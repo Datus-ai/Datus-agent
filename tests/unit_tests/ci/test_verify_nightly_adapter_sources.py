@@ -28,6 +28,23 @@ def _local_distribution(path: Path) -> _FakeDistribution:
     return _FakeDistribution(json.dumps({"url": path.resolve().as_uri(), "dir_info": {}}))
 
 
+class _FakeDialectOperations:
+    def render_limit(self, sql, limit):
+        return sql
+
+    def render_count(self, sql, alias):
+        return sql
+
+    def quote_identifier(self, name):
+        return name
+
+    def infer_transfer_type(self, series):
+        return "TEXT"
+
+    def write_dataframe(self, connector, table, dataframe, batch_size):
+        return 0
+
+
 def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_path):
     external_root = tmp_path / "external"
     distributions = {
@@ -64,7 +81,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
         get_parser_dialect=lambda db_type: {"hologres": "postgres", "oracle": "oracle"}.get(db_type),
         get_identifier_parser=lambda db_type: object() if db_type == "hologres" else None,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in {"hologres", "oracle"} else None,
-        get_dialect_operations=lambda db_type: object() if db_type == "oracle" else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
@@ -83,7 +100,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
         get_parser_dialect=lambda db_type: "oracle" if db_type == "oracle" else None,
         get_identifier_parser=lambda db_type: object() if db_type == "hologres" else None,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in {"hologres", "oracle"} else None,
-        get_dialect_operations=lambda db_type: object() if db_type == "oracle" else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
@@ -119,7 +136,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
         get_sql_generation_notes=lambda db_type: (
             None if db_type == "hologres" and missing_hook == "get_sql_generation_notes" else "notes"
         ),
-        get_dialect_operations=lambda db_type: object() if db_type == "oracle" else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
@@ -149,6 +166,29 @@ def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch)
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
     assert verify_sources.verify_database_adapter_imports() == ["datus_oracle did not register get_dialect_operations"]
+
+
+def test_verify_database_adapter_imports_requires_complete_oracle_operations(monkeypatch):
+    operations = _FakeDialectOperations()
+    operations.render_count = None
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: {"hologres": "postgres", "oracle": "oracle"}.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type == "hologres" else None,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in {"hologres", "oracle"} else None,
+        get_dialect_operations=lambda db_type: operations if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == [
+        "datus_oracle dialect operations are missing callable methods: render_count"
+    ]
 
 
 def test_verify_local_sources_rejects_registry_package(monkeypatch, tmp_path):

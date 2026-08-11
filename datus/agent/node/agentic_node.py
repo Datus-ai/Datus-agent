@@ -2415,7 +2415,11 @@ class AgenticNode(Node):
         if not self.agent_config:
             return []
         getter = getattr(self.agent_config, "current_db_configs", None)
-        configs = getter() if callable(getter) else getattr(self.agent_config, "datasource_configs", {})
+        try:
+            configs = getter() if callable(getter) else getattr(self.agent_config, "datasource_configs", {})
+        except Exception as exc:
+            logger.debug("Failed to read database configs for skill candidates: %s", exc)
+            return []
         if not isinstance(configs, dict):
             return []
 
@@ -2466,6 +2470,7 @@ class AgenticNode(Node):
         if not skills_to_inject:
             return base_prompt
 
+        required_skill_names = set(required_skills)
         sections = []
         for skill_name in skills_to_inject:
             success, message, content = self.skill_manager.load_skill(
@@ -2475,6 +2480,9 @@ class AgenticNode(Node):
                 node_class=self.get_node_class_name(),
             )
             if not success or not content:
+                if skill_name not in required_skill_names:
+                    logger.debug("Skipping optional database skill '%s': %s", skill_name, message)
+                    continue
                 from datus.utils.exceptions import DatusException, ErrorCode
 
                 raise DatusException(
@@ -2489,6 +2497,8 @@ class AgenticNode(Node):
             sections.append(f"<required_skill name={xml_quoteattr(skill_name)}>\n{content}\n</required_skill>")
             logger.info(f"Injected required skill '{skill_name}' into system prompt for '{self.get_node_name()}'")
 
+        if not sections:
+            return base_prompt
         return base_prompt + "\n\n" + "\n\n".join(sections)
 
     @staticmethod

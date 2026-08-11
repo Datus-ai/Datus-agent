@@ -1268,3 +1268,36 @@ Use FETCH FIRST instead of LIMIT.
         assert '<required_skill name="db-oracle-sql">' in result
         assert "Use FETCH FIRST instead of LIMIT." in result
         assert "db-postgresql-sql" not in result
+
+    def test_database_skill_config_failure_leaves_prompt_unchanged(self, mock_agent_config, skill_manager):
+        mock_agent_config.current_db_configs.side_effect = RuntimeError("config unavailable")
+        node = self._make_node(mock_agent_config, skill_manager, None)
+
+        assert node._inject_required_skills("base prompt") == "base prompt"
+
+    def test_database_skill_outside_node_scope_is_skipped(
+        self,
+        mock_agent_config,
+        skill_manager,
+        temp_skills_dir,
+    ):
+        skill_dir = temp_skills_dir / "db-oracle-sql"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            """---
+name: db-oracle-sql
+description: Oracle SQL generation rules
+allowed_agents:
+  - another_node
+---
+
+# Oracle SQL
+
+Use FETCH FIRST instead of LIMIT.
+"""
+        )
+        skill_manager.refresh()
+        mock_agent_config.current_db_configs.return_value = {"oracle_prod": {"type": "oracle"}}
+        node = self._make_node(mock_agent_config, skill_manager, None)
+
+        assert node._inject_required_skills("base prompt") == "base prompt"
