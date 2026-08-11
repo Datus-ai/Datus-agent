@@ -2410,6 +2410,24 @@ class AgenticNode(Node):
             return []
         return [pattern.strip() for pattern in patterns.split(",") if pattern.strip()]
 
+    def _get_database_skill_candidates(self) -> List[str]:
+        """Return conventional skill names for the configured database types."""
+        if not self.agent_config:
+            return []
+        getter = getattr(self.agent_config, "current_db_configs", None)
+        configs = getter() if callable(getter) else getattr(self.agent_config, "datasource_configs", {})
+        if not isinstance(configs, dict):
+            return []
+
+        candidates = []
+        for config in configs.values():
+            db_type = config.get("type", "") if isinstance(config, dict) else getattr(config, "type", "")
+            db_type = getattr(db_type, "value", db_type)
+            normalized = str(db_type or "").strip().lower().replace("_", "-")
+            if normalized:
+                candidates.append(f"db-{normalized}-sql")
+        return list(dict.fromkeys(candidates))
+
     def _inject_required_skills(self, base_prompt: str) -> str:
         """Append required-skill content to the system prompt deterministically.
 
@@ -2425,7 +2443,8 @@ class AgenticNode(Node):
                 fails fast instead.
         """
         required_skills = self._get_required_skills()
-        if not required_skills:
+        database_candidates = self._get_database_skill_candidates()
+        if not required_skills and not database_candidates:
             return base_prompt
 
         if not self.skill_manager:
@@ -2439,8 +2458,16 @@ class AgenticNode(Node):
 
         from xml.sax.saxutils import quoteattr as xml_quoteattr
 
+        # Database skills follow a convention but remain adapter-optional. Only
+        # inject candidates actually contributed by an installed adapter; class-
+        # declared required skills retain their fail-fast contract.
+        database_skills = [name for name in database_candidates if self.skill_manager.get_skill(name) is not None]
+        skills_to_inject = list(dict.fromkeys([*required_skills, *database_skills]))
+        if not skills_to_inject:
+            return base_prompt
+
         sections = []
-        for skill_name in required_skills:
+        for skill_name in skills_to_inject:
             success, message, content = self.skill_manager.load_skill(
                 skill_name,
                 self.get_node_name(),

@@ -28,6 +28,7 @@ This design keeps the core package lightweight while allowing you to add support
 | Trino | datus-trino | `pip install datus-trino` | Ready |
 | Apache Doris | datus-doris | `pip install datus-doris` | Ready |
 | Hologres | datus-hologres | `pip install datus-hologres` | Ready |
+| Oracle | datus-oracle | `pip install datus-oracle` | Ready |
 
 ## Installation
 
@@ -72,6 +73,9 @@ pip install datus-doris
 
 # Hologres
 pip install datus-hologres
+
+# Oracle
+pip install datus-oracle
 ```
 
 Once installed, Datus Agent will automatically detect and load the adapter.
@@ -271,6 +275,22 @@ Hologres (Alibaba Cloud) uses the PostgreSQL wire protocol with AccessKey creden
 accepts either a plain hostname or a `hostname:port` console endpoint; an explicit `port` must match an
 embedded one.
 
+### Oracle
+
+```yaml
+oracle_data:
+  type: oracle
+  host: localhost
+  port: 1521
+  username: datus_user
+  password: your_password
+  service_name: FREEPDB1
+  schema: DATUS_USER
+```
+
+Configure exactly one connection target: `service_name` (recommended), `sid`, or `dsn`. The service/PDB
+selects the connection target but is not part of an SQL object name; qualify objects as `SCHEMA.TABLE`.
+
 ### Multiple Database Entries
 
 ```yaml
@@ -371,6 +391,12 @@ All adapters support:
 - Console endpoint normalization (`hostname` or `hostname:port`)
 - SSL connection modes (disable, allow, prefer, require, verify-ca, verify-full)
 
+#### Oracle
+- Oracle Database 19c SQL and PL/SQL syntax guidance through the adapter-provided skill
+- Service name, SID, or DSN connection targets
+- Schema-scoped metadata discovery through `ALL_*` dictionary views
+- Oracle-compatible profiling and bound-parameter data transfers
+
 ## Troubleshooting
 
 ### Adapter Not Found
@@ -403,6 +429,7 @@ Some adapters require additional system dependencies:
 - **Trino**: Requires `trino` (installed automatically)
 - **Apache Doris**: Requires `datus-mysql` and `pymysql` (installed automatically)
 - **Hologres**: Requires `datus-postgresql` and `psycopg2-binary` (installed automatically)
+- **Oracle**: Requires `oracledb` (installed automatically; Thin mode needs no Oracle Client)
 
 ## Architecture
 
@@ -422,7 +449,8 @@ datus-agent (Core)
     │   ├── datus-hive
     │   ├── datus-spark
     │   ├── datus-clickhouse
-    │   └── datus-trino
+    │   ├── datus-trino
+    │   └── datus-oracle
     │
     └── Native SDK Adapters
         ├── datus-snowflake

@@ -28,6 +28,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | Trino | datus-trino | `pip install datus-trino` | 可用 |
 | Apache Doris | datus-doris | `pip install datus-doris` | 可用 |
 | Hologres | datus-hologres | `pip install datus-hologres` | 可用 |
+| Oracle | datus-oracle | `pip install datus-oracle` | 可用 |
 
 ## 安装
 
@@ -69,6 +70,9 @@ pip install datus-doris
 
 # Hologres
 pip install datus-hologres
+
+# Oracle
+pip install datus-oracle
 ```
 
 安装后，Datus Agent 会自动检测并加载适配器。
@@ -263,6 +267,22 @@ Hologres（阿里云）使用 PostgreSQL wire 协议和 AccessKey 凭证。`acce
 也可作为 `username`/`password` 的别名。`host` 支持纯 hostname 或 `hostname:port` 形式的控制台
 endpoint；显式配置的 `port` 必须与 endpoint 中内嵌的端口一致。
 
+### Oracle
+
+```yaml
+oracle_data:
+  type: oracle
+  host: localhost
+  port: 1521
+  username: datus_user
+  password: your_password
+  service_name: FREEPDB1
+  schema: DATUS_USER
+```
+
+连接目标必须且只能配置一个：`service_name`（推荐）、`sid` 或 `dsn`。service/PDB 只用于选择连接目标，
+不属于 SQL 对象名；对象应使用 `SCHEMA.TABLE` 限定。
+
 ## 多数据库连接
 
 可以在 `agent.services.datasources` 下配置多个独立数据源连接：
@@ -358,6 +378,12 @@ agent:
 - 控制台 endpoint 归一化（`hostname` 或 `hostname:port`）
 - SSL 连接模式（disable、allow、prefer、require、verify-ca、verify-full）
 
+#### Oracle
+- 通过 adapter 提供的 skill 注入 Oracle Database 19c SQL 和 PL/SQL 语法知识
+- 支持 service name、SID 或 DSN 连接目标
+- 通过 `ALL_*` 数据字典视图发现 schema 范围内的元数据
+- Oracle 兼容的 profiling 和绑定参数数据传输
+
 ## 故障排除
 
 ### 适配器未找到
@@ -389,6 +415,7 @@ pip install datus-mysql
 - **Trino**：需要 `trino`（自动安装）
 - **Apache Doris**：需要 `datus-mysql` 和 `pymysql`（自动安装）
 - **Hologres**：需要 `datus-postgresql` 和 `psycopg2-binary`（自动安装）
+- **Oracle**：需要 `oracledb`（自动安装；Thin 模式不需要 Oracle Client）
 
 ## 架构
 
@@ -408,7 +435,8 @@ datus-agent (核心)
     │   ├── datus-hive
     │   ├── datus-spark
     │   ├── datus-clickhouse
-    │   └── datus-trino
+    │   ├── datus-trino
+    │   └── datus-oracle
     │
     └── 原生 SDK 适配器
         ├── datus-snowflake

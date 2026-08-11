@@ -49,6 +49,7 @@ INSTALLABLE_TYPES = (
     "hive",
     "hologres",
     "mysql",
+    "oracle",
     "postgresql",
     "redshift",
     "snowflake",

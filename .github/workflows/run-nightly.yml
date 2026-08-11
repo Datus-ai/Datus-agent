@@ -159,6 +159,7 @@ jobs:
             --reinstall-package datus-snowflake \
             --reinstall-package datus-doris \
             --reinstall-package datus-hologres \
+            --reinstall-package datus-oracle \
             --reinstall-package datus-storage-base \
             --reinstall-package datus-storage-postgresql \
             pytest-playwright \
@@ -177,6 +178,7 @@ jobs:
             ./external/datus-db-adapters/datus-starrocks \
             ./external/datus-db-adapters/datus-doris \
             ./external/datus-db-adapters/datus-hologres \
+            ./external/datus-db-adapters/datus-oracle \
             ./external/datus-db-adapters/datus-trino \
             ./external/datus-db-adapters/datus-greenplum \
             ./external/datus-db-adapters/datus-hive \
