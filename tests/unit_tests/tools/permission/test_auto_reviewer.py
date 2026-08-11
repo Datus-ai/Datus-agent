@@ -180,7 +180,10 @@ class TestReviewerRequest:
         )
         messages = fake_model.generate_with_json_output.call_args.args[0]
         prompt_payload = json.loads(messages[1]["content"])
-        schema = fake_model.generate_with_json_output.call_args.kwargs["output_schema"]
+        call_kwargs = fake_model.generate_with_json_output.call_args.kwargs
+        schema = call_kwargs["output_schema"]
+        assert call_kwargs["max_tokens"] == 1024
+        assert call_kwargs["enable_thinking"] is False
         assert prompt_payload["review_request"]["planned_action"]["command"] == "make"
         assert prompt_payload["required_response_schema"] == schema
         assert set(schema["required"]) == {

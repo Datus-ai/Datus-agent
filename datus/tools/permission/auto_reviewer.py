@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 _MAX_HISTORY_BYTES = 24 * 1024
 _MAX_USER_MESSAGES = 8
 _MAX_PRIOR_ACTIONS = 20
+_REVIEW_MAX_TOKENS = 1024
 
 
 class ReviewRiskLevel(str, Enum):
@@ -202,7 +203,7 @@ class LLMAutoReviewer(AutoReviewer):
             raw = model.generate_with_json_output(
                 messages,
                 output_schema=output_schema,
-                max_tokens=512,
+                max_tokens=_REVIEW_MAX_TOKENS,
                 enable_thinking=False,
             )
             verdict = AutoReviewVerdict.model_validate(raw)
