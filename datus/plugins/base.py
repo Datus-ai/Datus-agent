@@ -122,6 +122,12 @@ Only ``manifest_version`` is required — every other key is optional::
           type: string
           description: "API base URL"
           default: "https://api.example.com"
+        provider:
+          type: string
+          description: "Provider plugin name"
+          x-plugin-profile-ref:
+            profile_field: provider_profile
+            default_profile: same-name
     # Inline JSON Schema (an object schema) describing ONE profile of
     # ``agent.plugins.<name>``. Drives the ``/plugins`` TUI form (property
     # order == field order; ``required`` and ``default`` are honoured) and
@@ -130,6 +136,13 @@ Only ``manifest_version`` is required — every other key is optional::
     # renderer strips them. TUI-entered values are strings, so prefer
     # ``type: string`` with ``pattern``/``enum``; values containing
     # ``${ENV_VAR}`` placeholders are exempt from value-level validation.
+    # ``x-plugin-profile-ref`` declares a one-hop runtime profile delegation
+    # for managed/AuthProvider execution. Its ``profile_field`` names the
+    # sibling field containing the referenced plugin's profile name;
+    # ``default_profile: same-name`` falls back to this profile's injected
+    # ``name``. Datus resolves only the referenced plugin/profile and carries
+    # it in the command-scoped runtime context, so composed plugins never need
+    # a Python/package dependency or access to the complete AgentConfig.
 
     commands:
       - name: sync

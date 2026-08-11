@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from datus.plugins import runtime_context
+from datus.plugins.base import PluginManifest
 from datus.tools.func_tool.bash_tool import BashExecutionContext, BashTool
 
 _CTX = runtime_context.RUNTIME_CONTEXT_ENV
@@ -62,6 +63,58 @@ def test_context_rejects_wrong_plugin_and_malformed_value():
         runtime_context.PluginRuntimeContext.decode("v1.not-base64!")
 
 
+def test_context_selects_only_requested_delegate():
+    original = runtime_context.PluginRuntimeContext(
+        plugin_name="k8s",
+        profile={"name": "dev", "provider": "eks"},
+        delegates={
+            "eks": runtime_context.PluginRuntimeTarget(
+                profile={"name": "dev", "region": "us-east-1"},
+                plugin_path="/opt/plugins/eks",
+            )
+        },
+    )
+
+    selected = runtime_context.PluginRuntimeContext.decode(original.encode(), expected_plugin="eks")
+
+    assert selected == runtime_context.PluginRuntimeContext(
+        plugin_name="eks",
+        profile={"name": "dev", "region": "us-east-1"},
+        plugin_path="/opt/plugins/eks",
+    )
+    with pytest.raises(runtime_context.PluginRuntimeContextError, match="not `gke`"):
+        runtime_context.PluginRuntimeContext.decode(original.encode(), expected_plugin="gke")
+
+
+def test_loading_delegate_narrows_inherited_environment(monkeypatch):
+    original = runtime_context.PluginRuntimeContext(
+        plugin_name="k8s",
+        profile={"name": "dev"},
+        delegates={"eks": runtime_context.PluginRuntimeTarget(profile={"name": "dev"})},
+    )
+    monkeypatch.setenv(runtime_context.RUNTIME_CONTEXT_ENV, original.encode())
+
+    selected = runtime_context.load_runtime_context_from_env(expected_plugin="eks")
+
+    narrowed = runtime_context.PluginRuntimeContext(
+        plugin_name="eks",
+        profile={"name": "dev"},
+        plugin_path=None,
+    )
+    assert selected == narrowed
+    inherited = runtime_context.PluginRuntimeContext.decode(
+        os.environ[runtime_context.RUNTIME_CONTEXT_ENV],
+        expected_plugin="eks",
+    )
+    assert inherited == narrowed
+    assert inherited.delegates == {}
+    with pytest.raises(runtime_context.PluginRuntimeContextError, match="not `k8s`"):
+        runtime_context.PluginRuntimeContext.decode(
+            os.environ[runtime_context.RUNTIME_CONTEXT_ENV],
+            expected_plugin="k8s",
+        )
+
+
 def test_context_rejects_non_json_profile():
     with pytest.raises(runtime_context.PluginRuntimeContextError, match="not JSON-serializable"):
         runtime_context.PluginRuntimeContext("hello", {"bad": object()}).encode()
@@ -94,6 +147,103 @@ def test_prepare_plain_command_resolves_explicit_profile(monkeypatch, tmp_path):
     assert decoded.profile["token"] == "tenant-secret"
     assert runtime_context.RUNTIME_CONTEXT_ENV in prepared.command
     assert "tenant-secret" not in prepared.command
+
+
+@pytest.mark.parametrize(
+    "provider_profile,expected_profile",
+    [(None, "dev"), ("cluster-a", "cluster-a")],
+)
+def test_prepare_resolves_manifest_declared_provider_profile(
+    monkeypatch,
+    tmp_path,
+    provider_profile,
+    expected_profile,
+):
+    plugin_dirs = {name: tmp_path / name for name in ("k8s", "eks")}
+    for directory in plugin_dirs.values():
+        directory.mkdir()
+    schema = {
+        "type": "object",
+        "properties": {
+            "provider": {
+                "type": "string",
+                "x-plugin-profile-ref": {
+                    "profile_field": "provider_profile",
+                    "default_profile": "same-name",
+                },
+            }
+        },
+    }
+    manifest = PluginManifest(name="k8s", package_dir=plugin_dirs["k8s"], config_schema=schema)
+    monkeypatch.setattr("datus.plugins.registry.load_plugin_manifest", lambda name: manifest if name == "k8s" else None)
+    monkeypatch.setattr(runtime_context, "_resolve_plugin_path", lambda config, name: plugin_dirs[name])
+
+    class Config:
+        plugins_enabled = True
+        plugin_paths = []
+
+        def __init__(self):
+            self.requested = []
+
+        def plugin_active(self, name):
+            return name in {"k8s", "eks"}
+
+        def get_plugin_profile(self, name, profile=None):
+            self.requested.append((name, profile))
+            if name == "k8s":
+                result = {"name": "dev", "provider": "eks", "namespace": "analytics"}
+                if provider_profile is not None:
+                    result["provider_profile"] = provider_profile
+                return result
+            return {"name": profile, "region": "us-east-1", "tenant_secret": "secret"}
+
+    config = Config()
+    prepared = runtime_context.prepare_plugin_invocation("datus k8s --profile dev get pods", config)
+
+    assert isinstance(prepared, runtime_context.PreparedPluginInvocation)
+    assert config.requested == [("k8s", "dev"), ("eks", expected_profile)]
+    assert prepared.sandbox_read_dirs == [str(plugin_dirs["k8s"]), str(plugin_dirs["eks"])]
+    primary = runtime_context.PluginRuntimeContext.decode(prepared.env[_CTX], expected_plugin="k8s")
+    assert set(primary.delegates) == {"eks"}
+    delegate = runtime_context.PluginRuntimeContext.decode(prepared.env[_CTX], expected_plugin="eks")
+    assert delegate.profile == {
+        "name": expected_profile,
+        "region": "us-east-1",
+        "tenant_secret": "secret",
+    }
+
+
+def test_prepare_rejects_inactive_or_self_delegate(monkeypatch, tmp_path):
+    schema = {
+        "type": "object",
+        "properties": {
+            "provider": {
+                "type": "string",
+                "x-plugin-profile-ref": {"default_profile": "same-name"},
+            }
+        },
+    }
+    manifest = PluginManifest(name="k8s", package_dir=tmp_path, config_schema=schema)
+    monkeypatch.setattr("datus.plugins.registry.load_plugin_manifest", lambda name: manifest)
+    monkeypatch.setattr(runtime_context, "_resolve_plugin_path", lambda config, name: None)
+
+    class InactiveDelegateConfig(_Config):
+        def plugin_active(self, name):
+            return name == "k8s"
+
+    inactive = InactiveDelegateConfig(profile={"name": "dev", "provider": "eks"})
+    with pytest.raises(runtime_context.PluginRuntimeContextError, match="not active"):
+        runtime_context.prepare_plugin_invocation("datus k8s get pods", inactive)
+
+    class SelfConfig(_Config):
+        def plugin_active(self, name):
+            return True
+
+    with pytest.raises(runtime_context.PluginRuntimeContextError, match="cannot delegate.*itself"):
+        runtime_context.prepare_plugin_invocation(
+            "datus k8s get pods",
+            SelfConfig(profile={"name": "dev", "provider": "k8s"}),
+        )
 
 
 def test_prepare_pipeline_injects_only_datus_segment(monkeypatch, tmp_path):
