@@ -105,24 +105,57 @@ def _assistant_content_fingerprint(event: SSEEvent) -> str:
 def _should_skip_duplicate_assistant_message(
     action,
     event: SSEEvent,
-    seen_fingerprints: set[str],
+    seen_fingerprints: dict[str, str],
 ) -> bool:
+    """Return True when this event repeats text already sent this turn.
+
+    ``seen_fingerprints`` maps rendered text -> the message_id that first
+    carried it, because UPDATE has to be judged differently from CREATE:
+
+    * CREATE re-stating known text is always a duplicate.
+    * UPDATE re-stating it is a duplicate only under a *different* message_id.
+      An UPDATE on the id that already owns the text is the legitimate
+      overwrite path (streamed thinking deltas replaced by the finished
+      response, ``finalize_progress`` stepping one bubble through its stages).
+
+    Judging UPDATE at all is the point: one assistant turn carrying text plus N
+    parallel tool calls opens N ``thinking_stream_*`` messages that each stream
+    the same prose and each close with an UPDATE. Skipping UPDATE entirely —
+    which this did — let all N through, and a mission thread rendered the same
+    paragraph four times in a row.
+    """
     if action.role != ActionRole.ASSISTANT or action.status != ActionStatus.SUCCESS:
         return False
     if action.action_type == "thinking_delta":
         return False
     if event.event != "message" or not isinstance(event.data, SSEMessageData):
         return False
-    if event.data.type != SSEDataType.CREATE_MESSAGE:
+    if event.data.type not in (SSEDataType.CREATE_MESSAGE, SSEDataType.UPDATE_MESSAGE):
         return False
+
     fingerprint = _assistant_content_fingerprint(event)
-    return bool(fingerprint and fingerprint in seen_fingerprints)
+    if not fingerprint:
+        return False
+
+    owner = seen_fingerprints.get(fingerprint)
+    if owner is None:
+        return False
+    if event.data.type == SSEDataType.UPDATE_MESSAGE:
+        return owner != event.data.payload.message_id
+    return True
 
 
-def _remember_assistant_message(event: SSEEvent, seen_fingerprints: set[str]) -> None:
+def _remember_assistant_message(event: SSEEvent, seen_fingerprints: dict[str, str]) -> None:
     fingerprint = _assistant_content_fingerprint(event)
-    if fingerprint:
-        seen_fingerprints.add(fingerprint)
+    if not fingerprint:
+        return
+    # First writer wins — it is the one whose UPDATEs stay legitimate.
+    seen_fingerprints.setdefault(fingerprint, _message_id_of(event))
+
+
+def _message_id_of(event: SSEEvent) -> str:
+    data = event.data
+    return data.payload.message_id if isinstance(data, SSEMessageData) else ""
 
 
 def _should_include_final_response(action, assistant_response_sent: bool) -> bool:
@@ -702,7 +735,7 @@ class ChatTaskManager:
                 # by a stale assistant_response_sent carried over between passes.
                 assistant_response_sent = False
                 tool_result_seen = False
-                seen_assistant_message_fingerprints: set[str] = set()
+                seen_assistant_message_fingerprints: dict[str, str] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
 

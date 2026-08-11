@@ -23,7 +23,7 @@ def test_answered_records_summary_and_artifacts():
     result = tool.submit_task_result(
         outcome="answered",
         summary="Semantic layer already had perp_notional_volume; produced last week by venue.",
-        artifacts=[TaskArtifact(kind="csv", ref="s3://run/1.csv", title="Weekly volume")],
+        artifacts=[TaskArtifact(kind="csv", slug="weekly_volume", title="Weekly volume")],
     )
 
     assert result.success
@@ -162,7 +162,7 @@ async def test_invoker_accepts_nested_objects_as_dicts():
         summary="Retention by market maker needs a dimension first.",
         gap_reasons=["no market_maker dimension"],
         plan_items=[{"kind": "dimension", "name": "dim_market_maker", "description": "42 addresses"}],
-        artifacts=[{"kind": "csv", "ref": "s3://run/1.csv", "title": "Draft"}],
+        artifacts=[{"kind": "csv", "slug": "draft_volume", "title": "Draft"}],
     )
 
     assert result["success"]
@@ -179,11 +179,11 @@ async def test_invoker_accepts_a_nested_array_sent_as_a_json_string():
         tool,
         outcome="answered",
         summary="Done.",
-        artifacts=json.dumps([{"kind": "report", "ref": "rpt_1"}]),
+        artifacts=json.dumps([{"kind": "report", "slug": "rpt_1"}]),
     )
 
     assert result["success"]
-    assert tool.submitted["artifacts"][0]["ref"] == "rpt_1"
+    assert tool.submitted["artifacts"][0]["slug"] == "rpt_1"
 
 
 @pytest.mark.asyncio
@@ -196,7 +196,7 @@ async def test_invoker_reports_a_malformed_item_instead_of_raising():
         tool,
         outcome="answered",
         summary="Done.",
-        artifacts=[{"ref": "missing-kind"}],
+        artifacts=[{"slug": "missing-kind"}],
     )
 
     assert not result["success"]
@@ -230,3 +230,37 @@ async def test_invoker_still_enforces_the_outcome_contract():
 
     assert not result["success"]
     assert "gap_reasons" in result["error"]
+
+
+def test_artifact_is_identified_by_slug_not_a_path():
+    """The field is the slug the caller opens the artifact by.
+
+    Named ``ref`` and described as "identifier or path", it collected
+    ``reports/<slug>/`` — decoration nothing downstream resolves, which a caller
+    wanting to link to the report then had to strip back off.
+    """
+    tool = TaskResultTool()
+
+    result = tool.submit_task_result(
+        outcome="answered",
+        summary="Root-cause report produced.",
+        artifacts=[{"kind": "report", "slug": "store_anomaly_root_cause_2026_06", "title": "Root cause"}],
+    )
+
+    assert result.success
+    assert tool.submitted["artifacts"][0]["slug"] == "store_anomaly_root_cause_2026_06"
+    assert "ref" not in tool.submitted["artifacts"][0]
+
+
+def test_artifact_without_a_slug_is_rejected():
+    tool = TaskResultTool()
+
+    result = tool.submit_task_result(
+        outcome="answered",
+        summary="Done.",
+        artifacts=[{"kind": "report", "title": "No slug"}],
+    )
+
+    assert not result.success
+    assert "artifacts[0]" in result.error
+    assert tool.submitted is None
