@@ -131,6 +131,28 @@ def test_parse_manifest_full():
     assert manifest.config_schema["required"] == ["api_key"]
 
 
+def test_parse_manifest_preserves_plugin_profile_reference_extension():
+    reference = {"profile_field": "provider_profile", "default_profile": "same-name"}
+    manifest = parse_manifest(
+        {
+            "manifest_version": 1,
+            "config_schema": {
+                "type": "object",
+                "properties": {
+                    "provider": {
+                        "type": "string",
+                        "x-plugin-profile-ref": reference,
+                    }
+                },
+            },
+        },
+        "k8s",
+        PKG,
+    )
+
+    assert manifest.config_schema["properties"]["provider"]["x-plugin-profile-ref"] == reference
+
+
 def test_parse_manifest_bad_section_does_not_kill_others(caplog):
     """A malformed permissions block is dropped while cli stays usable."""
     data = {

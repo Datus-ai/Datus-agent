@@ -4,13 +4,14 @@
 
 """Unit tests for ``datus.plugins`` dispatch + ``--profile``/``--config`` split."""
 
+import os
 from pathlib import Path
 from typing import Any, Optional
 
 from datus.cli import main as cli_main
 from datus.cli.main import _dispatch_plugin_command, _split_plugin_globals
 from datus.plugins.base import PluginManifest
-from datus.plugins.runtime_context import RUNTIME_CONTEXT_ENV, PluginRuntimeContext
+from datus.plugins.runtime_context import RUNTIME_CONTEXT_ENV, PluginRuntimeContext, PluginRuntimeTarget
 
 # ── _split_plugin_globals ────────────────────────────────────────────────────
 
@@ -107,6 +108,39 @@ def test_dispatch_calls_cli_with_resolved_profile(monkeypatch):
     assert _StubCli.last["profile"] == profile
     assert _StubCli.last["argv"] == ["dags", "list"]  # globals stripped
     assert stub_cfg.requested == {"name": "hello", "profile": "prod"}
+
+
+def test_dispatch_uses_inherited_delegate_without_loading_file_config(monkeypatch):
+    load_calls = []
+    _patch_dispatch(monkeypatch, profile_dict={"wrong": True}, load_calls=load_calls)
+    monkeypatch.setenv(
+        RUNTIME_CONTEXT_ENV,
+        PluginRuntimeContext(
+            plugin_name="k8s",
+            profile={"name": "dev", "provider": "eks"},
+            delegates={
+                "eks": PluginRuntimeTarget(
+                    profile={"name": "cluster-a", "region": "us-east-1"},
+                    plugin_path="/opt/plugins/eks",
+                )
+            },
+        ).encode(),
+    )
+    activated = []
+    monkeypatch.setattr("datus.plugins.store.activate_paths", lambda paths: activated.append(paths) or [])
+
+    rc = _dispatch_plugin_command(["eks", "--profile", "cluster-a", "kubernetes", "credential"])
+
+    assert rc == 7
+    assert load_calls == []
+    assert activated == [["/opt/plugins/eks"]]
+    assert _StubCli.last["profile"] == {"name": "cluster-a", "region": "us-east-1"}
+    assert _StubCli.last["argv"] == ["kubernetes", "credential"]
+    inherited = PluginRuntimeContext.decode(
+        os.environ[RUNTIME_CONTEXT_ENV],
+        expected_plugin="eks",
+    )
+    assert inherited.delegates == {}
 
 
 def test_dispatch_forwards_config_path(monkeypatch):
