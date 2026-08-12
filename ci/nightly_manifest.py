@@ -39,6 +39,7 @@ PACKAGE_NAMES = (
     "datus-greenplum",
     "datus-hive",
     "datus-spark",
+    "datus-gaussdb",
     "datus-bi-core",
     "datus-bi-superset",
     "datus-bi-grafana",

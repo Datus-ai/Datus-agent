@@ -353,6 +353,7 @@ flow_groups:
               - tests/integration/adapters/test_greenplum.py
               - tests/integration/adapters/test_hive.py
               - tests/integration/adapters/test_spark.py
+              - tests/integration/adapters/test_gaussdb.py
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark runs Datus queries against StarRocks.

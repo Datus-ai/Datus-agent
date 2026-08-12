@@ -15,6 +15,12 @@ verify_sources = importlib.util.module_from_spec(MODULE_SPEC)
 MODULE_SPEC.loader.exec_module(verify_sources)
 
 
+# Registration shape a healthy nightly checkout produces, per db_type.
+_PARSER_DIALECTS = {"hologres": "postgres", "gaussdb": "postgres", "oracle": "oracle"}
+_IDENTIFIER_PARSER_ADAPTERS = {"hologres", "gaussdb"}
+_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "oracle"}
+
+
 class _FakeDistribution:
     def __init__(self, direct_url: str | None):
         self.direct_url = direct_url
@@ -67,6 +73,7 @@ def test_expected_sources_include_new_database_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-doris"] == "datus-db-adapters/datus-doris"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-hologres"] == "datus-db-adapters/datus-hologres"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-oracle"] == "datus-db-adapters/datus-oracle"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-gaussdb"] == "datus-db-adapters/datus-gaussdb"
 
 
 def test_expected_sources_include_dosi_semantic_adapter():
@@ -78,15 +85,16 @@ def test_expected_sources_include_dosi_semantic_adapter():
 def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
-        get_parser_dialect=lambda db_type: {"hologres": "postgres", "oracle": "oracle"}.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type == "hologres" else None,
-        get_sql_generation_notes=lambda db_type: "notes" if db_type in {"hologres", "oracle"} else None,
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
@@ -97,15 +105,16 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
 def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
-        get_parser_dialect=lambda db_type: "oracle" if db_type == "oracle" else None,
-        get_identifier_parser=lambda db_type: object() if db_type == "hologres" else None,
-        get_sql_generation_notes=lambda db_type: "notes" if db_type in {"hologres", "oracle"} else None,
+        get_parser_dialect=lambda db_type: None if db_type == "hologres" else _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
@@ -129,9 +138,12 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
 def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, missing_hook: str, expected_error: str):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
-        get_parser_dialect=lambda db_type: {"hologres": "postgres", "oracle": "oracle"}.get(db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
         get_identifier_parser=lambda db_type: (
-            None if db_type != "hologres" or missing_hook == "get_identifier_parser" else object()
+            None
+            if db_type not in _IDENTIFIER_PARSER_ADAPTERS
+            or (db_type == "hologres" and missing_hook == "get_identifier_parser")
+            else object()
         ),
         get_sql_generation_notes=lambda db_type: (
             None if db_type == "hologres" and missing_hook == "get_sql_generation_notes" else "notes"
@@ -142,6 +154,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
@@ -152,15 +165,16 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
 def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
-        get_parser_dialect=lambda db_type: {"hologres": "postgres", "oracle": "oracle"}.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type == "hologres" else None,
-        get_sql_generation_notes=lambda db_type: "notes" if db_type in {"hologres", "oracle"} else None,
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda _db_type: None,
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
@@ -173,15 +187,16 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
     operations.render_count = None
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
-        get_parser_dialect=lambda db_type: {"hologres": "postgres", "oracle": "oracle"}.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type == "hologres" else None,
-        get_sql_generation_notes=lambda db_type: "notes" if db_type in {"hologres", "oracle"} else None,
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: operations if db_type == "oracle" else None,
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)

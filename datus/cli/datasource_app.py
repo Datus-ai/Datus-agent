@@ -45,6 +45,7 @@ INSTALLABLE_TYPES = (
     "clickhouse",
     "clickzetta",
     "doris",
+    "gaussdb",
     "greenplum",
     "hive",
     "hologres",

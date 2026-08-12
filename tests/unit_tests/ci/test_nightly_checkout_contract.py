@@ -56,7 +56,7 @@ def test_nightly_installs_storage_packages_from_latest_checkout():
 def test_nightly_installs_new_database_adapters_from_latest_checkout():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    for package_name in ("datus-doris", "datus-hologres", "datus-oracle"):
+    for package_name in ("datus-doris", "datus-hologres", "datus-oracle", "datus-gaussdb"):
         assert f"--reinstall-package {package_name}" in workflow
         assert f"./external/datus-db-adapters/{package_name}" in workflow
 
@@ -83,6 +83,17 @@ def test_nightly_runs_doris_agent_contract_from_checkout():
     assert 'wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"' in script
     assert 'wait_for_tcp_readiness "Doris"' not in script
     assert "tests/integration/adapters/test_doris.py" in script
+
+
+def test_nightly_runs_gaussdb_agent_contract_from_checkout():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'echo "ADAPTERS_GAUSSDB=1" >> $GITHUB_ENV' in workflow
+    assert 'GAUSSDB_COMPOSE="${GAUSSDB_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-gaussdb/docker-compose.yml}"' in script
+    assert 'run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600"' in script
+    assert "tests/integration/adapters/test_gaussdb.py" in script
+    assert '"GaussDB Adapter Tests"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
 
 
 def test_doris_readiness_failure_is_logged_and_propagated(tmp_path):
