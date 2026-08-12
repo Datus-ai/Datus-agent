@@ -292,7 +292,11 @@ class InteractionBroker:
             Single-select answers have one element; multi-select may have more.
 
         Raises:
-            InteractionCancelled: If the broker is closed while waiting.
+            InteractionCancelled: The question itself was cancelled — the broker
+                was closed, or the user dismissed it (ESC submits ``[[""]]``).
+                Callers turn this into a tool-level "cancelled" result.
+            asyncio.CancelledError: The whole run is being cancelled. Propagates
+                untouched so the task actually dies; see the handler below.
         """
         if self._closed:
             raise InteractionCancelled("Broker is already closed")
@@ -353,7 +357,14 @@ class InteractionBroker:
         except asyncio.CancelledError:
             with self._lock:
                 self._pending.pop(action_id, None)
-            raise InteractionCancelled("Request cancelled")
+            # Re-raise, never downgrade to InteractionCancelled. Cancellation
+            # here means the *run* is being torn down (``/chat/stop`` cancels the
+            # task; a dropped SSE client cancels the generator), and swallowing
+            # CancelledError leaves that task alive: ``ask_user`` would catch the
+            # downgraded error, hand the model "User cancelled the question" as
+            # an ordinary tool result, and the LLM would carry on to its next
+            # action — after the caller was told the run had stopped.
+            raise
 
     async def fetch(self) -> AsyncGenerator[ActionHistory, None]:
         """Async generator that yields ActionHistory objects for interactions."""
