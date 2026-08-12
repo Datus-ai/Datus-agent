@@ -7,6 +7,7 @@
 import base64
 import json
 import os
+import re
 import time
 import uuid
 from contextlib import nullcontext
@@ -37,6 +38,26 @@ logger = get_logger(__name__)
 # Fallback values when providers.yml / OpenRouter cache do not cover a codex slug.
 _CODEX_DEFAULT_CONTEXT_LENGTH = 192000
 _CODEX_DEFAULT_MAX_TOKENS = 16384
+
+# The Responses API requires a ``name`` alongside a ``json_schema`` text format
+# and accepts only ``[a-zA-Z0-9_-]`` in it, capped at 64 characters.
+_SCHEMA_NAME_ALLOWED = re.compile(r"[^a-zA-Z0-9_-]")
+_SCHEMA_NAME_MAX_LENGTH = 64
+_SCHEMA_NAME_FALLBACK = "structured_response"
+
+
+def _json_schema_format_name(output_schema: Dict[str, Any], explicit: Optional[str] = None) -> str:
+    """Derive a Responses-API-legal ``text.format.name`` for a JSON schema.
+
+    Prefers an explicit caller-supplied name, then the schema's ``title``
+    (Pydantic's ``model_json_schema()`` always sets it to the model class
+    name), then a generic fallback. Illegal characters collapse to ``_``
+    because omitting the field — or sending an unsanitized one — makes the
+    provider reject the whole request with HTTP 400.
+    """
+    candidate = explicit or (output_schema.get("title") if isinstance(output_schema, dict) else None)
+    sanitized = _SCHEMA_NAME_ALLOWED.sub("_", str(candidate)).strip("_") if candidate else ""
+    return (sanitized or _SCHEMA_NAME_FALLBACK)[:_SCHEMA_NAME_MAX_LENGTH]
 
 
 def _agents_trace_baggage(agent_name: Optional[str]):
@@ -391,6 +412,10 @@ class CodexModel(LLMBaseModel):
             create_kwargs["text"] = {
                 "format": {
                     "type": "json_schema",
+                    # Required by the Responses API: without it every
+                    # schema-mode request fails with HTTP 400
+                    # "Missing required parameter: 'text.format.name'".
+                    "name": _json_schema_format_name(output_schema, kwargs.get("output_schema_name")),
                     "schema": output_schema,
                 }
             }

@@ -180,6 +180,92 @@ class TestCodexModelJsonOutput:
         call_kwargs = mock_client.responses.create.call_args[1]
         assert call_kwargs["text"]["format"]["type"] == "json_schema"
 
+    @pytest.mark.parametrize(
+        "schema_extra, explicit_name, expected_name",
+        [
+            # Pydantic's model_json_schema() always sets ``title``.
+            ({"title": "AutoReviewVerdict"}, None, "AutoReviewVerdict"),
+            # An explicit caller name wins over the schema title.
+            ({"title": "AutoReviewVerdict"}, "review_verdict", "review_verdict"),
+            # Illegal characters collapse; the API accepts only [a-zA-Z0-9_-].
+            ({"title": "My Model (v2).final"}, None, "My_Model__v2__final"),
+            # No title and no explicit name still yields a legal name.
+            ({}, None, "structured_response"),
+            # A title made entirely of illegal characters degrades to the fallback.
+            ({"title": "!!!"}, None, "structured_response"),
+        ],
+    )
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_json_schema_format_always_carries_a_legal_name(
+        self, mock_oauth_cls, model_config, schema_extra, explicit_name, expected_name
+    ):
+        """The Responses API rejects a ``json_schema`` format without ``name``.
+
+        Omitting it fails the whole request with HTTP 400 "Missing required
+        parameter: 'text.format.name'", which silently disables every
+        structured-output caller (e.g. the bash/SQL permission auto reviewer).
+        """
+        import re
+
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = _mock_stream(json.dumps({"answer": 42}))
+        model._client = mock_client
+
+        schema = {"type": "object", "properties": {"answer": {"type": "integer"}}, **schema_extra}
+        kwargs = {"output_schema": schema}
+        if explicit_name is not None:
+            kwargs["output_schema_name"] = explicit_name
+
+        model.generate_with_json_output("test", **kwargs)
+
+        fmt = mock_client.responses.create.call_args[1]["text"]["format"]
+        assert fmt["name"] == expected_name
+        assert re.fullmatch(r"[a-zA-Z0-9_-]+", fmt["name"])
+        assert len(fmt["name"]) <= 64
+        assert fmt["schema"] == schema
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_json_object_format_carries_no_schema_name(self, mock_oauth_cls, model_config):
+        """Without a schema the request stays in plain JSON-object mode."""
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = _mock_stream(json.dumps({"answer": 42}))
+        model._client = mock_client
+
+        model.generate_with_json_output("test")
+
+        assert mock_client.responses.create.call_args[1]["text"] == {"format": {"type": "json_object"}}
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_long_schema_title_is_truncated_to_the_api_limit(self, mock_oauth_cls, model_config):
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth = MagicMock()
+        mock_oauth.get_access_token.return_value = "tok"
+        mock_oauth_cls.return_value = mock_oauth
+
+        model = CodexModel(model_config=model_config)
+        mock_client = MagicMock()
+        mock_client.responses.create.return_value = _mock_stream(json.dumps({"answer": 42}))
+        model._client = mock_client
+
+        model.generate_with_json_output("test", output_schema={"type": "object", "title": "N" * 200})
+
+        assert mock_client.responses.create.call_args[1]["text"]["format"]["name"] == "N" * 64
+
 
 class TestCodexModelUtils:
     @patch("datus.models.codex_model.OAuthManager")
