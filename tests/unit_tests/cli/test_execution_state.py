@@ -279,8 +279,12 @@ class TestInteractionBrokerRequest:
         assert success_action.output["user_choice"] == [["y"]]
 
     @pytest.mark.asyncio
-    async def test_request_cancelled_raises_interaction_cancelled(self):
-        """When the future is cancelled, request() raises InteractionCancelled."""
+    async def test_request_cancelled_propagates_cancelled_error(self):
+        """A cancelled run must stay cancelled: CancelledError, not InteractionCancelled.
+
+        Downgrading it let ``ask_user`` report an ordinary tool failure, so the
+        LLM kept going after ``/chat/stop`` said the run had ended.
+        """
         broker = InteractionBroker()
 
         async def do_request():
@@ -292,7 +296,25 @@ class TestInteractionBrokerRequest:
         # Cancel the task (which cancels the future inside request())
         task.cancel()
 
-        with pytest.raises((InteractionCancelled, asyncio.CancelledError)):
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+        assert not broker.has_pending
+
+    @pytest.mark.asyncio
+    async def test_request_raises_interaction_cancelled_when_broker_closes(self):
+        """Closing the broker cancels the question only — that stays catchable."""
+        broker = InteractionBroker()
+
+        async def do_request():
+            return await broker.request([InteractionEvent(content="Pick one", choices={"a": "A"}, default_choice="a")])
+
+        task = asyncio.create_task(do_request())
+        await asyncio.sleep(0.05)
+
+        broker.close()
+
+        with pytest.raises(InteractionCancelled):
             await task
 
 

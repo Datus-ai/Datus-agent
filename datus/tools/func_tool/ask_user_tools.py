@@ -195,6 +195,10 @@ class AskUserTool:
             return FuncToolResult(success=1, result=result_json)
 
         except InteractionCancelled:
+            # Only the question was cancelled (ESC, or the broker closing). A
+            # cancelled *run* raises CancelledError, which is a BaseException and
+            # so passes through here untouched — deliberately, since turning it
+            # into a tool result would keep the run going after a /chat/stop.
             logger.info("AskUserTool: interaction cancelled by user")
             return FuncToolResult(success=0, error="User cancelled the question")
         except Exception as e:
