@@ -4,6 +4,7 @@
 
 import asyncio
 import hashlib
+import json
 import os
 import threading
 from abc import ABC, abstractmethod
@@ -40,6 +41,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         LLMProvider.OPENROUTER: "OpenRouterModel",
         LLMProvider.MINIMAX: "MiniMaxModel",
         LLMProvider.GLM: "GLMModel",
+        LLMProvider.BEDROCK: "BedrockModel",
     }
 
     # Module-level LRU cache for instantiated models. Keyed on the
@@ -91,12 +93,16 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
             if target_config.api_key
             else ""
         )
+        provider_options_digest = hashlib.sha1(
+            json.dumps(target_config.provider_options or {}, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:12]
         cache_key: Tuple = (
             model_type,
             target_config.model,
             target_config.base_url or "",
             api_key_digest,
             target_config.auth_type,
+            provider_options_digest,
             scope or "",
             # Include reasoning-related fields so ``/effort`` and a toggled
             # ``enable_thinking`` produce a fresh adapter instead of reusing

@@ -227,7 +227,56 @@ class InteractiveInit:
             return self._finalize_provider(
                 provider, provider_info, configure_claude_subscription(self.console, provider, provider_info)
             )
+        if auth_type == "aws":
+            return self._configure_aws_provider(provider, provider_info)
         return self._configure_api_key_provider(provider, provider_info)
+
+    def _configure_aws_provider(self, provider: str, provider_info: dict) -> bool:
+        """Select and probe a Bedrock model using the AWS credential chain."""
+        from datus.configuration.agent_config import _aws_provider_available
+
+        provider_options = provider_info.get("provider_options") or {}
+        if not isinstance(provider_options, dict):
+            provider_options = {}
+        if not _aws_provider_available(provider_options):
+            self.console.print(
+                "❌ AWS credentials or region not found. Run `aws configure` or `aws sso login`, "
+                "set a region, and retry."
+            )
+            return False
+
+        models = provider_info.get("models", [])
+        if models:
+            self.console.print("- Select your model:")
+            model_name = select_choice(
+                self.console,
+                {str(model): str(model) for model in models},
+                default=provider_info.get("default_model", str(models[0])),
+                allow_free_text=True,
+            )
+        else:
+            model_name = Prompt.ask("- Enter your Bedrock model or inference profile ID").strip()
+
+        self._pending_probe = {
+            "type": provider_info.get("type", provider),
+            "api_key": "",
+            "model": model_name,
+            "auth_type": "aws",
+            "provider_options": provider_options,
+        }
+        self.console.print("→ Testing Bedrock connectivity...")
+        ok, err = self._test_llm_connectivity()
+        if not ok:
+            self.console.print(f"❌ Bedrock connectivity test failed: {err}\n")
+            return False
+
+        self.console.print(" ✅ Bedrock model test successful\n")
+        provider_config = {"auth_type": "aws"}
+        if provider_options:
+            provider_config["provider_options"] = provider_options
+        self.config["agent"]["providers"][provider] = provider_config
+        self._pending_target = ProjectTarget(provider=provider, model=model_name)
+        return True
 
     def _configure_api_key_provider(self, provider: str, provider_info: dict) -> bool:
         """Prompt for API key + base URL, test connectivity, stage credentials."""
@@ -530,6 +579,7 @@ class InteractiveInit:
                 top_p=probe.get("top_p"),
                 auth_type=probe.get("auth_type", "api_key"),
                 default_headers=probe.get("default_headers"),
+                provider_options=probe.get("provider_options") or {},
             )
 
             from datus.models.base import LLMBaseModel

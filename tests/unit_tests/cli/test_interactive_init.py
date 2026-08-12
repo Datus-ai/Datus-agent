@@ -632,6 +632,58 @@ class TestConfigureLLM:
             assert init._pending_target is None
             assert "openai" not in init.config["agent"]["providers"]
 
+    def test_aws_provider_uses_credential_chain_and_stages_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+            provider_info = {
+                "type": "bedrock",
+                "auth_type": "aws",
+                "default_model": "us.anthropic.claude-sonnet-5",
+                "models": ["us.anthropic.claude-sonnet-5"],
+                "provider_options": {"aws_region_name": "us-east-1"},
+            }
+
+            with (
+                patch("datus.configuration.agent_config._aws_provider_available", return_value=True),
+                patch(
+                    "datus.cli.interactive_init.select_choice",
+                    return_value="us.anthropic.claude-sonnet-5",
+                ),
+                patch.object(init, "_test_llm_connectivity", return_value=(True, "")),
+            ):
+                result = init._configure_aws_provider("bedrock", provider_info)
+
+            assert result is True
+            assert init.config["agent"]["providers"]["bedrock"] == {
+                "auth_type": "aws",
+                "provider_options": {"aws_region_name": "us-east-1"},
+            }
+            assert init._pending_probe["api_key"] == ""
+            assert init._pending_probe["provider_options"] == {"aws_region_name": "us-east-1"}
+            assert init._pending_target.provider == "bedrock"
+            assert init._pending_target.model == "us.anthropic.claude-sonnet-5"
+
+    def test_aws_provider_fails_before_probe_without_local_credentials(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+            with (
+                patch("datus.configuration.agent_config._aws_provider_available", return_value=False),
+                patch.object(init, "_test_llm_connectivity") as probe,
+            ):
+                result = init._configure_aws_provider(
+                    "bedrock",
+                    {
+                        "type": "bedrock",
+                        "auth_type": "aws",
+                        "models": ["us.anthropic.claude-sonnet-5"],
+                    },
+                )
+
+            assert result is False
+            probe.assert_not_called()
+            assert init._pending_target is None
+
 
 # ---------------------------------------------------------------------------
 # do_init_sql_and_log_result: edge cases

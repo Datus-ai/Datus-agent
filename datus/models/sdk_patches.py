@@ -180,6 +180,7 @@ _original_usage_model_dump = None
 _original_usage_model_dump_json = None
 _original_usage_init = None
 _original_showwarning = None
+_patched_showwarning = None
 
 # Cache reasoning_content from API responses, keyed by model name within the
 # current execution context. This avoids leaking one session's hidden reasoning
@@ -590,9 +591,15 @@ def _redirect_pydantic_serializer_warnings_to_log() -> None:
     serializer messages to ``logger.debug`` while leaving every other warning
     untouched.
     """
-    global _original_showwarning
+    global _original_showwarning, _patched_showwarning
 
     if _original_showwarning is not None:
+        # Test runners and observability libraries may replace the process-wide
+        # hook after Datus is imported. Re-applying the SDK patches must restore
+        # the Datus wrapper instead of treating the stale saved original as
+        # proof that the wrapper is still installed.
+        if _patched_showwarning is not None:
+            warnings.showwarning = _patched_showwarning
         return
 
     _original_showwarning = warnings.showwarning
@@ -608,7 +615,8 @@ def _redirect_pydantic_serializer_warnings_to_log() -> None:
             return
         _original_showwarning(message, category, filename, lineno, file, line)
 
-    warnings.showwarning = _showwarning
+    _patched_showwarning = _showwarning
+    warnings.showwarning = _patched_showwarning
 
 
 def _patch_litellm_usage_serialization() -> None:
@@ -793,7 +801,7 @@ def remove_sdk_patches() -> None:
     """
     global _original_items_to_messages, _original_acompletion, _original_completion
     global _original_usage_model_dump, _original_usage_model_dump_json, _original_usage_init
-    global _original_showwarning
+    global _original_showwarning, _patched_showwarning
 
     import litellm
     from agents.models.chatcmpl_converter import Converter
@@ -834,6 +842,7 @@ def remove_sdk_patches() -> None:
     if _original_showwarning is not None:
         warnings.showwarning = _original_showwarning
         _original_showwarning = None
+        _patched_showwarning = None
         logger.info("Removed SDK patch: warnings.showwarning (Pydantic serializer warnings)")
 
     _reasoning_content_cache.clear()

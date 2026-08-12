@@ -49,6 +49,12 @@ def _stub_agent_config(**overrides):
                 "models": ["code-1"],
                 "auth_type": "oauth",
             },
+            "bedrock": {
+                "type": "bedrock",
+                "auth_type": "aws",
+                "default_model": "us.anthropic.claude-sonnet-5",
+                "models": ["us.anthropic.claude-sonnet-5"],
+            },
         },
     }
     cfg.providers = {}
@@ -165,6 +171,26 @@ class TestProviderList:
         assert isinstance(result, ModelSelection)
         assert result.kind == "needs_oauth"
         assert result.provider == "codex"
+
+    def test_unconfigured_bedrock_shows_aws_setup_message(self):
+        cfg = _stub_agent_config()
+        cfg.provider_available = MagicMock(return_value=False)
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        visible = app._providers_for_tab(_Tab.PROVIDERS)
+        app._list_cursor = visible.index("bedrock")
+        app._on_provider_enter()
+        assert app._view == _View.PROVIDER_LIST
+        assert "AWS credentials or region not found" in app._error_message
+
+    def test_available_bedrock_enters_model_list(self):
+        cfg = _stub_agent_config()
+        cfg.provider_available = MagicMock(side_effect=lambda name: name in {"openai", "bedrock"})
+        app = ModelApp(cfg, Console(file=io.StringIO(), no_color=True))
+        visible = app._providers_for_tab(_Tab.PROVIDERS)
+        app._list_cursor = visible.index("bedrock")
+        app._on_provider_enter()
+        assert app._view == _View.PROVIDER_MODELS
+        assert app._provider_models == ["us.anthropic.claude-sonnet-5"]
 
 
 # ─────────────────────────────────────────────────────────────────────

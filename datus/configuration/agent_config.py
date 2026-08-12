@@ -425,8 +425,12 @@ class ModelConfig:
     # Model-specific parameters
     temperature: Optional[float] = None  # Some models like kimi-k2.5 require temperature=1
     top_p: Optional[float] = None  # Some models like kimi-k2.5 require top_p=0.95
-    auth_type: str = "api_key"  # "api_key" | "oauth" | "subscription"
+    auth_type: str = "api_key"  # "api_key" | "oauth" | "subscription" | "aws"
     use_native_api: bool = False  # Use native Anthropic client instead of LiteLLM
+    # Provider-specific, non-secret request options. Bedrock accepts AWS region,
+    # profile/role and custom runtime endpoint settings here; access keys remain
+    # in the standard AWS credential chain and must not be stored in agent.yml.
+    provider_options: Dict[str, Any] = field(default_factory=dict)
     # SSL/TLS verification for this model's endpoint. Mirrors httpx/litellm `verify`:
     #   True  -> verify against system/certifi CAs (default)
     #   False -> disable verification (discouraged; MITM-exposed)
@@ -452,6 +456,7 @@ class ProviderConfig:
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     auth_type: str = "api_key"
+    provider_options: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -2544,6 +2549,7 @@ class AgentConfig:
             model=model_name,
             base_url=str(base_url) if base_url else None,
             auth_type=auth_type,
+            provider_options=dict(user_cfg.provider_options),
             **model_kwargs,
         )
 
@@ -2666,6 +2672,7 @@ class AgentConfig:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         auth_type: str = "api_key",
+        provider_options: Optional[Dict[str, Any]] = None,
         persist: bool = True,
     ) -> None:
         """Record provider-level credentials in memory and (optionally) on disk.
@@ -2682,6 +2689,8 @@ class AgentConfig:
             entry.base_url = base_url or None
         if auth_type:
             entry.auth_type = auth_type
+        if provider_options is not None:
+            entry.provider_options = dict(provider_options)
         self.providers[provider] = entry
         if persist:
             _persist_provider_section(provider, entry)
@@ -2728,7 +2737,8 @@ class AgentConfig:
         ``api_key`` providers: either the user set an explicit key in
         ``agent.providers`` *or* the shipped env var fallback resolves to a
         non-empty value. ``subscription`` / ``oauth`` providers defer to
-        ``datus.auth`` helpers that inspect on-disk tokens.
+        ``datus.auth`` helpers that inspect on-disk tokens. ``aws`` providers
+        use the boto3 credential chain plus a resolved region.
         """
         catalog = self.provider_catalog
         providers_meta = catalog.get("providers", {}) if isinstance(catalog, dict) else {}
@@ -2753,6 +2763,9 @@ class AgentConfig:
                 return OAuthManager().is_authenticated()
             except Exception:
                 return False
+        if auth_type == "aws":
+            user_cfg = self.providers.get(provider, ProviderConfig())
+            return _aws_provider_available(user_cfg.provider_options)
 
         user_cfg = self.providers.get(provider, ProviderConfig())
         if user_cfg.api_key:
@@ -3074,6 +3087,55 @@ def _resolve_nested_value(value: Any) -> Any:
     return value
 
 
+_MISSING_PROVIDER_OPTION = object()
+
+
+def _drop_missing_provider_options(value: Any) -> Any:
+    """Remove unresolved ``${ENV_VAR}`` values from provider options.
+
+    Optional AWS options commonly point at environment variables. When one is
+    unset, treating ``<MISSING:...>`` as a literal profile or region prevents
+    boto3 from falling back to its standard credential chain.
+    """
+    if isinstance(value, str) and value.startswith("<MISSING:"):
+        return _MISSING_PROVIDER_OPTION
+    if isinstance(value, dict):
+        resolved = {}
+        for key, item in value.items():
+            cleaned = _drop_missing_provider_options(item)
+            if cleaned is not _MISSING_PROVIDER_OPTION:
+                resolved[key] = cleaned
+        return resolved
+    if isinstance(value, list):
+        resolved = []
+        for item in value:
+            cleaned = _drop_missing_provider_options(item)
+            if cleaned is not _MISSING_PROVIDER_OPTION:
+                resolved.append(cleaned)
+        return resolved
+    if isinstance(value, tuple):
+        resolved = []
+        for item in value:
+            cleaned = _drop_missing_provider_options(item)
+            if cleaned is not _MISSING_PROVIDER_OPTION:
+                resolved.append(cleaned)
+        return tuple(resolved)
+    return value
+
+
+def _resolve_provider_options(raw: Any, *, field_name: str = "provider_options") -> Dict[str, Any]:
+    """Validate, resolve, and normalize a provider-options mapping."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"{field_name} must be a mapping.",
+        )
+    resolved = _resolve_nested_value(dict(raw))
+    return _drop_missing_provider_options(resolved)
+
+
 def _load_provider_configs(raw: Dict[str, Any]) -> Dict[str, ProviderConfig]:
     """Parse ``agent.providers`` YAML section into :class:`ProviderConfig` map."""
     out: Dict[str, ProviderConfig] = {}
@@ -3093,8 +3155,39 @@ def _load_provider_configs(raw: Dict[str, Any]) -> Dict[str, ProviderConfig]:
             api_key=str(api_key_raw) if api_key_raw is not None else None,
             base_url=str(base_url_raw) if base_url_raw is not None else None,
             auth_type=str(cfg.get("auth_type", "api_key")),
+            provider_options=_resolve_provider_options(
+                cfg.get("provider_options"),
+                field_name=f"agent.providers.{name}.provider_options",
+            ),
         )
     return out
+
+
+def _aws_provider_available(provider_options: Optional[Mapping[str, Any]] = None) -> bool:
+    """Return whether the standard AWS credential chain and a region resolve.
+
+    This intentionally performs no Bedrock request. It is used by config repair
+    and the ``/model`` picker, where a network call would add latency and cost.
+    The selected model is still probed by the init wizard before it is saved.
+    """
+    options = dict(provider_options or {})
+    try:
+        import boto3
+
+        profile = options.get("aws_profile_name") or os.getenv("AWS_PROFILE")
+        session = boto3.Session(profile_name=str(profile) if profile else None)
+        credentials = session.get_credentials()
+        region = (
+            options.get("aws_region_name")
+            or os.getenv("AWS_REGION_NAME")
+            or os.getenv("AWS_REGION")
+            or os.getenv("AWS_DEFAULT_REGION")
+            or session.region_name
+        )
+        return credentials is not None and bool(region)
+    except Exception as exc:
+        logger.debug("AWS credential-chain discovery failed: %s", exc)
+        return False
 
 
 def _load_provider_catalog() -> Dict[str, Any]:
@@ -3138,6 +3231,8 @@ def _persist_provider_section(provider: str, entry: "ProviderConfig") -> None:
             payload["base_url"] = entry.base_url
         if entry.auth_type and entry.auth_type != "api_key":
             payload["auth_type"] = entry.auth_type
+        if entry.provider_options:
+            payload["provider_options"] = dict(entry.provider_options)
         current[provider] = payload
         cfg_mgr.update_item("providers", current, delete_old_key=False, save=True)
     except Exception as e:  # pragma: no cover - defensive
@@ -3196,6 +3291,7 @@ def load_model_config(data: dict) -> ModelConfig:
         top_p=float(top_p) if top_p is not None else None,
         auth_type=data.get("auth_type", "api_key"),
         use_native_api=data.get("use_native_api", False),
+        provider_options=_resolve_provider_options(data.get("provider_options")),
         ssl_verify=_load_ssl_verify(data),
     )
 

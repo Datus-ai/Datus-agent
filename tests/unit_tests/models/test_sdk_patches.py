@@ -996,6 +996,20 @@ class TestApplyAndRemoveSdkPatches:
         finally:
             remove_sdk_patches()
 
+    def test_apply_sdk_patches_restores_warning_hook_replaced_by_external_code(self):
+        """Re-applying restores the Datus hook after a runner or library replaces it."""
+        remove_sdk_patches()
+        original_showwarning = warnings.showwarning
+        apply_sdk_patches()
+        patched_showwarning = warnings.showwarning
+        try:
+            warnings.showwarning = lambda *args, **kwargs: None
+            apply_sdk_patches()
+            assert warnings.showwarning is patched_showwarning
+        finally:
+            remove_sdk_patches()
+        assert warnings.showwarning is original_showwarning
+
 
 class TestPatchedCompletionSync:
     """Tests for the sync litellm.completion patch (Kimi reasoning_content)."""

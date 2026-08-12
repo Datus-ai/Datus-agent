@@ -115,6 +115,7 @@ class TestLiteLLMAdapterModelName:
             ("gemini", "gemini-2.5-pro", "gemini/gemini-2.5-pro"),
             ("qwen", "qwen3-coder", "dashscope/qwen3-coder"),
             ("kimi", "kimi-k2.5", "moonshot/kimi-k2.5"),
+            ("bedrock", "us.anthropic.claude-sonnet-5", "bedrock/converse/us.anthropic.claude-sonnet-5"),
         ],
     )
     def test_litellm_model_name(self, provider, model, expected_litellm_name):
@@ -178,6 +179,27 @@ class TestOpenRouterModelName:
         assert adapter.litellm_model_name == "openrouter/anthropic/claude-sonnet-4"
 
 
+class TestBedrockModelName:
+    def test_bedrock_deepseek_model_stays_on_bedrock(self):
+        adapter = LiteLLMAdapter(provider="bedrock", model="deepseek.v3.2", api_key="")
+        assert adapter.provider == "bedrock"
+        assert adapter.litellm_model_name == "bedrock/converse/deepseek.v3.2"
+
+    def test_bedrock_prefix_is_canonicalized_to_converse(self):
+        adapter = LiteLLMAdapter(provider="bedrock", model="bedrock/us.amazon.nova-2-lite-v1:0", api_key="")
+        assert adapter.litellm_model_name == "bedrock/converse/us.amazon.nova-2-lite-v1:0"
+
+    def test_existing_converse_prefix_is_not_duplicated(self):
+        model = "bedrock/converse/openai.gpt-oss-20b-1:0"
+        adapter = LiteLLMAdapter(provider="bedrock", model=model, api_key="")
+        assert adapter.litellm_model_name == model
+
+    def test_invoke_route_is_rejected(self):
+        adapter = LiteLLMAdapter(provider="bedrock", model="bedrock/invoke/anthropic.claude-v2", api_key="")
+        with pytest.raises(ValueError, match="Converse route only"):
+            _ = adapter.litellm_model_name
+
+
 class TestGetCompletionKwargs:
     def test_includes_model(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="sk-test")
@@ -202,6 +224,18 @@ class TestGetCompletionKwargs:
         adapter.base_url = None
         kwargs = adapter.get_completion_kwargs()
         assert "api_base" not in kwargs
+
+    def test_provider_options_are_forwarded(self):
+        adapter = LiteLLMAdapter(
+            provider="bedrock",
+            model="us.amazon.nova-2-lite-v1:0",
+            api_key="",
+            provider_options={"aws_region_name": "us-east-1", "aws_profile_name": "dev"},
+        )
+        kwargs = adapter.get_completion_kwargs()
+        assert kwargs["aws_region_name"] == "us-east-1"
+        assert kwargs["aws_profile_name"] == "dev"
+        assert "api_key" not in kwargs
 
 
 class TestGetAgentsSdkModel:

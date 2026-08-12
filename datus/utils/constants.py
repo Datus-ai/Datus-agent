@@ -32,6 +32,7 @@ class LLMProvider(StrEnum):
     GPT = "gpt"  # Alternative name for OpenAI
     CODEX = "codex"  # OpenAI Codex (ChatGPT subscription, OAuth authentication)
     OPENROUTER = "openrouter"  # OpenRouter unified AI gateway
+    BEDROCK = "bedrock"  # Amazon Bedrock (AWS credential-chain authentication)
 
 
 class EmbeddingProvider(StrEnum):

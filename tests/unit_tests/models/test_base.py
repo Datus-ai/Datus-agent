@@ -163,3 +163,28 @@ class TestCreateModelCache:
             on = LLMBaseModel.create_model(self._agent_config(cfg_on))
         assert off is not on
         assert module.OpenAIModel.call_count == 2
+
+    def test_different_provider_options_yield_new_instance(self):
+        """AWS profile/region changes must not reuse a stale Bedrock client."""
+        self._fresh_cache()
+        cfg_east = ModelConfig(
+            type="bedrock",
+            api_key="",
+            model="us.anthropic.claude-sonnet-5",
+            auth_type="aws",
+            provider_options={"aws_region_name": "us-east-1"},
+        )
+        cfg_west = ModelConfig(
+            type="bedrock",
+            api_key="",
+            model="us.anthropic.claude-sonnet-5",
+            auth_type="aws",
+            provider_options={"aws_region_name": "us-west-2"},
+        )
+        module = MagicMock()
+        module.BedrockModel = MagicMock(side_effect=lambda **kw: MagicMock(name="Instance"))
+        with patch.dict("sys.modules", {"datus.models.bedrock_model": module}):
+            east = LLMBaseModel.create_model(self._agent_config(cfg_east))
+            west = LLMBaseModel.create_model(self._agent_config(cfg_west))
+        assert east is not west
+        assert module.BedrockModel.call_count == 2

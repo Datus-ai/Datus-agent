@@ -15,6 +15,17 @@ providers:
       nodeids:
         - tests/integration/models/test_other_models.py::TestOpenAIModel
 
+  bedrock:
+    required_env: []
+    deterministic:
+      nodeids:
+        - tests/unit_tests/models/test_bedrock_model.py::TestBedrockModel
+        - tests/unit_tests/models/test_litellm_adapter.py::TestBedrockModelName
+        - tests/unit_tests/configuration/test_agent_config.py::TestProviderConfigurationDispatch
+    live_provider_health:
+      mode: not-tested
+      nodeids: []
+
   deepseek:
     required_env:
       - DEEPSEEK_API_KEY

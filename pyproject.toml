@@ -47,6 +47,8 @@ dependencies = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
     "litellm>=1.67.4.post1,<2",
+    # Bedrock is a first-class provider; do not rely on a transitive boto3 install.
+    "boto3>=1.40,<2",
     "pydantic>=2.11.7,<3.0",
     "lancedb==0.34.0",
     # This library is required by lancedb

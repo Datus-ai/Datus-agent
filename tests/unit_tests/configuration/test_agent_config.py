@@ -13,6 +13,7 @@ CI-level: zero external deps, zero network.
 """
 
 import argparse
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -632,6 +633,32 @@ class TestLoadModelConfig:
         }
         cfg = load_model_config(data)
         assert cfg.base_url == "https://api.example.com"
+
+    def test_provider_options_resolve_env_and_drop_missing_values(self, monkeypatch):
+        monkeypatch.setenv("AWS_REGION_NAME_TEST", "us-east-1")
+        monkeypatch.delenv("AWS_PROFILE_NAME_TEST", raising=False)
+        cfg = load_model_config(
+            {
+                "type": "bedrock",
+                "model": "us.amazon.nova-2-lite-v1:0",
+                "provider_options": {
+                    "aws_region_name": "${AWS_REGION_NAME_TEST}",
+                    "aws_profile_name": "${AWS_PROFILE_NAME_TEST}",
+                },
+            }
+        )
+        assert cfg.provider_options == {"aws_region_name": "us-east-1"}
+
+    @pytest.mark.parametrize("value", ["profile", [], False])
+    def test_provider_options_reject_non_mapping(self, value):
+        with pytest.raises(DatusException, match="provider_options must be a mapping"):
+            load_model_config(
+                {
+                    "type": "bedrock",
+                    "model": "us.amazon.nova-2-lite-v1:0",
+                    "provider_options": value,
+                }
+            )
 
     def test_to_dict(self):
         cfg = ModelConfig(type="openai", api_key="sk", model="gpt-4")
@@ -2212,6 +2239,12 @@ class TestProviderConfigurationDispatch:
                     "default_model": "anthropic/claude-sonnet-4",
                     "models": ["anthropic/claude-sonnet-4", "openai/gpt-4o"],
                 },
+                "bedrock": {
+                    "type": "bedrock",
+                    "auth_type": "aws",
+                    "default_model": "us.anthropic.claude-sonnet-5",
+                    "models": ["us.anthropic.claude-sonnet-5"],
+                },
             },
             "model_overrides": {
                 "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95},
@@ -2291,6 +2324,30 @@ class TestProviderConfigurationDispatch:
         assert active.temperature == 1.0
         assert active.top_p == 0.95
 
+    def test_bedrock_provider_options_flow_to_model_config(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            providers={
+                "bedrock": {
+                    "auth_type": "aws",
+                    "provider_options": {
+                        "aws_region_name": "us-east-1",
+                        "aws_profile_name": "dev",
+                    },
+                }
+            },
+            target_provider="bedrock",
+            target_model="us.anthropic.claude-sonnet-5",
+        )
+        active = cfg.active_model()
+        assert active.type == "bedrock"
+        assert active.api_key == ""
+        assert active.auth_type == "aws"
+        assert active.provider_options == {
+            "aws_region_name": "us-east-1",
+            "aws_profile_name": "dev",
+        }
+
     def test_env_fallback_used_when_user_api_key_empty(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "env-secret")
         cfg = self._make(
@@ -2368,6 +2425,30 @@ class TestProviderConfigurationDispatch:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         cfg = self._make(tmp_path)
         assert cfg.provider_available("openai") is False
+
+    def test_bedrock_available_with_aws_credentials_and_region(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            providers={
+                "bedrock": {
+                    "auth_type": "aws",
+                    "provider_options": {"aws_region_name": "us-east-1"},
+                }
+            },
+        )
+        session = MagicMock()
+        session.get_credentials.return_value = MagicMock()
+        with patch("boto3.Session", return_value=session):
+            assert cfg.provider_available("bedrock") is True
+
+    def test_bedrock_unavailable_without_region(self, tmp_path, monkeypatch):
+        for name in ("AWS_REGION_NAME", "AWS_REGION", "AWS_DEFAULT_REGION"):
+            monkeypatch.delenv(name, raising=False)
+        cfg = self._make(tmp_path, providers={"bedrock": {"auth_type": "aws"}})
+        session = MagicMock(region_name=None)
+        session.get_credentials.return_value = MagicMock()
+        with patch("boto3.Session", return_value=session):
+            assert cfg.provider_available("bedrock") is False
 
     # ── reasoning_effort ───────────────────────────────────────────
 

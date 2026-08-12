@@ -71,6 +71,7 @@ _MAX_LIST_ROWS = 15
 # no config migration is required.
 _DISPLAY_NAME_OVERRIDES: Dict[str, str] = {
     "claude_subscription": "claude code",
+    "bedrock": "AWS Bedrock",
 }
 
 
@@ -402,6 +403,8 @@ class ModelApp:
             return None
         if auth_type == "oauth":
             return ModelSelection(kind="needs_oauth", provider=provider)
+        if auth_type == "aws":
+            self._error_message = self._aws_setup_message()
         return None
 
     # ─────────────────────────────────────────────────────────────────
@@ -674,6 +677,8 @@ class ModelApp:
                     tags.append("coding plan")
                 if auth_type in ("subscription", "oauth"):
                     tags.append(auth_type)
+                if auth_type == "aws":
+                    tags.append("AWS credentials")
                 if tags:
                     suffix = f"  ({', '.join(tags)})"
             # \u2713 = ✓ for configured; "[needs setup]" stays as a word tag
@@ -912,6 +917,8 @@ class ModelApp:
             # caller by exiting with a ``needs_oauth`` result.
             self._result = ModelSelection(kind="needs_oauth", provider=provider)
             self._finish(self._result)
+        elif auth_type == "aws":
+            self._error_message = self._aws_setup_message()
         else:
             self._error_message = f"Unknown auth_type `{auth_type}` for provider `{provider}`"
 
@@ -938,6 +945,8 @@ class ModelApp:
         elif auth_type == "oauth":
             self._result = ModelSelection(kind="needs_oauth", provider=provider)
             self._finish(self._result)
+        elif auth_type == "aws":
+            self._error_message = self._aws_setup_message()
         else:
             self._error_message = f"Unknown auth_type `{auth_type}` for provider `{provider}`"
 
@@ -1094,6 +1103,13 @@ class ModelApp:
             return token or None
         except Exception:
             return None
+
+    @staticmethod
+    def _aws_setup_message() -> str:
+        return (
+            "AWS credentials or region not found. Configure the standard AWS credential chain "
+            "(for example `aws configure` or `aws sso login`) and set a region, then reopen /model."
+        )
 
     # ─────────────────────────────────────────────────────────────────
     # Key bindings
