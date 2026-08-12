@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ``permissions.bash_commands.classifier`` is consulted on every bash ASK, so
+# the migration hint is emitted once per process instead of once per command.
+_LEGACY_CLASSIFIER_DEPRECATION_LOGGED = False
+
 # Per-broker locks to serialize permission prompts within a single agent run.
 #
 # The lock exists so several parallel tool calls in one LLM turn don't fire
@@ -354,6 +358,13 @@ class PermissionHooks(AgentHooks):
         # ``bash_commands.classifier`` was published as a reserved seam before
         # the shared reviewer existed. Keep it as a deprecated bash-only
         # override so existing configurations start working rather than break.
+        global _LEGACY_CLASSIFIER_DEPRECATION_LOGGED
+        if not _LEGACY_CLASSIFIER_DEPRECATION_LOGGED:
+            _LEGACY_CLASSIFIER_DEPRECATION_LOGGED = True
+            logger.warning(
+                "permissions.bash_commands.classifier is deprecated and applies to bash only; "
+                "migrate these settings to permissions.auto_review"
+            )
         legacy = bash_rules.classifier
         values = config.model_dump()
         for field_name in legacy.model_fields_set:
@@ -389,13 +400,17 @@ class PermissionHooks(AgentHooks):
         from datus.tools.permission.auto_reviewer import AutoReviewRequest
 
         evidence = self._review_evidence()
+        # Node-supplied keys are merged FIRST: the hook owns the security
+        # posture the reviewer must reason about, so a ``review_context_provider``
+        # must never be able to relabel the profile, interactivity, or paths.
+        provided_environment = evidence.get("environment")
         environment = {
+            **(provided_environment if isinstance(provided_environment, dict) else {}),
             "cwd": self.project_root or ".",
             "project_root": self.project_root or ".",
             "node_name": self.node_name,
             "profile": getattr(self.permission_manager, "active_profile", None) or "unknown",
             "non_interactive": self.non_interactive,
-            **(evidence.get("environment") if isinstance(evidence.get("environment"), dict) else {}),
         }
         request = AutoReviewRequest(
             action_type=action_type,

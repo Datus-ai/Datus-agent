@@ -22,11 +22,6 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-_MAX_HISTORY_BYTES = 24 * 1024
-_MAX_USER_MESSAGES = 8
-_MAX_PRIOR_ACTIONS = 20
-_REVIEW_MAX_TOKENS = 1024
-
 
 class ReviewRiskLevel(str, Enum):
     LOW = "low"
@@ -88,9 +83,9 @@ class AutoReviewRequest:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
-    def prompt_payload(self) -> Dict[str, Any]:
-        users = [str(item) for item in self.trusted_user_messages if str(item).strip()][-_MAX_USER_MESSAGES:]
-        actions = [item for item in self.prior_actions if isinstance(item, dict)][-_MAX_PRIOR_ACTIONS:]
+    def prompt_payload(self, config: AutoReviewConfig) -> Dict[str, Any]:
+        users = [str(item) for item in self.trusted_user_messages if str(item).strip()][-config.max_user_messages :]
+        actions = [item for item in self.prior_actions if isinstance(item, dict)][-config.max_prior_actions :]
 
         # Trim historical evidence only.  The exact planned action is never
         # shortened; an oversized model request fails closed at the call site.
@@ -100,7 +95,7 @@ class AutoReviewRequest:
                 ensure_ascii=False,
                 default=str,
             )
-            if len(history.encode("utf-8")) <= _MAX_HISTORY_BYTES:
+            if len(history.encode("utf-8")) <= config.max_history_bytes:
                 break
             if actions:
                 actions.pop(0)
@@ -108,7 +103,9 @@ class AutoReviewRequest:
                 users.pop(0)
 
         return {
-            "planned_action": {"type": self.action_type, **self.action},
+            # ``type`` is set last so an action payload can never relabel the
+            # request for the reviewer model.
+            "planned_action": {**self.action, "type": self.action_type},
             "environment": self.environment,
             "static_assessment": self.static_assessment,
             "direct_user_invocation": self.direct_user_invocation,
@@ -180,7 +177,7 @@ class LLMAutoReviewer(AutoReviewer):
                 "role": "user",
                 "content": json.dumps(
                     {
-                        "review_request": request.prompt_payload(),
+                        "review_request": request.prompt_payload(config),
                         # Some OpenAI-compatible providers only guarantee JSON
                         # object mode, not JSON Schema mode. Include the exact
                         # schema in-band as well as passing it to adapters that
@@ -203,8 +200,13 @@ class LLMAutoReviewer(AutoReviewer):
             raw = model.generate_with_json_output(
                 messages,
                 output_schema=output_schema,
-                max_tokens=_REVIEW_MAX_TOKENS,
+                max_tokens=config.max_completion_tokens,
                 enable_thinking=False,
+                # Bound the transport call itself: the outer ``asyncio.wait_for``
+                # cancels the awaiting task but cannot stop a blocking request
+                # already in flight. Adapters that reach LiteLLM forward this to
+                # the provider request; schema-only adapters ignore it.
+                timeout=config.timeout_seconds,
             )
             verdict = AutoReviewVerdict.model_validate(raw)
             if span is not None:

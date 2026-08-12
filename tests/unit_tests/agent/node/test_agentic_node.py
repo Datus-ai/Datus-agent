@@ -1904,6 +1904,35 @@ class TestPermissionReviewContext:
             },
         }
 
+    def test_user_message_falls_back_to_messages_and_strips_prefix(self):
+        """Without ``user_message``, the rendered transcript line is the evidence.
+
+        The ``"User: "`` prefix must be stripped: the reviewer treats these
+        strings as the only source of user authorization, so the prefix would
+        otherwise become part of the quoted instruction.
+        """
+        node = _make_simple_node()
+        node.session_id = "session-2"
+        node.agent_config = SimpleNamespace(bash_sandbox=None)
+        node.actions = [
+            ActionHistory.create_action(
+                role=ActionRole.USER,
+                action_type="chat_request",
+                messages="User: drop the temp table",
+                input_data={},
+                status=ActionStatus.SUCCESS,
+            ),
+        ]
+
+        evidence = node._build_permission_review_context()
+
+        assert evidence["trusted_user_messages"] == ["drop the temp table"]
+        assert evidence["environment"] == {
+            "session_id": "session-2",
+            "sandbox_enabled": False,
+            "sandbox_mode": None,
+        }
+
 
 # ---------------------------------------------------------------------------
 # _ensure_tool_transformers (plugin tool argument middleware wiring)

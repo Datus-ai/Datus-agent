@@ -78,9 +78,10 @@ def create_bash_classifier(rules: Optional[BashCommandRules], agent_config: Any)
     """
     if rules is None or not rules.classifier.enabled:
         return None
-    # TODO(llm-classifier): construct the real implementation here via
-    #   LLMBaseModel.create_model(agent_config, model_name=rules.classifier.model)
-    # and generate_with_json_output(). Until then, an enabled flag yields the
-    # Noop so turning it on is harmless.
-    logger.warning("bash_commands.classifier.enabled is set but no LLM classifier is implemented yet; using no-op")
+    # Intentionally a no-op: ``auto_reviewer.py`` owns LLM review now, and
+    # ``PermissionHooks`` maps this block onto ``permissions.auto_review`` for
+    # bash. Returning the Noop keeps an enabled legacy flag harmless.
+    logger.warning(
+        "bash_commands.classifier.enabled is deprecated; the shared auto reviewer handles bash review, using no-op"
+    )
     return NoopBashCommandClassifier()

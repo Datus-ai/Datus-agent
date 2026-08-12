@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 
 import json
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,7 +55,7 @@ def tool(name):
     return value
 
 
-def hooks_for(profile, reviewer, broker, *, non_interactive=False, bash_rules=None):
+def hooks_for(profile, reviewer, broker, *, non_interactive=False, bash_rules=None, review_context=None):
     config = get_profile(profile)
     if bash_rules is not None:
         config = PermissionConfig(
@@ -74,10 +75,14 @@ def hooks_for(profile, reviewer, broker, *, non_interactive=False, bash_rules=No
         non_interactive=non_interactive,
         project_root="/tmp/project",
         auto_reviewer=reviewer,
-        review_context_provider=lambda: {
-            "trusted_user_messages": ["delete the one test row"],
-            "prior_actions": [{"tool": "bash", "arguments": {"command": "pwd"}}],
-        },
+        review_context_provider=lambda: (
+            review_context
+            if review_context is not None
+            else {
+                "trusted_user_messages": ["delete the one test row"],
+                "prior_actions": [{"tool": "bash", "arguments": {"command": "pwd"}}],
+            }
+        ),
     ), manager
 
 
@@ -122,9 +127,20 @@ class TestAutoReviewConfig:
 
 
 class TestReviewerRequest:
-    def test_planned_action_is_exact_and_history_is_bounded(self):
-        command = "python -c '" + ("x" * 30000) + "'"
-        request = AutoReviewRequest(
+    @staticmethod
+    def _history_bytes(payload):
+        return len(
+            json.dumps(
+                {
+                    "trusted_user_messages": payload["trusted_user_messages"],
+                    "prior_planned_actions": payload["untrusted_prior_planned_actions"],
+                }
+            ).encode("utf-8")
+        )
+
+    @staticmethod
+    def _oversized_request(command):
+        return AutoReviewRequest(
             action_type="bash",
             action={"command": command},
             environment={},
@@ -132,19 +148,44 @@ class TestReviewerRequest:
             trusted_user_messages=["u" * 5000 for _ in range(12)],
             prior_actions=[{"command": "p" * 5000} for _ in range(30)],
         )
-        payload = request.prompt_payload()
+
+    def test_planned_action_is_exact_and_history_is_bounded(self):
+        command = "python -c '" + ("x" * 30000) + "'"
+        request = self._oversized_request(command)
+
+        payload = request.prompt_payload(AutoReviewConfig(enabled=True))
+
         assert payload["planned_action"]["command"] == command
-        assert (
-            len(
-                json.dumps(
-                    {
-                        "trusted_user_messages": payload["trusted_user_messages"],
-                        "prior_planned_actions": payload["untrusted_prior_planned_actions"],
-                    }
-                ).encode("utf-8")
+        assert self._history_bytes(payload) <= 24 * 1024
+
+    def test_history_bounds_follow_configuration(self):
+        request = self._oversized_request("make")
+
+        payload = request.prompt_payload(
+            AutoReviewConfig(
+                enabled=True,
+                max_history_bytes=2048,
+                max_user_messages=3,
+                max_prior_actions=2,
             )
-            <= 24 * 1024
         )
+
+        assert len(payload["trusted_user_messages"]) <= 3
+        assert len(payload["untrusted_prior_planned_actions"]) <= 2
+        assert self._history_bytes(payload) <= 2048
+        assert payload["planned_action"] == {"command": "make", "type": "bash"}
+
+    def test_action_payload_cannot_relabel_the_request_type(self):
+        request = AutoReviewRequest(
+            action_type="bash",
+            action={"command": "make", "type": "sql"},
+            environment={},
+            static_assessment={},
+        )
+
+        payload = request.prompt_payload(AutoReviewConfig(enabled=True))
+
+        assert payload["planned_action"]["type"] == "bash"
 
     @pytest.mark.asyncio
     async def test_invalid_model_output_fails_closed(self):
@@ -184,6 +225,7 @@ class TestReviewerRequest:
         schema = call_kwargs["output_schema"]
         assert call_kwargs["max_tokens"] == 1024
         assert call_kwargs["enable_thinking"] is False
+        assert call_kwargs["timeout"] == 20.0
         assert prompt_payload["review_request"]["planned_action"]["command"] == "make"
         assert prompt_payload["required_response_schema"] == schema
         assert set(schema["required"]) == {
@@ -193,6 +235,68 @@ class TestReviewerRequest:
             "confidence",
             "rationale",
         }
+
+    @pytest.mark.asyncio
+    async def test_configured_budgets_reach_the_adapter(self):
+        fake_model = MagicMock()
+        fake_model.generate_with_json_output.return_value = {
+            "risk_level": "low",
+            "user_authorization": "high",
+            "decision": "allow",
+            "confidence": 0.95,
+            "rationale": "Routine local build.",
+        }
+        reviewer = LLMAutoReviewer(agent_config=MagicMock())
+        request = AutoReviewRequest("bash", {"command": "make"}, {}, {})
+        config = AutoReviewConfig(enabled=True, max_completion_tokens=256, timeout_seconds=5)
+
+        with patch("datus.models.base.LLMBaseModel.create_model", return_value=fake_model):
+            result = await reviewer.review(request, config)
+
+        assert result == AutoReviewVerdict(
+            risk_level="low",
+            user_authorization="high",
+            decision="allow",
+            confidence=0.95,
+            rationale="Routine local build.",
+        )
+        call_kwargs = fake_model.generate_with_json_output.call_args.kwargs
+        assert call_kwargs["max_tokens"] == 256
+        assert call_kwargs["timeout"] == 5
+
+    @pytest.mark.asyncio
+    async def test_timeout_fails_closed(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_generate(*args, **kwargs):
+            entered.set()
+            # Held until the assertions below release it, so the review can only
+            # return through the timeout path. The bound is a safety net against
+            # a hung test, never a wait the passing case relies on.
+            release.wait(timeout=30)
+            return {
+                "risk_level": "low",
+                "user_authorization": "high",
+                "decision": "allow",
+                "confidence": 0.95,
+                "rationale": "Routine local build.",
+            }
+
+        fake_model = MagicMock()
+        fake_model.generate_with_json_output.side_effect = blocking_generate
+        reviewer = LLMAutoReviewer(agent_config=MagicMock())
+        request = AutoReviewRequest("bash", {"command": "make"}, {}, {})
+        config = AutoReviewConfig(enabled=True, timeout_seconds=0.01)
+
+        try:
+            with patch("datus.models.base.LLMBaseModel.create_model", return_value=fake_model):
+                assert await reviewer.review(request, config) is None
+            # The model really was called; the verdict was dropped by the
+            # timeout rather than never requested.
+            assert entered.is_set()
+        finally:
+            release.set()
 
     @pytest.mark.asyncio
     async def test_explicit_model_failure_does_not_fallback(self):
@@ -250,6 +354,38 @@ class TestBashAutoReview:
         request = reviewer.requests[0][0]
         assert request.action == {"command": "cargo build", "timeout": None}
         assert request.trusted_user_messages == ["delete the one test row"]
+
+    @pytest.mark.asyncio
+    async def test_context_provider_cannot_override_hook_owned_environment(self):
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        reviewer = StubReviewer(verdict("low"))
+        hooks, _ = hooks_for(
+            "auto",
+            reviewer,
+            broker,
+            review_context={
+                "environment": {
+                    "profile": "dangerous",
+                    "non_interactive": True,
+                    "node_name": "spoofed",
+                    "cwd": "/etc",
+                    "project_root": "/etc",
+                    "sandbox_enabled": True,
+                }
+            },
+        )
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        environment = reviewer.requests[0][0].environment
+        assert environment["profile"] == "auto"
+        assert environment["non_interactive"] is False
+        assert environment["node_name"] == "chat"
+        assert environment["cwd"] == "/tmp/project"
+        assert environment["project_root"] == "/tmp/project"
+        # Keys the hook does not own are still forwarded.
+        assert environment["sandbox_enabled"] is True
 
     @pytest.mark.asyncio
     async def test_safety_forced_command_is_reviewed(self):

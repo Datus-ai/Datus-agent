@@ -617,6 +617,21 @@ class TestGenerateWithJsonOutput:
             model.generate_with_json_output("prompt", output_schema={"type": "object"})
         assert "output_schema" not in mock_gen.call_args.kwargs
 
+    def test_timeout_reaches_the_provider_request(self):
+        """A caller-supplied transport timeout must bound the actual request.
+
+        ``LLMAutoReviewer`` relies on this to cap a review: cancelling the
+        awaiting task cannot stop a blocking request already in flight.
+        """
+        model = _make_model()
+        resp = MagicMock()
+        resp.choices = [MagicMock()]
+        resp.choices[0].message.content = "{}"
+        resp.usage = None
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=resp) as mock_lit:
+            model.generate_with_json_output("prompt", output_schema={"type": "object"}, timeout=7)
+        assert mock_lit.call_args[1]["timeout"] == 7
+
     def test_enable_thinking_passed_through(self):
         model = _make_model()
         with patch.object(model, "generate", return_value='{"a": 1}') as mock_gen:

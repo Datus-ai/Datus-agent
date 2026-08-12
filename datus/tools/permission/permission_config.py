@@ -49,6 +49,24 @@ class AutoReviewConfig(BaseModel):
     )
     timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    max_completion_tokens: int = Field(
+        default=1024,
+        gt=0,
+        le=8192,
+        description="Completion budget for one review; too small truncates the structured verdict",
+    )
+    max_history_bytes: int = Field(
+        default=24 * 1024,
+        gt=0,
+        le=512 * 1024,
+        description="Byte ceiling for the trimmed review history (planned action is never trimmed)",
+    )
+    max_user_messages: int = Field(
+        default=8, gt=0, le=100, description="Most recent trusted user messages included as authorization evidence"
+    )
+    max_prior_actions: int = Field(
+        default=20, gt=0, le=200, description="Most recent prior bash/SQL arguments included as untrusted history"
+    )
 
     model_config = ConfigDict(extra="forbid")
 

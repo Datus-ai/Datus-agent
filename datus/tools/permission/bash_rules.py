@@ -28,7 +28,12 @@ results are aggregated (any DENY -> DENY; any safety-forced -> ASK; all ALLOW
 -> ALLOW; otherwise ASK). This lets a pipeline of allow-listed read-only
 commands (``cat log | grep err | wc -l``) auto-run. Every OTHER shell
 construct (``&&``, ``;``, ``||``, ``$()``, redirection) hits the safety
-ceiling and requires confirmation.
+ceiling, so these static rules never allow it on their own.
+
+The safety ceiling is a *static* verdict, not a final one: under a profile with
+``permissions.auto_review`` enabled the shared reviewer in ``auto_reviewer.py``
+sees the full command text and may still resolve such an ASK. Only unparseable
+commands are kept behind direct user confirmation.
 
 Per-segment decision order (deny-bypass-resistant, mirroring Claude Code's
 asymmetry of aggressive deny / conservative allow):
@@ -351,9 +356,14 @@ class BashRuleDecision:
         bucket: Session-approval bucket key (e.g. ``git push`` or an ask-rule
             pattern) — "always allow" grants are scoped to this bucket.
         safety_forced: True when the ASK came from the safety ceiling or an
-            unparseable command. Such decisions must never be auto-resolved by
-            the future LLM classifier, and must not be offered as persistent
-            project-level allows.
+            unparseable command. Such decisions are never auto-resolved by the
+            deprecated bash-only classifier seam, and are never offered as
+            persistent project-level allows. The shared structured reviewer in
+            ``auto_reviewer.py`` MAY still resolve them, because it inspects the
+            complete command text that the argv-level rules cannot see (a
+            wrapper, metacharacter, or ``$()`` is judged on its actual effect).
+            Genuinely unparseable commands stay behind direct user
+            confirmation — the reviewer is never consulted for them.
         segment_ask_patterns: For an ASK pipeline decision, the
             ``(source, matched_pattern)`` of EVERY non-allow segment. The hook's
             project-grant bypass must cover each segment, not just the
