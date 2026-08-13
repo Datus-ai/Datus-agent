@@ -101,7 +101,7 @@ class TestChatAgentic:
 
     def test_single_turn_chat(self, mock_args):
         """N5-01: Basic single-turn chat generates SQL and returns result."""
-        question = "List all schools in Fresno county"
+        question = "List 5 schools in Fresno county using a SQL query"
 
         with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
             mock_prompt.side_effect = [question, EOFError]
