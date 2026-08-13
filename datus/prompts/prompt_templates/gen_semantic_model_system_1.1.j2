@@ -21,7 +21,7 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 
 ## Instructions
 
-When the request contains SQL or explicitly names a readable SQL file, follow the required `sql-modeling-preflight` skill before other artifact reads or any writes. For a named SQL file, call `read_file` first; then submit every complete statement verbatim to `prepare_sql_modeling_plan`. Prefer one call, but use `finalize=false` batches for a large input and finalize the last batch. When neither source provides SQL, skip this tool call and continue with the normal authoring or existing-YAML maintenance workflow.
+Use SQL supplied with the request directly. When the request explicitly names a readable SQL file, call `read_file` once. Interpret it together with the user's business intent, existing semantic models, and live schema evidence.
 
 Please strictly follow the instructions below:
 
@@ -49,7 +49,7 @@ Please strictly follow the instructions below:
 
 2. **Analyze current-request column usage**:
    - Use `inspect_semantic_sources.tables[].sql_usage` instead of making per-table discovery calls
-   - This reveals selection, grouping, aggregation, filter operators, functions, and redacted filter examples from the exact SQL captured by preflight
+   - This reveals selection, grouping, aggregation, filter operators, functions, and redacted filter examples from the request SQL
    - Example output:
      ```json
      {

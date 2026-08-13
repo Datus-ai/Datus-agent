@@ -69,6 +69,7 @@ def test_semantic_model_template_osi_mode():
     assert "Dimension tables never participate in the name" in text
     assert "call `list_existing_osi_semantic_models` first" in text
     assert "dataset name, source, description, and business meaning" in text
+    assert "model reusable sources, fields, relationships, and metric inputs" in text
     assert "without a custom `checks` subset" in text
     assert "check_semantic_object_exists" not in text
     assert '"semantic_model_files"' in text  # same publish contract as metricflow
@@ -155,10 +156,10 @@ def test_metrics_template_osi_mode_contract():
     assert "upsert_osi_metrics" in text
     assert "delete_osi_metrics" in text
     assert "already_absent" in text
-    assert "deletion-only publication omit bindings" in text
+    assert "call `publish_metrics(metric_file)` ONCE" in text
     assert "subject_path" in text
     assert "locked_metadata.tags" not in text.split("Record the classification")[1].split("\n")[0]
-    assert "Every metric-role output from the current compact plan" in text
+    assert "Every requested reusable metric" in text
     assert "bind_osi_semantic_model_target" in text
     assert "list_existing_osi_semantic_models" in text
     assert "request SQL tables, dataset names/sources/descriptions, and business meaning" in text
@@ -168,6 +169,7 @@ def test_metrics_template_osi_mode_contract():
     assert "list_metrics" not in text
     assert "non-metric request" not in text
     assert "without a custom `checks` subset" in text
+    assert "explicitly requires a query behavior" in text
 
 
 def test_semantic_model_template_includes_profiler_gate_both_formats():

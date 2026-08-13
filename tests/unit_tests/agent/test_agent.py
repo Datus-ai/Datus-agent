@@ -1489,6 +1489,53 @@ class TestBootstrapKbMetrics:
         assert result["components"]["metrics"]["status"] == "partial"
 
 
+class TestBootstrapKbSemanticModeling:
+    def test_semantic_modeling_uses_unified_bootstrap_helper(self):
+        args = _make_args_ext(
+            components=["semantic_modeling"],
+            kb_update_strategy="overwrite",
+            success_story="stories.csv",
+            metrics_batch_size=5,
+        )
+        agent = _make_agent_ext(args=args)
+        details = {
+            "semantic_object_count": 4,
+            "metrics_count": 9,
+            "sql_entries_covered": 12,
+        }
+
+        with patch(
+            "datus.agent.agent.init_success_story_semantic_modeling",
+            return_value=(True, "", details),
+        ) as init:
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        assert "sql_entries_covered=12" in result["message"]
+        init.assert_called_once_with(
+            agent.global_config,
+            "stories.csv",
+            None,
+            emit=agent._emit_metrics_event,
+            build_mode="overwrite",
+            batch_size=5,
+        )
+
+    def test_semantic_modeling_rejects_legacy_authoring_components(self):
+        args = _make_args_ext(
+            components=["semantic_modeling", "semantic_model"],
+            kb_update_strategy="overwrite",
+        )
+        agent = _make_agent_ext(args=args)
+
+        with patch("datus.agent.agent.init_success_story_semantic_modeling") as init:
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "failed"
+        assert "cannot be combined" in result["message"]
+        init.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # bootstrap_kb — reference_sql branch
 # ---------------------------------------------------------------------------

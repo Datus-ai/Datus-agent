@@ -150,6 +150,14 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "wire them to the JSX filter state. Returns JSON with {response, "
         "dashboard_slug, app_jsx_path, render_file_count, template_count, tokens_used}."
     ),
+    "semantic_modeling": (
+        "Create or update Dosi semantic datasets, metrics, or both in one coherent run. "
+        "Prefer this owner when a request may need metric prerequisites or spans both artifact kinds. "
+        "It always inspects the active datasource's existing semantic models first, reuses the unique suitable "
+        "target, interprets the supplied SQL and request directly, and validates it before Host reconciliation. "
+        "Preserve table names, pasted SQL, or an explicitly named workspace SQL file path in the delegated prompt. "
+        "Returns JSON with {response, semantic_models, status, tokens_used}."
+    ),
     "gen_semantic_model": (
         "Generate semantic model YAML files from database table structures. "
         "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
@@ -460,7 +468,16 @@ class SubAgentTaskTool:
 
     def _create_builtin_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a builtin system subagent node with its non-standard constructor."""
-        if subagent_type == "gen_semantic_model":
+        if subagent_type == "semantic_modeling":
+            from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+            return SemanticModelingAgenticNode(
+                agent_config=self.agent_config,
+                execution_mode=self._resolve_execution_mode(),
+                is_subagent=True,
+                session_id=session_id,
+            )
+        elif subagent_type == "gen_semantic_model":
             from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
             return GenSemanticModelAgenticNode(
@@ -681,6 +698,7 @@ class SubAgentTaskTool:
 
         # Built-in system subagents (SYS_SUB_AGENTS)
         builtin_type_map = {
+            "semantic_modeling": (NodeType.TYPE_SEMANTIC, "semantic_modeling"),
             "gen_semantic_model": (NodeType.TYPE_SEMANTIC, "gen_semantic_model"),
             "gen_metrics": (NodeType.TYPE_SEMANTIC, "gen_metrics"),
             "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
@@ -1178,6 +1196,7 @@ class SubAgentTaskTool:
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
         if isinstance(node, (GenTableAgenticNode, GenJobAgenticNode)):
@@ -1187,7 +1206,7 @@ class SubAgentTaskTool:
                 user_message=prompt,
             )
 
-        if isinstance(node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
+        if isinstance(node, (SemanticModelingAgenticNode, GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
             from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
             return SemanticNodeInput(
@@ -1563,7 +1582,12 @@ class SubAgentTaskTool:
         in SYS_SUB_AGENTS (which only guards reserved system names).
         """
         types = ["explore"]
-        types.extend(sorted(name for name in SYS_SUB_AGENTS if name != "feedback"))
+        builtin_types = {name for name in SYS_SUB_AGENTS if name != "feedback"}
+        from datus.agent.node.semantic_authoring import is_semantic_modeling_available
+
+        if not is_semantic_modeling_available(self.agent_config):
+            builtin_types.discard("semantic_modeling")
+        types.extend(sorted(builtin_types))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):
             current_datasource = self.agent_config.current_datasource

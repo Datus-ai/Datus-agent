@@ -350,6 +350,43 @@ class TestKbServiceInitSemanticAndMetrics:
         assert "table_semantic_profile_count=2" in result["message"]
         mock_init.assert_not_called()
 
+    def test_init_semantic_modeling_forwards_unified_options(self, real_agent_config):
+        svc = KbService(agent_config=real_agent_config)
+        request = BootstrapKbInput(
+            components=["semantic_modeling"],
+            strategy="incremental",
+            success_story="stories.csv",
+            subject_tree=["Sales"],
+            metrics_batch_size=3,
+        )
+        args = KbService._build_args(request, str(real_agent_config.home))
+
+        with patch(
+            "datus.api.services.kb_service.init_success_story_semantic_modeling",
+            return_value=(
+                True,
+                "",
+                {"semantic_object_count": 4, "metrics_count": 0, "sql_entries_covered": 3},
+            ),
+        ) as mock_init:
+            result = svc._init_semantic_modeling(
+                real_agent_config,
+                "incremental",
+                args,
+                request.subject_tree,
+                emit=None,
+            )
+
+        assert result["status"] == "success"
+        mock_init.assert_called_once_with(
+            real_agent_config,
+            args.success_story,
+            ["Sales"],
+            emit=None,
+            build_mode="incremental",
+            batch_size=3,
+        )
+
     def test_init_semantic_model_forwards_strategy(self, real_agent_config):
         svc = KbService(agent_config=real_agent_config)
         args = KbService._build_args(

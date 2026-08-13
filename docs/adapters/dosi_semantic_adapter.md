@@ -45,10 +45,11 @@ selects the only YAML or JSON model in that directory. Configure
 
 Dosi executes aggregate, ratio, and expression metrics; dimensions;
 many-to-one relationships; composite joins; query-backed datasets; filters;
-day-through-year time grains; D-TIME primary axes; D-JOIN/D-FILL behavior; and
-native D-WINDOW period-over-period, rolling, and cumulative metrics. D-WINDOW
-in datus-ext 1.2 uses one plain aggregate as its base expression and declares
-the window derivation on top of it.
+day-through-year time grains; `time_dimension` primary axes; relationship
+`join_type`; metric `fill_nulls_with`; and structured windows. Datus-ext 1.3
+supports period comparison, rolling, cumulative, rank/distribution,
+first/last/nth value, backward or forward offset, and explicit statistical
+frames over row- or value-based ranges.
 
 ## Authoring and Validation
 
@@ -58,12 +59,7 @@ profile. `validate_semantic`, `list_metrics`, `get_dimensions`, and
 `metric_time` as the dimension and the grain separately; a returned column such
 as `metric_time__<grain>` is an output/order key.
 
-Before switching existing Python-OSI models, run the one-shot checker. It is
-read-only by default; `--write` converts only unambiguous cases, validates with
-the installed native engine, creates a sibling `.bak`, and refuses ambiguous
-files:
-
-```bash
-datus-dosi-migrate subject/semantic_models/<datasource>
-datus-dosi-migrate subject/semantic_models/<datasource> --write
-```
+The unified `semantic_modeling` workflow lists valid and repairable existing
+models separately. It binds a valid target or plans the same repairable model
+in place, applies the requested changes, validates the exact final artifact,
+and reconciles that artifact to the Knowledge Base.

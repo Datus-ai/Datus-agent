@@ -15,6 +15,7 @@ import inspect
 import io
 import json
 from collections import OrderedDict
+from copy import copy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -341,6 +342,7 @@ class SemanticTools:
         generation_evidence: Optional[GenerationEvidence] = None,
         runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
         warehouse_dry_run_provider: Optional[Callable[[str], Mapping[str, Any]]] = None,
+        semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
     ):
         """
         Initialize semantic function tool.
@@ -355,6 +357,8 @@ class SemanticTools:
                 context used to initialize the semantic adapter.
             warehouse_dry_run_provider: Optional host callback that validates
                 adapter-compiled SQL against the active warehouse.
+            semantic_model_path_provider: Optional callback that returns the exact
+                request-local semantic model selected for authoring or validation.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
@@ -362,6 +366,7 @@ class SemanticTools:
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
+        self._semantic_model_path_provider = semantic_model_path_provider
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
@@ -378,7 +383,7 @@ class SemanticTools:
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
         self._adapter_load_error: Optional[str] = None
-        self._adapter_context_key: Optional[Tuple[str, str, str, str, str]] = None
+        self._adapter_context_key: Optional[Tuple[str, ...]] = None
 
     @staticmethod
     def _query_data_row_count(data: Any) -> int:
@@ -625,6 +630,15 @@ class SemanticTools:
                 logger.debug("Failed to resolve AgentConfig runtime DB context for semantic adapter: %s", e)
         return {}
 
+    def _selected_semantic_model_path(self) -> str:
+        if not callable(self._semantic_model_path_provider):
+            return ""
+        try:
+            return str(self._semantic_model_path_provider() or "").strip()
+        except Exception as e:
+            logger.debug("Failed to resolve the selected semantic model path: %s", e)
+            return ""
+
     def _extract_db_config(self, datasource: str) -> Optional[dict]:
         """Extract db_config dict from the selected database config."""
         try:
@@ -661,12 +675,14 @@ class SemanticTools:
 
             runtime_db_context = self._runtime_db_context()
             datasource = runtime_db_context.get("datasource") or self.agent_config.current_datasource
+            semantic_model_path = self._selected_semantic_model_path()
             context_key = (
                 resolved_adapter,
                 datasource or "",
                 runtime_db_context.get("catalog", ""),
                 runtime_db_context.get("database", ""),
                 runtime_db_context.get("schema", ""),
+                semantic_model_path,
             )
             if self._adapter is not None:
                 if self._adapter_context_key is None or self._adapter_context_key == context_key:
@@ -676,6 +692,13 @@ class SemanticTools:
                 self._adapter_context_key = None
 
             metadata = semantic_adapter_registry.get_metadata(resolved_adapter)
+            config_class = metadata.config_class if metadata and metadata.config_class else None
+            config_fields = getattr(config_class, "model_fields", {})
+            artifact_overrides = (
+                {"semantic_model_path": semantic_model_path}
+                if semantic_model_path and "semantic_model_path" in config_fields
+                else {}
+            )
             builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
             adapter_config = None
             if callable(builder):
@@ -693,23 +716,33 @@ class SemanticTools:
                 db_config = self._extract_db_config(datasource)
                 semantic_models_path = str(self.agent_config.path_manager.semantic_model_path(datasource))
 
-                if metadata and metadata.config_class:
-                    adapter_config = metadata.config_class(
+                if config_class:
+                    adapter_config = config_class(
                         datasource=datasource,
                         db_config=db_config,
                         semantic_models_path=semantic_models_path,
+                        **artifact_overrides,
                     )
                 else:
                     from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
                     adapter_config = SemanticAdapterConfig(datasource=datasource)
             elif isinstance(adapter_config, dict):
-                if metadata and metadata.config_class:
-                    adapter_config = metadata.config_class(**adapter_config)
+                adapter_config = {**adapter_config, **artifact_overrides}
+                if config_class:
+                    adapter_config = config_class(**adapter_config)
                 else:
                     from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
                     adapter_config = SemanticAdapterConfig(**adapter_config)
+            elif artifact_overrides:
+                model_copy = getattr(adapter_config, "model_copy", None)
+                if callable(model_copy):
+                    adapter_config = model_copy(update=artifact_overrides)
+                else:
+                    adapter_config = copy(adapter_config)
+                    for key, value in artifact_overrides.items():
+                        setattr(adapter_config, key, value)
 
             self.adapter_type = resolved_adapter
             self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
@@ -1106,8 +1139,6 @@ class SemanticTools:
                 self.generation_evidence.record_metric_dry_run(
                     metrics,
                     tool_result,
-                    dimensions=dimensions,
-                    time_granularity=time_granularity,
                 )
             return tool_result
 

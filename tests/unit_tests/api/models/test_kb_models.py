@@ -20,6 +20,26 @@ class TestBootstrapKbInput:
         assert inp.strategy == "refresh-profile"
         assert inp.semantic_yaml == "semantic/orders.yml"
 
+    def test_semantic_modeling_options(self):
+        inp = BootstrapKbInput(
+            components=["semantic_modeling"],
+            success_story="stories.csv",
+            metrics_batch_size=3,
+        )
+
+        assert inp.components == ["semantic_modeling"]
+        assert inp.metrics_batch_size == 3
+
+    def test_semantic_modeling_strategy_contract_describes_artifact_reconcile(self):
+        description = BootstrapKbInput.model_fields["strategy"].description
+
+        assert "compatibility aliases" in description
+        assert "fully reconcile each selected semantic-model YAML" in description
+
+    def test_semantic_modeling_rejects_legacy_authoring_components(self):
+        with pytest.raises(ValidationError):
+            BootstrapKbInput(components=["semantic_modeling", "metrics"])
+
 
 class TestBootstrapDocInput:
     """Tests for BootstrapDocInput validation."""

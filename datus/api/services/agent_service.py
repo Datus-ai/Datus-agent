@@ -47,6 +47,17 @@ VALID_TOOL_CATEGORIES = set(VALID_TOOL_METHODS.keys())
 
 BUILTIN_SUBAGENTS = SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS
 
+
+def _available_builtin_subagents(agent_config: AgentConfig) -> set[str]:
+    """Return user-visible builtins supported by the active semantic adapter."""
+    from datus.agent.node.semantic_authoring import is_semantic_modeling_available
+
+    available = set(BUILTIN_SUBAGENTS)
+    if not is_semantic_modeling_available(agent_config):
+        available.discard("semantic_modeling")
+    return available
+
+
 # Curated list of categories surfaced through GET /agent/use_tools' ``tool_types``
 # block. Matches the SaaS editor's whitelist — ``platform_doc_tools`` is a
 # valid tool (and stays in VALID_TOOL_METHODS for write-side validation) but is
@@ -733,7 +744,8 @@ class AgentService:
         """Return agent configuration matching IAgentInfo."""
 
         # 1. Check builtin agents
-        if agent_id in BUILTIN_SUBAGENTS:
+        available_builtins = _available_builtin_subagents(agent_config)
+        if agent_id in available_builtins:
             return Result(
                 success=True,
                 data={
@@ -750,6 +762,8 @@ class AgentService:
                     }
                 },
             )
+        if agent_id == "semantic_modeling":
+            return Result(success=False, errorCode="AGENT_NOT_FOUND", errorMessage=f"Agent '{agent_id}' not found")
 
         # 2. Query custom sub-agent from agent.yml (dict keyed by name, treated as id)
         agentic_nodes = agent_config.agentic_nodes or {}
@@ -802,7 +816,7 @@ class AgentService:
                 "type": "builtin",
                 "description": BUILTIN_SUBAGENT_DESCRIPTIONS.get(name, ""),
             }
-            for name in sorted(BUILTIN_SUBAGENTS)
+            for name in sorted(_available_builtin_subagents(agent_config))
         ]
 
         # 2. Custom sub-agents from agent.yml
@@ -815,6 +829,7 @@ class AgentService:
                 "description": _read_description(node),
             }
             for name, node in sorted(agentic_nodes.items())
+            if name != "semantic_modeling"
         ]
 
         return Result(success=True, data={"agents": builtin + custom})

@@ -39,6 +39,7 @@ AUTHORING_FORMAT_OSI = "osi"
 OSI_AUTHORING_ADAPTERS: frozenset[str] = frozenset({"osi", "dosi"})
 
 _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_DATUS_EXTENSION_VERSION_TOKEN = "<datus_extension_version>"
 
 # Authoring specification skills injected into the system prompt on every run,
 # keyed by node name then authoring format. These carry the full YAML format
@@ -46,12 +47,12 @@ _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary
 # advertised for LLM-initiated ``load_skill``.
 _REQUIRED_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
     "gen_semantic_model": {
-        AUTHORING_FORMAT_METRICFLOW: "sql-modeling-preflight,metricflow-semantic-authoring",
-        AUTHORING_FORMAT_OSI: "sql-modeling-preflight,osi-semantic-authoring",
+        AUTHORING_FORMAT_METRICFLOW: "metricflow-semantic-authoring",
+        AUTHORING_FORMAT_OSI: "osi-semantic-authoring",
     },
     "gen_metrics": {
-        AUTHORING_FORMAT_METRICFLOW: "sql-modeling-preflight,gen-metrics",
-        AUTHORING_FORMAT_OSI: "sql-modeling-preflight,osi-metrics-authoring",
+        AUTHORING_FORMAT_METRICFLOW: "gen-metrics",
+        AUTHORING_FORMAT_OSI: "osi-metrics-authoring",
     },
 }
 
@@ -60,11 +61,14 @@ _REQUIRED_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
 # shared authoring-format switch so the Python OSI and Rust Dosi backends do
 # not receive contradictory window instructions.
 _REQUIRED_ADAPTER_SKILLS: Dict[str, Dict[str, str]] = {
+    "semantic_modeling": {
+        "dosi": "dosi-semantic-authoring",
+    },
     "gen_semantic_model": {
-        "dosi": "sql-modeling-preflight,dosi-native-authoring",
+        "dosi": "dosi-semantic-authoring",
     },
     "gen_metrics": {
-        "dosi": "sql-modeling-preflight,dosi-metrics-authoring",
+        "dosi": "dosi-semantic-authoring",
     },
 }
 
@@ -117,6 +121,11 @@ def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
     if normalized:
         return normalized
     return AUTHORING_FORMAT_METRICFLOW
+
+
+def is_semantic_modeling_available(agent_config: Any = None) -> bool:
+    """Return whether the unified semantic-modeling agent can be instantiated."""
+    return resolve_semantic_adapter_type(agent_config) == "dosi"
 
 
 def is_osi_authoring(agent_config: Any = None, node_config: Optional[Dict[str, Any]] = None) -> bool:
@@ -425,7 +434,8 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
                 recoverable.append({**identity, "repair_required": True})
             continue
 
-        dataset_summaries: list[Dict[str, str]] = []
+        dataset_summaries: list[Dict[str, Any]] = []
+        authoring_datasets: list[Dict[str, Any]] = []
         table_references: list[str] = []
         for dataset in model.get("datasets") or []:
             if not isinstance(dataset, dict):
@@ -433,17 +443,39 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             dataset_name = str(dataset.get("name") or "").strip()
             dataset_source = str(dataset.get("source") or "").strip()
             query_backed = _is_query_backed_dataset(dataset)
-            dataset_summaries.append(
-                {
-                    key: value
-                    for key, value in {
-                        "name": dataset_name,
-                        "source": dataset_source if not query_backed else "",
-                        "description": str(dataset.get("description") or "").strip(),
-                    }.items()
-                    if value
-                }
-            )
+            dataset_summary = {
+                key: value
+                for key, value in {
+                    "name": dataset_name,
+                    "source": dataset_source if not query_backed else "",
+                    "description": str(dataset.get("description") or "").strip(),
+                    "query_backed": query_backed,
+                }.items()
+                if value
+            }
+            dataset_summaries.append(dataset_summary)
+
+            fields = [field for field in dataset.get("fields") or [] if isinstance(field, dict)]
+            authoring_dataset = {
+                key: value
+                for key, value in {
+                    "name": dataset_name,
+                    "source": dataset_source if not query_backed else "",
+                    "query_backed": query_backed,
+                    "primary_key": dataset.get("primary_key") or [],
+                    "unique_keys": dataset.get("unique_keys") or [],
+                    "fields": [str(field.get("name") or "").strip() for field in fields if field.get("name")],
+                    "time_fields": [
+                        str(field.get("name") or "").strip()
+                        for field in fields
+                        if field.get("name")
+                        and isinstance(field.get("dimension"), dict)
+                        and field["dimension"].get("is_time") is True
+                    ],
+                }.items()
+                if value
+            }
+            authoring_datasets.append(authoring_dataset)
             dataset_references = _dataset_table_references(agent_config, dataset, dataset_source)
             if dataset_source and query_backed and not dataset_references:
                 discovery_warnings.append(
@@ -463,12 +495,45 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             for table_reference in dataset_references:
                 if table_reference not in table_references:
                     table_references.append(table_reference)
+
+        relationships = []
+        for relationship in model.get("relationships") or []:
+            if not isinstance(relationship, dict):
+                continue
+            summary = {
+                key: value
+                for key, value in {
+                    "name": str(relationship.get("name") or "").strip(),
+                    "from": str(relationship.get("from") or "").strip(),
+                    "to": str(relationship.get("to") or "").strip(),
+                    "from_columns": relationship.get("from_columns") or [],
+                    "to_columns": relationship.get("to_columns") or [],
+                }.items()
+                if value
+            }
+            if summary:
+                relationships.append(summary)
+        metric_names = [
+            str(metric.get("name") or "").strip()
+            for metric in model.get("metrics") or []
+            if isinstance(metric, dict) and metric.get("name")
+        ]
         discovered.append(
             {
                 **identity,
                 "description": str(model.get("description") or "").strip(),
                 "datasets": dataset_summaries,
                 "table_references": table_references,
+                "relationships": [
+                    {key: relationship[key] for key in ("name", "from", "to") if relationship.get(key)}
+                    for relationship in relationships
+                ],
+                "metrics": metric_names,
+                "authoring_outline": {
+                    "datasets": authoring_datasets,
+                    "relationships": relationships,
+                    "metrics": metric_names,
+                },
             }
         )
     models_by_name: Dict[str, list[Dict[str, Any]]] = {}
@@ -650,6 +715,8 @@ def plan_osi_semantic_model_target(
     business_domain: str = "",
     fact_tables: Optional[Iterable[str]] = None,
     dimension_tables: Optional[Iterable[str]] = None,
+    *,
+    inventory: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Resolve a stable Ossie model name and file from authoring intent.
 
@@ -661,7 +728,7 @@ def plan_osi_semantic_model_target(
     """
     facts = [str(value).strip() for value in (fact_tables or []) if str(value).strip()]
     dimensions = [str(value).strip() for value in (dimension_tables or []) if str(value).strip()]
-    inventory = inspect_osi_semantic_model_inventory(agent_config)
+    inventory = inventory if inventory is not None else inspect_osi_semantic_model_inventory(agent_config)
     duplicate_models = [issue for issue in inventory["issues"] if issue.get("code") == "duplicate_semantic_model_name"]
     existing_models = inventory["models"]
     named_models = [*existing_models, *inventory["recoverable_models"], *duplicate_models]
@@ -835,6 +902,43 @@ def required_authoring_skills(agent_config: Any, node_name: str) -> str:
         return adapter_skills
     authoring_format = resolve_authoring_format(agent_config)
     return _REQUIRED_AUTHORING_SKILLS.get(node_name, {}).get(authoring_format, "")
+
+
+def render_required_authoring_skill(
+    skill_name: str,
+    content: str,
+    *,
+    include_osi_core: bool = False,
+) -> str:
+    """Append the active native specs to the Dosi authoring skill."""
+    if skill_name != "dosi-semantic-authoring":
+        return content
+
+    from datus_semantic_dosi.authoring_spec import (
+        authoring_spec_text,
+        datus_extension_authoring_spec_text,
+    )
+    from datus_semantic_dosi.engine import datus_extension_version
+
+    rendered_skill = content.replace(_DATUS_EXTENSION_VERSION_TOKEN, datus_extension_version())
+    extension_spec = datus_extension_authoring_spec_text("<osi_dialect>")
+    sections = [rendered_skill]
+    if include_osi_core:
+        core_spec = authoring_spec_text("<osi_dialect>")
+        sections.append(f"## Active OSI Core authoring specification\n\n```yaml\n{core_spec.rstrip()}\n```")
+    sections.append(f"## Active DATUS extension authoring specification\n\n```yaml\n{extension_spec.rstrip()}\n```")
+    return "\n\n".join(sections)
+
+
+def authoring_prompt_snapshot_meta(agent_config: Any, node_name: str) -> Dict[str, str]:
+    """Return runtime authoring values that identify a cached system prompt."""
+    skills = {skill.strip() for skill in required_authoring_skills(agent_config, node_name).split(",") if skill.strip()}
+    if "dosi-semantic-authoring" not in skills:
+        return {}
+
+    from datus_semantic_dosi.engine import datus_extension_version
+
+    return {"datus_extension_version": datus_extension_version()}
 
 
 def default_optional_skills(agent_config: Any, node_name: str) -> str:

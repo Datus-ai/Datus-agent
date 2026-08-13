@@ -23,6 +23,7 @@ __all__ = [
     "CompareAgenticNode",
     "GenSemanticModelAgenticNode",
     "GenMetricsAgenticNode",
+    "SemanticModelingAgenticNode",
     "AskMetricsAgenticNode",
     "GenReportAgenticNode",
     "ExploreAgenticNode",
@@ -61,4 +62,5 @@ from .scheduler_agentic_node import SchedulerAgenticNode
 from .schema_linking_node import SchemaLinkingNode
 from .search_metrics_node import SearchMetricsNode
 from .selection_node import SelectionNode
+from .semantic_modeling_agentic_node import SemanticModelingAgenticNode
 from .subworkflow_node import SubworkflowNode

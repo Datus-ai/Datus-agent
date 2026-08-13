@@ -132,7 +132,7 @@ class TestOnToolEnd:
 
         assert evidence.validation_passed is True
 
-    async def test_records_query_metrics_dry_run_success(self, broker, agent_config):
+    async def test_records_query_metrics_dry_run_sql(self, broker, agent_config):
         evidence = GenerationEvidence()
         hooks = GenerationHooks(broker=broker, agent_config=agent_config, generation_evidence=evidence)
         tool = MagicMock()
@@ -150,7 +150,6 @@ class TestOnToolEnd:
 
         await hooks.on_tool_end(ctx, MagicMock(), tool, result)
 
-        assert evidence.metric_dry_run_passed is True
         assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
 
 

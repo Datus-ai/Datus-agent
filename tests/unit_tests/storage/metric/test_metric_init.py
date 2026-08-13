@@ -918,7 +918,6 @@ class TestMetricProvenanceHelpers:
             {
                 "question": "Revenue?",
                 "sql": "SELECT SUM(amount) FROM orders",
-                "external_knowledge": "amount excludes tax",
             },
             2,
             "/tmp/orders.csv",
@@ -928,7 +927,6 @@ class TestMetricProvenanceHelpers:
         assert result.source_sql_name == "sql_3"
         assert result.sql == "SELECT SUM(amount) FROM orders"
         assert result.source_id == "orders.csv:2"
-        assert result.external_knowledge == ""
         assert result.source_context_ids == []
 
     def test_source_provenance_from_row_reads_context_columns(self):

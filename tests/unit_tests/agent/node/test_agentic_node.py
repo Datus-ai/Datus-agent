@@ -99,6 +99,42 @@ def _make_node(agent_config=None, context_length=_UNSET, **overrides):
 
 
 # ---------------------------------------------------------------------------
+# TestExecute
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteAgenticNode:
+    def test_failed_terminal_action_overrides_prior_success(self):
+        node = _make_node()
+        node.result_class = BaseResult
+
+        async def _execute_stream(_action_history_manager):
+            yield ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="progress",
+                messages="intermediate success",
+                input_data={},
+                output_data={"success": True},
+                status=ActionStatus.SUCCESS,
+            )
+            yield ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="error",
+                messages="terminal failure",
+                input_data={},
+                output_data={"success": True, "error": "terminal failure"},
+                status=ActionStatus.FAILED,
+            )
+
+        node.execute_stream = _execute_stream
+
+        result = node.execute()
+
+        assert result.success is False
+        assert result.error == "terminal failure"
+
+
+# ---------------------------------------------------------------------------
 # TestGetNodeName
 # ---------------------------------------------------------------------------
 

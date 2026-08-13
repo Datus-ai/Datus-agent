@@ -46,7 +46,7 @@ semantic_model:
     assert document.datasets[0].time_dimension.name == "order_date"
     assert document.datasets[0].time_dimension.granularity == "day"
     assert [item.name for item in document.datasets[0].fields] == ["order_id", "order_date", "status"]
-    assert document.datasets[0].dimensions == []
+    assert [item.name for item in document.datasets[0].dimensions] == ["status"]
     assert document.metrics[0].dataset == "orders"
     assert document.metrics[0].subject_path == ["sales", "revenue"]
     assert document.metrics[0].window == {"type": "cumulative", "function": "sum"}
@@ -71,6 +71,34 @@ semantic_model:
 
     assert [item.name for item in document.datasets] == ["budgets"]
     assert document.metrics == []
+
+
+def test_load_osi_document_leaves_multiple_time_fields_unresolved(tmp_path):
+    model = tmp_path / "events.yml"
+    model.write_text(
+        """
+version: 0.2.0.dev0
+semantic_model:
+  - name: events_model
+    datasets:
+      - name: events
+        source: events
+        fields:
+          - name: created_at
+            dimension: {is_time: true}
+          - name: completed_at
+            dimension: {is_time: true}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    document = load_osi_document(str(model), "events_model")
+
+    assert document.datasets[0].time_dimension is None
+    assert [item.name for item in document.datasets[0].dimensions] == [
+        "created_at",
+        "completed_at",
+    ]
 
 
 def test_load_osi_document_rejects_duplicate_model_declarations(tmp_path):

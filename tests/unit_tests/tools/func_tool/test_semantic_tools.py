@@ -31,7 +31,6 @@ class TestSemanticToolsGenerationEvidence:
         evidence.record_metric_dry_run(["revenue"], {"result": {"metadata": {"sql": "SELECT 1"}}})
 
         assert evidence.validation_passed is False
-        assert evidence.metric_dry_run_passed is False
         assert evidence.metric_sqls == {}
 
     def test_attr_payload_metadata_is_recorded(self):
@@ -42,7 +41,6 @@ class TestSemanticToolsGenerationEvidence:
 
         evidence.record_metric_dry_run(["revenue"], result)
 
-        assert evidence.metric_dry_run_passed is True
         assert evidence.metric_sqls == {"revenue": "SELECT 1"}
 
     def test_single_sql_fallback_not_fanned_out_to_multiple_metrics(self):
@@ -51,64 +49,7 @@ class TestSemanticToolsGenerationEvidence:
 
         evidence.record_metric_dry_run(["revenue", "cost"], result)
 
-        assert evidence.metric_dry_run_passed is True
         assert evidence.metric_sqls == {"__query_metrics_dry_run__": "SELECT 1"}
-        assert evidence.has_metric_dry_run(["revenue", "cost"]) is True
-
-    def test_dry_run_success_without_sql_metadata_records_coverage(self):
-        evidence = GenerationEvidence()
-        result = FuncToolResult(success=1, result={"metadata": {}})
-
-        evidence.record_metric_dry_run(["revenue"], result)
-
-        assert evidence.metric_dry_run_passed is True
-        assert evidence.metric_sqls == {}
-        assert evidence.has_metric_dry_run(["revenue"]) is True
-
-    def test_queryability_contract_requires_one_complete_grouped_dry_run(self):
-        evidence = GenerationEvidence()
-        evidence.set_metric_queryability_contracts(
-            [
-                {
-                    "contract_id": "orders:group_1",
-                    "source_id": "orders",
-                    "metric_output_ids": ["orders:revenue", "orders:count"],
-                    "dimensions": ["orders.order_date", "orders.region"],
-                    "time_grain": "month",
-                }
-            ]
-        )
-        evidence.bind_metric_output_names(
-            [
-                {"output_id": "orders:revenue", "metric_name": "revenue_total"},
-                {"output_id": "orders:count", "metric_name": "order_count"},
-            ]
-        )
-        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
-
-        evidence.record_metric_dry_run(
-            ["revenue_total"],
-            result,
-            dimensions=["orders.order_date", "orders.region"],
-            time_granularity="month",
-        )
-        evidence.record_metric_dry_run(
-            ["order_count"],
-            result,
-            dimensions=["orders.order_date", "orders.region"],
-            time_granularity="month",
-        )
-
-        assert evidence.has_required_queryability_dry_runs(["revenue_total", "order_count"]) is False
-
-        evidence.record_metric_dry_run(
-            ["revenue_total", "order_count"],
-            result,
-            dimensions=["orders.order_date", "orders.region"],
-            time_granularity="month",
-        )
-
-        assert evidence.has_required_queryability_dry_runs(["revenue_total", "order_count"]) is True
 
 
 class TestNormalizeNull:
@@ -503,8 +444,7 @@ class TestQueryMetricsCompression:
         assert result.result["metadata"]["row_count"] == 1
         assert result.result["metadata"]["_full_result_cache_key"]
 
-    def test_query_metrics_dry_run_records_generation_evidence(self, semantic_tools):
-        """Successful dry-run evidence gates metric publishing."""
+    def test_query_metrics_dry_run_records_compiled_sql(self, semantic_tools):
         evidence = GenerationEvidence()
         semantic_tools.generation_evidence = evidence
         query_result = QueryResult(
@@ -522,17 +462,9 @@ class TestQueryMetricsCompression:
             )
 
         assert result.success == 1
-        assert evidence.metric_dry_run_passed is True
-        assert len(evidence.metric_dry_run_queries) == 1
-        dry_run = evidence.metric_dry_run_queries[0]
-        assert dry_run["metrics"] == ["revenue"]
-        assert dry_run["dimensions"] == ["customer_segment"]
-        assert dry_run["time_granularity"] == "month"
-        assert dry_run["time_granularity_explicit"] is True
-        assert dry_run["sql"] == "SELECT SUM(revenue) AS revenue FROM orders"
         assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
 
-    def test_query_metrics_non_dry_run_does_not_record_publish_evidence(self, semantic_tools):
+    def test_query_metrics_non_dry_run_does_not_record_metric_sql(self, semantic_tools):
         evidence = GenerationEvidence()
         semantic_tools.generation_evidence = evidence
         query_result = QueryResult(columns=[], data=[], metadata={"sql": "SELECT 1"})
@@ -541,7 +473,6 @@ class TestQueryMetricsCompression:
             result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=False)
 
         assert result.success == 1
-        assert evidence.metric_dry_run_passed is False
         assert evidence.metric_sqls == {}
 
     def test_query_metrics_drops_non_serializable_metadata(self, semantic_tools):
@@ -1219,6 +1150,53 @@ class TestRuntimeDbContext:
         adapter_config = create_adapter.call_args.args[1]
         assert adapter_config.kwargs["datasource"] == "runtime_ds"
         assert adapter_config.kwargs["semantic_models_path"] == str(tmp_path / "runtime_ds")
+
+    def test_adapter_tracks_selected_semantic_model_path(self, tmp_path):
+        first_adapter = Mock()
+        second_adapter = Mock()
+
+        class FakeConfig:
+            model_fields = {
+                "semantic_model_path": object(),
+                "semantic_models_path": object(),
+            }
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        selected = {"path": str(tmp_path / "orders.yml")}
+        config = SimpleNamespace(
+            active_model=lambda: SimpleNamespace(model="gpt-4o"),
+            current_datasource="runtime_ds",
+            build_semantic_adapter_config=lambda adapter_type, **kwargs: {
+                "semantic_models_path": str(tmp_path),
+            },
+        )
+        metadata = SimpleNamespace(config_class=FakeConfig)
+
+        with (
+            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=metadata),
+            patch(
+                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
+                side_effect=[first_adapter, second_adapter],
+            ) as create_adapter,
+        ):
+            tool = SemanticTools(
+                agent_config=config,
+                adapter_type="dosi",
+                semantic_model_path_provider=lambda: selected["path"],
+            )
+
+            assert tool.adapter is first_adapter
+            first_config = create_adapter.call_args_list[0].args[1]
+            assert first_config.kwargs["semantic_model_path"] == str(tmp_path / "orders.yml")
+
+            selected["path"] = str(tmp_path / "finance.yml")
+            assert tool.adapter is second_adapter
+            second_config = create_adapter.call_args_list[1].args[1]
+            assert second_config.kwargs["semantic_model_path"] == str(tmp_path / "finance.yml")
 
     def test_validate_semantic_initializes_adapter_with_runtime_database(self, tmp_path):
         from datus.configuration.agent_config import AgentConfig, NodeConfig

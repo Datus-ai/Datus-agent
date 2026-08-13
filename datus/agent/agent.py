@@ -31,6 +31,7 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
     refresh_success_story_semantic_model_profile,
 )
+from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
@@ -398,6 +399,13 @@ class Agent:
         selected_components = self.args.components
 
         kb_update_strategy = self.args.kb_update_strategy
+        if "semantic_modeling" in selected_components and {"semantic_model", "metrics"}.intersection(
+            selected_components
+        ):
+            return {
+                "status": "failed",
+                "message": "semantic_modeling cannot be combined with the legacy semantic_model or metrics components",
+            }
         if kb_update_strategy == "refresh-profile" and set(selected_components) != {"semantic_model"}:
             return {
                 "status": "failed",
@@ -511,6 +519,44 @@ class Agent:
                     f"schema_size={self.metadata_store.get_schema_size()}, "
                     f"value_size={self.metadata_store.get_value_size()}",
                 }
+                results[component] = result
+                continue
+
+            elif component == "semantic_modeling":
+                uses_adapter = hasattr(self.args, "from_adapter") and self.args.from_adapter
+                uses_semantic_yaml = hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml
+                if uses_adapter or uses_semantic_yaml:
+                    results[component] = {
+                        "status": "failed",
+                        "message": (
+                            "semantic_modeling authors from --success_story; use semantic_model/metrics for "
+                            "--from_adapter or --semantic_yaml"
+                        ),
+                    }
+                    continue
+
+                successful, error_message, details = init_success_story_semantic_modeling(
+                    self.global_config,
+                    self.args.success_story,
+                    subject_tree,
+                    emit=self._emit_metrics_event,
+                    build_mode=kb_update_strategy,
+                    batch_size=getattr(self.args, "metrics_batch_size", 5),
+                )
+                if successful:
+                    details = details or {}
+                    result = {
+                        "status": "success",
+                        "message": (
+                            "semantic_modeling bootstrap completed, "
+                            f"semantic_object_count={details.get('semantic_object_count', 0)}, "
+                            f"metrics_count={details.get('metrics_count', 0)}, "
+                            f"sql_entries_covered={details.get('sql_entries_covered', 0)}"
+                        ),
+                        "details": details,
+                    }
+                else:
+                    result = {"status": "failed", "message": error_message, "details": details}
                 results[component] = result
                 continue
 

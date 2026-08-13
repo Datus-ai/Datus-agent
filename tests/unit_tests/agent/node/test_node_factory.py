@@ -65,6 +65,17 @@ class TestResolveNodeClassType:
 
 
 class TestCreateInteractiveNode:
+    @patch(
+        "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
+        return_value=None,
+    )
+    def test_semantic_modeling(self, mock_init):
+        config = _mock_agent_config()
+        create_interactive_node("semantic_modeling", config)
+        mock_init.assert_called_once_with(
+            agent_config=config, execution_mode="interactive", scope=None, session_id=None
+        )
+
     @patch("datus.agent.node.chat_agentic_node.ChatAgenticNode.__init__", return_value=None)
     def test_default_chat_node(self, mock_init):
         config = _mock_agent_config()

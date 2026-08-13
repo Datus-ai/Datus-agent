@@ -45,6 +45,7 @@ class EmbeddingProvider(StrEnum):
 
 # System sub-agents that are built-in and not user-configurable
 SYS_SUB_AGENTS = {
+    "semantic_modeling",
     "gen_semantic_model",
     "gen_metrics",
     "gen_sql_summary",

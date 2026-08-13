@@ -73,6 +73,11 @@ _EXTRA_BUILTIN_SUBAGENTS = {"feedback"}
 
 def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
     """Return True if *subagent_id* resolves to a builtin or custom sub-agent."""
+    if subagent_id == "semantic_modeling":
+        from datus.agent.node.semantic_authoring import is_semantic_modeling_available
+
+        if not is_semantic_modeling_available(svc.agent_config):
+            return False
     if subagent_id in BUILTIN_SUBAGENTS or subagent_id in _EXTRA_BUILTIN_SUBAGENTS:
         return True
     agentic_nodes = getattr(svc.agent_config, "agentic_nodes", None) or {}

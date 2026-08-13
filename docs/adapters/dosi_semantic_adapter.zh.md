@@ -41,9 +41,9 @@ Datus 会注入当前数据源连接，并默认把 `semantic_models_path` 指�
 
 Dosi 当前可执行 aggregate、ratio、expression 指标，维度、many-to-one
 关系、复合 Join、query-backed dataset、过滤、day 到 year 的时间粒度、
-D-TIME 主时间轴、D-JOIN/D-FILL，以及原生 D-WINDOW 的同比/环比、滚动和
-累计指标。当前 datus-ext 1.2 的 D-WINDOW 使用单个普通 aggregate 作为
-base expression，并在其上声明窗口派生语义。
+`time_dimension` 主时间轴、relationship `join_type`、metric `fill_nulls_with`，
+以及结构化窗口。datus-ext 1.3 支持期间比较、滚动、累计、排名与分布、
+first/last/nth value、向前或向后 offset，以及基于 ROWS 或 RANGE 的统计 frame。
 
 ## Authoring 与校验
 
@@ -52,11 +52,6 @@ base expression，并在其上声明窗口派生语义。
 原生 engine 执行。时间查询用 `metric_time` 作为 dimension，并把粒度单独
 传入；返回的 `metric_time__<grain>` 是对应的结果列/order key。
 
-切换已有 Python-OSI 模型前，先运行一次性检查工具。默认只读；`--write`
-只转换语义明确的情况，使用已安装的原生 engine 校验，创建同目录 `.bak`
-备份，并拒绝自动改写有歧义的文件：
-
-```bash
-datus-dosi-migrate subject/semantic_models/<datasource>
-datus-dosi-migrate subject/semantic_models/<datasource> --write
-```
+统一 `semantic_modeling` 会分别列出有效模型和可修复模型：有效模型直接绑定，
+可修复模型按原名称原地规划和修改。最终由 Host 校验确切 YAML，并把该 artifact
+完整同步到 Knowledge Base。

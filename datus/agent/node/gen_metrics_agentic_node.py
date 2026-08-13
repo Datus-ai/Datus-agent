@@ -10,113 +10,19 @@ metrics generation with support for filesystem tools, generation tools,
 hooks, and metricflow MCP server integration.
 """
 
-import re
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
-
-import sqlglot
-from sqlglot import expressions as exp
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import GenMetricsNodeResult, SemanticNodeInput
-from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
-from datus.tools.func_tool.generation_tools import GenerationTools, MetricOutputBinding
-from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
-from datus.tools.func_tool.sql_modeling_planner import (
-    SqlModelingPlan,
-    SqlModelingPlanTools,
-    inspect_planned_semantic_sources,
-)
+from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-
-def _normalized_window_offset(value: Any) -> str:
-    if isinstance(value, dict):
-        count = value.get("count")
-        granularity = str(value.get("granularity") or "").strip().lower().rstrip("s")
-        try:
-            count = int(count)
-        except (TypeError, ValueError):
-            return ""
-        if count < 1 or granularity not in {"day", "week", "month", "quarter", "year"}:
-            return ""
-        return f"{count} {granularity}{'' if count == 1 else 's'}"
-
-    match = re.fullmatch(
-        r"\s*([1-9]\d*)\s+(day|week|month|quarter|year)s?\s*",
-        str(value or ""),
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return ""
-    count = int(match.group(1))
-    granularity = match.group(2).lower()
-    return f"{count} {granularity}{'' if count == 1 else 's'}"
-
-
-def _normalized_native_window(value: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(value, dict):
-        return None
-    window_type = str(value.get("type") or ("pop" if "offset" in value else "")).strip().lower()
-    if window_type == "pop":
-        offset = _normalized_window_offset(value.get("offset"))
-        calculation = str(value.get("calculation") or "percent_change").strip().lower()
-        if not offset or calculation not in {"value", "delta", "percent_change", "ratio"}:
-            return None
-        return {"type": "pop", "offset": offset, "calculation": calculation}
-    if window_type == "rolling":
-        function = str(value.get("function") or "").strip().lower()
-        try:
-            periods = int(value.get("periods"))
-        except (TypeError, ValueError):
-            return None
-        require_full_window = value.get("require_full_window", False)
-        if (
-            function not in {"sum", "avg", "min", "max", "count"}
-            or periods < 1
-            or not isinstance(require_full_window, bool)
-        ):
-            return None
-        return {
-            "type": "rolling",
-            "function": function,
-            "periods": periods,
-            "require_full_window": require_full_window,
-        }
-    if window_type == "cumulative":
-        function = str(value.get("function") or "").strip().lower()
-        reset = str(value.get("reset") or "").strip().lower() or None
-        if function not in {"sum", "avg", "min", "max", "count"}:
-            return None
-        if reset not in {None, "week", "month", "quarter", "year"}:
-            return None
-        return {"type": "cumulative", "function": function, "reset": reset}
-    return None
-
-
-def _normalized_metric_expression(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    try:
-        expression = sqlglot.parse_one(text)
-    except sqlglot.errors.ParseError:
-        return re.sub(r"\s+", "", text).lower()
-    for column in expression.find_all(exp.Column):
-        column.set("table", None)
-        column.set("db", None)
-        column.set("catalog", None)
-    return re.sub(r"\s+", "", expression.sql(normalize=True)).lower()
-
-
-def _normalized_field_reference(value: Any) -> str:
-    return str(value or "").strip().rsplit(".", 1)[-1].strip('"`[]').lower()
 
 
 class GenMetricsAgenticNode(AgenticNode):
@@ -201,9 +107,6 @@ class GenMetricsAgenticNode(AgenticNode):
         self.ask_user_tool = None
         self.hooks = None
         self.generation_evidence = GenerationEvidence()
-        self.sql_modeling_plan: Optional[SqlModelingPlan] = None
-        self.sql_modeling_tools: Optional[SqlModelingPlanTools] = None
-        self.response_metric_output_bindings: Optional[List[Dict[str, str]]] = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -230,10 +133,10 @@ class GenMetricsAgenticNode(AgenticNode):
                 if result is not None and not getattr(result, "success", False):
                     filesystem_tool = getattr(self, "filesystem_func_tool", None)
                     try:
-                        if filesystem_tool is not None and filesystem_tool.rollback_failed_metric_authoring():
-                            logger.info("Rolled back metric artifact after terminal generation failure")
+                        if filesystem_tool is not None and filesystem_tool.rollback_failed_authoring():
+                            logger.info("Rolled back authored artifact after terminal generation failure")
                     except Exception:
-                        logger.exception("Failed to roll back metric artifact after terminal generation failure")
+                        logger.exception("Failed to roll back authored artifact after terminal generation failure")
 
     def setup_tools(self):
         """Setup tools for metrics generation."""
@@ -242,7 +145,6 @@ class GenMetricsAgenticNode(AgenticNode):
 
         self.tools = []
 
-        self._setup_sql_modeling_tools()
         self._setup_osi_target_tools()
         from datus.agent.node.semantic_authoring import is_osi_authoring
 
@@ -263,34 +165,10 @@ class GenMetricsAgenticNode(AgenticNode):
         self.result = None
         self.generation_evidence.reset()
         self.osi_target_state.reset()
-        self.sql_modeling_plan = None
-        self.response_metric_output_bindings = None
-        if self.sql_modeling_tools is not None:
-            self.sql_modeling_tools.reset()
-
-    def _setup_sql_modeling_tools(self) -> None:
-        """Expose the single shared SQL preflight entry point."""
-        from datus.agent.node.semantic_authoring import is_osi_authoring
-
-        self.sql_modeling_tools = SqlModelingPlanTools(
-            agent_config=self.agent_config,
-            sub_agent_name=self.get_node_name(),
-            generation_evidence=self.generation_evidence,
-            plan_consumer=self._accept_sql_modeling_plan,
-            semantic_source_inspector=(
-                None if is_osi_authoring(self.agent_config) else self._inspect_planned_semantic_sources
-            ),
-        )
-        self.tools.extend(self.sql_modeling_tools.available_tools())
-
-    def _accept_sql_modeling_plan(self, plan: Optional[SqlModelingPlan]) -> None:
-        self.sql_modeling_plan = plan
-        self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
-
-    def _inspect_planned_semantic_sources(self, plan: SqlModelingPlan) -> Dict[str, Any]:
-        """Batch-inspect physical SQL sources for MetricFlow authoring."""
-        self.sql_modeling_plan = plan
-        return inspect_planned_semantic_sources(plan, self.semantic_discovery_tools)
+        if self.osi_target_tools is not None:
+            self.osi_target_tools.invalidate_inventory()
+        if self.semantic_discovery_tools is not None:
+            self.semantic_discovery_tools.reset_request_cache()
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Keep OSI metric authoring on its metrics-only filesystem surface."""
@@ -304,6 +182,8 @@ class GenMetricsAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import resolve_authoring_format
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
         from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+
+        filesystem_tool_cls = kwargs.pop("filesystem_tool_cls", MetricFilesystemFuncTool)
 
         root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
         datus_home = kwargs.pop("datus_home", None)
@@ -328,7 +208,7 @@ class GenMetricsAgenticNode(AgenticNode):
         )
         from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
 
-        return MetricFilesystemFuncTool(
+        return filesystem_tool_cls(
             root_path=root_path,
             current_node=current_node,
             datus_home=datus_home,
@@ -421,6 +301,16 @@ class GenMetricsAgenticNode(AgenticNode):
         patterns = required_authoring_skills(self.agent_config, self.NODE_NAME)
         return [pattern.strip() for pattern in patterns.split(",") if pattern.strip()]
 
+    def _render_required_skill_content(self, skill_name: str, content: str) -> str:
+        """Resolve runtime values in Dosi authoring specifications."""
+        from datus.agent.node.semantic_authoring import render_required_authoring_skill
+
+        return render_required_authoring_skill(
+            skill_name,
+            super()._render_required_skill_content(skill_name, content),
+            include_osi_core=self.NODE_NAME == "semantic_modeling",
+        )
+
     def _setup_semantic_tools(self):
         """Setup semantic tools for metrics querying and exploration."""
         try:
@@ -437,6 +327,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 generation_evidence=self.generation_evidence,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
                 warehouse_dry_run_provider=self._warehouse_dry_run_compiled_sql,
+                semantic_model_path_provider=lambda: self.osi_target_state.selected_path,
             )
 
             # Add all available tools from semantic func tool
@@ -502,6 +393,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 source_sql_provider=self._semantic_discovery_source_sql,
+                compact_source_inspection=self.NODE_NAME == "semantic_modeling",
             )
             discovery_tools = self.semantic_discovery_tools.available_tools()
             self.tools.extend(discovery_tools)
@@ -513,16 +405,15 @@ class GenMetricsAgenticNode(AgenticNode):
             logger.error(f"Failed to setup semantic discovery tools: {e}")
 
     def _semantic_discovery_source_sql(self) -> List[Dict[str, Any]]:
-        """Expose exact request SQL captured by the shared preflight."""
-        if self.sql_modeling_plan is None:
-            return []
+        """Expose structured SQL supplied directly by the current request."""
+        sources = list(getattr(getattr(self, "input", None), "source_queries", None) or [])
         return [
             {
                 "name": source.source_sql_name,
                 "question": source.question,
                 "sql": source.sql,
             }
-            for source in self.sql_modeling_plan.source_queries
+            for source in sources
         ]
 
     def _get_existing_subject_trees(self) -> list:
@@ -614,8 +505,11 @@ class GenMetricsAgenticNode(AgenticNode):
 
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         """Invalidate snapshots created before semantic targets became request-scoped."""
+        from datus.agent.node.semantic_authoring import authoring_prompt_snapshot_meta
+
         meta = super()._system_prompt_snapshot_meta(prompt_version)
         meta["semantic_target_scope"] = "agent_bound_v3"
+        meta.update(authoring_prompt_snapshot_meta(self.agent_config, self.NODE_NAME))
         return meta
 
     def _get_system_prompt(
@@ -678,11 +572,9 @@ class GenMetricsAgenticNode(AgenticNode):
             ) from e
 
     def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
-        self._set_metric_queryability_contracts_from_input(ctx.user_input)
         return self._prepare_template_context(ctx.user_input)
 
     def _build_success_result(self, ctx: StreamRunContext) -> GenMetricsNodeResult:
-        sql_plan_ready = self.generation_evidence.ensure_sql_modeling_plan_resolved()
         response_content = ctx.response_content
         if not response_content and ctx.last_successful_output:
             raw_output = ctx.last_successful_output.get("raw_output", "")
@@ -694,7 +586,6 @@ class GenMetricsAgenticNode(AgenticNode):
         semantic_model_files, metric_file, status, blocker_code, skip_reason, extracted_output = (
             self._extract_metric_and_output_from_response({"content": response_content})
         )
-        metric_output_bindings = getattr(self, "response_metric_output_bindings", None)
         if extracted_output:
             response_content = extracted_output
 
@@ -703,21 +594,12 @@ class GenMetricsAgenticNode(AgenticNode):
 
         blocker_code = blocker_code.strip().lower() if isinstance(blocker_code, str) else blocker_code
         skip_reason = skip_reason.strip().lower() if isinstance(skip_reason, str) else skip_reason
-        if sql_plan_ready and status is None:
-            raise RuntimeError(
-                "SQL-backed metric generation must return a structured final response "
-                "with status and the generated metric_file or an explicit supported skip."
-            )
         if status is not None and status not in {"generated", "skipped", "blocked"}:
             raise RuntimeError(f"Unsupported metric generation status: {status!r}")
         if skip_reason is not None and skip_reason != "not_a_metric":
             raise RuntimeError(f"Unsupported metric generation skip_reason: {skip_reason!r}")
         if skip_reason is not None and status != "skipped":
             raise RuntimeError("skip_reason is only valid when status='skipped'.")
-        if status == "skipped" and self.generation_evidence.required_metric_output_ids:
-            raise RuntimeError(
-                "SQL planning found required metric outputs, so generation cannot return status='skipped'."
-            )
         normalized_status = status
         if normalized_status == "blocked":
             if metric_file or self.osi_target_state.touched_metric_names:
@@ -737,7 +619,6 @@ class GenMetricsAgenticNode(AgenticNode):
             self._finalize_metric_generation(
                 semantic_model_files=semantic_model_files,
                 metric_file=metric_file,
-                metric_output_bindings=metric_output_bindings,
                 status=normalized_status,
                 skip_reason=skip_reason,
             )
@@ -791,253 +672,12 @@ class GenMetricsAgenticNode(AgenticNode):
             raise RuntimeError(f"Metric generation reported {kind}_file outside Knowledge Base sandbox: {path!r}")
         return resolved_path
 
-    @staticmethod
-    def _tool_result_payload(result: Any) -> Dict[str, Any]:
-        payload = result.get("result") if isinstance(result, dict) else getattr(result, "result", None)
-        return payload if isinstance(payload, dict) else {}
-
-    @classmethod
-    def _warehouse_dry_run_succeeded(cls, result: Any) -> bool:
-        metadata = cls._tool_result_payload(result).get("metadata")
-        warehouse = metadata.get("warehouse_dry_run") if isinstance(metadata, dict) else None
-        return isinstance(warehouse, dict) and warehouse.get("status") == "success"
-
-    def _queryability_dry_run_args(
-        self,
-        contract: Dict[str, Any],
-        metric_names: List[str],
-    ) -> tuple[List[str], List[str], Optional[str]]:
-        metric_hints = {str(name).strip() for name in contract.get("metric_hints") or [] if str(name).strip()}
-        metric_output_ids = [
-            str(output_id).strip() for output_id in contract.get("metric_output_ids") or [] if str(output_id).strip()
-        ]
-        if metric_output_ids and not metric_hints:
-            return [], [], None
-        contract_metrics = [name for name in metric_names if not metric_hints or name in metric_hints]
-        if not contract_metrics:
-            return [], [], None
-        dimensions = [
-            str(dimension).strip() for dimension in contract.get("dimensions") or [] if str(dimension).strip()
-        ]
-        time_granularity = str(contract.get("time_grain") or "").strip() or None
-        return contract_metrics, list(dict.fromkeys(dimensions)), time_granularity
-
-    def _ensure_metric_dry_runs(self, metric_names: List[str]) -> None:
-        """Run fresh contract and warehouse dry-runs before every publication."""
-        query_metrics = getattr(getattr(self, "semantic_tools", None), "query_metrics", None)
-        if not callable(query_metrics):
-            raise RuntimeError("Metric generation produced metrics, but query_metrics is unavailable.")
-
-        covered_metrics = set()
-        for contract in self.generation_evidence.metric_queryability_contracts:
-            contract_metrics, dimensions, time_granularity = self._queryability_dry_run_args(
-                contract,
-                metric_names,
-            )
-            if not contract_metrics:
-                continue
-            kwargs: Dict[str, Any] = {
-                "metrics": contract_metrics,
-                "dimensions": dimensions,
-                "dry_run": True,
-            }
-            if time_granularity:
-                kwargs["time_granularity"] = time_granularity
-            result = query_metrics(**kwargs)
-            self.generation_evidence.record_metric_dry_run(
-                contract_metrics,
-                result,
-                dimensions=dimensions,
-                time_granularity=time_granularity,
-            )
-            if not self._tool_succeeded(result):
-                raise RuntimeError(
-                    "query_metrics(dry_run=True) failed for queryability contract "
-                    f"{contract.get('contract_id') or contract.get('source_id') or 'unknown'}: "
-                    f"{self._tool_error(result)}"
-                )
-            if not self._warehouse_dry_run_succeeded(result):
-                raise RuntimeError(
-                    "query_metrics(dry_run=True) compiled queryability contract "
-                    f"{contract.get('contract_id') or contract.get('source_id') or 'unknown'}, "
-                    "but did not complete a warehouse dry-run."
-                )
-            covered_metrics.update(contract_metrics)
-
-        uncovered = [name for name in metric_names if name not in covered_metrics]
-        if uncovered:
-            result = query_metrics(metrics=uncovered, dry_run=True)
-            self.generation_evidence.record_metric_dry_run(uncovered, result)
-            if not self._tool_succeeded(result):
-                raise RuntimeError(
-                    "query_metrics(dry_run=True) failed for generated metric(s) "
-                    f"{', '.join(uncovered)}: {self._tool_error(result)}"
-                )
-            if not self._warehouse_dry_run_succeeded(result):
-                raise RuntimeError(
-                    "query_metrics(dry_run=True) compiled generated metric(s) "
-                    f"{', '.join(uncovered)}, but did not complete a warehouse dry-run."
-                )
-
-        missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
-        if missing_contracts:
-            raise RuntimeError(
-                "query_metrics(dry_run=True) must pass with every source SQL GROUP BY dimension "
-                "before publishing metrics. "
-                f"Missing: {summarize_queryability_contracts(missing_contracts)}",
-            )
-
-    def publish_metrics(
-        self,
-        metric_file: str,
-        metric_output_bindings: Optional[List[MetricOutputBinding]] = None,
-    ):
-        """Run deterministic queryability checks, then sync metrics to storage."""
+    def publish_metrics(self, metric_file: str):
+        """Sync the validated metric artifact to storage."""
         if not self.generation_tools:
             raise RuntimeError("Metric generation tools are unavailable.")
-        self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
-        bindings = [
-            binding.model_dump() if isinstance(binding, MetricOutputBinding) else dict(binding)
-            for binding in metric_output_bindings or []
-        ]
-        self.generation_evidence.bind_metric_output_names(bindings)
-
         abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
-        native_window_error = self._validate_native_window_bindings(abs_metric_file, bindings, metric_file)
-        if native_window_error is not None:
-            return native_window_error
-        if self.osi_target_state.touched_metric_names:
-            current_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
-            metric_names, _ = self.osi_target_state.partition_touched_metrics(current_names)
-        else:
-            metric_names = self.generation_tools._extract_metric_names_from_file(abs_metric_file)
-            metric_definitions = self.generation_tools._extract_metric_definitions_from_file(abs_metric_file)
-            metric_names = self.generation_tools._metric_names_requiring_dry_run(
-                metric_names,
-                metric_definitions,
-                self.generation_evidence.metric_sqls,
-            )
-        if metric_names:
-            try:
-                self._ensure_metric_dry_runs(metric_names)
-            except Exception as exc:
-                error_message = str(exc) or type(exc).__name__
-                logger.exception(f"publish_metrics preflight failed for metrics={metric_names}: {error_message}")
-                return FuncToolResult(
-                    success=0,
-                    error=error_message,
-                    result={
-                        "code": "metric_publish_preflight_failed",
-                        "stage": "query_metrics_dry_run",
-                        "metric_file": metric_file,
-                        "metrics": metric_names,
-                    },
-                )
-
-        publish_kwargs: Dict[str, Any] = {"metric_file": abs_metric_file}
-        if metric_output_bindings is not None:
-            publish_kwargs["metric_output_bindings"] = metric_output_bindings
-        return self.generation_tools.publish_metrics(**publish_kwargs)
-
-    def _validate_native_window_bindings(
-        self,
-        abs_metric_file: str,
-        bindings: List[Dict[str, Any]],
-        reported_metric_file: str,
-    ) -> Optional[FuncToolResult]:
-        candidate_plan = self.sql_modeling_plan.candidate_plan if self.sql_modeling_plan is not None else {}
-        window_outputs = {
-            str(output.get("output_id") or "").strip(): output
-            for output in candidate_plan.get("outputs") or []
-            if isinstance(output, dict)
-            and str(output.get("output_id") or "").strip()
-            and isinstance(output.get("native_window"), dict)
-        }
-        relevant_bindings = [binding for binding in bindings if binding.get("output_id") in window_outputs]
-        if not relevant_bindings:
-            return None
-
-        model_names = self.generation_tools.extract_osi_model_names(abs_metric_file)
-        if len(model_names) != 1:
-            return FuncToolResult(
-                success=0,
-                error="Native window validation requires one OSI semantic model in the metric artifact.",
-                result={
-                    "code": "native_window_required",
-                    "stage": "native_window_binding",
-                    "metric_file": reported_metric_file,
-                },
-            )
-
-        from datus.tools.semantic_tools.osi_document import load_osi_document
-
-        try:
-            document = load_osi_document(abs_metric_file, model_names[0])
-        except ValueError as exc:
-            return FuncToolResult(
-                success=0,
-                error=str(exc),
-                result={
-                    "code": "native_window_required",
-                    "stage": "native_window_binding",
-                    "metric_file": reported_metric_file,
-                },
-            )
-        metrics = {metric.name: metric for metric in document.metrics}
-
-        for binding in relevant_bindings:
-            output_id = str(binding.get("output_id") or "").strip()
-            metric_name = str(binding.get("metric_name") or "").strip()
-            expected_hint = window_outputs[output_id]["native_window"]
-            expected_window = _normalized_native_window(expected_hint)
-            metric = metrics.get(metric_name)
-            actual_window = _normalized_native_window(metric.window if metric is not None else None)
-            expected_expression = _normalized_metric_expression(expected_hint.get("base_expression"))
-            actual_expression = _normalized_metric_expression(metric.expression if metric is not None else None)
-            expected_time_dimension = _normalized_field_reference(expected_hint.get("time_dimension"))
-            actual_time_dimension = _normalized_field_reference(metric.time_dimension if metric is not None else None)
-            expression_matches = not expected_expression or expected_expression == actual_expression
-            time_dimension_matches = not expected_time_dimension or expected_time_dimension == actual_time_dimension
-            if (
-                expected_window is not None
-                and expected_window == actual_window
-                and expression_matches
-                and time_dimension_matches
-            ):
-                continue
-            return FuncToolResult(
-                success=0,
-                error=(
-                    f"Metric {metric_name!r} must match the native Dosi window binding required by "
-                    f"SQL output {output_id!r}."
-                ),
-                result={
-                    "code": "native_window_required",
-                    "stage": "native_window_binding",
-                    "metric_file": reported_metric_file,
-                    "output_id": output_id,
-                    "metric_name": metric_name,
-                    "expected_window": expected_window,
-                    "actual_window": actual_window,
-                    "expected_base_expression": expected_hint.get("base_expression"),
-                    "actual_base_expression": metric.expression if metric is not None else None,
-                    "expected_time_dimension": expected_hint.get("time_dimension"),
-                    "actual_time_dimension": metric.time_dimension if metric is not None else None,
-                },
-            )
-        return None
-
-    def _set_metric_queryability_contracts_from_input(self, user_input: Optional[SemanticNodeInput]) -> None:
-        if not user_input:
-            return
-        candidate_plan = self.sql_modeling_plan.candidate_plan if self.sql_modeling_plan is not None else {}
-        contracts = [
-            dict(contract)
-            for contract in candidate_plan.get("queryability_contracts") or []
-            if isinstance(contract, dict)
-        ]
-        self.generation_evidence.set_metric_queryability_contracts(contracts)
-        self.generation_evidence.set_required_metric_outputs(candidate_plan.get("outputs") or [])
+        return self.generation_tools.publish_metrics(metric_file=abs_metric_file)
 
     def _finalize_metric_generation(
         self,
@@ -1045,7 +685,6 @@ class GenMetricsAgenticNode(AgenticNode):
         metric_file: Optional[str],
         status: Optional[str],
         skip_reason: Optional[str] = None,
-        metric_output_bindings: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """Ensure generated metric artifacts are published without relying on one LLM tool call."""
         from datus.agent.node.semantic_authoring import is_osi_authoring
@@ -1054,7 +693,6 @@ class GenMetricsAgenticNode(AgenticNode):
             self._finalize_osi_metric_generation(
                 semantic_model_files=semantic_model_files,
                 metric_file=metric_file,
-                metric_output_bindings=metric_output_bindings,
                 status=status,
                 skip_reason=skip_reason,
             )
@@ -1085,9 +723,6 @@ class GenMetricsAgenticNode(AgenticNode):
 
         if not self.generation_tools:
             raise RuntimeError("Metric generation produced a metric_file, but generation tools are unavailable.")
-        self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
-        self.generation_evidence.bind_metric_output_names(metric_output_bindings)
-
         if not self.generation_evidence.validation_passed:
             if not getattr(self, "semantic_tools", None):
                 raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
@@ -1103,10 +738,7 @@ class GenMetricsAgenticNode(AgenticNode):
         if preflight_error:
             raise RuntimeError(preflight_error)
 
-        publish_kwargs: Dict[str, Any] = {"metric_file": abs_metric_file}
-        if self.generation_evidence.required_metric_output_ids:
-            publish_kwargs["metric_output_bindings"] = metric_output_bindings
-        publish_result = self.publish_metrics(**publish_kwargs)
+        publish_result = self.publish_metrics(metric_file=abs_metric_file)
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"Metric KB sync failed: {self._tool_error(publish_result)}")
 
@@ -1116,7 +748,6 @@ class GenMetricsAgenticNode(AgenticNode):
         metric_file: Optional[str],
         status: Optional[str],
         skip_reason: Optional[str],
-        metric_output_bindings: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         """Validate and publish only the exact target bound during this request."""
         del semantic_model_files
@@ -1178,9 +809,6 @@ class GenMetricsAgenticNode(AgenticNode):
 
         if not self.generation_tools:
             raise RuntimeError("Metrics were changed in a bound OSI target, but generation tools are unavailable.")
-        self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
-        self.generation_evidence.bind_metric_output_names(metric_output_bindings)
-
         if not getattr(self, "semantic_tools", None):
             raise RuntimeError("Metrics were changed in a bound OSI target, but validate_semantic is unavailable.")
         model_names = self.generation_tools.extract_osi_model_names(abs_metric_file)
@@ -1201,10 +829,7 @@ class GenMetricsAgenticNode(AgenticNode):
                     f"validate_semantic failed before publishing OSI metrics: {self._tool_error(validation_result)}"
                 )
 
-        publish_kwargs: Dict[str, Any] = {"metric_file": abs_metric_file}
-        if self.generation_evidence.required_metric_output_ids:
-            publish_kwargs["metric_output_bindings"] = metric_output_bindings
-        publish_result = self.publish_metrics(**publish_kwargs)
+        publish_result = self.publish_metrics(metric_file=abs_metric_file)
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"OSI metric KB sync failed: {self._tool_error(publish_result)}")
 
@@ -1223,7 +848,6 @@ class GenMetricsAgenticNode(AgenticNode):
 
         Per prompt template requirements, LLM should return JSON format:
         {"semantic_model_files": ["path.yml"], "metric_file": "path.yml",
-         "metric_output_bindings": [{"output_id": "...", "metric_name": "..."}],
          "status": "generated" | "skipped" | "blocked", "blocker_code": null,
          "skip_reason": null | "not_a_metric",
          "output": "markdown text"}
@@ -1235,10 +859,8 @@ class GenMetricsAgenticNode(AgenticNode):
 
         Returns:
             Tuple of (semantic_model_files, metric_file, status, blocker_code,
-            skip_reason, output_string). Parsed bindings are retained on the
-            request-scoped node for the host publish fallback.
+            skip_reason, output_string).
         """
-        self.response_metric_output_bindings = None
         try:
             from datus.utils.json_utils import strip_json_str
 
@@ -1250,8 +872,6 @@ class GenMetricsAgenticNode(AgenticNode):
                 output_text = content.get("output")
                 semantic_model_files = self._normalize_semantic_model_files(content)
                 metric_file = content.get("metric_file")
-                metric_output_bindings = self._normalize_metric_output_bindings(content)
-                self.response_metric_output_bindings = metric_output_bindings
                 status = content.get("status")
                 normalized_status = status.strip().lower() if isinstance(status, str) else None
                 blocker_code = content.get("blocker_code")
@@ -1286,8 +906,6 @@ class GenMetricsAgenticNode(AgenticNode):
                             output_text = parsed.get("output")
                             semantic_model_files = self._normalize_semantic_model_files(parsed)
                             metric_file = parsed.get("metric_file")
-                            metric_output_bindings = self._normalize_metric_output_bindings(parsed)
-                            self.response_metric_output_bindings = metric_output_bindings
                             status = parsed.get("status")
                             normalized_status = status.strip().lower() if isinstance(status, str) else None
                             blocker_code = parsed.get("blocker_code")
@@ -1318,13 +936,6 @@ class GenMetricsAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Unexpected error extracting metric_file: {e}", exc_info=True)
             return None, None, None, None, None, None
-
-    @staticmethod
-    def _normalize_metric_output_bindings(content: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
-        raw_bindings = content.get("metric_output_bindings")
-        if not isinstance(raw_bindings, list):
-            return None
-        return raw_bindings
 
     @staticmethod
     def _normalize_semantic_model_files(content: Dict[str, Any]) -> List[str]:

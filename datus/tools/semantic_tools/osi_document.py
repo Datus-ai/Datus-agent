@@ -171,7 +171,7 @@ def _dataset(node: dict[str, Any]) -> OsiDataset:
     if isinstance(explicit_time, dict):
         explicit_time = explicit_time.get("name")
     primary_time_name = str(explicit_time or "").rsplit(".", 1)[-1]
-    if not primary_time_name and time_fields:
+    if not primary_time_name and len(time_fields) == 1:
         primary_time_name = str(time_fields[0].get("name") or "")
 
     primary_time: OsiDimension | None = None
@@ -184,9 +184,7 @@ def _dataset(node: dict[str, Any]) -> OsiDataset:
         field_views.append(dimension)
         if name == primary_time_name:
             primary_time = dimension
-        field_payload = _extension_payload(field_node)
-        is_dimension = "dimension" in field_node or bool(field_payload.get("type"))
-        if is_dimension and name != primary_time_name and name not in primary_keys:
+        if name != primary_time_name and name not in primary_keys:
             dimensions.append(dimension)
 
     return OsiDataset(

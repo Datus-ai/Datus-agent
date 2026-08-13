@@ -263,6 +263,10 @@ def _create_real_agent_config(
         "project_root": str(tmp_path / "workspace"),
         "storage": storage_config or {},
         "agentic_nodes": {
+            "semantic_modeling": {
+                "system_prompt": "semantic_modeling",
+                "max_turns": 5,
+            },
             "chat": {
                 "system_prompt": "chat",
                 "tools": "db_tools.*,context_search_tools.*",

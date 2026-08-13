@@ -170,7 +170,8 @@ class TestAskMetricsAgenticNode:
 
         assert "reserved input dimension `metric_time`" in prompt
         assert "Never pass the suffixed output name in `dimensions`" in prompt
-        assert "include the matching `metric_time__<grain>` dimension" not in prompt
+        assert "Order time-axis window results by their grained time result" in prompt
+        assert "Order value-oriented window results" in prompt
 
     def test_large_subject_tree_exposes_list_subject_tree_tool(self, real_agent_config, mock_llm_create):
         tree = {
