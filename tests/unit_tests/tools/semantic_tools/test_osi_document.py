@@ -78,6 +78,40 @@ semantic_model:
     assert document.metrics == []
 
 
+def test_load_osi_document_preserves_authored_source_types(tmp_path):
+    model = tmp_path / "sources.yml"
+    model.write_text(
+        """
+version: 0.2.0.dev0
+semantic_model:
+  - name: source_model
+    datasets:
+      - name: mapped_table
+        source: {table: analytics.orders}
+      - name: whitespace_query
+        source: "SELECT\\tCOUNT(*) FROM analytics.orders"
+      - name: extension_query
+        source: "VALUES (1)"
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"source_type":"query"}'
+      - name: extension_table
+        source: "SELECT_table"
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"source_type":"table"}'
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    document = load_osi_document(str(model), "source_model")
+
+    assert document.datasets[0].source.table == "analytics.orders"
+    assert document.datasets[1].source.query == "SELECT\tCOUNT(*) FROM analytics.orders"
+    assert document.datasets[2].source.query == "VALUES (1)"
+    assert document.datasets[3].source.table == "SELECT_table"
+
+
 def test_load_osi_document_leaves_multiple_time_fields_unresolved(tmp_path):
     model = tmp_path / "events.yml"
     model.write_text(

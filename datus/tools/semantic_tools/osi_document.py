@@ -145,9 +145,21 @@ def _names(value: Any) -> list[str]:
     return []
 
 
-def _source(value: Any) -> OsiSource:
+def _source(value: Any, source_type: Any = None) -> OsiSource:
+    authored_type = str(source_type or "").strip().lower()
+    if isinstance(value, dict):
+        query = str(value.get("query") or "").strip()
+        table = str(value.get("table") or "").strip()
+        if authored_type == "table":
+            return OsiSource(table=table or query)
+        if authored_type == "query" or query:
+            return OsiSource(query=query or table)
+        return OsiSource(table=table)
+
     text = str(value or "").strip()
-    if text.lstrip().lower().startswith(("select ", "with ", "(")):
+    if authored_type == "table":
+        return OsiSource(table=text)
+    if authored_type == "query" or re.match(r"^(?:select|with)\s", text, flags=re.IGNORECASE) or text.startswith("("):
         return OsiSource(query=text)
     return OsiSource(table=text)
 
@@ -198,7 +210,7 @@ def _dataset(node: dict[str, Any]) -> OsiDataset:
 
     return OsiDataset(
         name=str(node.get("name") or ""),
-        source=_source(node.get("source")),
+        source=_source(node.get("source"), payload.get("source_type")),
         primary_key=primary_keys,
         time_dimension=primary_time,
         dimensions=dimensions,
