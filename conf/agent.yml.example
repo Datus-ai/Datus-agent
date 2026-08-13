@@ -83,7 +83,10 @@ agent:
   # Profiles:
   #   normal    — Read-only allowed; all writes prompt; named destructive deny
   #   auto      — Normal + workspace writes auto + SQL non-destructive writes
-  #               auto; destructive SQL (UPDATE/DELETE/DROP/...) prompts (not deny)
+  #               auto; remaining bash/SQL prompts receive a single-shot AI
+  #               review. Confident low/medium-risk actions auto-run; high or
+  #               critical risk still requires confirmation (and is denied in
+  #               non-interactive runs).
   #   dangerous — Nearly everything auto (writes outside workspace still prompt)
   #
   # User rules in ``rules:`` are evaluated after the profile base, so they
@@ -93,6 +96,24 @@ agent:
   # ---------------------------------------------------------------------------
   # permissions:
   #   profile: normal
+  #   # AI review is enabled by default only for the ``auto`` profile. Static
+  #   # deny rules always win. Omit ``model`` (or use ``default``) to follow
+  #   # the active model; use ``provider/model`` or ``custom/alias`` to give
+  #   # the reviewer a separate model. An explicit model failure fails closed
+  #   # and never falls back to another model.
+  #   # The context and token bounds below cap reviewer cost: history evidence
+  #   # is trimmed to fit ``max_history_bytes`` (the planned action itself is
+  #   # never trimmed), and too small a ``max_completion_tokens`` truncates the
+  #   # structured verdict, which fails closed into a manual prompt.
+  #   # auto_review:
+  #   #   enabled: true
+  #   #   model: openai/gpt-5-mini
+  #   #   timeout_seconds: 20
+  #   #   confidence_threshold: 0.8
+  #   #   max_completion_tokens: 1024
+  #   #   max_history_bytes: 24576
+  #   #   max_user_messages: 8
+  #   #   max_prior_actions: 20
   #   # rules:
   #   #   - tool: db_tools
   #   #     pattern: execute_ddl
@@ -102,10 +123,13 @@ agent:
   #   # omitted). Pattern syntax — no colon = exact command; "prefix:*" =
   #   # prefix match; "prefix:glob" = prefix + first-argument glob. Decision
   #   # order: deny (also matches wrapped commands like ``xargs rm``) →
-  #   # safety ceiling (bash -c / sudo / && / $() / redirection always ask) →
-  #   # ask → allow → default (ask). A PURE pipeline (``a | b | c``) is judged
-  #   # per segment: it auto-runs only if every segment is allowed, and any
-  #   # denied segment blocks the whole pipeline. The confirmation prompt
+  #   # safety ceiling (bash -c / sudo / && / $() / redirection never auto-allow
+  #   # statically) → ask → allow → default (ask). A PURE pipeline (``a | b | c``)
+  #   # is judged per segment: it auto-runs only if every segment is allowed, and
+  #   # any denied segment blocks the whole pipeline. A safety-ceiling ASK is
+  #   # still eligible for ``auto_review`` above, which reads the full command
+  #   # text; only unparseable commands always require a person. Safety-ceiling
+  #   # asks are never offered as project-level grants. The confirmation prompt
   #   # offers once / session / project scopes; "project" appends the prefix
   #   # to ``.datus/config.yml``'s ``bash_allow`` list.
   #   # bash_commands:
@@ -118,7 +142,7 @@ agent:
   #   #     - "git push:*"            # deny always beats allow
   #   #   ask:
   #   #     - "docker:*"              # confirm every call (session approval per bucket)
-  #   #   classifier:                 # reserved: LLM classifier (not implemented)
+  #   #   classifier:                 # deprecated bash-only compatibility override
   #   #     enabled: false
   #   #
   #   # Installed plugins may declare bash rules for their own ``datus <plugin>``

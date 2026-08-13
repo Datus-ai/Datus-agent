@@ -87,6 +87,7 @@ class TestCreateModelCache:
         cfg = MagicMock()
         cfg.active_model.return_value = model_config
         cfg.model_config.return_value = model_config
+        cfg.resolve_model_ref.return_value = model_config
         cfg.models = {"custom": model_config}
         cfg.session_dir = None
         return cfg

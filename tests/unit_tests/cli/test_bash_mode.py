@@ -34,6 +34,8 @@ from datus.cli.bash_mode import (
     _make_input_collector,
     _resolve_bash_tool,
     _resolve_permission_components,
+    _SqlContextShim,
+    _ToolContextShim,
     run_bash_mode_command,
 )
 from datus.schemas.action_history import ActionRole, ActionStatus
@@ -80,6 +82,17 @@ class TestShimContract:
     def test_context_shim_is_json_encoded(self):
         shim = _BashContextShim("echo hi")
         assert json.loads(shim.tool_arguments) == {"command": "echo hi"}
+        assert shim.direct_user_invocation is True
+
+    def test_every_shim_marks_direct_user_invocation(self):
+        """All three shims stand for a command the user typed themselves.
+
+        The auto reviewer reads ``direct_user_invocation`` as authorization
+        evidence, so a regression on any shim would silently change
+        auto-approval for manual SQL and manual tool calls.
+        """
+        assert _SqlContextShim("select 1").direct_user_invocation is True
+        assert _ToolContextShim({"query_text": "foo"}).direct_user_invocation is True
 
     def test_tool_stub_exposes_bash_name(self):
         """``on_tool_start`` resolves the tool via ``getattr(tool, "name")``."""

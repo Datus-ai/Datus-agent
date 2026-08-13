@@ -28,7 +28,12 @@ results are aggregated (any DENY -> DENY; any safety-forced -> ASK; all ALLOW
 -> ALLOW; otherwise ASK). This lets a pipeline of allow-listed read-only
 commands (``cat log | grep err | wc -l``) auto-run. Every OTHER shell
 construct (``&&``, ``;``, ``||``, ``$()``, redirection) hits the safety
-ceiling and requires confirmation.
+ceiling, so these static rules never allow it on their own.
+
+The safety ceiling is a *static* verdict, not a final one: under a profile with
+``permissions.auto_review`` enabled the shared reviewer in ``auto_reviewer.py``
+sees the full command text and may still resolve such an ASK. Only unparseable
+commands are kept behind direct user confirmation.
 
 Per-segment decision order (deny-bypass-resistant, mirroring Claude Code's
 asymmetry of aggressive deny / conservative allow):
@@ -48,8 +53,8 @@ asymmetry of aggressive deny / conservative allow):
 5. allow rules                -> ALLOW (anchored only, never unanchored)
 6. rules.default              -> usually ASK
 
-The ``classifier`` config block is a reserved seam for a future LLM-based
-classifier (see ``bash_classifier.py``); it carries configuration only.
+The legacy ``classifier`` config block is retained as a deprecated bash-only
+override for the shared automatic reviewer settings.
 """
 
 import fnmatch
@@ -239,16 +244,21 @@ def _normalize_datus_plugin_argv(argv: List[str]) -> List[str]:
 
 
 class BashClassifierConfig(BaseModel):
-    """Reserved configuration for the future LLM command classifier.
+    """Deprecated bash-only configuration alias for the shared AI reviewer.
 
-    Parsed and carried through the config pipeline today; consumed only by
-    ``bash_classifier.create_bash_classifier`` which returns ``None`` until a
-    real implementation lands. See ``bash_classifier.py`` for the contract.
+    ``PermissionHooks`` maps explicitly configured fields onto
+    ``permissions.auto_review`` for bash actions. The separate classifier
+    interface remains only as a test/embedder compatibility seam.
     """
 
-    enabled: bool = Field(default=False, description="Enable the LLM classifier (no implementation yet)")
-    model: Optional[str] = Field(default=None, description="Model name for LLMBaseModel.create_model")
-    confidence_threshold: float = Field(default=0.8, description="Minimum confidence for a verdict to act")
+    enabled: bool = Field(default=False, description="Enable AI review for bash ASK actions")
+    model: Optional[str] = Field(default=None, description="Reviewer model reference")
+    confidence_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence for a verdict to act",
+    )
 
 
 class BashCommandRules(BaseModel):
@@ -346,9 +356,14 @@ class BashRuleDecision:
         bucket: Session-approval bucket key (e.g. ``git push`` or an ask-rule
             pattern) — "always allow" grants are scoped to this bucket.
         safety_forced: True when the ASK came from the safety ceiling or an
-            unparseable command. Such decisions must never be auto-resolved by
-            the future LLM classifier, and must not be offered as persistent
-            project-level allows.
+            unparseable command. Such decisions are never auto-resolved by the
+            deprecated bash-only classifier seam, and are never offered as
+            persistent project-level allows. The shared structured reviewer in
+            ``auto_reviewer.py`` MAY still resolve them, because it inspects the
+            complete command text that the argv-level rules cannot see (a
+            wrapper, metacharacter, or ``$()`` is judged on its actual effect).
+            Genuinely unparseable commands stay behind direct user
+            confirmation — the reviewer is never consulted for them.
         segment_ask_patterns: For an ASK pipeline decision, the
             ``(source, matched_pattern)`` of EVERY non-allow segment. The hook's
             project-grant bypass must cover each segment, not just the

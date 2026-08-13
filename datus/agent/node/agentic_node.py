@@ -3945,12 +3945,7 @@ class AgenticNode(Node):
 
             # Never call ``_get_or_create_broker`` here — it resets the queue
             # and orphans any parent CLI listener when running as a sub-agent.
-            # Reserved LLM-classifier seam for bash commands: returns None
-            # until ``permissions.bash_commands.classifier.enabled`` gains a
-            # real implementation (see bash_classifier.py).
-            from datus.tools.permission.bash_classifier import create_bash_classifier
-
-            bash_rules = getattr(getattr(self.agent_config, "permissions_config", None), "bash_commands", None)
+            from datus.tools.permission.auto_reviewer import create_auto_reviewer
 
             self.permission_hooks = PermissionHooks(
                 broker=self.interaction_broker,
@@ -3962,7 +3957,8 @@ class AgenticNode(Node):
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
                 config_mutable=self._resolve_config_mutable(),
-                bash_classifier=create_bash_classifier(bash_rules, self.agent_config),
+                auto_reviewer=create_auto_reviewer(self.agent_config),
+                review_context_provider=self._build_permission_review_context,
             )
             logger.debug(
                 f"PermissionHooks attached to node '{self.get_node_name()}' "
@@ -3981,6 +3977,57 @@ class AgenticNode(Node):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Permission hook setup failed for {self.get_node_name()}: {e}"},
             ) from e
+
+    def _build_permission_review_context(self) -> Dict[str, Any]:
+        """Return minimal permission-review evidence without tool outputs.
+
+        User actions are trusted authorization evidence. Bash/SQL call
+        arguments are retained only as explicitly-labelled untrusted history;
+        assistant prose and every tool result are omitted.
+        """
+        combined: List[ActionHistory] = list(self.actions)
+        current = getattr(self, "_current_action_history", None)
+        if current is not None:
+            combined.extend(current.get_actions())
+
+        seen: Set[str] = set()
+        user_messages: List[str] = []
+        prior_actions: List[Dict[str, Any]] = []
+        for action in combined:
+            if action.action_id in seen:
+                continue
+            seen.add(action.action_id)
+            role = ActionRole(action.role)
+            if role == ActionRole.USER:
+                payload = action.input if isinstance(action.input, dict) else {}
+                message = payload.get("user_message") or action.messages
+                if isinstance(message, str) and message.strip():
+                    user_messages.append(message.removeprefix("User: ").strip())
+                continue
+            if role != ActionRole.TOOL:
+                continue
+            tool_name = action.action_type or action.function_name()
+            if tool_name not in {"bash", "execute_sql"}:
+                continue
+            payload = action.input if isinstance(action.input, dict) else {}
+            arguments: Any = payload.get("arguments", payload)
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {"raw": arguments}
+            prior_actions.append({"tool": tool_name, "arguments": arguments})
+
+        sandbox = getattr(self.agent_config, "bash_sandbox", None)
+        return {
+            "trusted_user_messages": user_messages,
+            "prior_actions": prior_actions,
+            "environment": {
+                "session_id": self.session_id,
+                "sandbox_enabled": bool(getattr(sandbox, "enabled", False)),
+                "sandbox_mode": getattr(sandbox, "mode", None),
+            },
+        }
 
     def _ensure_tool_transformers(self) -> None:
         """Wrap ``self.tools`` with plugin-declared argument transformers, once.

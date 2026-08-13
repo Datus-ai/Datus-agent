@@ -15,7 +15,7 @@ import fnmatch
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from datus.tools.permission.bash_rules import BashCommandRules
@@ -32,6 +32,59 @@ class PermissionLevel(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
     ASK = "ask"
+
+
+class AutoReviewConfig(BaseModel):
+    """Configuration for AI review of bash/SQL actions that remain ASK.
+
+    Profiles provide the default ``enabled`` posture.  User configuration is
+    layered field-by-field so setting only a dedicated model does not reset
+    the profile's timeout or confidence threshold.
+    """
+
+    enabled: bool = Field(default=False, description="Review bash/SQL ASK actions with an LLM")
+    model: Optional[str] = Field(
+        default=None,
+        description="Reviewer model reference: provider/model, custom/alias, or omitted for the active model",
+    )
+    timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    max_completion_tokens: int = Field(
+        default=1024,
+        gt=0,
+        le=8192,
+        description="Completion budget for one review; too small truncates the structured verdict",
+    )
+    max_history_bytes: int = Field(
+        default=24 * 1024,
+        gt=0,
+        le=512 * 1024,
+        description="Byte ceiling for the trimmed review history (planned action is never trimmed)",
+    )
+    max_user_messages: int = Field(
+        default=8, gt=0, le=100, description="Most recent trusted user messages included as authorization evidence"
+    )
+    max_prior_actions: int = Field(
+        default=20, gt=0, le=200, description="Most recent prior bash/SQL arguments included as untrusted history"
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["AutoReviewConfig"]:
+        if data is None:
+            return None
+        if not isinstance(data, dict):
+            raise ValueError(f"permissions.auto_review must be a mapping, got {type(data).__name__}")
+        return cls(**data)
+
+    def merge_with(self, override: Optional["AutoReviewConfig"]) -> "AutoReviewConfig":
+        if override is None:
+            return self
+        values = self.model_dump()
+        for field_name in override.model_fields_set:
+            values[field_name] = getattr(override, field_name)
+        return AutoReviewConfig(**values)
 
 
 class PermissionRule(BaseModel):
@@ -239,6 +292,10 @@ class PermissionConfig(BaseModel):
     sql_statements: Optional[SqlStatementRules] = Field(
         default=None, description="Per-class permission levels for execute_sql statements"
     )
+    auto_review: AutoReviewConfig = Field(
+        default_factory=AutoReviewConfig,
+        description="AI review settings for bash/SQL actions that remain ASK",
+    )
 
     class Config:
         use_enum_values = True
@@ -272,6 +329,7 @@ class PermissionConfig(BaseModel):
             rules=rules,
             bash_commands=BashCommandRules.from_dict(data.get("bash_commands")),
             sql_statements=SqlStatementRules.from_dict(data.get("sql_statements")),
+            auto_review=AutoReviewConfig.from_dict(data.get("auto_review")) or AutoReviewConfig(),
         )
 
     def merge_with(self, override: Optional["PermissionConfig"]) -> "PermissionConfig":
@@ -305,6 +363,8 @@ class PermissionConfig(BaseModel):
         else:
             merged_sql = override.sql_statements
 
+        merged_auto_review = self.auto_review.merge_with(override.auto_review)
+
         # Always use override's default_permission when override is provided
         # This allows overriding just the default without adding rules
         return PermissionConfig(
@@ -312,6 +372,7 @@ class PermissionConfig(BaseModel):
             rules=merged_rules,
             bash_commands=merged_bash,
             sql_statements=merged_sql,
+            auto_review=merged_auto_review,
         )
 
 

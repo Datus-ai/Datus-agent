@@ -2601,6 +2601,30 @@ class TestBashCommandPermission:
         assert mock_broker.request.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_legacy_classifier_not_consulted_non_interactively(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        calls = []
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                calls.append(command)
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.99, reason="safe")
+
+        hooks, _ = self._make_hooks(
+            mock_broker,
+            bash_commands={"allow": ["git log:*"]},
+            bash_classifier=StubClassifier(),
+            non_interactive=True,
+        )
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        assert calls == []
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_switch_profile_clears_session_but_keeps_project_allows(self, mock_broker, tmp_path):
         hooks, manager = self._make_hooks(
             mock_broker, bash_commands={"allow": ["git log:*"]}, project_root=str(tmp_path)

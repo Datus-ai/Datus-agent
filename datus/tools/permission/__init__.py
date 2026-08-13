@@ -21,6 +21,7 @@ from datus.tools.permission.bash_rules import (
     evaluate_bash_command,
 )
 from datus.tools.permission.permission_config import (
+    AutoReviewConfig,
     PermissionConfig,
     PermissionLevel,
     PermissionRule,
@@ -36,6 +37,7 @@ from datus.tools.permission.permission_manager import PermissionManager
 
 __all__ = [
     "PermissionLevel",
+    "AutoReviewConfig",
     "PermissionRule",
     "PermissionConfig",
     "PermissionManager",

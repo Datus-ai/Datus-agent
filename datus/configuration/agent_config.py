@@ -2475,6 +2475,34 @@ class AgentConfig:
             raise ValueError(f"Model {name} not found")
         return self.models[name]
 
+    def resolve_model_ref(self, ref: Optional[str] = None) -> ModelConfig:
+        """Resolve a stable model reference without changing the active model.
+
+        ``None``/``default`` follows the active selection, ``custom/<alias>``
+        resolves a legacy ``agent.models`` entry, and ``provider/<model>``
+        synthesizes a model from the provider catalog and configured
+        credentials.  The concrete model portion may itself contain slashes.
+        """
+        normalized = str(ref or "default").strip()
+        if not normalized or normalized == "default":
+            return self.active_model()
+        if normalized.startswith("custom/"):
+            alias = normalized.split("/", 1)[1]
+            if alias not in self.models:
+                raise ValueError(f"Custom model {alias!r} not found")
+            return self.models[alias]
+        if normalized in self.models:
+            return self.models[normalized]
+        if "/" not in normalized:
+            raise ValueError(f"Model reference {normalized!r} is neither an agent.models alias nor provider/model")
+        provider, model_name = normalized.split("/", 1)
+        providers = self.provider_catalog.get("providers", {})
+        if provider not in providers and provider not in self.providers:
+            raise ValueError(f"Unknown model provider {provider!r}")
+        if not model_name:
+            raise ValueError(f"Model reference {normalized!r} is missing the model name")
+        return self._synthesize_model(provider, model_name)
+
     # ── Provider-level helpers ─────────────────────────────────────────────
 
     @property

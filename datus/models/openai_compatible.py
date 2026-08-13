@@ -741,6 +741,12 @@ class OpenAICompatibleModel(LLMBaseModel):
         """
         # Set JSON mode
         json_kwargs = kwargs.copy()
+        # ``output_schema`` is understood by schema-capable adapters such as
+        # CodexModel, but it is not a LiteLLM completion parameter. Callers
+        # that need portable structured output include the schema in-band and
+        # validate the returned object; never leak this internal kwarg to the
+        # provider request.
+        json_kwargs.pop("output_schema", None)
         json_kwargs["response_format"] = {"type": "json_object"}
 
         # Pass through enable_thinking if provided
