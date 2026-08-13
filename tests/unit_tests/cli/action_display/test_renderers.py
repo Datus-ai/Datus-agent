@@ -568,13 +568,15 @@ class TestRenderMainAction:
         panel = result[0]
         assert isinstance(panel, Panel)
         assert str(panel.border_style) == "green"
-        assert str(panel.style) == "on #eeeeee"
+        # No background fill: the block must inherit the terminal background so
+        # it reads correctly on both dark and light schemes.
+        assert str(panel.style) == "none"
         inner = panel.renderable
         assert isinstance(inner, Text)
         assert inner.plain.startswith("> ")
         assert "my question" in inner.plain
-        assert str(inner.spans[0].style) == "green bold on #eeeeee"
-        assert str(inner.spans[1].style) == "on #eeeeee"
+        assert str(inner.spans[0].style) == "green bold"
+        assert all("on " not in str(span.style) for span in inner.spans)
 
     def test_user_action_exec_message_is_suppressed_live(self):
         """During the live model turn, a marker-encoded manual-execution USER
@@ -830,13 +832,13 @@ class TestUtilityRenderables:
         panel = _renderer().render_user_header("What is revenue?")
         assert isinstance(panel, Panel)
         assert str(panel.border_style) == "green"
-        assert str(panel.style) == "on #eeeeee"
+        assert str(panel.style) == "none"
         inner = panel.renderable
         assert isinstance(inner, Text)
         assert inner.plain.startswith("> ")
         assert "What is revenue?" in inner.plain
-        assert str(inner.spans[0].style) == "green bold on #eeeeee"
-        assert str(inner.spans[1].style) == "on #eeeeee"
+        assert str(inner.spans[0].style) == "green bold"
+        assert all("on " not in str(span.style) for span in inner.spans)
 
     def test_user_header_exec_message_renders_styled_block(self):
         """On resume, a manual-execution record renders as its bash/sql block
