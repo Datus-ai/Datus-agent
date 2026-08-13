@@ -35,17 +35,24 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         self,
         *args,
         authoring_format: str = "metricflow",
+        semantic_adapter: str = "",
         osi_target_state: Optional["OsiSemanticModelTargetState"] = None,
         generation_evidence: Optional["GenerationEvidence"] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.authoring_format = (authoring_format or "metricflow").strip().lower()
+        self.semantic_adapter = (
+            (semantic_adapter or ("osi" if self.authoring_format == "osi" else "metricflow")).strip().lower()
+        )
         self.osi_target_state = osi_target_state
         self.generation_evidence = generation_evidence
 
     def _is_metricflow_authoring(self) -> bool:
         return self.authoring_format == "metricflow"
+
+    def _require_metric_revision(self, path: str | Path) -> None:
+        self.osi_target_state.require_current_revision(path)
 
     def available_tools(self):
         """Expose format-specific filesystem mutation tools.
@@ -206,8 +213,12 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     return FuncToolResult(success=0, error=f"Invalid OSI dataset update: {validation_error}")
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.osi_target_state is not None and self.osi_target_state.bound is not None:
-                        self.osi_target_state.record_metric_snapshot(target_path, original_content)
+                    if self.osi_target_state is not None:
+                        self.osi_target_state.record_artifact_snapshot(
+                            target_path,
+                            original_content,
+                            existed=not creating,
+                        )
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
@@ -221,6 +232,8 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     serialized_content,
                     list(incoming_by_name),
                 )
+            elif self.osi_target_state is not None and self.osi_target_state.planned is not None:
+                self.osi_target_state.record_planned_dataset_touch([*created, *updated])
 
         return FuncToolResult(
             result={
@@ -314,8 +327,8 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     return FuncToolResult(success=0, error=f"Invalid OSI dataset deletion: {validation_error}")
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    if self.osi_target_state is not None and self.osi_target_state.bound is not None:
-                        self.osi_target_state.record_metric_snapshot(target_path, original_content)
+                    if self.osi_target_state is not None:
+                        self.osi_target_state.record_artifact_snapshot(target_path, original_content)
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
@@ -419,7 +432,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         with semantic_artifact_lock(target_path):
             if self.osi_target_state is not None:
                 try:
-                    self.osi_target_state.require_current_revision(target_path)
+                    self._require_metric_revision(target_path)
                 except ValueError as exc:
                     return FuncToolResult(
                         success=0,
@@ -486,7 +499,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
                     if self.osi_target_state is not None:
-                        self.osi_target_state.record_metric_snapshot(target_path, original_content)
+                        self.osi_target_state.record_artifact_snapshot(target_path, original_content)
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
@@ -553,7 +566,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
         with semantic_artifact_lock(target_path):
             try:
-                self.osi_target_state.require_current_revision(target_path)
+                self._require_metric_revision(target_path)
             except ValueError as exc:
                 return FuncToolResult(
                     success=0,
@@ -608,7 +621,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     return FuncToolResult(success=0, error=f"Invalid OSI metric deletion: {validation_error}")
                 serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
                 try:
-                    self.osi_target_state.record_metric_snapshot(target_path, original_content)
+                    self.osi_target_state.record_artifact_snapshot(target_path, original_content)
                     atomic_write_text(target_path, serialized)
                 except OSError as exc:
                     return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
@@ -636,29 +649,36 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             }
         )
 
-    def rollback_failed_metric_authoring(self) -> bool:
-        """Restore the artifact revision captured before this request authored metrics."""
+    def rollback_failed_authoring(self) -> bool:
+        """Restore the artifact revision captured before this request's first mutation."""
         state = self.osi_target_state
-        if state is None or state.metric_snapshot_content is None or not state.metric_snapshot_path:
+        if state is None or state.artifact_snapshot_content is None or not state.artifact_snapshot_path:
             return False
 
-        target_path = Path(state.metric_snapshot_path)
-        original_content = state.metric_snapshot_content
+        target_path = Path(state.artifact_snapshot_path)
+        original_content = state.artifact_snapshot_content
         with semantic_artifact_lock(target_path):
             try:
-                restored_content = original_content.decode("utf-8")
-                atomic_write_text(target_path, restored_content)
+                if state.artifact_snapshot_existed:
+                    restored_content = original_content.decode("utf-8")
+                    atomic_write_text(target_path, restored_content)
+                    rollback_content: Optional[bytes] = original_content
+                else:
+                    target_path.unlink(missing_ok=True)
+                    rollback_content = None
             except (OSError, UnicodeDecodeError):
                 return False
-            self._notify_mutation(target_path)
-            state.record_metric_rollback(original_content)
+            if self.generation_evidence is not None:
+                self.generation_evidence.record_artifact_mutation(target_path)
+            state.record_artifact_rollback(rollback_content)
         return True
 
-    @staticmethod
-    def _validate_osi_document(document: Dict[str, Any]) -> Optional[str]:
-        from datus.agent.node.semantic_authoring import validate_osi_core_document
+    def _validate_osi_document(self, document: Dict[str, Any]) -> Optional[str]:
+        from datus.agent.node.semantic_authoring import (
+            validate_osi_authoring_document,
+        )
 
-        return validate_osi_core_document(document)
+        return validate_osi_authoring_document(document, semantic_adapter=self.semantic_adapter)
 
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
         resolved = self._classify(path)
@@ -1185,14 +1205,89 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
             except (OSError, yaml.YAMLError) as exc:
                 return FuncToolResult(success=0, error=f"Cannot edit OSI semantic model {resolved.display}: {exc}")
 
+            try:
+                original_document = yaml.safe_load(content)
+            except yaml.YAMLError:
+                original_document = None
+
             if not isinstance(document, dict):
                 return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
             validation_error = self._validate_osi_document(document)
             if validation_error:
                 return FuncToolResult(success=0, error=f"Invalid OSI semantic model edit: {validation_error}")
             try:
+                if self.osi_target_state is not None:
+                    self.osi_target_state.record_artifact_snapshot(target_path, content.encode("utf-8"))
                 atomic_write_text(target_path, new_content)
             except OSError as exc:
                 return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
             self._notify_mutation(target_path)
+            if self.osi_target_state is not None and self.osi_target_state.planned is not None:
+                before = self._dataset_definitions(original_document)
+                after = self._dataset_definitions(document)
+                changed = [
+                    (after.get(key) or before[key])[0]
+                    for key in before.keys() | after.keys()
+                    if before.get(key) != after.get(key)
+                ]
+                if changed:
+                    self.osi_target_state.record_planned_dataset_touch(changed)
         return FuncToolResult(result=f"File edited successfully: {resolved.display}")
+
+    @staticmethod
+    def _dataset_definitions(document: Any) -> Dict[str, tuple[str, Dict[str, Any]]]:
+        """Index dataset definitions for planned edit change tracking."""
+        models = document.get("semantic_model") if isinstance(document, dict) else None
+        if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+            return {}
+        return {
+            str(dataset.get("name") or "").strip().casefold(): (str(dataset.get("name") or "").strip(), dataset)
+            for dataset in models[0].get("datasets") or []
+            if isinstance(dataset, dict) and str(dataset.get("name") or "").strip()
+        }
+
+
+class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
+    """Combined OSI surface for one dataset-and-metric authoring run."""
+
+    @staticmethod
+    def _query_source_extensions(value: Any) -> List[Dict[str, Any]]:
+        """Stamp Dosi query-backed datasets with the active extension version."""
+        from datus_semantic_dosi.engine import datus_extension_version
+
+        extensions = MetricFilesystemFuncTool._query_source_extensions(value)
+        for extension in extensions:
+            if not isinstance(extension, dict) or str(extension.get("vendor_name") or "").upper() != "DATUS":
+                continue
+            try:
+                payload = json.loads(str(extension.get("data") or "{}"))
+            except json.JSONDecodeError:
+                payload = {}
+            payload = payload if isinstance(payload, dict) else {}
+            payload["v"] = datus_extension_version()
+            payload["source_type"] = "query"
+            extension["data"] = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            break
+        return extensions
+
+    def _require_metric_revision(self, path: str | Path) -> None:
+        self.osi_target_state.require_selected_revision(path)
+
+    def available_tools(self):
+        """Expose the existing narrow dataset and metric mutation methods."""
+        from datus.tools.func_tool import trans_to_function_tool
+
+        return [
+            trans_to_function_tool(self.read_file),
+            trans_to_function_tool(self.edit_file),
+            trans_to_function_tool(self.upsert_osi_datasets),
+            trans_to_function_tool(self.delete_osi_datasets),
+            trans_to_function_tool(self.upsert_osi_metrics),
+            trans_to_function_tool(self.delete_osi_metrics),
+            trans_to_function_tool(self.glob),
+            trans_to_function_tool(self.grep),
+        ]
+
+    def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
+        """Edit relationships or model metadata on the once-selected target."""
+        return super().edit_file(path=path, old_string=old_string, new_string=new_string)

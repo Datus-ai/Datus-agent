@@ -204,6 +204,9 @@ ci = [
     "datus-semantic-metricflow>=0.2.12",
     # Required so the OSI authoring tests run in CI (rather than skipping).
     "datus-semantic-osi>=0.1.4",
+    # The current PyPI release predates the authoring-spec API used here.
+    # Use the merged adapter source until the next adapter package is released.
+    "datus-semantic-dosi @ https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz#subdirectory=datus-semantic-dosi ; platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 
 [tool.coverage.run]

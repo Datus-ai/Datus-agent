@@ -47,7 +47,14 @@ def create_interactive_node(
     if subagent_name:
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
 
-        if subagent_name == "gen_semantic_model":
+        if subagent_name == "semantic_modeling":
+            from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+            return SemanticModelingAgenticNode(
+                agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
+            )
+
+        elif subagent_name == "gen_semantic_model":
             from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
             return GenSemanticModelAgenticNode(
@@ -379,11 +386,13 @@ def _build_typed_node_input(
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
     from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
     from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 
     if isinstance(
         node,
         (
+            SemanticModelingAgenticNode,
             GenSemanticModelAgenticNode,
             GenMetricsAgenticNode,
             GenTableAgenticNode,

@@ -1,18 +1,25 @@
 # Dosi Semantic Adapter
 
 The Dosi adapter executes OSI semantic models directly in the native Rust
-engine. It uses the same strict OSI authoring workflow as the existing OSI
-adapter, but does not lower models to MetricFlow.
+engine. Its authoring, validation, catalog loading, and execution paths are
+provided by `datus-semantic-dosi`; it does not load the Python OSI adapter or
+lower models to MetricFlow.
 
 ## Install
 
+For local development, a published `dosi-engine` package is not required. From
+the `Datus-agent` checkout in the standard sibling-repository layout, install
+the engine binding and adapter sources into the same environment:
+
 ```bash
-pip install datus-semantic-dosi
+uv pip install -e ../osi-engine/crates/dosi-py
+uv pip install -e ../datus-semantic-adapter/datus-semantic-core
+uv pip install -e ../datus-semantic-adapter/datus-semantic-dosi
 ```
 
-This command also installs the required `dosi-engine` wheel. The `/services`
-Semantic tab performs the same installation automatically when `dosi` is
-selected.
+The adapter still declares the logical `dosi-engine` dependency, but the local
+editable install satisfies it directly from source. A released engine version
+is needed only for registry-based installation and formal delivery.
 
 ## Configure
 
@@ -36,18 +43,23 @@ selects the only YAML or JSON model in that directory. Configure
 
 ## Supported Semantics
 
-Dosi currently executes aggregate, ratio, and expression metrics; dimensions;
+Dosi executes aggregate, ratio, and expression metrics; dimensions;
 many-to-one relationships; composite joins; query-backed datasets; filters;
-and day-through-year time grains. Its planner rejects ambiguous join paths and
-fan-out-prone queries rather than silently double-counting.
-
-Derived metrics, cumulative or rolling windows, metric offsets, and
-period-over-period metrics remain on the OSI + MetricFlow path until Dosi gains
-equivalent execution support.
+day-through-year time grains; `time_dimension` primary axes; relationship
+`join_type`; metric `fill_nulls_with`; and structured windows. Datus-ext 1.3
+supports period comparison, rolling, cumulative, rank/distribution,
+first/last/nth value, backward or forward offset, and explicit statistical
+frames over row- or value-based ranges.
 
 ## Authoring and Validation
 
-Selecting `dosi` still activates Datus's OSI semantic-model and metric
-authoring skills. `validate_semantic`, `list_metrics`, `get_dimensions`, and
-`query_metrics` are routed through the Dosi adapter. The authored OSI document
-remains the source of truth.
+Selecting `dosi` activates strict OSI authoring plus a Dosi-native extension
+profile. `validate_semantic`, `list_metrics`, `get_dimensions`, and
+`query_metrics` are routed through the native engine. For time queries, pass
+`metric_time` as the dimension and the grain separately; a returned column such
+as `metric_time__<grain>` is an output/order key.
+
+The unified `semantic_modeling` workflow lists valid and repairable existing
+models separately. It binds a valid target or plans the same repairable model
+in place, applies the requested changes, validates the exact final artifact,
+and reconciles that artifact to the Knowledge Base.

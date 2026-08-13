@@ -17,6 +17,7 @@ from datus.agent.node.semantic_authoring import (
     required_authoring_skills,
     resolve_authoring_format,
     resolve_semantic_adapter_type,
+    validate_osi_authoring_document,
     validate_osi_core_document,
 )
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -77,6 +78,34 @@ def test_validate_osi_core_document_uses_canonical_validator(monkeypatch):
 
     profile_module.validate_osi_core_schema = reject
     assert validate_osi_core_document({"version": "invalid"}) == "schema mismatch"
+
+
+def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
+    calls = []
+    package_module = ModuleType("datus_semantic_dosi")
+    package_module.__path__ = []
+    authoring_module = ModuleType("datus_semantic_dosi.authoring")
+    authoring_module.validate_dosi_document = calls.append
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring", authoring_module)
+
+    document = {"version": "0.2.0.dev0"}
+    assert validate_osi_authoring_document(document, semantic_adapter="dosi") is None
+    assert calls == [document]
+
+
+def test_dosi_prompt_rendering_reports_missing_adapter_package(monkeypatch):
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", None)
+
+    with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
+        semantic_authoring.render_required_authoring_skill("dosi-semantic-authoring", "authoring")
+
+
+def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", None)
+
+    with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
+        semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "gen_metrics")
 
 
 def test_legacy_node_config_fields_are_ignored():
@@ -341,14 +370,15 @@ def test_adapter_type_resolution_propagates_agent_config_errors():
 @pytest.mark.parametrize(
     "node_name, adapter, expected",
     [
-        (
-            "gen_semantic_model",
-            "metricflow",
-            "sql-modeling-preflight,metricflow-semantic-authoring",
-        ),
-        ("gen_semantic_model", "osi", "sql-modeling-preflight,osi-semantic-authoring"),
-        ("gen_metrics", "metricflow", "sql-modeling-preflight,gen-metrics"),
-        ("gen_metrics", "osi", "sql-modeling-preflight,osi-metrics-authoring"),
+        ("semantic_modeling", "metricflow", ""),
+        ("semantic_modeling", "osi", ""),
+        ("semantic_modeling", "dosi", "dosi-semantic-authoring"),
+        ("gen_semantic_model", "metricflow", "metricflow-semantic-authoring"),
+        ("gen_semantic_model", "osi", "osi-semantic-authoring"),
+        ("gen_semantic_model", "dosi", "dosi-semantic-authoring"),
+        ("gen_metrics", "metricflow", "gen-metrics"),
+        ("gen_metrics", "osi", "osi-metrics-authoring"),
+        ("gen_metrics", "dosi", "dosi-semantic-authoring"),
         ("unknown_node", "metricflow", ""),
     ],
 )
@@ -359,6 +389,8 @@ def test_required_authoring_skills_derive_from_format(node_name, adapter, expect
 @pytest.mark.parametrize(
     "node_name, adapter, expected",
     [
+        ("semantic_modeling", "metricflow", ""),
+        ("semantic_modeling", "osi", ""),
         ("gen_semantic_model", "metricflow", "semantic-sql-history-profiler"),
         ("gen_semantic_model", "osi", "semantic-sql-history-profiler"),
         ("gen_metrics", "metricflow", "metricflow-semantic-authoring"),
@@ -414,8 +446,9 @@ def test_node_skill_defaults_respect_explicit_config(monkeypatch):
 @pytest.mark.parametrize(
     "adapter, expected",
     [
-        ("metricflow", ["sql-modeling-preflight", "metricflow-semantic-authoring"]),
-        ("osi", ["sql-modeling-preflight", "osi-semantic-authoring"]),
+        ("metricflow", ["metricflow-semantic-authoring"]),
+        ("osi", ["osi-semantic-authoring"]),
+        ("dosi", ["dosi-semantic-authoring"]),
     ],
 )
 def test_gen_semantic_model_required_skills(adapter, expected):
@@ -429,8 +462,9 @@ def test_gen_semantic_model_required_skills(adapter, expected):
 @pytest.mark.parametrize(
     "adapter, expected",
     [
-        ("metricflow", ["sql-modeling-preflight", "gen-metrics"]),
-        ("osi", ["sql-modeling-preflight", "osi-metrics-authoring"]),
+        ("metricflow", ["gen-metrics"]),
+        ("osi", ["osi-metrics-authoring"]),
+        ("dosi", ["dosi-semantic-authoring"]),
     ],
 )
 def test_gen_metrics_required_skills(adapter, expected):

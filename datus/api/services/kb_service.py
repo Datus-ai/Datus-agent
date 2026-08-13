@@ -1,8 +1,8 @@
 """Service for knowledge base bootstrap with SSE streaming."""
 
 import asyncio
-import os
 import types
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 from datus.api.models.kb_models import (
@@ -11,8 +11,9 @@ from datus.api.models.kb_models import (
     BootstrapKbInput,
     KbComponent,
 )
+from datus.api.utils.path_utils import safe_resolve
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.batch_events import BatchEvent, BatchStage
+from datus.schemas.batch_events import BatchEvent, BatchEventEmitter, BatchStage
 from datus.storage.metric.metric_init import init_success_story_metrics
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql import ReferenceSqlRAG
@@ -23,6 +24,7 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
     refresh_success_story_semantic_model_profile,
 )
+from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager
@@ -196,6 +198,9 @@ class KbService:
             elif component == KbComponent.SEMANTIC_MODEL:
                 return self._init_semantic_model(config, strategy, dir_path, args, emit)
 
+            elif component == KbComponent.SEMANTIC_MODELING:
+                return self._init_semantic_modeling(config, strategy, args, subject_tree, emit)
+
             elif component == KbComponent.METRICS:
                 return self._init_metrics(config, strategy, dir_path, args, subject_tree, emit)
 
@@ -328,6 +333,37 @@ class KbService:
                 "error": error_message,
             }
         return {"status": "failed", "message": error_message}
+
+    def _init_semantic_modeling(
+        self,
+        config: AgentConfig,
+        strategy: str,
+        args: types.SimpleNamespace,
+        subject_tree: Optional[list[str]],
+        emit: BatchEventEmitter,
+    ) -> dict:
+        successful, error_message, details = init_success_story_semantic_modeling(
+            config,
+            args.success_story,
+            subject_tree,
+            emit=emit,
+            build_mode=strategy,
+            batch_size=args.metrics_batch_size,
+        )
+        if not successful:
+            return {"status": "failed", "message": error_message, "details": details}
+
+        details = details or {}
+        return {
+            "status": "success",
+            "message": (
+                "semantic_modeling bootstrap completed, "
+                f"semantic_object_count={details.get('semantic_object_count', 0)}, "
+                f"metrics_count={details.get('metrics_count', 0)}, "
+                f"sql_entries_covered={details.get('sql_entries_covered', 0)}"
+            ),
+            "details": details,
+        }
 
     def _init_reference_sql(
         self,
@@ -500,10 +536,14 @@ class KbService:
     @staticmethod
     def _build_args(request: BootstrapKbInput, project_root: str) -> types.SimpleNamespace:
         """Create a SimpleNamespace mimicking argparse.Namespace for the bootstrap-kb helpers."""
-        # Resolve relative paths against the project root
-        success_story = os.path.join(project_root, request.success_story) if request.success_story else None
-        semantic_yaml = os.path.join(project_root, request.semantic_yaml) if request.semantic_yaml else None
-        sql_dir = os.path.join(project_root, request.sql_dir) if request.sql_dir else None
+        root = Path(project_root)
+
+        def _project_path(value: Optional[str]) -> Optional[str]:
+            return str(safe_resolve(root, value)) if value else None
+
+        success_story = _project_path(request.success_story)
+        semantic_yaml = _project_path(request.semantic_yaml)
+        sql_dir = _project_path(request.sql_dir)
 
         return types.SimpleNamespace(
             success_story=success_story,
@@ -514,6 +554,7 @@ class KbService:
             database_name=request.database_name or "",
             pool_size=1,
             kb_update_strategy=request.strategy,
+            metrics_batch_size=request.metrics_batch_size,
             validate_only=False,
         )
 

@@ -229,10 +229,12 @@ class DatusCLI:
         self.session: PromptSession | None = None
 
         # Initialize available subagents early (needed by autocomplete)
-        self.available_subagents = set(SYS_SUB_AGENTS)
+        self.available_subagents = self._available_system_subagents()
         self.available_subagents.add("chat")
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
-            self.available_subagents.update(name for name in self.agent_config.agentic_nodes.keys() if name != "chat")
+            self.available_subagents.update(
+                name for name in self.agent_config.agentic_nodes.keys() if name not in SYS_SUB_AGENTS and name != "chat"
+            )
 
         # TUI mode: use persistent prompt_toolkit Application with pinned
         # status bar + input. Requires a TTY on both stdin/stdout and can be
@@ -1494,6 +1496,7 @@ class DatusCLI:
         """
 
         visible = {name for name in self.available_subagents if name not in HIDDEN_SYS_SUB_AGENTS}
+        visible &= self._available_system_subagents() | {name for name in visible if name not in SYS_SUB_AGENTS}
         if hasattr(self.agent_config, "agentic_nodes") and self.agent_config.agentic_nodes:
             current_db = getattr(self.agent_config, "current_datasource", None)
             for name, sub_config in self.agent_config.agentic_nodes.items():
@@ -1502,6 +1505,15 @@ class DatusCLI:
                 if scoped_ns and scoped_ns != current_db:
                     visible.discard(name)
         return visible
+
+    def _available_system_subagents(self) -> set[str]:
+        """Return system agents supported by the active adapter."""
+        from datus.agent.node.semantic_authoring import is_semantic_modeling_available
+
+        available = set(SYS_SUB_AGENTS)
+        if not is_semantic_modeling_available(self.agent_config):
+            available.discard("semantic_modeling")
+        return available
 
     def _cmd_agent(self, args: str):
         """Open the unified agent management TUI (Custom tab seed).
@@ -1693,11 +1705,13 @@ class DatusCLI:
             if hasattr(self.agent_config, "agentic_nodes"):
                 self.agent_config.agentic_nodes = sub_agent_manager.list_agents()
             if hasattr(self, "available_subagents"):
-                self.available_subagents = set(SYS_SUB_AGENTS)
+                self.available_subagents = self._available_system_subagents()
                 self.available_subagents.add("chat")
                 if self.agent_config.agentic_nodes:
                     self.available_subagents.update(
-                        name for name in self.agent_config.agentic_nodes.keys() if name != "chat"
+                        name
+                        for name in self.agent_config.agentic_nodes.keys()
+                        if name not in SYS_SUB_AGENTS and name != "chat"
                     )
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to refresh in-memory agent config: %s", exc)

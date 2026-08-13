@@ -111,6 +111,9 @@ agent:
         - type: langfuse
 
   agentic_nodes:
+    semantic_modeling:
+      max_turns: 60
+      system_prompt: semantic_modeling
     gen_semantic_model:
       max_turns: 40
       system_prompt: gen_semantic_model

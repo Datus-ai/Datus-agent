@@ -31,10 +31,12 @@ class OsiSemanticModelTargetState:
     artifact_sha256: str = ""
     touched_metric_names: List[str] = field(default_factory=list)
     touched_dataset_names: List[str] = field(default_factory=list)
+    planned_dataset_names: List[str] = field(default_factory=list)
     target_mutated: bool = False
     last_error_code: str = ""
-    metric_snapshot_path: str = ""
-    metric_snapshot_content: Optional[bytes] = None
+    artifact_snapshot_path: str = ""
+    artifact_snapshot_content: Optional[bytes] = None
+    artifact_snapshot_existed: bool = False
 
     def clear_target(self) -> None:
         self.selected = None
@@ -46,9 +48,11 @@ class OsiSemanticModelTargetState:
         self.clear_target()
         self.touched_metric_names = []
         self.touched_dataset_names = []
+        self.planned_dataset_names = []
         self.last_error_code = ""
-        self.metric_snapshot_path = ""
-        self.metric_snapshot_content = None
+        self.artifact_snapshot_path = ""
+        self.artifact_snapshot_content = None
+        self.artifact_snapshot_existed = False
 
     def _matches_selected_target(self, candidate: Dict[str, Any]) -> bool:
         if self.selected is None:
@@ -61,7 +65,7 @@ class OsiSemanticModelTargetState:
 
     def select(self, candidate: Dict[str, Any], *, mode: str) -> None:
         if (
-            self.target_mutated or self.touched_metric_names or self.touched_dataset_names
+            self.target_mutated or self.touched_metric_names or self.touched_dataset_names or self.planned_dataset_names
         ) and not self._matches_selected_target(candidate):
             raise ValueError("The OSI target cannot change after authoring started.")
         self.selected = dict(candidate)
@@ -77,6 +81,13 @@ class OsiSemanticModelTargetState:
     def planned(self) -> Optional[Dict[str, Any]]:
         return self.selected if self.mode == "planned" else None
 
+    @property
+    def selected_path(self) -> Optional[str]:
+        if self.selected is None:
+            return None
+        path = str(self.selected.get("absolute_path") or "").strip()
+        return path or None
+
     def require_bound_path(self, path: str | Path) -> Dict[str, Any]:
         bound = self.bound
         if bound is None:
@@ -88,6 +99,19 @@ class OsiSemanticModelTargetState:
         if requested != selected:
             raise ValueError(f"Metric authoring is bound to {bound['semantic_model_file']}; refusing target {path!s}.")
         return bound
+
+    def require_selected_path(self, path: str | Path) -> Dict[str, Any]:
+        """Require the exact target selected once for this authoring run."""
+        selected = self.selected
+        if selected is None:
+            raise ValueError("Select an OSI semantic-model target before authoring semantic objects.")
+        requested = Path(path).expanduser().resolve(strict=False)
+        expected = Path(str(selected["absolute_path"])).expanduser().resolve(strict=False)
+        if requested != expected:
+            raise ValueError(
+                f"Semantic authoring is limited to {selected['semantic_model_file']}; refusing target {path!s}."
+            )
+        return selected
 
     def require_planned_path(self, path: str | Path) -> Dict[str, Any]:
         planned = self.planned
@@ -116,15 +140,25 @@ class OsiSemanticModelTargetState:
 
     def require_current_revision(self, path: str | Path) -> None:
         self.require_bound_path(path)
+        self._require_revision(path)
+
+    def require_selected_revision(self, path: str | Path) -> None:
+        """Require the current bytes of the once-selected target."""
+        self.require_selected_path(path)
+        self._require_revision(path)
+
+    def _require_revision(self, path: str | Path) -> None:
         try:
             current = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         except OSError as exc:
-            raise ValueError(f"Cannot read the bound OSI semantic model: {exc}") from exc
+            raise ValueError(f"Cannot read the selected OSI semantic model: {exc}") from exc
         if current != self.artifact_sha256:
-            raise ValueError(
-                "The bound OSI semantic model changed after selection. "
+            remediation = (
                 "Inspect the live inventory and bind it again before writing."
+                if self.mode == "bound"
+                else "Plan the target again before writing."
             )
+            raise ValueError(f"The selected OSI semantic model changed after selection. {remediation}")
 
     def record_planned_write(self) -> None:
         planned = self.planned
@@ -134,15 +168,35 @@ class OsiSemanticModelTargetState:
         self.artifact_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         self.target_mutated = True
 
+    def record_selected_write(self) -> None:
+        """Refresh the revision after a write to the once-selected target."""
+        selected = self.selected
+        if selected is None:
+            raise ValueError("Cannot record an OSI semantic-model write without a selected target.")
+        path = Path(str(selected["absolute_path"]))
+        self.artifact_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.target_mutated = True
+
+    def record_planned_dataset_touch(self, dataset_names: Iterable[str]) -> None:
+        """Remember datasets changed during planned semantic-model authoring."""
+        if self.planned is None:
+            raise ValueError("Cannot record a changed dataset without a planned OSI target.")
+        for name in dataset_names:
+            normalized_name = str(name or "").strip().casefold()
+            if normalized_name and not any(
+                str(changed or "").strip().casefold() == normalized_name for changed in self.planned_dataset_names
+            ):
+                self.planned_dataset_names.append(str(name).strip())
+
     def record_metric_touch(self, path: str | Path, content: bytes, metric_names: List[str]) -> None:
         """Record explicit metric changes for final-YAML reconciliation."""
-        self.require_bound_path(path)
+        self.require_selected_path(path)
         self.artifact_sha256 = hashlib.sha256(content).hexdigest()
         self._record_touched_metric_names(metric_names)
 
     def record_dataset_touch(self, path: str | Path, content: bytes, dataset_names: List[str]) -> None:
-        """Record a narrow dataset change made while authoring bound metrics."""
-        self.require_bound_path(path)
+        """Record a narrow dataset change made against the selected target."""
+        self.require_selected_path(path)
         self.artifact_sha256 = hashlib.sha256(content).hexdigest()
         self.target_mutated = True
         for name in dataset_names:
@@ -178,25 +232,28 @@ class OsiSemanticModelTargetState:
             ):
                 self.touched_metric_names.append(str(name).strip())
 
-    def record_metric_snapshot(self, path: str | Path, content: bytes) -> None:
-        """Keep the pre-authoring artifact revision for terminal failure rollback."""
-        self.require_bound_path(path)
-        if self.metric_snapshot_content is not None:
+    def record_artifact_snapshot(self, path: str | Path, content: bytes, *, existed: bool = True) -> None:
+        """Keep the artifact revision from before this request's first mutation."""
+        if self.artifact_snapshot_path:
             return
-        self.metric_snapshot_path = str(Path(path).expanduser().resolve(strict=False))
-        self.metric_snapshot_content = bytes(content)
+        self.require_selected_path(path)
+        self.artifact_snapshot_path = str(Path(path).expanduser().resolve(strict=False))
+        self.artifact_snapshot_content = bytes(content)
+        self.artifact_snapshot_existed = bool(existed)
 
-    def clear_metric_snapshot(self) -> None:
-        self.metric_snapshot_path = ""
-        self.metric_snapshot_content = None
+    def clear_artifact_snapshot(self) -> None:
+        self.artifact_snapshot_path = ""
+        self.artifact_snapshot_content = None
+        self.artifact_snapshot_existed = False
 
-    def record_metric_rollback(self, content: bytes) -> None:
+    def record_artifact_rollback(self, content: Optional[bytes]) -> None:
         """Reset request-local mutation state after restoring the original artifact."""
-        self.artifact_sha256 = hashlib.sha256(content).hexdigest()
+        self.artifact_sha256 = hashlib.sha256(content).hexdigest() if content is not None else ""
         self.touched_metric_names = []
         self.touched_dataset_names = []
+        self.planned_dataset_names = []
         self.target_mutated = False
-        self.clear_metric_snapshot()
+        self.clear_artifact_snapshot()
 
 
 class OsiSemanticModelTargetTools:
@@ -214,6 +271,8 @@ class OsiSemanticModelTargetTools:
         self.agent_config = agent_config
         self.target_state = target_state or OsiSemanticModelTargetState()
         self.generation_evidence = generation_evidence
+        self._inventory_cache: Optional[Dict[str, Any]] = None
+        self._inventory_revision = ""
 
     def available_tools(self):
         """Return the complete target-tool surface for permission registration."""
@@ -267,6 +326,11 @@ class OsiSemanticModelTargetTools:
             raise ValueError("semantic_model_file must be a .yml or .yaml file")
         return canonical
 
+    def invalidate_inventory(self) -> None:
+        """Drop the request-local inventory snapshot."""
+        self._inventory_cache = None
+        self._inventory_revision = ""
+
     @staticmethod
     def _public_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -277,6 +341,8 @@ class OsiSemanticModelTargetTools:
                 "description",
                 "datasets",
                 "table_references",
+                "relationships",
+                "metrics",
                 "repair_required",
             )
             if candidate.get(key)
@@ -300,7 +366,28 @@ class OsiSemanticModelTargetTools:
     def _inventory(self) -> Dict[str, Any]:
         from datus.agent.node.semantic_authoring import inspect_osi_semantic_model_inventory
 
-        return inspect_osi_semantic_model_inventory(self.agent_config)
+        if self._inventory_revision != self.target_state.artifact_sha256:
+            self.invalidate_inventory()
+        if self._inventory_cache is None:
+            self._inventory_cache = inspect_osi_semantic_model_inventory(self.agent_config)
+            self._inventory_revision = self.target_state.artifact_sha256
+        return self._inventory_cache
+
+    def _require_inventory_revision(self, candidate: Dict[str, Any]) -> None:
+        """Ensure a cached candidate still refers to the same file bytes."""
+        expected = str(candidate.get("artifact_sha256") or "")
+        path = Path(str(candidate.get("absolute_path") or ""))
+        try:
+            current = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            self.invalidate_inventory()
+            raise ValueError(f"The selected OSI semantic model is no longer readable: {exc}") from exc
+        if not expected or current != expected:
+            self.invalidate_inventory()
+            raise ValueError(
+                "The OSI semantic-model inventory changed after inspection. "
+                "Call list_existing_osi_semantic_models again before selecting a target."
+            )
 
     def plan_osi_semantic_model_target(
         self,
@@ -326,6 +413,7 @@ class OsiSemanticModelTargetTools:
                 business_domain=business_domain,
                 fact_tables=fact_tables,
                 dimension_tables=dimension_tables,
+                inventory=self._inventory(),
             )
             if target.get("ambiguous"):
                 return self._plan_failure(
@@ -340,6 +428,7 @@ class OsiSemanticModelTargetTools:
             }
             selected.setdefault("artifact_sha256", "")
             if target.get("exists"):
+                self._require_inventory_revision(selected)
                 target_path = Path(str(target.get("absolute_path") or "")).resolve(strict=False)
                 if (
                     target_path != canonical
@@ -353,7 +442,11 @@ class OsiSemanticModelTargetTools:
             if self.generation_evidence is not None:
                 self.generation_evidence.invalidate_artifact_evidence()
             self.target_state.select(selected, mode="planned")
-            return FuncToolResult(result=self._public_candidate(selected) | {"exists": bool(target.get("exists"))})
+            result = self._public_candidate(selected) | {"exists": bool(target.get("exists"))}
+            if selected.get("authoring_outline"):
+                result["authoring_outline"] = selected["authoring_outline"]
+            self.invalidate_inventory()
+            return FuncToolResult(result=result)
         except Exception as exc:
             return self._plan_failure(f"Failed to plan OSI semantic-model target: {exc}")
 
@@ -362,12 +455,15 @@ class OsiSemanticModelTargetTools:
         try:
             inventory = self._inventory()
             models = inventory["models"]
+            repairable_models = inventory["recoverable_models"]
             issues = inventory["issues"]
             discovery_warnings = inventory["discovery_warnings"]
             if models and issues:
                 status, code = "partial", None
             elif models:
                 status, code = "found", None
+            elif repairable_models:
+                status, code = "repairable", None
             elif issues:
                 status, code = "invalid", "semantic_model_target_invalid"
             else:
@@ -379,6 +475,7 @@ class OsiSemanticModelTargetTools:
                     "count": len(models),
                     "files_scanned": inventory["files_scanned"],
                     "semantic_models": [self._public_candidate(model) for model in models],
+                    "repairable_semantic_models": [self._public_candidate(model) for model in repairable_models],
                     "issues": [self._public_issue(issue) for issue in issues],
                     "discovery_warnings": [self._public_issue(warning) for warning in discovery_warnings],
                     "bound_target": (
@@ -459,15 +556,17 @@ class OsiSemanticModelTargetTools:
                 )
 
             selected = matches[0]
+            self._require_inventory_revision(selected)
             if self.generation_evidence is not None:
                 self.generation_evidence.invalidate_artifact_evidence()
             self.target_state.select(selected, mode="bound")
-            return FuncToolResult(
-                result={
-                    "status": "bound",
-                    **self._public_candidate(selected),
-                }
-            )
+            result = {
+                "status": "bound",
+                **self._public_candidate(selected),
+                "authoring_outline": selected.get("authoring_outline") or {},
+            }
+            self.invalidate_inventory()
+            return FuncToolResult(result=result)
         except ValueError as exc:
             return self._bind_failure("semantic_model_target_invalid", str(exc))
         except Exception as exc:

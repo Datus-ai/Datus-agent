@@ -29,9 +29,9 @@ The authoritative document shape you author against, including the Datus executi
 ## Workflow
 
 0. **Prepare the request**
-   - When the request contains SQL or explicitly names a readable SQL file, follow `sql-modeling-preflight` before other artifact reads or any writes. For a named SQL file, call `read_file` first, then submit every complete statement verbatim to `prepare_sql_modeling_plan`. Prefer one call, but use `finalize=false` batches for a large input and finalize the last batch.
-   - When neither the request nor a named file provides SQL, skip `prepare_sql_modeling_plan` and continue with the normal authoring or existing-YAML maintenance workflow.
-   - For SQL-backed requests, preserve the plan's source SQL as immutable evidence. Its compact `outputs`, `generated_sql`, and `queryability_contracts` may be corrected with `update_sql_modeling_plan` before publication.
+   - Use SQL supplied with the request directly. When the request explicitly names a readable SQL file, call `read_file` once.
+   - Interpret SQL together with the user's business intent, existing models, and live schema evidence. By default, model reusable sources, fields, relationships, and metric inputs rather than reproducing each query result shape.
+   - Choose a query-backed dataset only when the user establishes the result itself as a durable reusable asset or explicitly asks for faithful one-query reproduction.
 
 1. **Clarify blocking ambiguity first**
 {% if has_ask_user_tool %}   - If the request does not clearly specify the target table(s), intended scope, or another critical modeling choice that would change the generated YAML (e.g. which column is the grain or the primary time dimension), call `ask_user` before proceeding.

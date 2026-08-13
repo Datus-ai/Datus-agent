@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,6 +64,32 @@ def test_partition_touched_metrics_uses_final_yaml_presence_and_canonical_names(
     assert absent == ["missing_metric"]
 
 
+@pytest.mark.parametrize(
+    ("mode", "remediation"),
+    [
+        ("planned", "Plan the target again before writing."),
+        ("bound", "Inspect the live inventory and bind it again before writing."),
+    ],
+)
+def test_selected_revision_mismatch_reports_mode_appropriate_remediation(tmp_path, mode, remediation):
+    target = tmp_path / "orders.yml"
+    target.write_text("before", encoding="utf-8")
+    state = OsiSemanticModelTargetState()
+    state.select(
+        {
+            "semantic_model_name": "orders",
+            "semantic_model_file": "subject/semantic_models/warehouse/orders.yml",
+            "absolute_path": str(target),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode=mode,
+    )
+    target.write_text("after", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=re.escape(remediation)):
+        state.require_selected_revision(target)
+
+
 def test_list_scans_live_yaml_inventory_without_mutating_binding(tmp_path):
     config, model_dir = _config(tmp_path)
     _write_model(model_dir / "orders.yml", name="orders_model")
@@ -101,6 +128,122 @@ def test_list_scans_live_yaml_inventory_without_mutating_binding(tmp_path):
     assert result.result["issues"][0]["semantic_model_file"].endswith("/broken.yml")
     assert state.selected is None
     assert state.last_error_code == ""
+
+
+def test_list_and_bind_reuse_inventory_and_return_compact_authoring_outline(tmp_path, monkeypatch):
+    config, model_dir = _config(tmp_path)
+    target = model_dir / "orders.yml"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "version: 0.2.0.dev0\n"
+        "semantic_model:\n"
+        "  - name: orders_model\n"
+        "    datasets:\n"
+        "      - name: orders\n"
+        "        source: analytics.orders\n"
+        "        primary_key: [order_id]\n"
+        "        fields:\n"
+        "          - name: order_id\n"
+        "          - name: ordered_at\n"
+        "            dimension: {is_time: true}\n"
+        "      - name: customers\n"
+        "        source: analytics.customers\n"
+        "        unique_keys: [[customer_id]]\n"
+        "        fields:\n"
+        "          - name: customer_id\n"
+        "    relationships:\n"
+        "      - name: orders_customer\n"
+        "        from: orders\n"
+        "        to: customers\n"
+        "        from_columns: [customer_id]\n"
+        "        to_columns: [customer_id]\n"
+        "    metrics:\n"
+        "      - name: order_count\n",
+        encoding="utf-8",
+    )
+    inspect_inventory = semantic_authoring.inspect_osi_semantic_model_inventory
+    calls = 0
+
+    def counted_inventory(agent_config):
+        nonlocal calls
+        calls += 1
+        return inspect_inventory(agent_config)
+
+    monkeypatch.setattr(semantic_authoring, "inspect_osi_semantic_model_inventory", counted_inventory)
+    tools = OsiSemanticModelTargetTools(config)
+
+    inventory = tools.list_existing_osi_semantic_models()
+    bound = tools.bind_osi_semantic_model_target(semantic_model_name="orders_model")
+
+    assert calls == 1
+    candidate = inventory.result["semantic_models"][0]
+    assert candidate["relationships"] == [{"name": "orders_customer", "from": "orders", "to": "customers"}]
+    assert candidate["metrics"] == ["order_count"]
+    assert bound.success
+    assert bound.result["authoring_outline"] == {
+        "datasets": [
+            {
+                "name": "orders",
+                "source": "analytics.orders",
+                "primary_key": ["order_id"],
+                "fields": ["order_id", "ordered_at"],
+                "time_fields": ["ordered_at"],
+            },
+            {
+                "name": "customers",
+                "source": "analytics.customers",
+                "unique_keys": [["customer_id"]],
+                "fields": ["customer_id"],
+            },
+        ],
+        "relationships": [
+            {
+                "name": "orders_customer",
+                "from": "orders",
+                "to": "customers",
+                "from_columns": ["customer_id"],
+                "to_columns": ["customer_id"],
+            }
+        ],
+        "metrics": ["order_count"],
+    }
+
+
+def test_inventory_cache_refreshes_when_selected_artifact_revision_changes(tmp_path, monkeypatch):
+    config, model_dir = _config(tmp_path)
+    _write_model(model_dir / "orders.yml", name="orders_model")
+    inspect_inventory = semantic_authoring.inspect_osi_semantic_model_inventory
+    calls = 0
+
+    def counted_inventory(agent_config):
+        nonlocal calls
+        calls += 1
+        return inspect_inventory(agent_config)
+
+    monkeypatch.setattr(semantic_authoring, "inspect_osi_semantic_model_inventory", counted_inventory)
+    state = OsiSemanticModelTargetState()
+    tools = OsiSemanticModelTargetTools(config, target_state=state)
+
+    assert tools.list_existing_osi_semantic_models().success
+    state.artifact_sha256 = "new-revision"
+    assert tools.list_existing_osi_semantic_models().success
+
+    assert calls == 2
+
+
+def test_bind_rejects_inventory_revision_changed_after_list(tmp_path):
+    config, model_dir = _config(tmp_path)
+    target = model_dir / "orders.yml"
+    _write_model(target, name="orders_model")
+    tools = OsiSemanticModelTargetTools(config)
+    assert tools.list_existing_osi_semantic_models().success
+
+    target.write_text(target.read_text(encoding="utf-8") + "\n# external edit\n", encoding="utf-8")
+    result = tools.bind_osi_semantic_model_target(semantic_model_name="orders_model")
+
+    assert not result.success
+    assert "Call list_existing_osi_semantic_models again" in result.error
+    assert tools.target_state.selected is None
 
 
 @pytest.mark.parametrize("selector_kind", ["name", "relative", "absolute"])
@@ -177,8 +320,15 @@ def test_inventory_excludes_core_schema_invalid_yaml(tmp_path, monkeypatch):
     bound = tools.bind_osi_semantic_model_target(semantic_model_file=str(target))
 
     assert raw_inventory["recoverable_models"][0]["semantic_model_name"] == "invalid_model"
-    assert inventory.result["status"] == "invalid"
+    assert inventory.result["status"] == "repairable"
     assert inventory.result["semantic_models"] == []
+    assert inventory.result["repairable_semantic_models"] == [
+        {
+            "semantic_model_name": "invalid_model",
+            "semantic_model_file": "subject/semantic_models/warehouse/invalid.yml",
+            "repair_required": True,
+        }
+    ]
     assert inventory.result["issues"][0]["code"] == "invalid_osi_core_schema"
     assert not bound.success
     assert bound.result["code"] == "semantic_model_target_invalid"

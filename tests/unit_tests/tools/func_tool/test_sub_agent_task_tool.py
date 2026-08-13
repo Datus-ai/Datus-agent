@@ -151,6 +151,15 @@ class TestGetAvailableTypes:
         types = task_tool._get_available_types()
         assert "gen_sql" in types
 
+    def test_semantic_modeling_is_available_for_dosi(self, task_tool):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
+        assert "semantic_modeling" in task_tool._get_available_types()
+
+    @pytest.mark.parametrize("adapter", ["metricflow", "osi"])
+    def test_semantic_modeling_is_hidden_for_other_adapters(self, task_tool, adapter):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = adapter
+        assert "semantic_modeling" not in task_tool._get_available_types()
+
     def test_includes_custom_subagent(self, task_tool):
         types = task_tool._get_available_types()
         assert "sales_analyst" in types
@@ -1660,8 +1669,8 @@ class TestBuildTaskDescriptionFileStorage:
 @pytest.mark.ci
 class TestGetAvailableTypesBuiltIn:
     def test_includes_all_builtin_types(self, task_tool):
-        """All SYS_SUB_AGENTS appear in available types, except 'feedback'
-        which is a top-level node and not task()-delegatable."""
+        """All built-ins appear for Dosi, except non-delegatable feedback."""
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         types = task_tool._get_available_types()
         # feedback is a top-level node and must NEVER be exposed as delegatable.
         assert "feedback" not in types, "feedback must not be exposed as a delegatable subagent"
@@ -1689,6 +1698,7 @@ class TestGetAvailableTypesBuiltIn:
     def test_builtin_types_sorted(self, task_tool):
         """Built-in types appear in sorted order after gen_sql (excluding 'feedback',
         which is not task()-delegatable)."""
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
         expected = sorted(name for name in SYS_SUB_AGENTS if name != "feedback")
@@ -1998,6 +2008,7 @@ class TestBuildNodeInputBuiltIn:
 @pytest.mark.ci
 class TestBuildTaskDescriptionBuiltIn:
     def test_contains_all_builtin_types(self, task_tool):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         desc = task_tool._build_task_description()
         # feedback is a top-level node; must NEVER be advertised to the LLM.
         assert "feedback" not in desc, "feedback must not appear in task description"
@@ -2007,6 +2018,7 @@ class TestBuildTaskDescriptionBuiltIn:
             assert name in desc, f"{name} not found in task description"
 
     def test_contains_builtin_descriptions(self, task_tool):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         desc = task_tool._build_task_description()
         for name, builtin_desc in BUILTIN_SUBAGENT_DESCRIPTIONS.items():
             assert builtin_desc in desc, f"Description for {name} not found"

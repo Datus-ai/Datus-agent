@@ -6,7 +6,7 @@ import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import yaml
@@ -16,6 +16,7 @@ from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_filesystem_tools import (
     MetricFilesystemFuncTool,
     OsiSemanticModelFilesystemFuncTool,
+    SemanticModelingFilesystemFuncTool,
 )
 from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
@@ -144,7 +145,7 @@ class TestMetricFilesystemFuncTool:
         assert metric_result.success == 1
         assert state.touched_dataset_names == ["orders", "obsolete_orders_query"]
         assert state.touched_metric_names == ["order_count"]
-        assert state.metric_snapshot_content == original_content
+        assert state.artifact_snapshot_content == original_content
         model = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]
         assert [dataset["name"] for dataset in model["datasets"]] == ["orders"]
         assert [field["name"] for field in model["datasets"][0]["fields"]] == ["ordered_at", "order_id"]
@@ -190,6 +191,7 @@ class TestMetricFilesystemFuncTool:
             current_node="gen_semantic_model",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
+            osi_target_state=state,
         )
         query_dataset = {
             "name": "retention_query_dataset",
@@ -216,6 +218,7 @@ class TestMetricFilesystemFuncTool:
         }
         assert json.loads(authored_query_dataset["custom_extensions"][0]["data"]) == {"source_type": "query"}
         assert state.target_mutated is True
+        assert state.planned_dataset_names == ["retention_query_dataset"]
         assert set(tool.name for tool in tool.available_tools()) == {
             "read_file",
             "edit_file",
@@ -225,6 +228,83 @@ class TestMetricFilesystemFuncTool:
             "grep",
         }
         osi_schema_validator.assert_called_once()
+
+    def test_planned_dataset_update_is_recorded(self, tmp_path, osi_schema_validator):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            yaml.safe_dump(
+                {
+                    "semantic_model": [
+                        {
+                            "name": "sales",
+                            "datasets": [{"name": "orders", "source": "analytics.orders"}],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = OsiSemanticModelTargetState()
+        state.select(
+            {
+                "semantic_model_name": "sales",
+                "semantic_model_file": str(target.relative_to(tmp_path)),
+                "absolute_path": str(target),
+                "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            },
+            mode="planned",
+        )
+        tool = OsiSemanticModelFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_semantic_model",
+            mutation_guard=state.require_planned_path,
+            mutation_callback=state.record_planned_write,
+            osi_target_state=state,
+        )
+
+        result = tool.upsert_osi_datasets(
+            str(target.relative_to(tmp_path)),
+            json.dumps([{"name": "orders", "source": "SELECT * FROM analytics.orders"}]),
+        )
+
+        assert result.success == 1
+        assert result.result["updated"] == ["orders"]
+        assert state.planned_dataset_names == ["orders"]
+
+    def test_osi_edit_records_changed_dataset(self, tmp_path, osi_schema_validator):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "semantic_model:\n  - name: sales\n    datasets:\n      - name: orders\n        source: analytics.orders\n",
+            encoding="utf-8",
+        )
+        state = OsiSemanticModelTargetState()
+        state.select(
+            {
+                "semantic_model_name": "sales",
+                "semantic_model_file": str(target.relative_to(tmp_path)),
+                "absolute_path": str(target),
+                "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            },
+            mode="planned",
+        )
+        tool = OsiSemanticModelFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_semantic_model",
+            mutation_guard=state.require_planned_path,
+            mutation_callback=state.record_planned_write,
+            osi_target_state=state,
+        )
+
+        result = tool.edit_file(
+            str(target.relative_to(tmp_path)),
+            "source: analytics.orders",
+            "source: SELECT * FROM analytics.orders",
+        )
+
+        assert result.success == 1
+        assert state.planned_dataset_names == ["orders"]
 
     def test_delete_osi_datasets_is_scoped_tolerant_and_retryable(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
@@ -886,7 +966,7 @@ semantic_model:
 
         assert tool.delete_osi_metrics(path, ["revenue"]).success == 1
         assert state.touched_metric_names == ["Revenue"]
-        assert tool.rollback_failed_metric_authoring() is True
+        assert tool.rollback_failed_authoring() is True
         assert target.read_bytes() == original
         assert state.touched_metric_names == []
 
@@ -917,7 +997,7 @@ semantic_model:
         mutation_callback.assert_called_once_with(target.resolve())
         osi_schema_validator.assert_not_called()
 
-    def test_upsert_invalidates_prior_validation_dry_run_and_sync_evidence(self, tmp_path, osi_schema_validator):
+    def test_upsert_invalidates_prior_validation_query_sql_and_sync_evidence(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
@@ -931,8 +1011,7 @@ semantic_model:
         )
         evidence = GenerationEvidence(
             validation_passed=True,
-            metric_dry_run_passed=True,
-            metric_dry_run_metrics={"revenue"},
+            metric_sqls={"revenue": "SELECT SUM(amount) FROM orders"},
             semantic_kb_sync_passed=True,
             metric_kb_sync_passed=True,
         )
@@ -952,8 +1031,7 @@ semantic_model:
 
         assert result.success == 1
         assert evidence.validation_passed is False
-        assert evidence.metric_dry_run_passed is False
-        assert evidence.metric_dry_run_metrics == set()
+        assert evidence.metric_sqls == {}
         assert evidence.validated_semantic_artifacts == {}
         assert evidence.kb_sync_passed is False
 
@@ -971,6 +1049,7 @@ semantic_model:
         )
         original = target.read_bytes()
         state = _bound_state(target)
+        state.planned_dataset_names = ["orders"]
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_metrics",
@@ -985,17 +1064,123 @@ semantic_model:
 
         assert result.success == 1
         assert target.read_bytes() != original
-        assert tool.rollback_failed_metric_authoring() is True
+        assert tool.rollback_failed_authoring() is True
         assert target.read_bytes() == original
         assert state.touched_metric_names == []
-        assert tool.rollback_failed_metric_authoring() is False
+        assert state.planned_dataset_names == []
+        assert tool.rollback_failed_authoring() is False
+
+    def test_full_authoring_failure_restores_artifact_before_dataset_changes(self, tmp_path, osi_schema_validator):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: sales\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "    metrics: []\n",
+            encoding="utf-8",
+        )
+        original = target.read_bytes()
+        state = OsiSemanticModelTargetState()
+        state.select(
+            {
+                "semantic_model_name": "sales",
+                "semantic_model_file": str(target.relative_to(tmp_path)),
+                "absolute_path": str(target),
+                "artifact_sha256": hashlib.sha256(original).hexdigest(),
+            },
+            mode="planned",
+        )
+
+        def mutation_guard(path):
+            return state.require_bound_path(path) if state.bound is not None else state.require_planned_path(path)
+
+        def mutation_callback(_path):
+            if state.planned is not None:
+                state.record_planned_write()
+
+        tool = SemanticModelingFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="semantic_modeling",
+            authoring_format="osi",
+            osi_target_state=state,
+            mutation_guard=mutation_guard,
+            mutation_callback=mutation_callback,
+        )
+        path = str(target.relative_to(tmp_path))
+
+        assert (
+            tool.upsert_osi_datasets(
+                path,
+                json.dumps(
+                    [
+                        {"name": "orders", "source": "orders"},
+                        {"name": "customers", "source": "customers"},
+                    ]
+                ),
+            ).success
+            == 1
+        )
+        state.select(
+            {
+                "semantic_model_name": "sales",
+                "semantic_model_file": path,
+                "absolute_path": str(target),
+                "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            },
+            mode="bound",
+        )
+        assert tool.upsert_osi_metrics(path, json.dumps([_osi_metric("revenue", "SUM(orders.amount)")])).success == 1
+
+        assert tool.rollback_failed_authoring() is True
+        assert target.read_bytes() == original
+        assert state.touched_metric_names == []
+        assert state.touched_dataset_names == []
+        assert state.planned_dataset_names == []
+
+    def test_failed_new_model_authoring_removes_created_artifact(self, tmp_path, osi_schema_validator):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        state = _planned_state(target)
+        tool = SemanticModelingFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="semantic_modeling",
+            authoring_format="osi",
+            osi_target_state=state,
+            mutation_guard=state.require_planned_path,
+            mutation_callback=lambda _path: state.record_planned_write(),
+        )
+
+        result = tool.upsert_osi_datasets(
+            str(target.relative_to(tmp_path)),
+            json.dumps([{"name": "orders", "source": "orders"}]),
+        )
+
+        assert result.success == 1
+        assert target.is_file()
+        assert tool.rollback_failed_authoring() is True
+        assert not target.exists()
+
+    def test_semantic_modeling_stamps_query_source_with_runtime_dosi_version(self, tmp_path):
+        pytest.importorskip("datus_semantic_dosi")
+        tool = SemanticModelingFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="semantic_modeling",
+        )
+
+        with patch("datus_semantic_dosi.engine.datus_extension_version", return_value="1.3"):
+            extensions = tool._query_source_extensions([])
+
+        assert json.loads(extensions[0]["data"]) == {"source_type": "query", "v": "1.3"}
 
     def test_failed_metric_authoring_rollback_returns_false_on_invalid_snapshot(self, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text("semantic_model: []\n", encoding="utf-8")
         state = _bound_state(target)
-        state.record_metric_snapshot(target, b"\xff")
+        state.record_artifact_snapshot(target, b"\xff")
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_metrics",
@@ -1003,15 +1188,15 @@ semantic_model:
             osi_target_state=state,
         )
 
-        assert tool.rollback_failed_metric_authoring() is False
-        assert state.metric_snapshot_content == b"\xff"
+        assert tool.rollback_failed_authoring() is False
+        assert state.artifact_snapshot_content == b"\xff"
 
     def test_failed_metric_authoring_rollback_returns_false_on_write_error(self, tmp_path, monkeypatch):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text("semantic_model: []\n", encoding="utf-8")
         state = _bound_state(target)
-        state.record_metric_snapshot(target, target.read_bytes())
+        state.record_artifact_snapshot(target, target.read_bytes())
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_metrics",
@@ -1023,8 +1208,8 @@ semantic_model:
             Mock(side_effect=OSError("disk full")),
         )
 
-        assert tool.rollback_failed_metric_authoring() is False
-        assert state.metric_snapshot_content == b"semantic_model: []\n"
+        assert tool.rollback_failed_authoring() is False
+        assert state.artifact_snapshot_content == b"semantic_model: []\n"
 
     def test_identical_upsert_preserves_bytes_and_registers_publish_scope(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"

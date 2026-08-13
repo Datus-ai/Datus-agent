@@ -16,8 +16,11 @@ from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEvent, BatchStage
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
-from datus.tools.func_tool.sql_modeling_planner import source_query_from_success_story_row
+from datus.schemas.semantic_agentic_node_models import (
+    SemanticNodeInput,
+    SourceQueryEvidence,
+    source_query_from_success_story_row,
+)
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
@@ -213,6 +216,7 @@ async def init_success_story_semantic_model_async(
         or runtime_db_context.get("db_schema")
         or runtime_db_context.get("schema_name")
         or current_db_config.schema,
+        source_queries=source_queries,
     )
 
     action_history_manager = ActionHistoryManager()

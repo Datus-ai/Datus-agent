@@ -194,6 +194,27 @@ class TestSemanticLayerServiceBranches:
         svc._validate_osi_semantic_yaml.assert_called_once_with(request.yaml, str(yaml_file.resolve()))
 
     @pytest.mark.asyncio
+    async def test_validate_semantic_model_uses_dosi_validator(self, tmp_path):
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
+        _yaml_file, selector = _write_model(tmp_path, _osi_yaml())
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(False, ["native Dosi validation failed"]))
+        svc._validate_osi_semantic_yaml = MagicMock()
+        request = ValidateSemanticModelInput(
+            semantic_model_file=selector,
+            yaml=_osi_yaml(),
+        )
+
+        result = await svc.validate_semantic_model(request)
+
+        assert result.success is True
+        assert result.data == ValidateSemanticModelData(
+            valid=False,
+            invalid_message=["native Dosi validation failed"],
+        )
+        svc._validate_dosi_semantic_yaml.assert_called_once_with(request.yaml)
+        svc._validate_osi_semantic_yaml.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_validate_semantic_model_uses_metricflow_validator(self, tmp_path):
         svc = _service_with_semantic_adapter("metricflow", models_root=tmp_path)
         yaml_file, selector = _write_model(tmp_path, "semantic_model:\n  name: orders\n")

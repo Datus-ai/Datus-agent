@@ -1,15 +1,16 @@
 """Pydantic v2 models for the bootstrap-kb API."""
 
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal, Optional, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class KbComponent(str, Enum):
     """Knowledge base components that can be bootstrapped."""
 
     METADATA = "metadata"
+    SEMANTIC_MODELING = "semantic_modeling"
     SEMANTIC_MODEL = "semantic_model"
     METRICS = "metrics"
     REFERENCE_SQL = "reference_sql"
@@ -29,6 +30,7 @@ class BootstrapKbInput(BaseModel):
         description=(
             "Knowledge base components to initialize. "
             "`metadata` scans live database schema and sample rows; "
+            "`semantic_modeling` authors Dosi datasets and metrics through one unified workflow; "
             "`semantic_model` derives semantic schema objects from success-story SQLs; "
             "`metrics` derives MetricFlow-style business metrics; "
             "`reference_sql` indexes reusable SQL files."
@@ -39,7 +41,9 @@ class BootstrapKbInput(BaseModel):
         description=(
             "Update strategy. `check` inspects existing data without rebuilding where supported, "
             "`overwrite` clears and rebuilds, `incremental` appends or updates changed entries, "
-            "and `refresh-profile` updates profile-derived descriptions in an existing semantic YAML."
+            "and `refresh-profile` updates profile-derived descriptions in an existing semantic YAML. "
+            "For `semantic_modeling`, `overwrite` and `incremental` are compatibility aliases: both preserve "
+            "sibling artifacts and fully reconcile each selected semantic-model YAML."
         ),
     )
 
@@ -66,12 +70,12 @@ class BootstrapKbInput(BaseModel):
         ),
     )
 
-    # semantic_model / metrics source
+    # semantic_modeling / semantic_model / metrics source
     success_story: Optional[str] = Field(
         default=None,
         description=(
             "Project-root-relative path to a success-story CSV containing historical question/SQL pairs. "
-            "Used by `semantic_model` and `metrics` when bootstrapping from success stories."
+            "Used by `semantic_modeling`, `semantic_model`, and `metrics` when bootstrapping from success stories."
         ),
     )
     semantic_yaml: Optional[str] = Field(
@@ -85,9 +89,14 @@ class BootstrapKbInput(BaseModel):
         default=None,
         description=(
             "Optional predefined hierarchical categories in `domain/layer1/layer2` form, such as "
-            "`Sales/Reporting/Daily`. Used by `metrics` and `reference_sql`; "
+            "`Sales/Reporting/Daily`. Used by `semantic_modeling`, `metrics`, and `reference_sql`; "
             "if omitted, bootstrap reuses or learns categories from existing KB content."
         ),
+    )
+    metrics_batch_size: int = Field(
+        default=5,
+        ge=1,
+        description="Number of success-story SQL entries handled by each metrics or semantic-modeling batch.",
     )
 
     # reference_sql source
@@ -98,6 +107,14 @@ class BootstrapKbInput(BaseModel):
             "Files are scanned recursively and only `SELECT` statements are indexed."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_component_combination(self) -> Self:
+        components = set(self.components)
+        legacy_authoring = {KbComponent.SEMANTIC_MODEL.value, KbComponent.METRICS.value}
+        if KbComponent.SEMANTIC_MODELING.value in components and components.intersection(legacy_authoring):
+            raise ValueError("semantic_modeling cannot be combined with semantic_model or metrics")
+        return self
 
 
 class BootstrapDocInput(BaseModel):

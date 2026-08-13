@@ -2432,6 +2432,11 @@ class AgenticNode(Node):
                 candidates.append(f"db-{normalized}-sql")
         return list(dict.fromkeys(candidates))
 
+    def _render_required_skill_content(self, skill_name: str, content: str) -> str:
+        """Render node-specific runtime values into a required skill."""
+        del skill_name
+        return content
+
     def _inject_required_skills(self, base_prompt: str) -> str:
         """Append required-skill content to the system prompt deterministically.
 
@@ -2494,6 +2499,7 @@ class AgenticNode(Node):
                         )
                     },
                 )
+            content = self._render_required_skill_content(skill_name, content)
             sections.append(f"<required_skill name={xml_quoteattr(skill_name)}>\n{content}\n</required_skill>")
             logger.info(f"Injected required skill '{skill_name}' into system prompt for '{self.get_node_name()}'")
 
@@ -2993,8 +2999,7 @@ class AgenticNode(Node):
         async def _run_async():
             final_action = None
             async for action in self.execute_stream(action_history_manager):
-                if action.status == ActionStatus.SUCCESS:
-                    final_action = action
+                final_action = action
             return final_action
 
         try:
@@ -3004,20 +3009,24 @@ class AgenticNode(Node):
             # Extract result from final action output
             if final_action and final_action.output:
                 output_data = final_action.output
+                terminal_succeeded = final_action.status == ActionStatus.SUCCESS
                 if isinstance(output_data, dict):
                     result_class = getattr(self, "result_class", None)
                     if result_class:
                         try:
-                            self.result = result_class.model_validate(output_data)
+                            result_payload = dict(output_data)
+                            if not terminal_succeeded:
+                                result_payload["success"] = False
+                            self.result = result_class.model_validate(result_payload)
                         except Exception as e:
                             logger.warning(f"Failed to validate result as {result_class.__name__}: {e}")
                             self.result = BaseResult(
-                                success=output_data.get("success", True),
+                                success=terminal_succeeded and output_data.get("success", True),
                                 error=output_data.get("error"),
                             )
                     else:
                         self.result = BaseResult(
-                            success=output_data.get("success", True),
+                            success=terminal_succeeded and output_data.get("success", True),
                             error=output_data.get("error"),
                         )
                 else:

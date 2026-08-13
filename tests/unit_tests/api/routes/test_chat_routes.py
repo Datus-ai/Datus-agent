@@ -152,6 +152,7 @@ class TestSubmitUserInteractionConversion:
 def _mock_svc_with_nodes(agentic_nodes=None):
     svc = MagicMock()
     svc.agent_config.agentic_nodes = agentic_nodes or {}
+    svc.agent_config.resolve_semantic_adapter.return_value = "metricflow"
     return svc
 
 
@@ -166,6 +167,13 @@ class TestIsValidSubagentId:
         """feedback is dispatched by _create_node but not in BUILTIN_SUBAGENTS."""
         svc = _mock_svc_with_nodes()
         assert _is_valid_subagent_id(svc, "feedback") is True
+
+    def test_semantic_modeling_is_visible_only_for_dosi(self):
+        svc = _mock_svc_with_nodes()
+        assert _is_valid_subagent_id(svc, "semantic_modeling") is False
+
+        svc.agent_config.resolve_semantic_adapter.return_value = "dosi"
+        assert _is_valid_subagent_id(svc, "semantic_modeling") is True
 
     def test_custom_node_by_name(self):
         svc = _mock_svc_with_nodes({"my_custom_agent": {"id": "uuid-1", "model": "deepseek"}})

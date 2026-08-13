@@ -15,6 +15,7 @@ from datus.api.services.agent_service import (
     VALID_TOOL_CATEGORIES,
     VALID_TOOL_METHODS,
     AgentService,
+    _available_builtin_subagents,
     _build_scoped_context,
     _build_tool_types,
     _classify_subject_paths,
@@ -548,15 +549,22 @@ class TestListAgents:
         result = await svc.list_agents(real_agent_config)
         assert result.success is True
         agent_names = {a["name"] for a in result.data["agents"]}
-        for builtin_name in BUILTIN_SUBAGENTS:
+        for builtin_name in _available_builtin_subagents(real_agent_config):
             assert builtin_name in agent_names
+        assert "semantic_modeling" not in agent_names
+
+    async def test_list_includes_semantic_modeling_for_dosi(self, real_agent_config):
+        real_agent_config.resolve_semantic_adapter = lambda requested=None: "dosi"
+        result = await AgentService().list_agents(real_agent_config)
+
+        assert "semantic_modeling" in {agent["name"] for agent in result.data["agents"]}
 
     async def test_list_contains_builtin_type_entries(self, real_agent_config):
         """At least some agents in the list have type='builtin'."""
         svc = AgentService()
         result = await svc.list_agents(real_agent_config)
         builtin_agents = [a for a in result.data["agents"] if a["type"] == "builtin"]
-        assert len(builtin_agents) == len(BUILTIN_SUBAGENTS)
+        assert len(builtin_agents) == len(_available_builtin_subagents(real_agent_config))
 
     async def test_list_includes_custom_agents(self, real_agent_config):
         """list_agents includes custom agents from agentic_nodes."""
@@ -565,7 +573,7 @@ class TestListAgents:
         assert result.success is True
         # real_agent_config has agentic_nodes from conftest
         agent_names = {a["name"] for a in result.data["agents"]}
-        assert len(agent_names) >= len(BUILTIN_SUBAGENTS)
+        assert len(agent_names) >= len(_available_builtin_subagents(real_agent_config))
 
 
 class TestSanitizeAgenticNodeName:
@@ -704,7 +712,7 @@ class TestGetAgent:
         svc = AgentService()
         nodes = real_agent_config.agentic_nodes or {}
         assert nodes, "real_agent_config fixture must provide agentic_nodes"
-        first_name = next(iter(nodes))
+        first_name = next(name for name in nodes if name not in SYS_SUB_AGENTS)
         result = await svc.get_agent(first_name, real_agent_config)
         assert result.success is True
         agent = result.data["agent"]
@@ -717,6 +725,17 @@ class TestGetAgent:
         # collection fields are always lists, never None
         for field in ("rules", "catalogs", "subjects"):
             assert isinstance(agent[field], list)
+
+    async def test_get_semantic_modeling_requires_dosi(self, real_agent_config):
+        svc = AgentService()
+        hidden = await svc.get_agent("semantic_modeling", real_agent_config)
+        assert hidden.success is False
+        assert hidden.errorCode == "AGENT_NOT_FOUND"
+
+        real_agent_config.resolve_semantic_adapter = lambda requested=None: "dosi"
+        visible = await svc.get_agent("semantic_modeling", real_agent_config)
+        assert visible.success is True
+        assert visible.data["agent"]["type"] == "builtin"
 
     async def test_get_custom_agent_parses_tools_string(self, real_agent_config, agent_yml_with_singleton):
         """yaml ``tools: "db_tools.*, ctx.*"`` is returned as a trimmed list."""

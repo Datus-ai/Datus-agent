@@ -39,7 +39,7 @@ Classify each column by actual data type and analytical usage, not by display co
 - Define `type: TIME` only for a physical DATE/TIME/TIMESTAMP column, or for a `sql_query` alias / SQL expression that is guaranteed to return a DATE/TIME/TIMESTAMP value.
 - Do NOT mark numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as `type: TIME`. Model them as identifiers or categorical dimensions unless you explicitly convert them to a real date.
 - If a fact table derives its business date by joining a calendar/date dimension, prefer a `sql_query` data source that joins the date dimension, selects the real date column with a clear alias, and uses that alias as the primary time dimension.
-- When normal semantic objects cannot represent a SQL output, create or update a meaningful `sql_query` data source using corrected generated SQL. Preserve the original request SQL as evidence, record corrected SQL in the compact plan's `generated_sql`, and encode YAML with a literal block (`|-` when the statement has no trailing newline), never a folded `>` block.
+- When the user explicitly asks to preserve a durable result that normal semantic objects cannot represent, create or update a meaningful `sql_query` data source using the complete request SQL as evidence. Encode YAML with a literal block (`|-` when the statement has no trailing newline), never a folded `>` block.
 - `agg_time_dimension` on measures must point to that real date/time dimension, not a numeric surrogate key.
 - Include a primary time dimension only when a reliable DATE/TIME/TIMESTAMP column or expression exists; never force one.
 

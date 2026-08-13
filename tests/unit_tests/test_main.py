@@ -195,6 +195,22 @@ class TestCreateParser:
         args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--components", "table_lineage"])
         assert args.components == ["table_lineage"]
 
+    def test_bootstrap_kb_accepts_semantic_modeling_component(self):
+        parser = create_parser()
+        args = parser.parse_args(
+            [
+                "bootstrap-kb",
+                "--datasource",
+                "ds",
+                "--components",
+                "semantic_modeling",
+                "--metrics-batch-size",
+                "5",
+            ]
+        )
+        assert args.components == ["semantic_modeling"]
+        assert args.metrics_batch_size == 5
+
     def test_bootstrap_kb_accepts_check_strategy(self):
         parser = create_parser()
         args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--kb_update_strategy", "check"])

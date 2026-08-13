@@ -133,7 +133,6 @@ class TestGenSemanticModelAgenticNodeInit:
         assert {"write_file", "delete_file", "upsert_osi_metrics", "bash"}.isdisjoint(tool_names)
         assert "publish_semantic_model" in tool_names
         node._populate_tool_registry()
-        assert node.tool_registry.get("prepare_sql_modeling_plan") == "semantic_tools"
         assert node.tool_registry.get("list_existing_osi_semantic_models") == "semantic_tools"
         assert node.tool_registry.get("plan_osi_semantic_model_target") == "semantic_tools"
 
@@ -168,57 +167,6 @@ class TestGenSemanticModelAgenticNodeInit:
         assert node.generation_tools.generation_evidence is evidence
         assert node.semantic_func_tool.generation_evidence is evidence
 
-    @pytest.mark.asyncio
-    async def test_before_stream_only_resets_request_local_sql_plan(
-        self,
-        real_agent_config,
-        mock_llm_create,
-    ):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-        from datus.agent.node.stream_run_context import StreamRunContext
-
-        node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(
-            user_message=(
-                "Generate a semantic model for:\n"
-                "WITH base AS (SELECT * FROM orders) SELECT COUNT(*) AS orders FROM base"
-            )
-        )
-        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
-
-        await node._before_stream(ctx)
-
-        assert node.sql_modeling_plan is None
-        assert node.generation_evidence.sql_modeling_plan_status == "pending"
-        assert "prepare_sql_modeling_plan" in {tool.name for tool in node.tools}
-
-    def test_failed_sql_preflight_cannot_be_bypassed(self, real_agent_config, mock_llm_create):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-        from datus.agent.node.stream_run_context import StreamRunContext
-        from datus.utils.exceptions import DatusException
-
-        node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
-        node.generation_evidence.mark_sql_modeling_preflight_attempted()
-        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
-        ctx.response_content = "not json"
-
-        with pytest.raises(DatusException, match="prepare_sql_modeling_plan"):
-            node._build_success_result(ctx)
-
-    def test_sql_result_requires_semantic_model_files(self, real_agent_config, mock_llm_create):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-        from datus.agent.node.stream_run_context import StreamRunContext
-
-        node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
-        node.generation_evidence.mark_sql_modeling_plan_ready("source")
-        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
-        ctx.response_content = "not json"
-
-        with pytest.raises(RuntimeError, match="semantic_model_files"):
-            node._build_success_result(ctx)
-
     @pytest.mark.parametrize(
         ("adapter", "required_text", "forbidden_text"),
         [
@@ -226,7 +174,7 @@ class TestGenSemanticModelAgenticNodeInit:
             ("metricflow", "metricflow-semantic-authoring", "osi-semantic-authoring"),
         ],
     )
-    def test_required_skills_combine_preflight_with_format_specific_authoring(
+    def test_required_skills_follow_format_specific_authoring(
         self,
         real_agent_config,
         mock_llm_create,
@@ -242,7 +190,6 @@ class TestGenSemanticModelAgenticNodeInit:
 
         required_skills = node._get_required_skills()
 
-        assert required_skills[0] == "sql-modeling-preflight"
         assert required_text in required_skills
         assert forbidden_text not in required_skills
 
@@ -749,6 +696,22 @@ class TestGetSystemPrompt:
         assert "Every physical column referenced by a requested metric expression" in prompt
         assert "`ac_code` in `COUNT(DISTINCT ac_code)` is a plain field" in prompt
         assert '<required_skill name="metricflow-semantic-authoring">' not in prompt
+
+    def test_dosi_authoring_adds_native_extension_profile(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "dosi")
+        node = _make_node(real_agent_config, mock_llm_create)
+
+        with patch("datus_semantic_dosi.engine.datus_extension_version", return_value="1.3"):
+            prompt = node._get_system_prompt(template_context=node._prepare_template_context(None))
+            snapshot_meta = node._system_prompt_snapshot_meta(None)
+
+        assert '<required_skill name="dosi-semantic-authoring">' in prompt
+        assert '<required_skill name="osi-semantic-authoring">' not in prompt
+        assert 'extension_version: "1.3"' in prompt
+        assert '"v":"1.3"' in prompt
+        assert snapshot_meta["datus_extension_version"] == "1.3"
+        assert "join_type:" in prompt
+        assert node.filesystem_func_tool.semantic_adapter == "dosi"
 
     def test_metricflow_authoring_injects_metricflow_required_skill(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)

@@ -159,6 +159,20 @@ class TestAskMetricsAgenticNode:
         assert "Available datasources:" not in prompt
         assert "Current sql files root directory:" not in prompt
 
+    def test_dosi_prompt_uses_metric_time_as_input_not_suffixed_output_alias(self, real_agent_config, mock_llm_create):
+        real_agent_config.resolve_semantic_adapter = MagicMock(return_value="dosi")
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["running_revenue"]}}},
+        )
+
+        prompt = node._get_system_prompt()
+
+        assert "reserved input dimension `metric_time`" in prompt
+        assert "Never pass the suffixed output name in `dimensions`" in prompt
+        assert "Order time-axis window results by their grained time result" in prompt
+        assert "Order value-oriented window results" in prompt
+
     def test_large_subject_tree_exposes_list_subject_tree_tool(self, real_agent_config, mock_llm_create):
         tree = {
             "Domain": {

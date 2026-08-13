@@ -15,6 +15,7 @@ import inspect
 import io
 import json
 from collections import OrderedDict
+from copy import copy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -32,6 +33,11 @@ from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, norma
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
+from datus.tools.semantic_tools.paging import (
+    METRIC_CATALOG_MAX_PAGES,
+    METRIC_CATALOG_PAGE_SIZE,
+    metric_catalog_paging,
+)
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.loggings import get_logger
@@ -170,8 +176,8 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
 # `services.semantic_layer.<adapter>` with `metric_catalog_page_size` /
 # `metric_catalog_max_pages`. The page is large because an adapter may rebuild
 # its whole catalog per request, making each extra page cost a full pass.
-_METRIC_DATASETS_PAGE_SIZE = 5000
-_METRIC_DATASETS_MAX_PAGES = 200
+_METRIC_DATASETS_PAGE_SIZE = METRIC_CATALOG_PAGE_SIZE
+_METRIC_DATASETS_MAX_PAGES = METRIC_CATALOG_MAX_PAGES
 
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
@@ -341,6 +347,7 @@ class SemanticTools:
         generation_evidence: Optional[GenerationEvidence] = None,
         runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
         warehouse_dry_run_provider: Optional[Callable[[str], Mapping[str, Any]]] = None,
+        semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
     ):
         """
         Initialize semantic function tool.
@@ -355,6 +362,8 @@ class SemanticTools:
                 context used to initialize the semantic adapter.
             warehouse_dry_run_provider: Optional host callback that validates
                 adapter-compiled SQL against the active warehouse.
+            semantic_model_path_provider: Optional callback that returns the exact
+                request-local semantic model selected for authoring or validation.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
@@ -362,6 +371,7 @@ class SemanticTools:
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
+        self._semantic_model_path_provider = semantic_model_path_provider
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
@@ -378,7 +388,7 @@ class SemanticTools:
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
         self._adapter_load_error: Optional[str] = None
-        self._adapter_context_key: Optional[Tuple[str, str, str, str, str]] = None
+        self._adapter_context_key: Optional[Tuple[str, ...]] = None
 
     @staticmethod
     def _query_data_row_count(data: Any) -> int:
@@ -498,26 +508,7 @@ class SemanticTools:
 
     def _metric_catalog_paging(self) -> Tuple[int, int]:
         """Page size and page cap for `metric_datasets`, from the adapter's config."""
-        config: Dict[str, Any] = {}
-        getter = getattr(self.agent_config, "get_semantic_layer_config", None)
-        if callable(getter):
-            try:
-                config = getter(self.adapter_type) or {}
-            except Exception as e:  # noqa: BLE001 - a bad config must not break tool calls
-                logger.warning("Could not read semantic layer config for metric paging: %s", e)
-
-        def _positive(key: str, default: int) -> int:
-            try:
-                value = int(config.get(key) or default)
-            except (TypeError, ValueError):
-                logger.warning("Invalid %s=%r; using %d", key, config.get(key), default)
-                return default
-            return value if value > 0 else default
-
-        return (
-            _positive("metric_catalog_page_size", _METRIC_DATASETS_PAGE_SIZE),
-            _positive("metric_catalog_max_pages", _METRIC_DATASETS_MAX_PAGES),
-        )
+        return metric_catalog_paging(self.agent_config, self.adapter_type)
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""
@@ -625,6 +616,15 @@ class SemanticTools:
                 logger.debug("Failed to resolve AgentConfig runtime DB context for semantic adapter: %s", e)
         return {}
 
+    def _selected_semantic_model_path(self) -> str:
+        if not callable(self._semantic_model_path_provider):
+            return ""
+        try:
+            return str(self._semantic_model_path_provider() or "").strip()
+        except Exception as e:
+            logger.debug("Failed to resolve the selected semantic model path: %s", e)
+            return ""
+
     def _extract_db_config(self, datasource: str) -> Optional[dict]:
         """Extract db_config dict from the selected database config."""
         try:
@@ -661,12 +661,14 @@ class SemanticTools:
 
             runtime_db_context = self._runtime_db_context()
             datasource = runtime_db_context.get("datasource") or self.agent_config.current_datasource
+            semantic_model_path = self._selected_semantic_model_path()
             context_key = (
                 resolved_adapter,
                 datasource or "",
                 runtime_db_context.get("catalog", ""),
                 runtime_db_context.get("database", ""),
                 runtime_db_context.get("schema", ""),
+                semantic_model_path,
             )
             if self._adapter is not None:
                 if self._adapter_context_key is None or self._adapter_context_key == context_key:
@@ -676,6 +678,13 @@ class SemanticTools:
                 self._adapter_context_key = None
 
             metadata = semantic_adapter_registry.get_metadata(resolved_adapter)
+            config_class = metadata.config_class if metadata and metadata.config_class else None
+            config_fields = getattr(config_class, "model_fields", {})
+            artifact_overrides = (
+                {"semantic_model_path": semantic_model_path}
+                if semantic_model_path and "semantic_model_path" in config_fields
+                else {}
+            )
             builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
             adapter_config = None
             if callable(builder):
@@ -693,23 +702,33 @@ class SemanticTools:
                 db_config = self._extract_db_config(datasource)
                 semantic_models_path = str(self.agent_config.path_manager.semantic_model_path(datasource))
 
-                if metadata and metadata.config_class:
-                    adapter_config = metadata.config_class(
+                if config_class:
+                    adapter_config = config_class(
                         datasource=datasource,
                         db_config=db_config,
                         semantic_models_path=semantic_models_path,
+                        **artifact_overrides,
                     )
                 else:
                     from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
                     adapter_config = SemanticAdapterConfig(datasource=datasource)
             elif isinstance(adapter_config, dict):
-                if metadata and metadata.config_class:
-                    adapter_config = metadata.config_class(**adapter_config)
+                adapter_config = {**adapter_config, **artifact_overrides}
+                if config_class:
+                    adapter_config = config_class(**adapter_config)
                 else:
                     from datus.tools.semantic_tools.config import SemanticAdapterConfig
 
                     adapter_config = SemanticAdapterConfig(**adapter_config)
+            elif artifact_overrides:
+                model_copy = getattr(adapter_config, "model_copy", None)
+                if callable(model_copy):
+                    adapter_config = model_copy(update=artifact_overrides)
+                else:
+                    adapter_config = copy(adapter_config)
+                    for key, value in artifact_overrides.items():
+                        setattr(adapter_config, key, value)
 
             self.adapter_type = resolved_adapter
             self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
@@ -976,7 +995,9 @@ class SemanticTools:
 
         Args:
             metrics: List of metric names to query
-            dimensions: Optional list of dimensions to group by (from get_dimensions)
+            dimensions: Optional list of dimensions to group by (from get_dimensions).
+                        With Dosi, use reserved `metric_time` for the selected metric's
+                        primary time axis and pass its grain via `time_granularity`.
             path: Optional subject tree path (from list_subject_tree)
             time_start: Optional inclusive start of an OSI half-open range (ISO format like '2024-01-01'
                         or relative like '-7d')
@@ -985,9 +1006,11 @@ class SemanticTools:
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
             where: Optional SQL WHERE clause (without WHERE keyword)
             limit: Optional maximum number of rows
-            order_by: Optional list of columns to sort by. Use column name for ascending,
-                      prefix with '-' for descending. Examples: ['metric_time__day'] for ascending,
-                      ['-message_count'] for descending. Do NOT use 'asc'/'desc' keywords.
+            order_by: Optional list of result columns to sort by. Use column name for ascending,
+                      prefix with '-' for descending. A Dosi input dimension `metric_time` may
+                      produce a result/order key such as `metric_time__day`. Examples:
+                      ['metric_time__day'] for ascending, ['-message_count'] for descending.
+                      Do NOT use 'asc'/'desc' keywords.
             dry_run: If True, compile and return the query plan. Live OSI
                 backends also validate the compiled SQL with a warehouse dry-run.
 
@@ -1102,8 +1125,6 @@ class SemanticTools:
                 self.generation_evidence.record_metric_dry_run(
                     metrics,
                     tool_result,
-                    dimensions=dimensions,
-                    time_granularity=time_granularity,
                 )
             return tool_result
 

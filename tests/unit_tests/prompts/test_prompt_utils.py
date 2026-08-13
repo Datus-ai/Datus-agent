@@ -312,10 +312,9 @@ class TestGenMetricsV12Template:
         assert len(result) > 100, "Template should render substantial content"
         assert "metric" in result.lower()
         assert "explicitly names a readable SQL file" in result
-        assert "call `read_file` first" in result
-        assert "use `finalize=false` batches for a large input" in result
-        assert "Treat metric-role outputs as an editable draft" in result
-        assert "call `update_sql_modeling_plan` and retry validation" in result
+        assert "call `read_file` once" in result
+        assert "Read the complete supplied SQL" in result
+        assert "keep literal filters, grouping, ordering, and result layout as query-time concerns" in result
 
     @pytest.mark.parametrize(
         "template_name",
@@ -325,7 +324,7 @@ class TestGenMetricsV12Template:
             "gen_metrics_system_2.0.j2",
         ],
     )
-    def test_sql_file_preflight_reads_before_planning(self, template_name):
+    def test_sql_file_evidence_is_read_directly(self, template_name):
         from jinja2 import Environment, FileSystemLoader
 
         from datus.prompts.prompt_manager import PromptManager
@@ -351,13 +350,8 @@ class TestGenMetricsV12Template:
             existing_subject_trees=[],
         )
 
-        read_instruction = "call `read_file` first"
-        planner_instruction = "`prepare_sql_modeling_plan`"
-        assert read_instruction in result
-        assert planner_instruction in result
-        assert result.index(read_instruction) < result.index(planner_instruction)
-        assert "`update_sql_modeling_plan`" in result
-        assert "CSV file" not in result
+        assert "call `read_file` once" in result
+        assert "business intent" in result
 
     def test_v12_template_mentions_skill(self):
         """v1.2 template should reference skills and gen-metrics."""

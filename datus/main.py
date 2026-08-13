@@ -186,7 +186,9 @@ def create_parser() -> argparse.ArgumentParser:
         default="check",
         help=(
             "Knowledge base update strategy: check (verify paths and data), overwrite (careful!), "
-            "incremental, or refresh-profile (semantic_model only; update profile descriptions in an existing YAML)"
+            "incremental, or refresh-profile (semantic_model only; update profile descriptions in an existing YAML). "
+            "For semantic_modeling, overwrite and incremental are compatibility aliases that fully reconcile each "
+            "selected YAML without clearing sibling artifacts."
         ),
     )
     bootstrap_parser.add_argument(
@@ -196,6 +198,7 @@ def create_parser() -> argparse.ArgumentParser:
         choices=[
             "metrics",
             "metadata",
+            "semantic_modeling",
             "semantic_model",
             "table_lineage",
             "reference_sql",
@@ -282,8 +285,10 @@ def create_parser() -> argparse.ArgumentParser:
         "--metrics-batch-size",
         type=int,
         default=5,
-        help="Number of SQL queries per batch for metrics extraction (default: 5). "
-        "Set to 1 to enable per-query provenance tracking.",
+        help=(
+            "Number of SQL queries per batch for metrics extraction or unified semantic modeling (default: 5). "
+            "Set to 1 to enable per-query provenance tracking for the metrics component."
+        ),
     )
     bootstrap_parser.add_argument(
         "-y",

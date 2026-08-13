@@ -23,16 +23,17 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+from datus.schemas.semantic_agentic_node_models import (
+    SemanticNodeInput,
+    SourceQueryEvidence,
+    source_provenance_from_success_story_row,
+    source_query_from_success_story_row,
+)
 from datus.storage.knowledge_provenance import (
     METRIC_ARTIFACT_TYPE,
     KnowledgeProvenanceStore,
     build_metric_provenance_rows,
     is_knowledge_provenance_enabled,
-)
-from datus.tools.func_tool.sql_modeling_planner import (
-    source_provenance_from_success_story_row,
-    source_query_from_success_story_row,
 )
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
