@@ -4286,14 +4286,20 @@
 
 <h1 id="dosi-semantic-adapter">Dosi Semantic Adapter<a class="headerlink" href="#dosi-semantic-adapter" title="Permanent link">&para;</a></h1>
 <p>The Dosi adapter executes OSI semantic models directly in the native Rust
-engine. It uses the same strict OSI authoring workflow as the existing OSI
-adapter, but does not lower models to MetricFlow.</p>
+engine. Its authoring, validation, catalog loading, and execution paths are
+provided by <code>datus-semantic-dosi</code>; it does not load the Python OSI adapter or
+lower models to MetricFlow.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-semantic-dosi
+<p>For local development, a published <code>dosi-engine</code> package is not required. From
+the <code>Datus-agent</code> checkout in the standard sibling-repository layout, install
+the engine binding and adapter sources into the same environment:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>../osi-engine/crates/dosi-py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>../datus-semantic-adapter/datus-semantic-core
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>../datus-semantic-adapter/datus-semantic-dosi
 </span></code></pre></div>
-<p>This command also installs the required <code>dosi-engine</code> wheel. The <code>/services</code>
-Semantic tab performs the same installation automatically when <code>dosi</code> is
-selected.</p>
+<p>The adapter still declares the logical <code>dosi-engine</code> dependency, but the local
+editable install satisfies it directly from source. A released engine version
+is needed only for registry-based installation and formal delivery.</p>
 <h2 id="configure">Configure<a class="headerlink" href="#configure" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -4311,18 +4317,23 @@ selected.</p>
 selects the only YAML or JSON model in that directory. Configure
 <code>semantic_model_path</code> when more than one model file exists.</p>
 <h2 id="supported-semantics">Supported Semantics<a class="headerlink" href="#supported-semantics" title="Permanent link">&para;</a></h2>
-<p>Dosi currently executes aggregate, ratio, and expression metrics; dimensions;
+<p>Dosi executes aggregate, ratio, and expression metrics; dimensions;
 many-to-one relationships; composite joins; query-backed datasets; filters;
-and day-through-year time grains. Its planner rejects ambiguous join paths and
-fan-out-prone queries rather than silently double-counting.</p>
-<p>Derived metrics, cumulative or rolling windows, metric offsets, and
-period-over-period metrics remain on the OSI + MetricFlow path until Dosi gains
-equivalent execution support.</p>
+day-through-year time grains; <code>time_dimension</code> primary axes; relationship
+<code>join_type</code>; metric <code>fill_nulls_with</code>; and structured windows. Datus-ext 1.3
+supports period comparison, rolling, cumulative, rank/distribution,
+first/last/nth value, backward or forward offset, and explicit statistical
+frames over row- or value-based ranges.</p>
 <h2 id="authoring-and-validation">Authoring and Validation<a class="headerlink" href="#authoring-and-validation" title="Permanent link">&para;</a></h2>
-<p>Selecting <code>dosi</code> still activates Datus's OSI semantic-model and metric
-authoring skills. <code>validate_semantic</code>, <code>list_metrics</code>, <code>get_dimensions</code>, and
-<code>query_metrics</code> are routed through the Dosi adapter. The authored OSI document
-remains the source of truth.</p>
+<p>Selecting <code>dosi</code> activates strict OSI authoring plus a Dosi-native extension
+profile. <code>validate_semantic</code>, <code>list_metrics</code>, <code>get_dimensions</code>, and
+<code>query_metrics</code> are routed through the native engine. For time queries, pass
+<code>metric_time</code> as the dimension and the grain separately; a returned column such
+as <code>metric_time__&lt;grain&gt;</code> is an output/order key.</p>
+<p>The unified <code>semantic_modeling</code> workflow lists valid and repairable existing
+models separately. It binds a valid target or plans the same repairable model
+in place, applies the requested changes, validates the exact final artifact,
+and reconciles that artifact to the Knowledge Base.</p>
 
 
 
