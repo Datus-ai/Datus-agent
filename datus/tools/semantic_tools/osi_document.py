@@ -4,8 +4,9 @@
 """Minimal OSI-core document reader for Knowledge Base publication.
 
 Execution validation remains the active semantic engine's responsibility. This
-module only turns already-authored OSI YAML into the small object view consumed
-by ``GenerationTools`` when it writes semantic and metric records to storage.
+module intentionally uses lightweight read-only dataclass projections to turn
+already-authored OSI YAML into the small object view consumed by
+``GenerationTools`` when it writes semantic and metric records to storage.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 @dataclass
@@ -30,6 +33,7 @@ class OsiDimension:
     name: str
     expr: str
     type: str = "categorical"
+    is_dimension: bool = False
     granularity: str | None = None
     description: str = ""
     ai_context: Any = None
@@ -151,12 +155,14 @@ def _source(value: Any) -> OsiSource:
 def _dimension(field_node: dict[str, Any]) -> OsiDimension:
     payload = _extension_payload(field_node)
     dimension = field_node.get("dimension") or {}
-    is_time = isinstance(dimension, dict) and bool(dimension.get("is_time"))
+    is_dimension = "dimension" in field_node and isinstance(field_node.get("dimension"), dict)
+    is_time = is_dimension and bool(dimension.get("is_time"))
     name = str(field_node.get("name") or "")
     return OsiDimension(
         name=name,
         expr=_expression(field_node) or name,
         type="time" if is_time else str(payload.get("type") or "categorical"),
+        is_dimension=is_dimension,
         granularity=str(payload.get("time_granularity") or payload.get("granularity") or "") or None,
         description=str(field_node.get("description") or ""),
         ai_context=field_node.get("ai_context"),
@@ -166,7 +172,9 @@ def _dimension(field_node: dict[str, Any]) -> OsiDimension:
 def _dataset(node: dict[str, Any]) -> OsiDataset:
     payload = _extension_payload(node)
     fields = [item for item in node.get("fields") or [] if isinstance(item, dict) and item.get("name")]
-    time_fields = [item for item in fields if bool((item.get("dimension") or {}).get("is_time"))]
+    time_fields = [
+        item for item in fields if isinstance(item.get("dimension"), dict) and bool(item["dimension"].get("is_time"))
+    ]
     explicit_time = payload.get("time_dimension")
     if isinstance(explicit_time, dict):
         explicit_time = explicit_time.get("name")
@@ -183,8 +191,9 @@ def _dataset(node: dict[str, Any]) -> OsiDataset:
         dimension = _dimension(field_node)
         field_views.append(dimension)
         if name == primary_time_name:
+            dimension.is_dimension = True
             primary_time = dimension
-        if name != primary_time_name and name not in primary_keys:
+        if dimension.is_dimension and name != primary_time_name and name not in primary_keys:
             dimensions.append(dimension)
 
     return OsiDataset(
@@ -269,7 +278,10 @@ def load_osi_document(path: str, semantic_model_name: str) -> OsiDocument:
 
     model_file = Path(path)
     if not model_file.is_file():
-        raise ValueError(f"OSI publication artifact is not a file: {path!r}")
+        raise DatusException(
+            ErrorCode.TOOL_INVALID_INPUT,
+            message=f"OSI publication artifact is not a file: {path!r}",
+        )
 
     matches: list[dict[str, Any]] = []
     available: set[str] = set()
@@ -277,7 +289,10 @@ def load_osi_document(path: str, semantic_model_name: str) -> OsiDocument:
         with model_file.open(encoding="utf-8") as handle:
             documents = list(yaml.safe_load_all(handle))
     except (OSError, yaml.YAMLError) as exc:
-        raise ValueError(f"cannot read OSI model {str(model_file)!r}: {exc}") from exc
+        raise DatusException(
+            ErrorCode.TOOL_INVALID_INPUT,
+            message=f"cannot read OSI model {str(model_file)!r}: {exc}",
+        ) from exc
     for document in documents:
         if not isinstance(document, dict):
             continue
@@ -295,10 +310,17 @@ def load_osi_document(path: str, semantic_model_name: str) -> OsiDocument:
 
     if not matches:
         choices = ", ".join(sorted(available)) or "<none>"
-        raise ValueError(f"semantic model {semantic_model_name!r} was not found in {path!r}; available: {choices}")
+        raise DatusException(
+            ErrorCode.TOOL_INVALID_INPUT,
+            message=f"semantic model {semantic_model_name!r} was not found in {path!r}; available: {choices}",
+        )
     if len(matches) != 1:
-        raise ValueError(
-            f"semantic model {semantic_model_name!r} is declared {len(matches)} times in publication artifact {path!r}"
+        raise DatusException(
+            ErrorCode.TOOL_INVALID_INPUT,
+            message=(
+                f"semantic model {semantic_model_name!r} is declared {len(matches)} times "
+                f"in publication artifact {path!r}"
+            ),
         )
 
     model = matches[0]

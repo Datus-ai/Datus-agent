@@ -18,6 +18,11 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, Source
 @pytest.fixture(autouse=True)
 def _stub_osi_schema_validation(monkeypatch):
     monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
+    monkeypatch.setattr(
+        semantic_authoring,
+        "validate_osi_authoring_document",
+        lambda document, *, semantic_adapter: None,
+    )
 
 
 def _set_adapter(agent_config, adapter: str) -> None:
@@ -127,7 +132,9 @@ def test_semantic_modeling_rejects_non_dosi_adapters(real_agent_config, mock_llm
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     _set_adapter(real_agent_config, adapter)
-    with pytest.raises(ValueError, match="semantic_adapter=dosi"):
+    from datus.utils.exceptions import DatusException
+
+    with pytest.raises(DatusException, match="semantic_adapter=dosi"):
         SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
 
@@ -383,3 +390,30 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
         include_metrics=True,
     )
     assert node.osi_target_state.artifact_snapshot_path == ""
+
+
+def test_host_finalizer_reports_unavailable_semantic_validation(real_agent_config, mock_llm_create):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    _set_adapter(real_agent_config, "dosi")
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    target = model_dir / "orders.yml"
+    target.write_text(
+        "version: 0.2.0.dev0\nsemantic_model:\n  - name: orders_model\n    datasets: []\n    metrics: []\n",
+        encoding="utf-8",
+    )
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "orders_model",
+            "semantic_model_file": f"subject/semantic_models/{real_agent_config.current_datasource}/orders.yml",
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode="planned",
+    )
+    node.semantic_tools = None
+
+    with pytest.raises(RuntimeError, match="validate_semantic is unavailable"):
+        node._finalize_selected_osi_artifact()

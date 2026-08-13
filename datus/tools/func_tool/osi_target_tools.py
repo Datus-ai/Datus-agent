@@ -151,12 +151,14 @@ class OsiSemanticModelTargetState:
         try:
             current = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         except OSError as exc:
-            raise ValueError(f"Cannot read the bound OSI semantic model: {exc}") from exc
+            raise ValueError(f"Cannot read the selected OSI semantic model: {exc}") from exc
         if current != self.artifact_sha256:
-            raise ValueError(
-                "The bound OSI semantic model changed after selection. "
+            remediation = (
                 "Inspect the live inventory and bind it again before writing."
+                if self.mode == "bound"
+                else "Plan the target again before writing."
             )
+            raise ValueError(f"The selected OSI semantic model changed after selection. {remediation}")
 
     def record_planned_write(self) -> None:
         planned = self.planned
@@ -270,6 +272,7 @@ class OsiSemanticModelTargetTools:
         self.target_state = target_state or OsiSemanticModelTargetState()
         self.generation_evidence = generation_evidence
         self._inventory_cache: Optional[Dict[str, Any]] = None
+        self._inventory_revision = ""
 
     def available_tools(self):
         """Return the complete target-tool surface for permission registration."""
@@ -326,6 +329,7 @@ class OsiSemanticModelTargetTools:
     def invalidate_inventory(self) -> None:
         """Drop the request-local inventory snapshot."""
         self._inventory_cache = None
+        self._inventory_revision = ""
 
     @staticmethod
     def _public_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
@@ -362,8 +366,11 @@ class OsiSemanticModelTargetTools:
     def _inventory(self) -> Dict[str, Any]:
         from datus.agent.node.semantic_authoring import inspect_osi_semantic_model_inventory
 
+        if self._inventory_revision != self.target_state.artifact_sha256:
+            self.invalidate_inventory()
         if self._inventory_cache is None:
             self._inventory_cache = inspect_osi_semantic_model_inventory(self.agent_config)
+            self._inventory_revision = self.target_state.artifact_sha256
         return self._inventory_cache
 
     def _require_inventory_revision(self, candidate: Dict[str, Any]) -> None:

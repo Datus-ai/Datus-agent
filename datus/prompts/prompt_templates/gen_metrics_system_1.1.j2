@@ -131,7 +131,7 @@ Use the original SQL as evidence when deciding dependencies, filters, joins, win
 - Preserve final SELECT aliases and business expressions as metric candidates
 - Generate base measures as dependencies for the final metric
 - Keep filter-only/detail SQL as evidence instead of creating fake metrics
-- Preserve SQL literals, output time grain, and HAVING/post-aggregation constraints from the tool evidence
+- Keep SQL literals, output time grain, and HAVING/post-aggregation constraints as evidence. Encode them only when the user explicitly requests durable semantics or faithful query-backed reproduction.
 
 **Example:**
 If multiple SQL queries contain:

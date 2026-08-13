@@ -89,6 +89,32 @@ class TestAvailableTools:
         assert len(tools) == 4
 
 
+class TestCompiledMetricCatalog:
+    def test_uses_shared_adapter_catalog_paging(self, generation_tools, tmp_path):
+        calls = []
+
+        async def list_metrics(*, limit, offset):
+            calls.append((limit, offset))
+            return [SimpleNamespace(name="revenue")] if offset == 0 else []
+
+        generation_tools.agent_config.resolve_semantic_adapter.return_value = "dosi"
+        generation_tools.agent_config.build_semantic_adapter_config.return_value = None
+        adapter = SimpleNamespace(list_metrics=list_metrics)
+
+        with (
+            patch("datus.tools.semantic_tools.registry.semantic_adapter_registry.get_metadata", return_value=None),
+            patch(
+                "datus.tools.semantic_tools.registry.semantic_adapter_registry.create_adapter",
+                return_value=adapter,
+            ),
+            patch("datus.tools.semantic_tools.paging.metric_catalog_paging", return_value=(5000, 2)),
+        ):
+            catalog = generation_tools._compiled_metric_catalog(str(tmp_path / "model.yml"))
+
+        assert list(catalog) == ["revenue"]
+        assert calls == [(5000, 0)]
+
+
 class TestCheckSemanticObjectExists:
     def test_osi_bound_yaml_takes_precedence_over_stale_rag(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
@@ -1886,7 +1912,8 @@ class TestOsiSync:
         assert objects[3]["name"] == "customer_segment"
         assert objects[3]["is_dimension"] is True
         assert objects[4]["name"] == "amount"
-        assert objects[4]["is_dimension"] is True
+        assert objects[4]["is_dimension"] is False
+        assert objects[4]["is_measure"] is False
         generation_tools.table_semantic_profile_rag.delete_artifact_rows.assert_not_called()
         generation_tools.table_semantic_profile_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.table_semantic_profile_rag.upsert_batch.assert_called_once()
@@ -1896,6 +1923,7 @@ class TestOsiSync:
         assert profiles[0]["description"] == "Orders table"
         assert "order-level analytics" in profiles[0]["ai_context_json"]
         assert '"name": "customer_segment"' in profiles[0]["columns_json"]
+        assert '"name": "amount", "role": "field"' in profiles[0]["columns_json"]
         assert '"from_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
         assert '"to_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
         assert result["table_semantic_profiles"] == 1

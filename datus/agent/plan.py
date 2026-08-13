@@ -201,7 +201,11 @@ def _create_single_node(
         node_type=normalized_type,
         input_data=input_data,
         agent_config=agent_config,
-        node_name=node_type if normalized_type in (NodeType.TYPE_GEN_SQL, NodeType.TYPE_ASK_METRICS) else None,
+        node_name=(
+            node_type
+            if normalized_type in (NodeType.TYPE_GEN_SQL, NodeType.TYPE_ASK_METRICS, NodeType.TYPE_SEMANTIC)
+            else None
+        ),
     )
 
     return node

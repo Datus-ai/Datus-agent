@@ -914,11 +914,19 @@ def render_required_authoring_skill(
     if skill_name != "dosi-semantic-authoring":
         return content
 
-    from datus_semantic_dosi.authoring_spec import (
-        authoring_spec_text,
-        datus_extension_authoring_spec_text,
-    )
-    from datus_semantic_dosi.engine import datus_extension_version
+    try:
+        from datus_semantic_dosi.authoring_spec import (
+            authoring_spec_text,
+            datus_extension_authoring_spec_text,
+        )
+        from datus_semantic_dosi.engine import datus_extension_version
+    except ImportError as exc:
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message_args={"config_error": "semantic_adapter=dosi requires the datus-semantic-dosi package"},
+        ) from exc
 
     rendered_skill = content.replace(_DATUS_EXTENSION_VERSION_TOKEN, datus_extension_version())
     extension_spec = datus_extension_authoring_spec_text("<osi_dialect>")
@@ -936,7 +944,15 @@ def authoring_prompt_snapshot_meta(agent_config: Any, node_name: str) -> Dict[st
     if "dosi-semantic-authoring" not in skills:
         return {}
 
-    from datus_semantic_dosi.engine import datus_extension_version
+    try:
+        from datus_semantic_dosi.engine import datus_extension_version
+    except ImportError as exc:
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message_args={"config_error": "semantic_adapter=dosi requires the datus-semantic-dosi package"},
+        ) from exc
 
     return {"datus_extension_version": datus_extension_version()}
 

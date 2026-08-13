@@ -298,6 +298,50 @@ class TestCreateInteractiveNode:
 # ---------------------------------------------------------------------------
 
 
+class TestNodeSemanticWiring:
+    @pytest.mark.parametrize(
+        ("node_name", "class_name", "patch_target"),
+        [
+            (
+                "semantic_modeling",
+                "SemanticModelingAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
+            ),
+            (
+                "gen_metrics",
+                "GenMetricsAgenticNode",
+                "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__",
+            ),
+            (
+                "gen_semantic_model",
+                "GenSemanticModelAgenticNode",
+                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__",
+            ),
+        ],
+    )
+    def test_new_instance_routes_named_semantic_nodes(self, node_name, class_name, patch_target):
+        config = _mock_agent_config()
+
+        with patch(patch_target, return_value=None) as mock_init:
+            node = Node.new_instance(
+                node_id="semantic_node",
+                description="semantic authoring",
+                node_type=NodeType.TYPE_SEMANTIC,
+                agent_config=config,
+                node_name=node_name,
+                is_subagent=True,
+                session_id="session-1",
+            )
+
+        assert node.__class__.__name__ == class_name
+        mock_init.assert_called_once_with(
+            agent_config=config,
+            execution_mode="workflow",
+            is_subagent=True,
+            session_id="session-1",
+        )
+
+
 class TestNodeAskMetricsWiring:
     @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
     def test_new_instance_routes_ask_metrics(self, mock_init):

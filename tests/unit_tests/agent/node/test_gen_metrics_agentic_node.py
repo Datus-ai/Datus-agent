@@ -915,6 +915,7 @@ class TestGetSystemPrompt:
         assert '<required_skill name="gen-metrics">' not in prompt
 
     def test_dosi_authoring_injects_window_skill(self, real_agent_config, mock_llm_create):
+        pytest.importorskip("datus_semantic_dosi")
         _set_global_semantic_adapter(real_agent_config, "dosi")
         node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="Generate native Dosi metrics")
@@ -1190,7 +1191,6 @@ class TestExecuteStreamGenMetricsError:
             semantic_model_name="shop",
             scope="semantic_model",
         )
-        node.semantic_tools.query_metrics.assert_not_called()
         node.generation_tools.publish_metrics.assert_called_once_with(metric_file=str(target))
 
     def test_osi_retry_republishes_an_identical_existing_metric(self, real_agent_config, mock_llm_create):

@@ -216,6 +216,7 @@ async def init_success_story_semantic_model_async(
         or runtime_db_context.get("db_schema")
         or runtime_db_context.get("schema_name")
         or current_db_config.schema,
+        source_queries=source_queries,
     )
 
     action_history_manager = ActionHistoryManager()

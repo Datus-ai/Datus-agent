@@ -40,6 +40,8 @@ class GenMetricsAgenticNode(AgenticNode):
     """
 
     NODE_NAME = "gen_metrics"
+    INCLUDE_OSI_CORE_SPEC = False
+    COMPACT_SOURCE_INSPECTION = False
     result_class = GenMetricsNodeResult
 
     def __init__(
@@ -308,7 +310,7 @@ class GenMetricsAgenticNode(AgenticNode):
         return render_required_authoring_skill(
             skill_name,
             super()._render_required_skill_content(skill_name, content),
-            include_osi_core=self.NODE_NAME == "semantic_modeling",
+            include_osi_core=self.INCLUDE_OSI_CORE_SPEC,
         )
 
     def _setup_semantic_tools(self):
@@ -393,7 +395,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
                 source_sql_provider=self._semantic_discovery_source_sql,
-                compact_source_inspection=self.NODE_NAME == "semantic_modeling",
+                compact_source_inspection=self.COMPACT_SOURCE_INSPECTION,
             )
             discovery_tools = self.semantic_discovery_tools.available_tools()
             self.tools.extend(discovery_tools)

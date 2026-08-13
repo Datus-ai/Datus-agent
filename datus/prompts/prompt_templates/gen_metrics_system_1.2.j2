@@ -389,5 +389,5 @@ metric:
 14. **Metric name must match measure**: For `measure_proxy`, the metric name should match the measure name. `type_params.measure` must exactly match a measure in the semantic model. Do NOT invent unrelated names.
 15. **Filtered metrics**: Keep `type_params.measure` as a string measure name. Put filter logic in a reusable semantic-model measure, then reference that measure from the metric YAML.
 16. **Check before creating**: ALWAYS call `check_semantic_object_exists(name, kind="metric")` before writing a new metric. Skip if it already exists.
-17. **Verify names after validation**: Bind each output ID to the exact metric name authored in the validated YAML when calling `publish_metrics`.
+17. **Verify the artifact after validation**: Ensure `metric_file` points to the validated metric YAML before calling `publish_metrics(metric_file)`. Do not pass output bindings.
 18. **Derived after base metrics**: Do not generate a derived metric until all referenced metrics exist in the catalog. Never create a derived metric whose expression is just a single existing metric passthrough.

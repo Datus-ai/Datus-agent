@@ -42,9 +42,20 @@ jobs:
             uv.lock
             pyproject.toml
 
+      - name: Checkout datus-semantic-adapter main
+        uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/datus-semantic-adapter
+          ref: main
+          path: external/datus-semantic-adapter
+          persist-credentials: false
+
       - name: Install dependencies
         run: |
           uv sync --locked --group ci
+          uv pip install --no-cache-dir \
+            --reinstall-package datus-semantic-dosi \
+            ./external/datus-semantic-adapter/datus-semantic-dosi
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Check release metadata

@@ -33,6 +33,11 @@ from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, norma
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
+from datus.tools.semantic_tools.paging import (
+    METRIC_CATALOG_MAX_PAGES,
+    METRIC_CATALOG_PAGE_SIZE,
+    metric_catalog_paging,
+)
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.loggings import get_logger
@@ -171,8 +176,8 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
 # `services.semantic_layer.<adapter>` with `metric_catalog_page_size` /
 # `metric_catalog_max_pages`. The page is large because an adapter may rebuild
 # its whole catalog per request, making each extra page cost a full pass.
-_METRIC_DATASETS_PAGE_SIZE = 5000
-_METRIC_DATASETS_MAX_PAGES = 200
+_METRIC_DATASETS_PAGE_SIZE = METRIC_CATALOG_PAGE_SIZE
+_METRIC_DATASETS_MAX_PAGES = METRIC_CATALOG_MAX_PAGES
 
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
@@ -503,26 +508,7 @@ class SemanticTools:
 
     def _metric_catalog_paging(self) -> Tuple[int, int]:
         """Page size and page cap for `metric_datasets`, from the adapter's config."""
-        config: Dict[str, Any] = {}
-        getter = getattr(self.agent_config, "get_semantic_layer_config", None)
-        if callable(getter):
-            try:
-                config = getter(self.adapter_type) or {}
-            except Exception as e:  # noqa: BLE001 - a bad config must not break tool calls
-                logger.warning("Could not read semantic layer config for metric paging: %s", e)
-
-        def _positive(key: str, default: int) -> int:
-            try:
-                value = int(config.get(key) or default)
-            except (TypeError, ValueError):
-                logger.warning("Invalid %s=%r; using %d", key, config.get(key), default)
-                return default
-            return value if value > 0 else default
-
-        return (
-            _positive("metric_catalog_page_size", _METRIC_DATASETS_PAGE_SIZE),
-            _positive("metric_catalog_max_pages", _METRIC_DATASETS_MAX_PAGES),
-        )
+        return metric_catalog_paging(self.agent_config, self.adapter_type)
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""

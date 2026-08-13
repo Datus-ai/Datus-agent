@@ -134,6 +134,37 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
+        elif node_type == NodeType.TYPE_SEMANTIC:
+            if node_name == "semantic_modeling":
+                from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+                node = SemanticModelingAgenticNode(
+                    agent_config=agent_config,
+                    execution_mode="workflow",
+                    is_subagent=is_subagent,
+                    session_id=session_id,
+                )
+            elif node_name == "gen_metrics":
+                from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+                node = GenMetricsAgenticNode(
+                    agent_config=agent_config,
+                    execution_mode="workflow",
+                    is_subagent=is_subagent,
+                    session_id=session_id,
+                )
+            else:
+                from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+                node = GenSemanticModelAgenticNode(
+                    agent_config=agent_config,
+                    execution_mode="workflow",
+                    is_subagent=is_subagent,
+                    session_id=session_id,
+                )
+            if input_data is not None:
+                node.input = input_data
+            return node
         elif node_type == NodeType.TYPE_ASK_METRICS:
             from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 

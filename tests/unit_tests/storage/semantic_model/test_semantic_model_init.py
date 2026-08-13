@@ -1061,6 +1061,8 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
         assert "SQL:\nSELECT 1" in captured_inputs[0].user_message
         assert "ignore this" not in captured_inputs[0].user_message
         assert "sales:sql_1:case" not in captured_inputs[0].user_message
+        assert [query.sql for query in captured_inputs[0].source_queries] == ["SELECT 1"]
+        assert captured_inputs[0].source_queries[0].source_context_ids == ["sales:sql_1:case"]
 
     @pytest.mark.asyncio
     async def test_success_path_emits_events(self, tmp_path, monkeypatch):

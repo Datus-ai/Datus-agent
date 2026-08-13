@@ -4,6 +4,7 @@
 import pytest
 
 from datus.tools.semantic_tools.osi_document import load_osi_document
+from datus.utils.exceptions import DatusException
 
 
 def test_load_osi_document_reads_core_fields_and_datus_hints(tmp_path):
@@ -28,6 +29,7 @@ semantic_model:
                 data: '{"v":"1.2","time_granularity":"day"}'
           - name: status
             expression: {dialects: [{dialect: ANSI_SQL, expression: status}]}
+            dimension: {}
     metrics:
       - name: running_revenue
         expression:
@@ -47,6 +49,9 @@ semantic_model:
     assert document.datasets[0].time_dimension.granularity == "day"
     assert [item.name for item in document.datasets[0].fields] == ["order_id", "order_date", "status"]
     assert [item.name for item in document.datasets[0].dimensions] == ["status"]
+    assert document.datasets[0].fields[0].is_dimension is False
+    assert document.datasets[0].fields[1].is_dimension is True
+    assert document.datasets[0].fields[2].is_dimension is True
     assert document.metrics[0].dataset == "orders"
     assert document.metrics[0].subject_path == ["sales", "revenue"]
     assert document.metrics[0].window == {"type": "cumulative", "function": "sum"}
@@ -88,6 +93,8 @@ semantic_model:
             dimension: {is_time: true}
           - name: completed_at
             dimension: {is_time: true}
+          - name: invalid_dimension_marker
+            dimension: true
 """.lstrip(),
         encoding="utf-8",
     )
@@ -99,6 +106,7 @@ semantic_model:
         "created_at",
         "completed_at",
     ]
+    assert document.datasets[0].fields[-1].is_dimension is False
 
 
 def test_load_osi_document_rejects_duplicate_model_declarations(tmp_path):
@@ -118,5 +126,5 @@ semantic_model:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="declared 2 times"):
+    with pytest.raises(DatusException, match="declared 2 times"):
         load_osi_document(str(model), "finance")

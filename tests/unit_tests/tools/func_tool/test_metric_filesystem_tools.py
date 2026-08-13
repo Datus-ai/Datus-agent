@@ -1164,6 +1164,7 @@ semantic_model:
         assert not target.exists()
 
     def test_semantic_modeling_stamps_query_source_with_runtime_dosi_version(self, tmp_path):
+        pytest.importorskip("datus_semantic_dosi")
         tool = SemanticModelingFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="semantic_modeling",

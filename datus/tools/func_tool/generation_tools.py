@@ -1110,6 +1110,9 @@ class GenerationTools:
                 }
             )
 
+        dimension_names = {
+            str(getattr(dimension, "name", "") or "") for dimension in getattr(dataset, "dimensions", []) or []
+        }
         fields = getattr(dataset, "fields", None)
         for field in fields if fields is not None else getattr(dataset, "dimensions", []):
             field_name = str(getattr(field, "name", "") or "")
@@ -1119,7 +1122,7 @@ class GenerationTools:
                 {
                     "name": field_name,
                     "expr": getattr(field, "expr", None) or field_name,
-                    "role": "dimension",
+                    "role": "dimension" if field_name in dimension_names else "field",
                     "type": str(getattr(field, "type", "") or ""),
                     "granularity": getattr(field, "granularity", "") or "",
                     "description": getattr(field, "description", "") or "",
@@ -1568,6 +1571,9 @@ class GenerationTools:
                     )
 
                 fields = getattr(dataset, "fields", None)
+                dimension_names = {
+                    str(getattr(dimension, "name", "") or "") for dimension in getattr(dataset, "dimensions", []) or []
+                }
                 for field in fields if fields is not None else getattr(dataset, "dimensions", []):
                     field_name = str(getattr(field, "name", "") or "")
                     if not field_name or field_name in {*primary_keys, getattr(time_dimension, "name", None)}:
@@ -1583,7 +1589,7 @@ class GenerationTools:
                             column_type=str(getattr(field, "type", "") or ""),
                             yaml_path=yaml_path,
                             db_parts=db_parts,
-                            is_dimension=True,
+                            is_dimension=field_name in dimension_names,
                             time_granularity=getattr(field, "granularity", "") or "",
                         )
                     )
@@ -1767,6 +1773,7 @@ class GenerationTools:
             return None
 
         from datus.tools.semantic_tools.config import SemanticAdapterConfig
+        from datus.tools.semantic_tools.paging import metric_catalog_paging
         from datus.tools.semantic_tools.registry import semantic_adapter_registry
         from datus.utils.async_utils import run_async
 
@@ -1797,9 +1804,9 @@ class GenerationTools:
 
         adapter = semantic_adapter_registry.create_adapter(adapter_name, adapter_config)
         catalog: Dict[str, Any] = {}
-        page_size = 200
+        page_size, max_pages = metric_catalog_paging(self.agent_config, adapter_name)
         offset = 0
-        for _ in range(50):
+        for _ in range(max_pages):
             page = list(run_async(adapter.list_metrics(limit=page_size, offset=offset)))
             for metric in page:
                 name = str(getattr(metric, "name", "") or "").strip()
@@ -1810,7 +1817,9 @@ class GenerationTools:
             offset += len(page)
         if not list(run_async(adapter.list_metrics(limit=page_size, offset=offset))):
             return catalog
-        raise ValueError("Semantic adapter metric catalog exceeds the 10,000 metric publication limit")
+        raise ValueError(
+            f"Semantic adapter metric catalog exceeds the {page_size * max_pages} metric publication limit"
+        )
 
     @staticmethod
     def _preserve_existing_metric_sql(metric_objects: List[dict], existing_rows: Any) -> None:

@@ -9,6 +9,7 @@ from datus.api.models.kb_models import BootstrapDocInput, BootstrapKbEvent, Boot
 from datus.api.services.kb_service import KbService
 from datus.configuration.agent_config import DocumentConfig
 from datus.schemas.batch_events import BatchEvent, BatchStage
+from datus.utils.exceptions import DatusException
 
 
 class TestKbServiceInit:
@@ -53,6 +54,16 @@ class TestKbServiceBuildArgs:
         assert args.success_story is None
         assert args.semantic_yaml is None
         assert args.sql_dir is None
+
+    def test_build_args_rejects_paths_outside_project_root(self, tmp_path):
+        request = BootstrapKbInput(
+            components=["semantic_modeling"],
+            strategy="overwrite",
+            success_story="../outside.csv",
+        )
+
+        with pytest.raises(DatusException, match="escapes the project root"):
+            KbService._build_args(request, str(tmp_path / "project"))
 
     def test_build_args_sets_defaults(self):
         """_build_args sets default values for common fields."""

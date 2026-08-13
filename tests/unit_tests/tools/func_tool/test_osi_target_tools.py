@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,6 +62,32 @@ def test_partition_touched_metrics_uses_final_yaml_presence_and_canonical_names(
 
     assert present == ["revenue"]
     assert absent == ["missing_metric"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "remediation"),
+    [
+        ("planned", "Plan the target again before writing."),
+        ("bound", "Inspect the live inventory and bind it again before writing."),
+    ],
+)
+def test_selected_revision_mismatch_reports_mode_appropriate_remediation(tmp_path, mode, remediation):
+    target = tmp_path / "orders.yml"
+    target.write_text("before", encoding="utf-8")
+    state = OsiSemanticModelTargetState()
+    state.select(
+        {
+            "semantic_model_name": "orders",
+            "semantic_model_file": "subject/semantic_models/warehouse/orders.yml",
+            "absolute_path": str(target),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode=mode,
+    )
+    target.write_text("after", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=re.escape(remediation)):
+        state.require_selected_revision(target)
 
 
 def test_list_scans_live_yaml_inventory_without_mutating_binding(tmp_path):
@@ -180,6 +207,28 @@ def test_list_and_bind_reuse_inventory_and_return_compact_authoring_outline(tmp_
         ],
         "metrics": ["order_count"],
     }
+
+
+def test_inventory_cache_refreshes_when_selected_artifact_revision_changes(tmp_path, monkeypatch):
+    config, model_dir = _config(tmp_path)
+    _write_model(model_dir / "orders.yml", name="orders_model")
+    inspect_inventory = semantic_authoring.inspect_osi_semantic_model_inventory
+    calls = 0
+
+    def counted_inventory(agent_config):
+        nonlocal calls
+        calls += 1
+        return inspect_inventory(agent_config)
+
+    monkeypatch.setattr(semantic_authoring, "inspect_osi_semantic_model_inventory", counted_inventory)
+    state = OsiSemanticModelTargetState()
+    tools = OsiSemanticModelTargetTools(config, target_state=state)
+
+    assert tools.list_existing_osi_semantic_models().success
+    state.artifact_sha256 = "new-revision"
+    assert tools.list_existing_osi_semantic_models().success
+
+    assert calls == 2
 
 
 def test_bind_rejects_inventory_revision_changed_after_list(tmp_path):

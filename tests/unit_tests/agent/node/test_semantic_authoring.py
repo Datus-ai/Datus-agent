@@ -94,6 +94,20 @@ def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
     assert calls == [document]
 
 
+def test_dosi_prompt_rendering_reports_missing_adapter_package(monkeypatch):
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", None)
+
+    with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
+        semantic_authoring.render_required_authoring_skill("dosi-semantic-authoring", "authoring")
+
+
+def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", None)
+
+    with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
+        semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "gen_metrics")
+
+
 def test_legacy_node_config_fields_are_ignored():
     assert (
         resolve_authoring_format(_agent_config("metricflow"), {"authoring_format": "osi"})

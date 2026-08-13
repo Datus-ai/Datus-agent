@@ -24,6 +24,8 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
     """Author Dosi datasets, metrics, or both against one selected model."""
 
     NODE_NAME = "semantic_modeling"
+    INCLUDE_OSI_CORE_SPEC = True
+    COMPACT_SOURCE_INSPECTION = True
     result_class = SemanticModelingNodeResult
 
     def __init__(
@@ -35,10 +37,16 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
         session_id: Optional[str] = None,
     ):
         from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+        from datus.utils.exceptions import DatusException, ErrorCode
 
         adapter = resolve_semantic_adapter_type(agent_config)
         if adapter != "dosi":
-            raise ValueError("semantic_modeling is available only when semantic_adapter=dosi.")
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": f"semantic_modeling is available only when semantic_adapter=dosi; resolved {adapter!r}."
+                },
+            )
         self._existing_models_checked = False
         super().__init__(
             agent_config=agent_config,
@@ -348,6 +356,10 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
             required_scope=validation_scope,
         )
         if not artifact_validated:
+            if not getattr(self, "semantic_tools", None):
+                raise RuntimeError(
+                    "The selected semantic model needs validation, but validate_semantic is unavailable."
+                )
             validation_result = self.semantic_tools.validate_semantic(
                 scope=validation_scope,
                 semantic_model_name=model_name,

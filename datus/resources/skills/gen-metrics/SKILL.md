@@ -199,7 +199,7 @@ Do not read, edit, or pass `metric_file` / `semantic_model_files` paths from ano
 ## Phase 4: Batch Sync to Knowledge Base
 
 After all generated metrics have passed validation:
-- You MUST call `publish_metrics(metric_file)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors.
+- For each generated metric file, call `publish_metrics(metric_file)` once to sync it to Knowledge Base while you can still fix publish errors.
 - Do not rely on the final JSON host fallback. The host fallback is only a last-resort guard when the tool call was accidentally missed.
 - If no metrics were generated, do NOT call `publish_metrics`
 
@@ -215,7 +215,7 @@ Phase 1 confirms the generation scope; validation is the semantic acceptance gat
 
 4. **Check before creating**: ALWAYS call `check_semantic_object_exists(name="{metric_name}", kind="metric")` before writing a new metric. If the metric already exists, skip it.
 
-5. **Verify names after validation**: Bind each output ID to the exact metric name authored in the validated YAML when calling `publish_metrics`.
+5. **Verify the artifact after validation**: Ensure each `metric_file` points to validated metric YAML before calling `publish_metrics(metric_file)`. Do not pass output bindings.
 
 6. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, expr, derived, or cumulative — write a `metric:` entry in the metrics YAML file so it can be persisted and discovered later.
 

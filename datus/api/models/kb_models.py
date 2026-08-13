@@ -1,7 +1,7 @@
 """Pydantic v2 models for the bootstrap-kb API."""
 
 from enum import Enum
-from typing import Literal, Optional
+from typing import Literal, Optional, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -109,7 +109,7 @@ class BootstrapKbInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_component_combination(self):
+    def validate_component_combination(self) -> Self:
         components = set(self.components)
         legacy_authoring = {KbComponent.SEMANTIC_MODEL.value, KbComponent.METRICS.value}
         if KbComponent.SEMANTIC_MODELING.value in components and components.intersection(legacy_authoring):
