@@ -810,6 +810,25 @@ class TestDeepSeekHistorySanitization:
 class TestApplyAndRemoveSdkPatches:
     """Tests for apply_sdk_patches and remove_sdk_patches lifecycle."""
 
+    @pytest.fixture(autouse=True)
+    def unpatched_baseline(self):
+        """Start every lifecycle test from the un-patched state.
+
+        ``datus/models/__init__.py`` calls ``apply_sdk_patches()`` at import
+        time, so by the time any test runs ``litellm.completion`` is already
+        the patched wrapper and ``sdk_patches._original_*`` already hold the
+        true originals. Tests here capture ``litellm.completion`` as "the true
+        original" and re-apply, which only holds when nothing is patched yet.
+
+        Whether that was true used to depend on a sibling test having run its
+        ``remove_sdk_patches()`` cleanup first, so whichever test executed
+        first in a process failed. Normalizing here makes each test
+        independent of execution order and of the import-time patching.
+        """
+        remove_sdk_patches()
+        yield
+        remove_sdk_patches()
+
     def test_apply_and_remove_patches(self):
         """apply_sdk_patches and remove_sdk_patches complete without error."""
         # Apply patches
