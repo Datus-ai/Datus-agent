@@ -100,17 +100,20 @@ ACTION_ROLE_COLOR_NAMES: dict[str, str] = {
 }
 
 USER_SCROLLBACK_PROMPT = "> "
-USER_SCROLLBACK_BACKGROUND = "#eeeeee"
-USER_SCROLLBACK_PROMPT_STYLE = f"green bold on {USER_SCROLLBACK_BACKGROUND}"
-USER_SCROLLBACK_TEXT_STYLE = f"on {USER_SCROLLBACK_BACKGROUND}"
+USER_SCROLLBACK_PROMPT_STYLE = "green bold"
 USER_SCROLLBACK_BORDER_STYLE = "green"
 
 
 def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK_PROMPT) -> Panel:
-    """Render a user scrollback block — bordered panel with background fill.
+    """Render a user scrollback block — green rules, terminal-default fill.
 
-    The border and background give USER messages a strong visual identity
-    that separates them from neighbouring ASSISTANT markdown blocks.
+    The green rules and the green ``>`` prompt give USER messages their visual
+    identity; the block paints **no background**. A fixed background hue can
+    only ever suit one terminal theme — the TUI Console runs at
+    ``color_system="256"``, so a light fill lands on xterm 255 and shows as a
+    solid white slab on the dark schemes most SSH sessions use. Letting the
+    terminal background show through follows the same rule as the
+    ``completion-menu`` styles above.
 
     ``HORIZONTALS`` (top/bottom rules only, space side edges) instead of a
     fully-boxed style: the TUI's drag-copy extracts rendered characters, so
@@ -120,11 +123,10 @@ def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK
     """
     text = Text()
     text.append(prompt_text, style=USER_SCROLLBACK_PROMPT_STYLE)
-    text.append(message, style=USER_SCROLLBACK_TEXT_STYLE)
+    text.append(message)
     return Panel(
         text,
         border_style=USER_SCROLLBACK_BORDER_STYLE,
-        style=USER_SCROLLBACK_TEXT_STYLE,
         box=HORIZONTALS,
         padding=(0, 1),
         expand=True,

@@ -180,6 +180,27 @@ class TestRenderUserScrollbackText:
         selection.finish()
         assert extract_selection_text(buf, selection) == "  > hello world"
 
+    def test_paints_no_background(self):
+        """Contract: the USER block must not fill a background colour.
+
+        A fixed fill suits at most one terminal theme — the light hue this
+        block used to carry rendered as a solid white slab on the dark schemes
+        SSH sessions typically use. Rendering goes through the same
+        ``color_system="256"`` Console the TUI builds, so any background would
+        show up here as a ``48;5;N`` / ``4x`` SGR parameter.
+        """
+        import re
+
+        from datus.cli.cli_styles import render_user_scrollback_text
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True, color_system="256", width=30)
+        console.print(render_user_scrollback_text("hello world"))
+
+        params = [p for seq in re.findall(r"\x1b\[([0-9;]*)m", buf.getvalue()) for p in seq.split(";") if p]
+        assert "48" not in params, f"background SGR emitted: {buf.getvalue()!r}"
+        assert not [p for p in params if p.isdigit() and (40 <= int(p) <= 47 or 100 <= int(p) <= 107)]
+
     def test_top_and_bottom_rules_remain(self):
         from datus.cli.cli_styles import render_user_scrollback_text
 
