@@ -279,7 +279,9 @@ class ChatService:
                         messages = msg["actions"]
                         assistant_response_seen = False
                         tool_result_seen = False
-                        seen_assistant_message_fingerprints: set[str] = set()
+                        # Maps fingerprint -> owning message_id; the helpers below
+                        # need the owner to tell a legitimate UPDATE from a repeat.
+                        seen_assistant_message_fingerprints: dict[str, str] = {}
                         for action in messages:
                             include_final_response = _should_include_final_response(action, assistant_response_seen)
                             sse_event = action_to_sse_event(
