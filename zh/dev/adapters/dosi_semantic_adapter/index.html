@@ -4285,13 +4285,18 @@
 
 
 <h1 id="dosi">Dosi 语义适配器<a class="headerlink" href="#dosi" title="Permanent link">&para;</a></h1>
-<p>Dosi adapter 使用原生 Rust engine 直接执行 OSI 语义模型。它复用现有 OSI
-adapter 的 strict OSI authoring 流程，但不会再降低到 MetricFlow。</p>
+<p>Dosi adapter 使用原生 Rust engine 直接执行 OSI 语义模型。authoring、校验、
+catalog 加载和执行都由 <code>datus-semantic-dosi</code> 提供；它不会加载 Python OSI
+adapter，也不会降低到 MetricFlow。</p>
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-semantic-dosi
+<p>本地开发不要求先发布 <code>dosi-engine</code>。在标准的同级仓库布局中，从
+<code>Datus-agent</code> checkout 进入同一个 Python 环境后安装源码：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>../osi-engine/crates/dosi-py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>../datus-semantic-adapter/datus-semantic-core
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>../datus-semantic-adapter/datus-semantic-dosi
 </span></code></pre></div>
-<p>该命令会同时安装所需的 <code>dosi-engine</code> wheel。在 <code>/services</code> 的 Semantic tab
-中选择 <code>dosi</code> 时，CLI 也会自动执行相同安装。</p>
+<p>adapter 仍声明逻辑上的 <code>dosi-engine</code> 依赖，但本地 editable install 会直接
+用源码满足它。只有通过包仓库安装或正式交付时才需要已发布版本。</p>
 <h2 id="_2">配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -4309,14 +4314,18 @@ adapter 的 strict OSI authoring 流程，但不会再降低到 MetricFlow。</p
 会自动选择；存在多个模型文件时，需要配置 <code>semantic_model_path</code>。</p>
 <h2 id="_3">当前支持范围<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>Dosi 当前可执行 aggregate、ratio、expression 指标，维度、many-to-one
-关系、复合 Join、query-backed dataset、过滤，以及 day 到 year 的时间粒度。
-规划器会拒绝歧义 Join 路径和可能产生 fan-out 的查询，避免静默重复计算。</p>
-<p>derived、累计或滚动窗口、metric offset 和 period-over-period 指标，在 Dosi
-补齐等价能力前仍应使用 OSI + MetricFlow 路径。</p>
+关系、复合 Join、query-backed dataset、过滤、day 到 year 的时间粒度、
+<code>time_dimension</code> 主时间轴、relationship <code>join_type</code>、metric <code>fill_nulls_with</code>，
+以及结构化窗口。datus-ext 1.3 支持期间比较、滚动、累计、排名与分布、
+first/last/nth value、向前或向后 offset，以及基于 ROWS 或 RANGE 的统计 frame。</p>
 <h2 id="authoring">Authoring 与校验<a class="headerlink" href="#authoring" title="Permanent link">&para;</a></h2>
-<p>选择 <code>dosi</code> 后仍会启用 Datus 的 OSI 语义模型和指标 authoring skills。
-<code>validate_semantic</code>、<code>list_metrics</code>、<code>get_dimensions</code> 和 <code>query_metrics</code> 会通过
-Dosi adapter 执行，源 OSI 文档仍是唯一事实来源。</p>
+<p>选择 <code>dosi</code> 后会启用 strict OSI authoring 和 Dosi 原生 extension profile。
+<code>validate_semantic</code>、<code>list_metrics</code>、<code>get_dimensions</code> 和 <code>query_metrics</code> 都由
+原生 engine 执行。时间查询用 <code>metric_time</code> 作为 dimension，并把粒度单独
+传入；返回的 <code>metric_time__&lt;grain&gt;</code> 是对应的结果列/order key。</p>
+<p>统一 <code>semantic_modeling</code> 会分别列出有效模型和可修复模型：有效模型直接绑定，
+可修复模型按原名称原地规划和修改。最终由 Host 校验确切 YAML，并把该 artifact
+完整同步到 Knowledge Base。</p>
 
 
 
