@@ -20,7 +20,7 @@ This is an orchestration skill running in the main agent context, so you may cal
 
 **Routing authority is `storage-classify`.** This skill decides *what to scan and explore within scope*; the `storage-classify` skill owns *which content goes to which store, written with which mechanism*. Do NOT re-invent storage routing rules here — load `storage-classify` in Step 0 and follow it through Steps 2-4 (Step 2 inlines its rules into explore prompts; Step 3 routes every item by them).
 
-**Two-phase contract (important).** Heavy generation (`gen_semantic_model` / `gen_metrics` / `gen_sql_summary` / `gen_skill` / `extract-knowledge`) costs tokens and writes real artifacts. So there is a hard **turn boundary** after exploration: you produce a Generation Manifest and then **end your turn**. Do NOT call `ask_user` for this confirmation — just present the manifest and stop. The user confirms or corrects it in their next message; only then do you run Step 3 and Step 4.
+**Two-phase contract (important).** Heavy generation (`semantic_modeling` / `gen_sql_summary` / `gen_skill` / `extract-knowledge`) costs tokens and writes real artifacts. So there is a hard **turn boundary** after exploration: you produce a Generation Manifest and then **end your turn**. Do NOT call `ask_user` for this confirmation — just present the manifest and stop. The user confirms or corrects it in their next message; only then do you run Step 3 and Step 4.
 
 **Exception — auto-run (confirmation skip).** When the user explicitly waived confirmation in Step 0 (**auto-run = true**), there is no turn boundary: still **assemble and print the full manifest** (so the choices stay on the record and the dual-route knowledge rows stay visible), but instead of stopping, continue **straight into Step 3 in the same turn**. This is the only way the gate is skipped — never infer it from a bare scope hint or from impatience; default is always to confirm.
 
@@ -78,7 +78,7 @@ subject (the domain)
   → store: one of semantic_models | metrics | reference_sql | knowledge | skills | memory | AGENTS.md | none
     → ref: file path / table name / column name
        rationale: one line — why this store (cite the storage-classify decision-tree branch)
-       prompt-seed: the self-contained seed to hand the downstream generator — not just a bare ref but the context it needs (e.g. table names + the column encodings/intent for gen_semantic_model; for a SQL example *discovered in a doc*, the full SQL + the business question + any mandatory filter for gen_sql_summary)
+       prompt-seed: the self-contained seed to hand the downstream generator — not just a bare ref but the context it needs (e.g. table names + the column encodings/intent for semantic_modeling; for a SQL example *discovered in a doc*, the full SQL + the business question + any mandatory filter for gen_sql_summary)
 ```
 
 Coverage focuses on **semantic_models, metrics, and knowledge** (plus **reference_sql only for SQL newly discovered in docs** — the validated-query corpus was already enumerated in Step 1) — `/init` already wrote the AGENTS.md inventory and the initial knowledge/memory, so here the explorer should surface vector-store candidates plus any **additional** knowledge atoms the corpus reveals (do not re-propose facts `/init` already filed; do not propose other stores beyond memory/AGENTS.md notes).
@@ -103,8 +103,8 @@ This manifest is the **single user confirmation point** — it must lead with th
 
    | Subject | Store | Refs | Mechanism | Summary |
    |---------|-------|------|-----------|---------|
-   | sales/orders | semantic_models | `orders`, `order_items` | `task(gen_semantic_model)` | core order facts |
-   | sales/orders | metrics | GMV, AOV | `task(gen_metrics)` | built on orders measures |
+   | sales/orders | semantic_models | `orders`, `order_items` | `task(semantic_modeling)` | core order facts |
+   | sales/orders | metrics | GMV, AOV | `task(semantic_modeling)` | built on orders measures |
    | … | reference_sql | `queries/top_skus.sql` | `task(gen_sql_summary)` | reusable ranking query |
    | … | knowledge | `status` enum on `orders` | `extract-knowledge` (lite) | atomic field-encoding fact |
 
@@ -124,18 +124,17 @@ Once the user confirms or corrects the manifest (or immediately, in the same tur
 2. **Make every delegated prompt self-contained (see storage-classify's *Context Handoff*).** The `explore` subagents that produced these refs are gone, and each generator runs in a fresh context — so inline the **datasource (+ dialect)**, the **business intent**, the **`prompt-seed` the explorer returned**, and the **rules/encodings already gathered** that the artifact must honor. Route each manifest item to its store with the prescribed mechanism:
    - **Light items** → write directly: `memory` via `add_memory` (≤ 2000 bytes); small AGENTS.md notes via `write_file` / `edit_file`.
    - **Heavy items** → delegate (the placeholders below are the *minimum* each prompt must carry):
-     - semantic_models → `task(type="gen_semantic_model", prompt="<datasource> · <table name(s)> · intent · column encodings (meaning, not query directives)>")`
-     - metrics → `task(type="gen_metrics", prompt="<datasource> · metric name + definition · the base semantic model / measure it builds on · any mandatory filter>")`
+     - semantic_models / metrics → `task(type="semantic_modeling", prompt="<datasource> · table(s) · metric definitions if any · intent · column encodings and mandatory filters>")`; combine dependent model and metric rows for the same business domain when practical
      - reference_sql → `task(type="gen_sql_summary", prompt="<datasource/dialect> · the original natural-language question (if known) · the complete SQL · why it is written this way>")` — **one call per SQL, enumerate the whole corpus**: each query becomes its own `reference_sql` entry; index **every** `(question, SQL)` pair, do not select representatives (recall is driven by coverage). If a manifest row lists several SQLs, expand it into one `gen_sql_summary` call each; never pass multiple queries in a single prompt (they collapse into one mixed, unsearchable entry). Always pass the **original question** when the example came from one — it is the retrieval key future questions match against. The prompt must also instruct the generator explicitly: **"set `search_text` to the original natural-language question verbatim** (trim whitespace, keep its language); only fall back to keyword phrases when no original question exists" — `search_text` is the vector key the runtime embeds, and a user's question matches another question far better than it matches SQL keywords.
      - skills → `task(type="gen_skill", prompt="<skill intent + the concrete steps observed>")`
      - knowledge → run `extract-knowledge` in **lite** mode (do NOT trigger its deep blind-SQL flow); pass the **source (the SQL/doc/table) and the specific fact to mine**, plus the datasource it applies to. Only mine atoms `/init` did not already file — do not duplicate existing `./knowledge/*.md` entries.
-3. **Ordering:** metrics build on semantic models — generate all `semantic_models` items **before** their dependent `metrics` items.
-   - **SQL-backed handoff contract:** when either item originates from a validated/reference SQL row, append the original natural-language question when present and the complete original SQL to BOTH the `gen_semantic_model` and `gen_metrics` prompts. Do not pass a rewritten summary query, selected CTE fragments, or an inferred replacement. The two subagents run the same request-local SQL planner; the semantic-model pass creates any required query-backed dataset, and the metrics pass consumes the same final-output contracts.
+3. **Grouping:** by default, send one coherent `semantic_modeling` request per business domain. If the user requests another grouping, follow it. Include dependent datasets, relationships, and metrics in the same request.
+   - **SQL-backed handoff contract:** append the original natural-language question when present and the complete original SQL to the `semantic_modeling` prompt. Do not pass a rewritten summary query, selected CTE fragments, or an inferred replacement.
    - Do not assume a success-story row has external knowledge beyond its question, SQL, and stored metadata. Missing external knowledge is not a blocker and must not be synthesized.
 4. **Dual-route every `(question, SQL)` pair that appears as a `knowledge` row in the manifest — this is required, not optional.** For each such pair: (a) send it to `gen_sql_summary` so the example (with its original question) lands in `reference_sql`, AND (b) feed the same pair to `extract-knowledge` (lite) to mine the non-inferable rule. The example teaches *answer shape* (retrieved later for few-shot); the mined atom teaches *why* (encodings, mandatory filters, term→column mappings). One source, two stores — neither replaces the other. Mine knowledge ONLY for pairs listed as `knowledge` rows in the manifest — whether the user confirmed them, or auto-run carried the manifest through unconfirmed (see Turn Boundary).
 5. **Concurrency ≤ 3:** dispatch heavy `task` calls in batches of at most 3, waiting for each batch. Do **NOT** create or update todos in this step — the confirmed manifest is the item-level record; narrate per-batch progress briefly and list any failed items in the closing summary.
 
-Do not hand-write semantic_models / metrics / reference_sql YAML yourself — always go through the matching subagent (per storage-classify's Forbidden rules).
+Do not hand-write semantic_models / metrics / reference_sql YAML yourself — use `semantic_modeling` for Dosi semantic assets and the matching reference-SQL owner (per storage-classify's Forbidden rules).
 
 ---
 

@@ -105,7 +105,7 @@ def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", None)
 
     with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
-        semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "gen_metrics")
+        semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
 
 
 def test_legacy_node_config_fields_are_ignored():
@@ -373,12 +373,8 @@ def test_adapter_type_resolution_propagates_agent_config_errors():
         ("semantic_modeling", "metricflow", ""),
         ("semantic_modeling", "osi", ""),
         ("semantic_modeling", "dosi", "dosi-semantic-authoring"),
-        ("gen_semantic_model", "metricflow", "metricflow-semantic-authoring"),
-        ("gen_semantic_model", "osi", "osi-semantic-authoring"),
-        ("gen_semantic_model", "dosi", "dosi-semantic-authoring"),
-        ("gen_metrics", "metricflow", "gen-metrics"),
-        ("gen_metrics", "osi", "osi-metrics-authoring"),
-        ("gen_metrics", "dosi", "dosi-semantic-authoring"),
+        ("gen_semantic_model", "dosi", ""),
+        ("gen_metrics", "dosi", ""),
         ("unknown_node", "metricflow", ""),
     ],
 )
@@ -391,10 +387,9 @@ def test_required_authoring_skills_derive_from_format(node_name, adapter, expect
     [
         ("semantic_modeling", "metricflow", ""),
         ("semantic_modeling", "osi", ""),
-        ("gen_semantic_model", "metricflow", "semantic-sql-history-profiler"),
-        ("gen_semantic_model", "osi", "semantic-sql-history-profiler"),
-        ("gen_metrics", "metricflow", "metricflow-semantic-authoring"),
-        ("gen_metrics", "osi", ""),
+        ("semantic_modeling", "dosi", ""),
+        ("gen_semantic_model", "metricflow", ""),
+        ("gen_metrics", "metricflow", ""),
         ("unknown_node", "osi", ""),
     ],
 )
@@ -402,74 +397,41 @@ def test_default_optional_skills_derive_from_format(node_name, adapter, expected
     assert default_optional_skills(_agent_config(adapter), node_name) == expected
 
 
-@pytest.mark.parametrize("adapter", ["metricflow", "osi", "dosi"])
-def test_node_skill_defaults_follow_authoring_format(monkeypatch, adapter):
-    """Both nodes default node_config['skills'] from the format, then defer to the base setup."""
+def test_semantic_modeling_skill_defaults_follow_dosi_adapter(monkeypatch):
+    """The unified node defers optional-skill setup to the shared runtime."""
     from datus.agent.node.agentic_node import AgenticNode
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     parent_calls = []
     monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", lambda self: parent_calls.append(type(self).__name__))
 
-    metrics_node = GenMetricsAgenticNode.__new__(GenMetricsAgenticNode)
-    metrics_node.agent_config = _agent_config(adapter)
-    metrics_node.node_config = {}
-    metrics_node._setup_skill_func_tools()
-
-    semantic_node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
-    semantic_node.agent_config = _agent_config(adapter)
+    semantic_node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
+    semantic_node.agent_config = _agent_config("dosi")
     semantic_node.node_config = {}
     semantic_node._setup_skill_func_tools()
 
-    assert parent_calls == ["GenMetricsAgenticNode", "GenSemanticModelAgenticNode"]
-    assert semantic_node.node_config["skills"] == "semantic-sql-history-profiler"
-    expected_metrics_optional = "metricflow-semantic-authoring" if adapter == "metricflow" else ""
-    assert metrics_node.node_config["skills"] == expected_metrics_optional
+    assert parent_calls == ["SemanticModelingAgenticNode"]
+    assert semantic_node.node_config["skills"] == ""
 
 
 def test_node_skill_defaults_respect_explicit_config(monkeypatch):
     """An explicit skills entry (including opt-out '') is never overwritten."""
     from datus.agent.node.agentic_node import AgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", lambda self: None)
 
-    node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
-    node.agent_config = _agent_config("osi")
+    node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
+    node.agent_config = _agent_config("dosi")
     node.node_config = {"skills": ""}
     node._setup_skill_func_tools()
 
     assert node.node_config["skills"] == ""
 
 
-@pytest.mark.parametrize(
-    "adapter, expected",
-    [
-        ("metricflow", ["metricflow-semantic-authoring"]),
-        ("osi", ["osi-semantic-authoring"]),
-        ("dosi", ["dosi-semantic-authoring"]),
-    ],
-)
-def test_gen_semantic_model_required_skills(adapter, expected):
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+def test_semantic_modeling_required_skills_are_dosi_native():
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
-    node.agent_config = _agent_config(adapter)
-    assert node._get_required_skills() == expected
-
-
-@pytest.mark.parametrize(
-    "adapter, expected",
-    [
-        ("metricflow", ["gen-metrics"]),
-        ("osi", ["osi-metrics-authoring"]),
-        ("dosi", ["dosi-semantic-authoring"]),
-    ],
-)
-def test_gen_metrics_required_skills(adapter, expected):
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-    node = GenMetricsAgenticNode.__new__(GenMetricsAgenticNode)
-    node.agent_config = _agent_config(adapter)
-    assert node._get_required_skills() == expected
+    node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
+    node.agent_config = _agent_config("dosi")
+    assert node._get_required_skills() == ["dosi-semantic-authoring"]

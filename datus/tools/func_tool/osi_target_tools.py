@@ -396,7 +396,7 @@ class OsiSemanticModelTargetTools:
         fact_tables: Optional[List[str]] = None,
         dimension_tables: Optional[List[str]] = None,
     ) -> FuncToolResult:
-        """Plan the stable name and file used by gen_semantic_model."""
+        """Plan the stable name and file used by semantic_modeling."""
         if not self.target_state.target_mutated:
             self.target_state.reset()
         try:

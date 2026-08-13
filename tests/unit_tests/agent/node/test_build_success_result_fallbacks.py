@@ -30,15 +30,12 @@ from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.agent.node.compare_agentic_node import CompareAgenticNode
 from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
-from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
-from datus.tools.func_tool.generation_evidence import GenerationEvidence
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -306,101 +303,6 @@ class TestCompareBuildSuccessResultFallback:
         ctx = _ctx(last_successful_output={"raw_output": "not json"})
         result = node._build_success_result(ctx)
         assert "Failed to parse" in result.explanation
-
-
-# ---------------------------------------------------------------------------
-# GenSemanticModelAgenticNode (lines 373-377, 386)
-# ---------------------------------------------------------------------------
-
-
-class TestGenSemanticModelBuildSuccessResultFallback:
-    def _build_ctx_with_input(self, **kwargs):
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        ctx = _ctx(**kwargs)
-        ctx.user_input = SemanticNodeInput(user_message="m")
-        return ctx
-
-    def test_falls_back_to_raw_output_dict(self):
-        # ``raw_output`` is a dict — taken verbatim, then stringified for output.
-        node = _bare_node(
-            GenSemanticModelAgenticNode,
-            agent_config=None,
-            sql_modeling_tools=None,
-            generation_evidence=GenerationEvidence(),
-        )
-        ctx = self._build_ctx_with_input(last_successful_output={"raw_output": {"semantic_model_files": []}})
-
-        # Stub the parser + storage side effect so the test focuses on the
-        # response_content fallback chain.
-        node._extract_semantic_model_and_output_from_response = lambda payload: ([], None)  # type: ignore[assignment]
-        node._finalize_semantic_model_generation = lambda **_kw: None  # type: ignore[assignment]
-
-        result = node._build_success_result(ctx)
-        # raw_output dict gets stringified by the trailing ``isinstance`` check.
-        assert "semantic_model_files" in result.response
-
-    def test_falls_back_to_str_of_last_successful_output(self):
-        # ``raw_output`` falsy and not a dict — ``str(last_successful_output)``.
-        node = _bare_node(
-            GenSemanticModelAgenticNode,
-            agent_config=None,
-            sql_modeling_tools=None,
-            generation_evidence=GenerationEvidence(),
-        )
-        ctx = self._build_ctx_with_input(last_successful_output={"raw_output": ""})
-        node._extract_semantic_model_and_output_from_response = lambda payload: ([], None)  # type: ignore[assignment]
-        node._finalize_semantic_model_generation = lambda **_kw: None  # type: ignore[assignment]
-
-        result = node._build_success_result(ctx)
-        assert "raw_output" in result.response
-
-
-# ---------------------------------------------------------------------------
-# GenMetricsAgenticNode (lines 385-389, 398)
-# ---------------------------------------------------------------------------
-
-
-class TestGenMetricsBuildSuccessResultFallback:
-    def test_falls_back_to_raw_output_dict(self):
-        node = _bare_node(
-            GenMetricsAgenticNode,
-            agent_config=None,
-            sql_modeling_tools=None,
-            generation_evidence=GenerationEvidence(),
-        )
-        node._extract_metric_and_output_from_response = lambda payload: (  # type: ignore[assignment]
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        node._finalize_metric_generation = lambda **_kw: None  # type: ignore[assignment]
-        ctx = _ctx(last_successful_output={"raw_output": {"metric_file": "x.yml"}})
-        result = node._build_success_result(ctx)
-        assert "metric_file" in result.response
-
-    def test_falls_back_to_str_of_last_successful_output(self):
-        node = _bare_node(
-            GenMetricsAgenticNode,
-            agent_config=None,
-            sql_modeling_tools=None,
-            generation_evidence=GenerationEvidence(),
-        )
-        node._extract_metric_and_output_from_response = lambda payload: (  # type: ignore[assignment]
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        node._finalize_metric_generation = lambda **_kw: None  # type: ignore[assignment]
-        ctx = _ctx(last_successful_output={"raw_output": ""})
-        result = node._build_success_result(ctx)
-        assert "raw_output" in result.response
 
 
 # ---------------------------------------------------------------------------

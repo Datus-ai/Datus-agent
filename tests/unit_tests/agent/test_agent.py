@@ -582,6 +582,7 @@ def _make_agent_config_ext(datasource="test_ns"):
     cfg.output_dir = "/tmp/output"
     cfg.home = "/tmp/home"
     cfg.agentic_nodes = {}
+    cfg.resolve_semantic_adapter.return_value = "metricflow"
     cfg.rag_storage_path.return_value = "/tmp/storage"
     cfg.get_save_run_dir.return_value = "/tmp/output/run1"
     cfg.path_manager = MagicMock()
@@ -1111,6 +1112,33 @@ class TestBenchmarkStorageChecks:
 
 
 class TestBootstrapKbSemanticModel:
+    def test_semantic_model_alias_routes_to_datasets_only_semantic_modeling(self):
+        args = _make_args_ext(
+            components=["semantic_model"],
+            kb_update_strategy="overwrite",
+            success_story="stories.csv",
+        )
+        config = _make_agent_config_ext()
+        config.resolve_semantic_adapter.return_value = "dosi"
+        agent = _make_agent_ext(args=args, config=config)
+
+        with patch(
+            "datus.agent.agent.init_success_story_semantic_modeling",
+            return_value=(True, "", {"semantic_object_count": 3, "metrics_count": 2}),
+        ) as init:
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        init.assert_called_once_with(
+            config,
+            "stories.csv",
+            None,
+            emit=agent._emit_metrics_event,
+            build_mode="overwrite",
+            batch_size=5,
+            authoring_scope="datasets",
+        )
+
     def test_semantic_model_overwrite_success(self, tmp_path):
         args = _make_args_ext(components=["semantic_model"], kb_update_strategy="overwrite")
         agent = _make_agent_ext(args=args)
@@ -1126,8 +1154,9 @@ class TestBootstrapKbSemanticModel:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "success"
-        mock_init.assert_called_once_with(agent.global_config, args.success_story, build_mode="overwrite")
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
+        mock_init.assert_not_called()
         mock_rag.truncate.assert_not_called()
         mock_profile_rag.truncate.assert_not_called()
 
@@ -1183,7 +1212,8 @@ class TestBootstrapKbSemanticModel:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "cancelled"
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
 
     def test_semantic_model_with_semantic_yaml(self):
         args = _make_args_ext(
@@ -1241,8 +1271,9 @@ class TestBootstrapKbSemanticModel:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "success"
-        mock_init.assert_called_once_with(agent.global_config, args.success_story, build_mode="incremental")
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
+        mock_init.assert_not_called()
 
     def test_semantic_model_refresh_profile_updates_existing_yaml_without_regeneration(self):
         args = _make_args_ext(
@@ -1271,8 +1302,11 @@ class TestBootstrapKbSemanticModel:
             result = agent.bootstrap_kb()
 
         assert result["status"] == "success"
-        assert "changed_description_count=3" in result["message"]
-        mock_refresh.assert_called_once_with(agent.global_config, "path/to.yaml", "stories.csv")
+        mock_refresh.assert_called_once_with(
+            agent.global_config,
+            "path/to.yaml",
+            "stories.csv",
+        )
         mock_generate.assert_not_called()
         mock_import_yaml.assert_not_called()
         mock_rag.truncate.assert_not_called()
@@ -1298,9 +1332,9 @@ class TestBootstrapKbMetrics:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "success"
-        mock_init.assert_called_once()
-        assert mock_init.call_args.kwargs["build_mode"] == "overwrite"
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
+        mock_init.assert_not_called()
 
     def test_metrics_overwrite_keeps_semantic_yaml_dir(self):
         args = _make_args_ext(components=["metrics"], kb_update_strategy="overwrite")
@@ -1319,7 +1353,8 @@ class TestBootstrapKbMetrics:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "success"
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
         mock_safe_rmtree.assert_not_called()
 
     def test_metrics_with_semantic_yaml(self):
@@ -1366,9 +1401,9 @@ class TestBootstrapKbMetrics:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "success"
-        mock_init.assert_called_once()
-        assert mock_init.call_args.kwargs["build_mode"] == "incremental"
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
+        mock_init.assert_not_called()
 
     def test_metrics_failure(self):
         args = _make_args_ext(components=["metrics"], kb_update_strategy="overwrite")
@@ -1399,8 +1434,8 @@ class TestBootstrapKbMetrics:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "partial"
-        assert result["error"] == "one metrics batch failed"
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
 
     def test_metrics_check_skips_generation(self):
         args = _make_args_ext(components=["metrics"], kb_update_strategy="check")
@@ -1461,8 +1496,8 @@ class TestBootstrapKbMetrics:
             result = agent.bootstrap_kb()
 
         assert result["status"] == "failed"
-        assert result["message"] == "Knowledge base initialization failed"
-        assert result["components"]["metrics"]["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
+        assert "components" not in result
 
     def test_multiple_components_preserve_partial_status(self):
         args = _make_args_ext(components=["semantic_model", "metrics"], kb_update_strategy="overwrite")
@@ -1484,9 +1519,9 @@ class TestBootstrapKbMetrics:
         ):
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "partial"
-        assert result["message"] == "Knowledge base initialized with partial results"
-        assert result["components"]["metrics"]["status"] == "partial"
+        assert result["status"] == "failed"
+        assert "migrate it to Dosi" in result["message"]
+        assert "components" not in result
 
 
 class TestBootstrapKbSemanticModeling:
@@ -1498,6 +1533,7 @@ class TestBootstrapKbSemanticModeling:
             metrics_batch_size=5,
         )
         agent = _make_agent_ext(args=args)
+        agent.global_config.resolve_semantic_adapter.return_value = "dosi"
         details = {
             "semantic_object_count": 4,
             "metrics_count": 9,
@@ -1521,19 +1557,24 @@ class TestBootstrapKbSemanticModeling:
             batch_size=5,
         )
 
-    def test_semantic_modeling_rejects_legacy_authoring_components(self):
+    def test_semantic_modeling_combines_legacy_aliases_into_one_full_execution(self):
         args = _make_args_ext(
             components=["semantic_modeling", "semantic_model"],
             kb_update_strategy="overwrite",
+            success_story="stories.csv",
         )
         agent = _make_agent_ext(args=args)
+        agent.global_config.resolve_semantic_adapter.return_value = "dosi"
 
-        with patch("datus.agent.agent.init_success_story_semantic_modeling") as init:
+        with patch(
+            "datus.agent.agent.init_success_story_semantic_modeling",
+            return_value=(True, "", {"semantic_object_count": 2, "metrics_count": 1}),
+        ) as init:
             result = agent.bootstrap_kb()
 
-        assert result["status"] == "failed"
-        assert "cannot be combined" in result["message"]
-        init.assert_not_called()
+        assert result["status"] == "success"
+        assert result["components"]["semantic_model"]["details"]["shared_execution"] == "semantic_modeling"
+        init.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

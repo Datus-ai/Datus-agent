@@ -1,8 +1,12 @@
 # MetricFlow Semantic Adapter
 
-The MetricFlow semantic adapter connects Datus Agent to MetricFlow-native semantic model and metric YAML files.
+The MetricFlow semantic adapter connects Datus Agent to existing MetricFlow-native semantic model and metric YAML files.
 
-Use this adapter when you want generated semantic assets to be MetricFlow YAML and you expect MetricFlow to be the source format maintained by users or automation.
+> **Query-only compatibility:** existing MetricFlow projects remain queryable,
+> but Datus no longer generates or edits MetricFlow semantic YAML. New semantic
+> authoring is available only through `semantic_modeling` in Dosi projects.
+
+Use this adapter when MetricFlow YAML remains the source format maintained by external users or automation.
 
 ## Installation
 
@@ -43,11 +47,11 @@ By default, Datus points MetricFlow at the current project's semantic model dire
 {project_root}/subject/semantic_models/
 ```
 
-Generated YAML under this directory is included in validation, even when the files are project-local or gitignored.
+Existing YAML under this directory is included in validation, even when the files are project-local or gitignored.
 
-## Authoring Model
+## Legacy Source Model
 
-MetricFlow mode authors MetricFlow YAML directly.
+MetricFlow projects load MetricFlow YAML directly.
 
 Semantic model files use `data_source` documents:
 
@@ -82,15 +86,15 @@ metric:
       - revenue_sum
 ```
 
-## Generation Flow
+## Query Flow
 
-With MetricFlow as the active semantic layer:
+With MetricFlow as the active semantic layer, existing assets continue to support:
 
-1. `gen_semantic_model` writes MetricFlow semantic model YAML.
-2. `gen_metrics` writes MetricFlow metric YAML.
-3. `validate_semantic()` validates the full MetricFlow model.
-4. `query_metrics(..., dry_run=True)` verifies generated metrics can compile to SQL.
-5. `publish_semantic_model` and `publish_metrics` sync validated assets to the Knowledge Base.
+1. `validate_semantic()` validates the full MetricFlow model.
+2. `query_metrics(...)` compiles and executes existing metrics.
+3. `ask_metrics`, metric preview, API metric queries, reports, and dashboards use the same query path.
+
+The retired `gen_semantic_model` and `gen_metrics` names return an error that recommends migrating to Dosi and using `semantic_modeling`.
 
 ## Supported Query Features
 
@@ -105,6 +109,6 @@ MetricFlow handles SQL generation, joins, time granularity, metric constraints, 
 
 For the underlying MetricFlow engine concepts and supported warehouses, see [Datus-MetricFlow Introduction](../metricflow/introduction.md).
 
-## When to Use OSI Instead
+## Other Semantic Formats
 
-Use [OSI Semantic Adapter](osi_semantic_adapter.md) when you want the authored source files to be strict OSI core YAML and want Datus/MetricFlow-specific execution hints isolated in `custom_extensions`.
+Use [OSI Semantic Adapter](osi_semantic_adapter.md) to query existing strict OSI core YAML. Use Dosi for new semantic authoring.

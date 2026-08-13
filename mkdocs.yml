@@ -26,9 +26,8 @@ nav:
       - Built-in subagents: subagent/builtin_subagents.md
       - Customized subagents: subagent/customized_subagent.md
       - Generate Dashboard: subagent/gen_dashboard.md
-      - Generate Metrics: subagent/gen_metrics.md
+      - Semantic Modeling: subagent/semantic_modeling.md
       - Ask Metrics: subagent/ask_metrics.md
-      - Generate Semantic Model: subagent/gen_semantic_model.md
       - Scheduler: subagent/scheduler.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md

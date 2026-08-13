@@ -1,9 +1,9 @@
 """Pydantic v2 models for the bootstrap-kb API."""
 
 from enum import Enum
-from typing import Literal, Optional, Self
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class KbComponent(str, Enum):
@@ -31,8 +31,8 @@ class BootstrapKbInput(BaseModel):
             "Knowledge base components to initialize. "
             "`metadata` scans live database schema and sample rows; "
             "`semantic_modeling` authors Dosi datasets and metrics through one unified workflow; "
-            "`semantic_model` derives semantic schema objects from success-story SQLs; "
-            "`metrics` derives MetricFlow-style business metrics; "
+            "`semantic_model` is a compatibility alias for datasets-only Dosi authoring; "
+            "`metrics` is a compatibility alias for full Dosi authoring; "
             "`reference_sql` indexes reusable SQL files."
         ),
     )
@@ -107,14 +107,6 @@ class BootstrapKbInput(BaseModel):
             "Files are scanned recursively and only `SELECT` statements are indexed."
         ),
     )
-
-    @model_validator(mode="after")
-    def validate_component_combination(self) -> Self:
-        components = set(self.components)
-        legacy_authoring = {KbComponent.SEMANTIC_MODEL.value, KbComponent.METRICS.value}
-        if KbComponent.SEMANTIC_MODELING.value in components and components.intersection(legacy_authoring):
-            raise ValueError("semantic_modeling cannot be combined with semantic_model or metrics")
-        return self
 
 
 class BootstrapDocInput(BaseModel):

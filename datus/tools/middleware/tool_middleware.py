@@ -200,8 +200,7 @@ def _metric_catalog_providers(node: Any) -> List[Any]:
 
     Found by what the object declares, not by the attribute holding it — the
     same rule ``_iter_tool_groups`` uses to classify tools, and the reason a
-    node may hold its semantic tools under any name (``gen_semantic_model``
-    uses ``semantic_func_tool``). Aliases of one instance collapse to one
+    node may hold its semantic tools under any attribute name. Aliases of one instance collapse to one
     provider.
     """
     iter_groups = getattr(node, "_iter_tool_groups", None)

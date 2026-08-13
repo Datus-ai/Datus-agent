@@ -1,5 +1,8 @@
 # 指标生成指南
 
+> **已退役：**`gen_metrics` 已隐藏且不能调用。请在 Dosi 项目中使用
+> [`semantic_modeling`](semantic_modeling.md)。MetricFlow 和 OSI 项目保留查询能力，但不再支持生成新指标。
+
 ## 概览
 
 指标生成功能帮助你将 SQL 查询转换为可复用的指标定义。具体 YAML authoring format 由配置的 semantic adapter 决定：`metricflow` 生成 MetricFlow metric YAML，`osi` 生成 strict OSI core metrics，并把 Datus 执行提示写入 `custom_extensions`。使用 AI 助手，你可以分析 SQL 业务逻辑并自动生成标准化的指标配置，组织内可一致查询。

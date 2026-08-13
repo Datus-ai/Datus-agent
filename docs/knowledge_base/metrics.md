@@ -47,7 +47,7 @@ This ensures consistent metric definitions across the organization.
 
 ## Usage
 
-**Prerequisites**: This command relies on [datus-semantic-metricflow](../adapters/semantic_adapters.md), install it first with `pip install datus-semantic-metricflow`.
+With `--success_story`, this compatibility component runs the full Dosi-only `semantic_modeling` workflow, including any datasets and relationships required by the generated metrics. Existing YAML import remains a non-LLM compatibility operation.
 
 ### Basic Command
 
@@ -76,6 +76,8 @@ datus-agent bootstrap-kb \
 | `--kb_update_strategy` | ❌ | Update strategy | `overwrite`/`incremental` |
 | `--subject_tree` | ❌ | Predefined categories (comma-separated) | `Sales/Reporting/Daily,Finance/Revenue/Monthly` |
 | `--pool_size` | ❌ | Concurrent thread count | `4` |
+
+Combining `metrics` with `semantic_model` or `semantic_modeling` executes one full `semantic_modeling` run. Existing MetricFlow and OSI projects remain query-only for generated changes.
 
 ### Subject Tree Categorization
 

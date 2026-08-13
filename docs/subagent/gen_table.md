@@ -94,7 +94,7 @@ agent:
 
 - DDL execution requires user confirmation — tables are never created silently
 - If the target table already exists, the agent warns and asks whether to DROP + recreate or abort
-- gen_table only creates tables — for semantic model generation on the new table, use `gen_semantic_model` separately
+- gen_table only creates tables — for Dosi semantic authoring on the new table, use `semantic_modeling` separately
 - Source tables are never modified
 
 ## Output Format

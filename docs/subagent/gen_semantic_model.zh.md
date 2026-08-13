@@ -1,5 +1,8 @@
 # 语义模型生成指南
 
+> **已退役：**`gen_semantic_model` 已隐藏且不能调用。请在 Dosi 项目中使用
+> [`semantic_modeling`](semantic_modeling.md)。MetricFlow 和 OSI 项目保留查询能力，但不再支持语义建模。
+
 ## 概览
 
 语义模型生成功能帮助你通过 AI 助手从数据库表创建语义模型。具体 YAML 格式由配置的 semantic adapter 决定：`metricflow` 生成 MetricFlow YAML，`osi` 生成 strict OSI core YAML。助手会分析表结构，并按所选适配器生成配置文件。

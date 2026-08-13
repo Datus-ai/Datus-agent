@@ -67,7 +67,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 **命令驱动的迭代**
 
-使用 `/gen_semantic_model`、`/gen_metrics`、`/gen_sql_summary` 等命令创建或更新资产；`/catalog` 和 `/subject` 页面支持就地编辑。
+使用 `/semantic_modeling`、`/gen_sql_summary` 等命令创建或更新资产。已退役的 `/gen_semantic_model` 和 `/gen_metrics` 已隐藏，调用时会提示改用 `semantic_modeling`。
 
 **反馈驱动持续改进**
 
@@ -213,84 +213,36 @@ datasource:        california_schools
 
 更多介绍见[元数据管理](../knowledge_base/metadata.md)。
 
-### 步骤 3 —— 初始化语义模型（Semantic tab）
+### 步骤 3 —— 初始化 Dosi 语义模型和指标（Semantic tab）
 
 切到 **Semantic** tab，填写：
 
 ```text
-──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   Schema   SQL   Template   Semantic   Metrics   Knowledge    (Tab or ←/→ to switch)
-─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  Semantic
-  Generate semantic models from a success-story CSV.
-─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- 
 datasource:        california_schools
 success_story:     ~/.datus/benchmark/california_schools/success_story.csv
-[*]  overwrite  (Space to toggle — checked = overwrite, otherwise incremental)                                                                                                      ^
- 
-─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ↑↓/Tab next field   ←/→ switch tab   Ctrl+R run this tab   Esc cancel
+[*] overwrite
 ```
 
-`success_story.csv` 是 `(question, sql)` 对的 CSV，是 Datus 起草 MetricFlow 语义模型的 ground truth。该文件随样本数据集一起发布，因此上面的路径可直接使用。
+`success_story.csv` 是 `(question, sql)` 对的 CSV，Datus 会把它作为创作 Dosi dataset、relationship 和 metric 的证据。该文件随样本数据集一起发布，因此上面的路径可直接使用。此创作流程要求项目使用 Dosi semantic adapter。
 
 按 **Ctrl+R**，预期输出：
 
 ```text
-⏺ 💬 Running bootstrap task: semantic_model                                                                                                                                          
-
-⏺ gen_semantic_model(~/.datus/benchmark/california_schools/success_story.csv (mode=overwrite))
-  ⎿  Done (15 tool uses · 98.1s)
-⏺ 💬 gen_semantic_model (~/.datus/benchmark/california_schools/success_story.csv (mode=overwrite)):                                                                                  
-
-
-        Semantic Models Generated for california_schools                                                                   
-
-                Analysis Summary                                                                                   
-
- • SQL Queries Analyzed: 2 queries across 2 tables                                                                                                                                   
- • Tables Identified: frpm, schools                                                                                                                                                  
- • Relationship Discovered: frpm.CDSCode → schools.CDSCode (HIGH confidence, via DDL foreign key constraint)     
+⏺ 💬 Running bootstrap task: semantic_modeling
+⏺ semantic_modeling(~/.datus/benchmark/california_schools/success_story.csv)
+  ⎿  Dosi YAML validated and reconciled to the Knowledge Base
+⏺ 💬 semantic_modeling bootstrap completed
 ```
 
-Datus 会按表推断维度与度量，将 MetricFlow YAML 写入项目的 `subject/semantic_models/` 目录。
+Datus 会把通过校验的 Dosi YAML 写入项目的 `subject/semantic_models/` 目录，并将语义对象和指标完整同步到 Knowledge Base。
 
-### 步骤 4 —— 初始化指标（Metrics tab）
+### 步骤 4 —— 理解 CLI 兼容 component 的 scope
 
-切到 **Metrics** tab，填写：
+交互式 bootstrap 只保留一个 **Semantic Modeling** tab，并始终运行完整 Dosi 流程。自动化脚本仍可使用历史 component 名作为兼容别名：
 
-```text
-datasource:    california_schools
-success_story: ~/.datus/benchmark/california_schools/success_story.csv
-pool_size:     3
-subject_tree:  california_schools/Continuation_School/Free_Rate,california_schools/Charter/Education_Location
-overwrite:     [x]
-```
-
-`subject_tree` 是逗号分隔的 `domain/layer1/layer2` 路径列表。Datus 会把每个生成的指标挂在某个叶子上，最终知识库可按主题浏览。
-
-按 **Ctrl+R**，预期输出（节选）：
-
-```text
-⏺ gen_metrics(~/.datus/benchmark/california_schools/success_story.csv (mode=incremental))
-  ⎿  Done (20 tool uses · 90.0s)
-⏺ 💬 gen_metrics (~/.datus/benchmark/california_schools/success_story.csv (mode=incremental)):                                                                                       
-
-
-                    SQL Analysis Summary                                                                                 
-            Query 1 — Continuation School Free Rate (Ages 5-17)                                                                 
-
-Business Question: What are the eligible free meal rates (ages 5-17) for continuation schools?                                                                                       
-
-Metric Extracted: continuation_school_free_rate_ages_5_17                                                                                                                            
-
- • Type: ratio                                                                                                                                                                       
- • Numerator measure: continuation_school_free_meal_count_ages_5_17 — SUM(CASE WHEN Educational Option Type = 'Continuation School' THEN Free Meal Count (Ages 5-17) ELSE 0 END)     
- • Denominator measure: continuation_school_enrollment_ages_5_17 — SUM(CASE WHEN Educational Option Type = 'Continuation School' THEN Enrollment (Ages 5-17) ELSE 0 END)             
- • Subject tree: california_schools/Continuation_School/Free_Rate                                                                                                                    
- • Status: ✅ Created, validated, dry-run passed, synced to Knowledge Base  
-```
+- `--components semantic_model` 只创作 dataset，并保持所有已有 metric 定义不变。
+- `--components metrics` 或 `--components semantic_modeling` 创作完整的 dataset 和 metric。
+- 组合多个 semantic component 时只执行一次；full scope 优先。
 
 更多介绍见[指标文档](../knowledge_base/metrics.md)。
 

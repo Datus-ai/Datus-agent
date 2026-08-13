@@ -21,6 +21,47 @@ class TestKbServiceInit:
         assert svc.agent_config is real_agent_config
 
 
+class TestKbServiceSemanticComponentRouting:
+    def test_semantic_model_alias_uses_datasets_scope(self):
+        request = BootstrapKbInput(
+            components=["semantic_model"],
+            strategy="incremental",
+            success_story="stories.csv",
+        )
+
+        assert KbService._component_execution_specs(request) == [("semantic_model", ["semantic_model"], "datasets")]
+
+    def test_metrics_makes_combined_semantic_components_full_and_single_pass(self):
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics", "semantic_modeling"],
+            strategy="incremental",
+            success_story="stories.csv",
+        )
+
+        assert KbService._component_execution_specs(request) == [
+            (
+                "semantic_model",
+                ["semantic_model", "metrics", "semantic_modeling"],
+                "full",
+            )
+        ]
+
+    def test_duplicate_semantic_aliases_still_execute_once(self):
+        request = BootstrapKbInput(
+            components=["semantic_model", "semantic_model"],
+            strategy="incremental",
+            success_story="stories.csv",
+        )
+
+        assert KbService._component_execution_specs(request) == [
+            (
+                "semantic_model",
+                ["semantic_model"],
+                "datasets",
+            )
+        ]
+
+
 class TestKbServiceBuildArgs:
     """Tests for _build_args — argument namespace creation."""
 
@@ -246,6 +287,47 @@ class TestKbServiceBootstrapStream:
         assert len(events) >= 1
         components_seen = {e.component for e in events}
         assert "all" in components_seen
+
+    async def test_bootstrap_stream_collapses_semantic_aliases_and_forwards_full_scope(self, real_agent_config):
+        import asyncio
+
+        svc = KbService(agent_config=real_agent_config)
+        cancel_event = asyncio.Event()
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy="incremental",
+            success_story="stories.csv",
+        )
+        calls = []
+
+        def fake_run_component(
+            request,
+            component,
+            queue,
+            loop,
+            cancel_event,
+            project_root,
+            *,
+            authoring_scope=None,
+        ):
+            calls.append((component, authoring_scope))
+            return {"status": "success", "message": "done", "details": {}}
+
+        with patch.object(svc, "_run_component", side_effect=fake_run_component):
+            events = [
+                event
+                async for event in svc.bootstrap_stream(
+                    request,
+                    "semantic-aliases",
+                    cancel_event,
+                    str(real_agent_config.home),
+                )
+            ]
+
+        assert calls == [("semantic_model", "full")]
+        summary = events[-1].payload["components"]
+        assert set(summary) == {"semantic_model", "metrics"}
+        assert summary["metrics"]["details"]["shared_execution"] == "semantic_model"
 
     async def test_bootstrap_stream_reference_sql(self, real_agent_config):
         """bootstrap_stream with reference_sql component processes it."""
@@ -611,7 +693,8 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
     )
     calls = []
 
-    def fake_run_component(request, component, queue, loop, cancel_event, project_root):
+    def fake_run_component(request, component, queue, loop, cancel_event, project_root, *, authoring_scope=None):
+        assert authoring_scope is None
         calls.append((component, request.subject_tree, project_root))
         return {
             "status": "success",

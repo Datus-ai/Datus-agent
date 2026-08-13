@@ -1,5 +1,9 @@
 # Semantic Model Generation Guide
 
+> **Retired:** `gen_semantic_model` is hidden and cannot be invoked. Use
+> [`semantic_modeling`](semantic_modeling.md) in a Dosi project. MetricFlow and
+> OSI projects keep query support but do not support semantic authoring.
+
 ## Overview
 
 The semantic model generation feature helps you create semantic models from database tables through an AI-powered assistant. The YAML format is selected by the configured semantic adapter: `metricflow` generates MetricFlow YAML, while `osi` generates strict OSI core YAML. The assistant analyzes your table structure and generates configuration files for the selected adapter.

@@ -287,9 +287,13 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "mydb"
         mock_db_config.schema = "public"
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
+        node_init_kwargs = {}
+        semantic_input_cls = MagicMock(return_value=MagicMock())
 
         class MockNode:
             def __init__(self, *args, **kwargs):
+                node_init_kwargs.update(kwargs)
                 self.input = None
 
             async def execute_stream(self, ahm):
@@ -297,17 +301,21 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
                 "datus.schemas.semantic_agentic_node_models.SemanticNodeInput",
-                MagicMock(return_value=MagicMock()),
+                semantic_input_cls,
             ),
         ):
             success, error = await create_semantic_model_for_table("users", mock_config)
         assert success is True
         assert error == ""
+        assert node_init_kwargs["authoring_scope"] == "datasets"
+        input_kwargs = semantic_input_cls.call_args.kwargs
+        assert input_kwargs["authoring_scope"] == "datasets"
+        assert "Do not create, update, or delete metrics" in input_kwargs["user_message"]
 
     @pytest.mark.asyncio
     async def test_terminal_error_action_returns_false(self):
@@ -324,6 +332,7 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -334,7 +343,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -361,6 +370,7 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -371,7 +381,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -398,6 +408,7 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -410,12 +421,12 @@ class TestCreateSemanticModelForTable:
                     messages="Tool call: validate_semantic('{}...')",
                 )
                 yield SimpleNamespace(
-                    status=ActionStatus.SUCCESS, action_type="gen_semantic_model_response", messages="ok"
+                    status=ActionStatus.SUCCESS, action_type="semantic_modeling_response", messages="ok"
                 )
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -440,6 +451,7 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -451,7 +463,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -478,6 +490,7 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -490,7 +503,7 @@ class TestCreateSemanticModelForTable:
         emit_count = []
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -517,6 +530,7 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = "public"
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
         semantic_input_cls = MagicMock(return_value=MagicMock())
 
         class MockNode:
@@ -528,7 +542,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -567,6 +581,7 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "SNOWFLAKE_SAMPLE_DATA"
         mock_db_config.schema = "TPCH_SF1"
         mock_config.current_db_config.return_value = mock_db_config
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
         semantic_input_cls = MagicMock(return_value=MagicMock())
 
         class MockNode:
@@ -578,7 +593,7 @@ class TestCreateSemanticModelForTable:
 
         with (
             patch(
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode",
                 MockNode,
             ),
             patch(
@@ -607,6 +622,7 @@ class TestCreateSemanticModelForTable:
         from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
+        mock_config.resolve_semantic_adapter.return_value = "dosi"
         mock_config.current_db_config.side_effect = RuntimeError("missing datasource")
 
         success, error = await create_semantic_model_for_table("orders", mock_config)

@@ -303,40 +303,19 @@ Treemap layout makes it easy to compare relative population sizes at a glance.
 ⏺ 💬 Collected 9 reference SQL identifier(s).
 ```
 
-**3. Semantic model**
+**3. Unified semantic modeling**
 
-Datus consolidates all chart SQLs into a semantic model with measures, dimensions, and relationships, and validates it:
-
-```text
-⏺ gen_semantic_model(World Bank's Data)
- ⎿  Done (13 tool uses · 96.4s)
-⏺ 💬 gen_semantic_model (World Bank's Data):
-
-
-Semantic Model Generation Summary
-
-Analysis
-
- • SQL Queries Analyzed: 9 queries from the World Bank's Data dashboard
- • Tables Identified: 1 — public.wb_health_population
- • Column Usage Patterns: Analyzed 4 actively-filtered columns (year, region, country_name, country_code)
-```
-
-**4. Metric extraction**
-
-Based on the validated semantic model, the chart aggregations are deduped and merged into a small set of core metrics:
+Datus sends all chart SQLs through one Dosi `semantic_modeling` run, which authors and validates the datasets, relationships, and metrics together:
 
 ```text
-⏺ gen_metrics(World Bank's Data)
-  ⎿  Done (18 tool uses · 64.0s)
-⏺ 💬 gen_metrics (World Bank's Data):
-
-Metric Generation Summary
-
-Analyzed: 9 SQL queries from the World Bank's Data dashboard (public.wb_health_population)
-
-Deduplication Result: 9 queries → 4 unique aggregation patterns → 4 core metrics
+⏺ semantic_modeling(World Bank's Data)
+  ⎿  Dosi YAML validated and reconciled to the Knowledge Base
+⏺ 💬 semantic_modeling completed: 9 SQL queries, 1 dataset, 4 core metrics
 ```
+
+**4. Reconciled semantic assets**
+
+The validated Dosi YAML is the source of truth. Bootstrap fully reconciles its semantic objects and deduplicated metrics to the Knowledge Base before reporting success.
 
 ### Output
 

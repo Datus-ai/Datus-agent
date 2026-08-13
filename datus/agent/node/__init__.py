@@ -21,8 +21,6 @@ __all__ = [
     "GenSQLAgenticNode",
     "ChatAgenticNode",
     "CompareAgenticNode",
-    "GenSemanticModelAgenticNode",
-    "GenMetricsAgenticNode",
     "SemanticModelingAgenticNode",
     "AskMetricsAgenticNode",
     "GenReportAgenticNode",
@@ -48,9 +46,7 @@ from .explore_agentic_node import ExploreAgenticNode
 from .feedback_agentic_node import FeedbackAgenticNode
 from .fix_node import FixNode
 from .gen_dashboard_agentic_node import GenDashboardAgenticNode
-from .gen_metrics_agentic_node import GenMetricsAgenticNode
 from .gen_report_agentic_node import GenReportAgenticNode
-from .gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 from .gen_skill_agentic_node import SkillCreatorAgenticNode
 from .gen_sql_agentic_node import GenSQLAgenticNode
 from .hitl_node import HitlNode

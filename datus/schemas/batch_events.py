@@ -78,7 +78,7 @@ class BatchEvent(BaseModel):
             biz_name="metrics_init",
             stage=BatchStage.ITEM_PROCESSING,
             item_id="row_5",
-            action_name="gen_semantic_model",
+            action_name="semantic_modeling",
             status="processing",
         )
 

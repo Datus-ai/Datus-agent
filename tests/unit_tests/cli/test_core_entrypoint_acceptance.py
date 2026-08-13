@@ -16,7 +16,7 @@ from rich.console import Console
 
 from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPlan, DashboardCliOptions
-from datus.cli.bootstrap_streams import stream_metrics, stream_semantic_model
+from datus.cli.bootstrap_streams import stream_semantic_modeling
 from datus.cli.build_kb_commands import BuildKbCommands
 from datus.cli.datasource_commands import DatasourceCommands
 from datus.cli.init_commands import _INIT_PROMPT, InitCommands
@@ -193,72 +193,54 @@ def test_quickstart_documented_repl_entrypoints_stay_routable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_helpers() -> None:
-    agent_config = SimpleNamespace(current_datasource="", project_name="acceptance-project")
+async def test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper() -> None:
+    agent_config = SimpleNamespace(
+        current_datasource="",
+        project_name="acceptance-project",
+        resolve_semantic_adapter=lambda _value: "dosi",
+    )
     calls: list[tuple] = []
 
-    async def fake_semantic(agent_config, success_story, emit, *, build_mode, action_callback):
-        calls.append(("semantic", agent_config.current_datasource, success_story, build_mode))
-        action_callback(_action("semantic artifact persisted", action_type="semantic_model_saved"))
-        return True, ""
-
-    async def fake_metrics(
-        *,
+    async def fake_semantic_modeling(
         agent_config,
         success_story,
         subject_tree,
         emit,
+        *,
         build_mode,
         action_callback,
     ):
         calls.append(
             (
-                "metrics",
+                "semantic_modeling",
                 agent_config.current_datasource,
                 success_story,
                 tuple(subject_tree or ()),
                 build_mode,
             )
         )
-        action_callback(_action("metrics artifact persisted", action_type="metrics_saved"))
+        action_callback(_action("Dosi semantic layer persisted", action_type="semantic_modeling_saved"))
         return True, "", {"semantic_models": ["subject/semantic_models/local/orders.yml"]}
 
-    with (
-        patch(
-            "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
-            side_effect=fake_semantic,
-        ),
-        patch(
-            "datus.storage.metric.metric_init.init_success_story_metrics_async",
-            side_effect=fake_metrics,
-        ),
+    with patch(
+        "datus.storage.semantic_model.semantic_modeling_init.init_success_story_semantic_modeling_async",
+        side_effect=fake_semantic_modeling,
     ):
-        semantic_actions = [
+        actions = [
             action
-            async for action in stream_semantic_model(
-                agent_config,
-                datasource="local",
-                success_story="/tmp/story.csv",
-                build_mode="overwrite",
-            )
-        ]
-        metrics_actions = [
-            action
-            async for action in stream_metrics(
+            async for action in stream_semantic_modeling(
                 agent_config,
                 datasource="local",
                 success_story="/tmp/story.csv",
                 subject_tree=["Sales", "Orders"],
-                build_mode="incremental",
+                build_mode="overwrite",
             )
         ]
 
     assert calls == [
-        ("semantic", "local", "/tmp/story.csv", "overwrite"),
-        ("metrics", "local", "/tmp/story.csv", ("Sales", "Orders"), "incremental"),
+        ("semantic_modeling", "local", "/tmp/story.csv", ("Sales", "Orders"), "overwrite"),
     ]
-    assert any(action.action_type == "semantic_model_saved" for action in semantic_actions)
-    assert any(action.action_type == "metrics_saved" for action in metrics_actions)
+    assert any(action.action_type == "semantic_modeling_saved" for action in actions)
 
 
 @pytest.mark.asyncio
@@ -303,11 +285,8 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
 
     async def semantic_model_stream(*_args, state, **_kwargs):
         state.semantic_ok = True
-        yield _action("semantic model ready", action_type="gen_semantic_model")
-
-    async def metrics_stream(*_args, state, **_kwargs):
         state.metrics.append("superset.sales.total_orders")
-        yield _action("metrics ready", action_type="gen_metrics")
+        yield _action("semantic layer ready", action_type="semantic_modeling")
 
     async def save_stream(*_args, sub_agent_name, scoped_context, **_kwargs):
         saved["sub_agent_name"] = sub_agent_name
@@ -319,7 +298,6 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=metadata_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=reference_sql_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=semantic_model_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=metrics_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=save_stream),
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["cat.db.public.orders"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
@@ -338,8 +316,7 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
         "schema_crawl",
         "sql_summary_response",
     ]
-    assert any(action.action_type == "gen_semantic_model" for action in actions)
-    assert any(action.action_type == "gen_metrics" for action in actions)
+    assert any(action.action_type == "semantic_modeling" for action in actions)
     assert any(action.action_type == "save_subagents" for action in actions)
 
 

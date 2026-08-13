@@ -23,6 +23,19 @@ def _stub_osi_schema_validation(monkeypatch):
         "validate_osi_authoring_document",
         lambda document, *, semantic_adapter: None,
     )
+    monkeypatch.setattr(
+        semantic_authoring,
+        "render_required_authoring_skill",
+        lambda _name, content, *, include_osi_core=False: (
+            content
+            + (
+                "\n## Active OSI Core authoring specification\n# Apache Ossie - Core Metadata Spec"
+                if include_osi_core
+                else ""
+            )
+            + "\n## Active DATUS extension authoring specification"
+        ),
+    )
 
 
 def _set_adapter(agent_config, adapter: str) -> None:
@@ -30,8 +43,10 @@ def _set_adapter(agent_config, adapter: str) -> None:
 
 
 def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_config, mock_llm_create):
+    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
+    assert not issubclass(SemanticModelingAgenticNode, GenMetricsAgenticNode)
     _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Create the order dataset and its revenue metric")
@@ -68,6 +83,81 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "## Active OSI Core authoring specification" in prompt
     assert "# Apache Ossie - Core Metadata Spec" in prompt
     assert "## Active DATUS extension authoring specification" in prompt
+
+
+def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agent_config, mock_llm_create):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    _set_adapter(real_agent_config, "dosi")
+    node = SemanticModelingAgenticNode(
+        agent_config=real_agent_config,
+        execution_mode="workflow",
+        authoring_scope="datasets",
+    )
+    node.input = SemanticNodeInput(user_message="Create reusable order datasets", authoring_scope="datasets")
+
+    tool_names = {tool.name for tool in node.tools}
+    assert {"upsert_osi_datasets", "delete_osi_datasets", "edit_file"}.issubset(tool_names)
+    assert {"upsert_osi_metrics", "delete_osi_metrics"}.isdisjoint(tool_names)
+
+    prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+    assert "This run is datasets-only" in prompt
+    assert "Do not author metrics in this datasets-only run" in prompt
+    assert "Keep all existing metric definitions unchanged" in prompt
+
+
+def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
+    real_agent_config,
+    mock_llm_create,
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.agent.node.stream_run_context import StreamRunContext
+
+    _set_adapter(real_agent_config, "dosi")
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    target = model_dir / "orders.yml"
+    original = (
+        "version: 0.2.0.dev0\n"
+        "semantic_model:\n"
+        "  - name: orders_model\n"
+        "    datasets: []\n"
+        "    relationships: []\n"
+        "    metrics:\n"
+        "      - name: order_count\n"
+        "        expression:\n"
+        "          dialects: [{dialect: SQLITE, expression: 'COUNT(*)'}]\n"
+    )
+    target.write_text(original, encoding="utf-8")
+    node = SemanticModelingAgenticNode(
+        agent_config=real_agent_config,
+        execution_mode="workflow",
+        authoring_scope="datasets",
+    )
+    node.input = SemanticNodeInput(user_message="Update order relationships", authoring_scope="datasets")
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "orders_model",
+            "semantic_model_file": f"subject/semantic_models/{real_agent_config.current_datasource}/orders.yml",
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode="planned",
+    )
+
+    edit_result = node.filesystem_func_tool.edit_file(
+        str(target),
+        "name: order_count",
+        "name: changed_order_count",
+    )
+    assert edit_result.success == 1
+
+    ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+    ctx.response_content = {"status": "generated", "output": "Updated relationships"}
+    with pytest.raises(RuntimeError, match="Datasets-only semantic_modeling cannot"):
+        node._build_success_result(ctx)
+
+    assert target.read_text(encoding="utf-8") == original
 
 
 def test_unified_node_exposes_structured_request_sql_as_discovery_evidence(real_agent_config, mock_llm_create):
@@ -134,7 +224,7 @@ def test_semantic_modeling_rejects_non_dosi_adapters(real_agent_config, mock_llm
     _set_adapter(real_agent_config, adapter)
     from datus.utils.exceptions import DatusException
 
-    with pytest.raises(DatusException, match="semantic_adapter=dosi"):
+    with pytest.raises(DatusException, match="query-only.*migrate it to Dosi.*semantic_modeling"):
         SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
 

@@ -11,23 +11,14 @@ from typing import Any, Callable, Optional
 import pandas as pd
 import yaml
 
-from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
+from datus.schemas.action_history import ActionHistory
 from datus.schemas.batch_events import BatchEvent, BatchStage
-from datus.schemas.semantic_agentic_node_models import (
-    SemanticNodeInput,
-    SourceQueryEvidence,
-    source_query_from_success_story_row,
-)
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
-
-SEMANTIC_MODEL_RESPONSE_ACTION_TYPE = f"{GenSemanticModelAgenticNode.NODE_NAME}_response"
-_VALID_BUILD_MODES = {"check", "overwrite", "incremental"}
 
 
 def _resolve_semantic_yaml_refresh_path(yaml_file_path: str, agent_config: Optional[AgentConfig]) -> Optional[str]:
@@ -72,217 +63,19 @@ async def init_success_story_semantic_model_async(
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
     require_exact_osi_target: bool = False,
 ) -> tuple[bool, str]:
-    """
-    Async version: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
+    """Route the legacy semantic-model bootstrap entry point to datasets-only authoring."""
+    del require_exact_osi_target
+    from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling_async
 
-    IMPORTANT: This function processes the ENTIRE success_story CSV in one go,
-    NOT line-by-line. It uses execution_mode="workflow" (not plan mode).
-
-    The gen_semantic_model node will receive all SQL queries from the CSV
-    and generate semantic models for all tables found in those queries.
-
-    Args:
-        agent_config: Agent configuration
-        success_story: Path to success story CSV file
-        emit: Optional callback to stream BatchEvent progress events
-        build_mode: ``"overwrite"`` (default) wipes the semantic model store
-            for the current project before regenerating. ``"incremental"``
-            preserves storage and lets the semantic-model Node reconcile the
-            request with existing artifacts.
-        require_exact_osi_target: Compatibility hint for callers that need the
-            Node's exact reported OSI target. Incremental mode always runs the
-            same Node workflow, so SQL-backed dataset requirements cannot be
-            hidden by a physical-table coverage shortcut.
-    """
-    # Load and validate CSV file
-    csv_path = success_story
-    try:
-        df = pd.read_csv(csv_path)
-    except FileNotFoundError:
-        error_msg = f"Success story CSV file not found: {csv_path}"
-        logger.error(error_msg)
-        return False, error_msg
-    except pd.errors.EmptyDataError:
-        error_msg = f"Success story CSV file is empty: {csv_path}"
-        logger.error(error_msg)
-        return False, error_msg
-    except Exception as e:
-        error_msg = f"Failed to read success story CSV file '{csv_path}': {e}"
-        logger.exception(error_msg)
-        return False, error_msg
-
-    # Validate required columns
-    required_columns = ["sql", "question"]
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        error_msg = (
-            f"Success story CSV '{csv_path}' is missing required columns: {missing_columns}. "
-            f"Available columns: {list(df.columns)}"
-        )
-        logger.error(error_msg)
-        return False, error_msg
-
-    source_queries: list[SourceQueryEvidence] = []
-    for idx, row in df.iterrows():
-        source_query = source_query_from_success_story_row(row, idx, success_story)
-        if source_query is not None:
-            source_queries.append(source_query)
-
-    if not source_queries:
-        error_msg = f"Success story CSV '{csv_path}' contains no SQL rows"
-        logger.error(error_msg)
-        return False, error_msg
-
-    if build_mode not in _VALID_BUILD_MODES:
-        error_msg = (
-            f"Unsupported semantic model build_mode: {build_mode!r}. "
-            f"Expected one of: {', '.join(sorted(_VALID_BUILD_MODES))}"
-        )
-        logger.error(error_msg)
-        return False, error_msg
-
-    semantic_model_rag = None
-    table_profile_rag = None
-    if build_mode in {"check", "overwrite"}:
-        try:
-            from datus.storage.semantic_model.store import SemanticModelRAG
-            from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
-
-            semantic_model_rag = SemanticModelRAG(agent_config)
-            table_profile_rag = TableSemanticProfileRAG(agent_config)
-        except Exception as exc:
-            error_msg = f"Failed to initialize semantic model storage for build_mode='{build_mode}': {exc}"
-            logger.exception(error_msg)
-            return False, error_msg
-
-    if build_mode == "check":
-        logger.info(
-            "[check] semantic_model rows=%d table_semantic_profile rows=%d; generation skipped",
-            semantic_model_rag.get_size(),
-            table_profile_rag.get_size(),
-        )
-        return True, ""
-
-    if build_mode == "overwrite":
-        logger.info(
-            "[overwrite] Wiping semantic_model rows for datasource '%s' before re-population",
-            semantic_model_rag.datasource_id,
-        )
-        try:
-            semantic_model_rag.truncate()
-            table_profile_rag.truncate()
-        except Exception as exc:
-            error_msg = f"Failed to wipe semantic model storage for build_mode='overwrite': {exc}"
-            logger.exception(error_msg)
-            return False, error_msg
-
-    elif build_mode == "incremental":
-        logger.info(
-            "[incremental] Preserving semantic-model storage and delegating reconciliation to gen_semantic_model"
-        )
-
-    # Build comprehensive context from all rows
-    context_message = "Generate semantic models for the following SQL queries:\n\n"
-    for source in source_queries:
-        query_number = source.source_sql_name.removeprefix("sql_")
-        context_message += f"Query {query_number}:\n"
-        context_message += f"Question: {source.question}\n"
-        context_message += f"SQL:\n{source.sql}\n\n"
-
-    current_db_config = agent_config.current_db_config()
-    runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
-    runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
-    runtime_db_context = runtime_db_context if isinstance(runtime_db_context, dict) else {}
-
-    # Emit task started event
-    if emit:
-        emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_STARTED))
-
-    # Create semantic model generation node (workflow mode, NOT plan mode)
-    semantic_node = GenSemanticModelAgenticNode(
-        agent_config=agent_config,
-        execution_mode="workflow",  # CRITICAL: workflow mode only
+    successful, error_message, _ = await init_success_story_semantic_modeling_async(
+        agent_config,
+        success_story,
+        emit=emit,
+        build_mode=build_mode,
+        action_callback=action_callback,
+        authoring_scope="datasets",
     )
-
-    semantic_input = SemanticNodeInput(
-        user_message=context_message,
-        catalog=runtime_db_context.get("catalog")
-        or runtime_db_context.get("catalog_name")
-        or current_db_config.catalog,
-        database=runtime_db_context.get("database")
-        or runtime_db_context.get("database_name")
-        or current_db_config.database,
-        db_schema=runtime_db_context.get("schema")
-        or runtime_db_context.get("db_schema")
-        or runtime_db_context.get("schema_name")
-        or current_db_config.schema,
-        source_queries=source_queries,
-    )
-
-    action_history_manager = ActionHistoryManager()
-    semantic_node.input = semantic_input
-
-    try:
-        generated_files = []
-        terminal_error = None
-        async for action in semantic_node.execute_stream(action_history_manager):
-            if action_callback is not None:
-                try:
-                    action_callback(action)
-                except Exception as cb_exc:  # pragma: no cover - defensive
-                    logger.debug("semantic_model action_callback raised: %s", cb_exc)
-            # Emit streaming messages
-            if emit and action.messages:
-                emit(
-                    BatchEvent(
-                        biz_name="semantic_model_init",
-                        stage=BatchStage.ITEM_PROCESSING,
-                        payload={"messages": action.messages, "output": action.output},
-                    )
-                )
-
-            action_type = getattr(action, "action_type", "")
-            if (
-                action.status == ActionStatus.SUCCESS
-                and action_type == SEMANTIC_MODEL_RESPONSE_ACTION_TYPE
-                and action.output
-            ):
-                if isinstance(action.output, dict):
-                    # Check for semantic_models field (from SemanticNodeResult)
-                    if "semantic_models" in action.output:
-                        models = action.output["semantic_models"]
-                        if isinstance(models, list):
-                            generated_files.extend(models)
-                        elif models:  # Single file as string
-                            generated_files.append(models)
-            elif action.status == ActionStatus.FAILED and action_type in {"error", SEMANTIC_MODEL_RESPONSE_ACTION_TYPE}:
-                terminal_error = action.messages or "Semantic model generation failed"
-                logger.error(terminal_error)
-                continue
-
-        if terminal_error:
-            if emit:
-                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=terminal_error))
-            return False, terminal_error
-
-        if not generated_files:
-            error_msg = f"Failed to generate any semantic models from {len(source_queries)} SQL queries in '{csv_path}'"
-            logger.error(error_msg)
-            if emit:
-                emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
-            return False, error_msg
-
-        logger.info(f"Generated {len(generated_files)} semantic model files: {generated_files}")
-        if emit:
-            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_COMPLETED))
-        return True, ""
-
-    except Exception as e:
-        error_msg = f"Error generating semantic models from '{csv_path}': {e}"
-        logger.exception(error_msg)
-        if emit:
-            emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
-        return False, error_msg
+    return successful, error_message
 
 
 def init_success_story_semantic_model(
@@ -292,15 +85,7 @@ def init_success_story_semantic_model(
     *,
     build_mode: str = "overwrite",
 ) -> tuple[bool, str]:
-    """
-    Sync wrapper: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
-
-    Args:
-        agent_config: Agent configuration
-        success_story: Path to success story CSV file
-        emit: Optional callback to stream BatchEvent progress events
-        build_mode: Forwarded to :func:`init_success_story_semantic_model_async`.
-    """
+    """Sync wrapper for datasets-only semantic modeling bootstrap."""
     with suppress_keyboard_input():
         return asyncio.run(
             init_success_story_semantic_model_async(agent_config, success_story, emit, build_mode=build_mode)
@@ -384,7 +169,7 @@ def refresh_success_story_semantic_model_profile(
         from datus.tools.func_tool.database import DBFuncTool
         from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 
-        db_tool = DBFuncTool(agent_config=agent_config, sub_agent_name="gen_semantic_model", read_only=True)
+        db_tool = DBFuncTool(agent_config=agent_config, sub_agent_name="semantic_modeling", read_only=True)
         discovery_tools = SemanticDiscoveryTools(db_tool=db_tool, enable_semantic_model_profiler=True)
         profile_result = discovery_tools.profile_semantic_model_evidence(
             sql_entries_json=json.dumps(entries, ensure_ascii=False),

@@ -94,7 +94,7 @@ agent:
 
 - DDL 执行需要用户确认 — 不会静默创建表
 - 如果目标表已存在，agent 会警告并询问是否 DROP 后重建
-- gen_table 只负责建表 — 语义模型生成请使用 `gen_semantic_model`
+- gen_table 只负责建表——Dosi 语义模型创作请使用 `semantic_modeling`
 - 不会修改源表
 
 ## 与 gen_job 的区别

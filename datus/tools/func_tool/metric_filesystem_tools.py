@@ -443,8 +443,8 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "OSI semantic model is required before metric generation. "
-                        "Run gen_semantic_model first, then retry gen_metrics."
+                        "The selected semantic model needs datasets before metrics can be authored. "
+                        "Use semantic_modeling to add or repair the datasets first."
                     ),
                     result={"code": "semantic_model_required", "semantic_model_file": resolved.display},
                 )
@@ -577,8 +577,8 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "OSI semantic model is required before deleting metrics. "
-                        "Run gen_semantic_model first, then retry gen_metrics."
+                        "The selected semantic model must exist before metrics can be deleted. "
+                        "Use semantic_modeling to select or repair the target first."
                     ),
                     result={"code": "semantic_model_required", "semantic_model_file": resolved.display},
                 )

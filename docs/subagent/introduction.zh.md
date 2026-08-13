@@ -26,8 +26,7 @@ Subagent 可以是：
 1. `explore`：只读的结构、知识和文件探索
 2. `gen_sql`：专用 SQL 生成
 3. `gen_report`：结构化报告生成
-4. `gen_semantic_model`：MetricFlow 语义模型生成
-5. `gen_metrics`：MetricFlow 指标生成
+4. `semantic_modeling`：统一的 Dosi 语义模型和指标创作
 6. `gen_sql_summary`：SQL 摘要生成
 7. `gen_table`：交互式建表
 8. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
@@ -87,7 +86,7 @@ datus --datasource production
 然后使用 `/[name]` 启动 subagent：
 
 ```text
-/gen_metrics 根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders
+/semantic_modeling 根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders
 /finance_report 分析本季度与上季度的收入变化
 ```
 
@@ -108,7 +107,7 @@ datus --web --datasource production --subagent finance_report
 也可以直接访问 URL：
 
 ```text
-http://localhost:8501/?subagent=gen_metrics
+http://localhost:8501/?subagent=semantic_modeling
 http://localhost:8501/?subagent=finance_report
 ```
 
@@ -141,8 +140,7 @@ graph LR
 | `explore` | 收集 schema、样本数据、知识库或文件上下文 |
 | `gen_sql` | 执行更深的多步 SQL 推理 |
 | `gen_report` | 生成结构化分析报告 |
-| `gen_semantic_model` | 生成 MetricFlow 语义模型 |
-| `gen_metrics` | 生成 MetricFlow 指标 |
+| `semantic_modeling` | 创作 Dosi 语义模型和指标 |
 | `gen_sql_summary` | 把 SQL 总结为可复用知识 |
 | `gen_table` | 交互式创建表 |
 | `gen_job` | 构建数据管道作业（单库 ETL 或跨库迁移） |

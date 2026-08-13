@@ -1392,21 +1392,14 @@ class TestCreateNode:
         node = manager._create_node(real_agent_config, None, "test-session")
         assert isinstance(node, AgenticNode)
 
-    def test_create_gen_semantic_model_node(self, real_agent_config, mock_llm_create):
-        """_create_node creates GenSemanticModelAgenticNode for gen_semantic_model."""
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_nodes_are_rejected(self, real_agent_config, mock_llm_create, agent_name):
+        """Retired semantic nodes cannot bypass the shared node factory."""
+        from datus.utils.exceptions import DatusException
 
         manager = ChatTaskManager()
-        node = manager._create_node(real_agent_config, "gen_semantic_model", "test-session")
-        assert isinstance(node, GenSemanticModelAgenticNode)
-
-    def test_create_gen_metrics_node(self, real_agent_config, mock_llm_create):
-        """_create_node creates GenMetricsAgenticNode for gen_metrics."""
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        manager = ChatTaskManager()
-        node = manager._create_node(real_agent_config, "gen_metrics", "test-session")
-        assert isinstance(node, GenMetricsAgenticNode)
+        with pytest.raises(DatusException, match="semantic_modeling"):
+            manager._create_node(real_agent_config, agent_name, "test-session")
 
     def test_create_gen_report_node(self, real_agent_config, mock_llm_create):
         """gen_report must land on GenReportAgenticNode (regression: previously fell back to GenSQL)."""
@@ -1535,23 +1528,14 @@ class TestCreateNodeInput:
         result = manager._create_node_input("hello", node, [], [], [])
         assert result.user_message == "hello"
 
-    def test_semantic_model_node_input(self, real_agent_config, mock_llm_create):
-        """_create_node_input for GenSemanticModelAgenticNode returns SemanticNodeInput."""
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_nodes_have_no_input_path(self, real_agent_config, mock_llm_create, agent_name):
+        """Input construction is unreachable for retired semantic nodes."""
+        from datus.utils.exceptions import DatusException
 
         manager = ChatTaskManager()
-        node = manager._create_node(real_agent_config, "gen_semantic_model", "test")
-        result = manager._create_node_input("generate model", node, [], [], [])
-        assert isinstance(result, SemanticNodeInput)
-
-    def test_metrics_node_input(self, real_agent_config, mock_llm_create):
-        """_create_node_input for GenMetricsAgenticNode returns SemanticNodeInput."""
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        manager = ChatTaskManager()
-        node = manager._create_node(real_agent_config, "gen_metrics", "test")
-        result = manager._create_node_input("generate metrics", node, [], [], [])
-        assert isinstance(result, SemanticNodeInput)
+        with pytest.raises(DatusException, match="semantic_modeling"):
+            manager._create_node(real_agent_config, agent_name, "test")
 
     def test_sql_summary_node_input(self, real_agent_config, mock_llm_create):
         """_create_node_input for SqlSummaryAgenticNode returns SqlSummaryNodeInput."""

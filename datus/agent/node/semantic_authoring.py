@@ -2,23 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Semantic authoring format resolution for generation nodes.
+"""Semantic authoring compatibility and Dosi availability helpers.
 
-Datus can author semantic assets in two formats:
-
-- ``metricflow``: the LLM writes MetricFlow YAML directly. This is the original
-  behavior and is left untouched.
-- ``osi``: the LLM writes OSI semantic models + Datus business hints, which the
-  Datus OSI compiler later lowers to a backend (e.g. MetricFlow). The LLM never
-  writes backend YAML.
-
-The format is resolved from the global active semantic adapter so semantic model
-generation, metric generation, query, and ask flows stay on one semantic layer
-for a project. Legacy node-level semantic format fields are ignored.
-
-Both formats share one system prompt template per node; the format-specific
-authoring specification is carried by a *required skill* that the node injects
-into the prompt at render time (see ``required_authoring_skills``).
+New authoring is exposed only through ``semantic_modeling`` on a Dosi project.
+MetricFlow and OSI format resolution remains here for query and import
+compatibility, while all user-facing factories reject the retired agent names.
 """
 
 from __future__ import annotations
@@ -37,24 +25,12 @@ import yaml
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
 OSI_AUTHORING_ADAPTERS: frozenset[str] = frozenset({"osi", "dosi"})
+QUERY_ONLY_MIGRATION_MESSAGE = (
+    "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
+)
 
 _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _DATUS_EXTENSION_VERSION_TOKEN = "<datus_extension_version>"
-
-# Authoring specification skills injected into the system prompt on every run,
-# keyed by node name then authoring format. These carry the full YAML format
-# spec, so they are host-injected (``REQUIRED_SKILLS`` semantics) rather than
-# advertised for LLM-initiated ``load_skill``.
-_REQUIRED_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
-    "gen_semantic_model": {
-        AUTHORING_FORMAT_METRICFLOW: "metricflow-semantic-authoring",
-        AUTHORING_FORMAT_OSI: "osi-semantic-authoring",
-    },
-    "gen_metrics": {
-        AUTHORING_FORMAT_METRICFLOW: "gen-metrics",
-        AUTHORING_FORMAT_OSI: "osi-metrics-authoring",
-    },
-}
 
 # Dosi consumes the OSI core document shape but has its own native DATUS
 # extension contract. Keep adapter-specific execution semantics out of the
@@ -63,27 +39,6 @@ _REQUIRED_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
 _REQUIRED_ADAPTER_SKILLS: Dict[str, Dict[str, str]] = {
     "semantic_modeling": {
         "dosi": "dosi-semantic-authoring",
-    },
-    "gen_semantic_model": {
-        "dosi": "dosi-semantic-authoring",
-    },
-    "gen_metrics": {
-        "dosi": "dosi-semantic-authoring",
-    },
-}
-
-# Optional skills advertised in ``<available_skills>`` for LLM-initiated
-# loading, keyed the same way. These cover conditional workflows (profiling on
-# explicit request, semantic-model repair during metric authoring), so the LLM
-# decides per request whether to load them.
-_OPTIONAL_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
-    "gen_semantic_model": {
-        AUTHORING_FORMAT_METRICFLOW: "semantic-sql-history-profiler",
-        AUTHORING_FORMAT_OSI: "semantic-sql-history-profiler",
-    },
-    "gen_metrics": {
-        AUTHORING_FORMAT_METRICFLOW: "metricflow-semantic-authoring",
-        AUTHORING_FORMAT_OSI: "",
     },
 }
 
@@ -126,6 +81,38 @@ def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
 def is_semantic_modeling_available(agent_config: Any = None) -> bool:
     """Return whether the unified semantic-modeling agent can be instantiated."""
     return resolve_semantic_adapter_type(agent_config) == "dosi"
+
+
+def semantic_authoring_unavailable_message(agent_config: Any = None) -> str:
+    """Return the actionable message for a project that cannot author semantics."""
+    if is_semantic_modeling_available(agent_config):
+        return "semantic_model and metrics authoring are retired; use semantic_modeling instead."
+    return QUERY_ONLY_MIGRATION_MESSAGE
+
+
+def retired_semantic_agent_message(agent_name: str, agent_config: Any = None) -> str:
+    """Return the actionable user-facing error for a retired authoring agent."""
+    from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
+
+    if agent_name not in RETIRED_SYS_SUB_AGENTS:
+        return ""
+    if is_semantic_modeling_available(agent_config):
+        return f"{agent_name} is retired. Use semantic_modeling instead."
+    return QUERY_ONLY_MIGRATION_MESSAGE
+
+
+def ensure_semantic_agent_available(agent_name: str, agent_config: Any = None) -> None:
+    """Reject retired or adapter-incompatible semantic authoring agents."""
+    from datus.utils.exceptions import DatusException, ErrorCode
+
+    message = retired_semantic_agent_message(agent_name, agent_config)
+    if not message and agent_name == "semantic_modeling" and not is_semantic_modeling_available(agent_config):
+        message = QUERY_ONLY_MIGRATION_MESSAGE
+    if message:
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message_args={"config_error": message},
+        )
 
 
 def is_osi_authoring(agent_config: Any = None, node_config: Optional[Dict[str, Any]] = None) -> bool:
@@ -900,8 +887,7 @@ def required_authoring_skills(agent_config: Any, node_name: str) -> str:
     adapter_skills = _REQUIRED_ADAPTER_SKILLS.get(node_name, {}).get(adapter)
     if adapter_skills is not None:
         return adapter_skills
-    authoring_format = resolve_authoring_format(agent_config)
-    return _REQUIRED_AUTHORING_SKILLS.get(node_name, {}).get(authoring_format, "")
+    return ""
 
 
 def render_required_authoring_skill(
@@ -964,5 +950,5 @@ def default_optional_skills(agent_config: Any, node_name: str) -> str:
     active authoring format decides which variants are visible. Users can still
     override with an explicit ``skills:`` entry in node configuration.
     """
-    authoring_format = resolve_authoring_format(agent_config)
-    return _OPTIONAL_AUTHORING_SKILLS.get(node_name, {}).get(authoring_format, "")
+    del agent_config, node_name
+    return ""

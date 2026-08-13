@@ -397,25 +397,14 @@ class TestCreateNewNode:
         assert isinstance(node, GenSQLAgenticNode)
         assert not isinstance(node, ChatAgenticNode)
 
-    def test_gen_semantic_model_node_creation(self, real_agent_config, mock_llm_create):
-        """subagent_name='gen_semantic_model' creates a GenSemanticModelAgenticNode."""
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_node_creation_fails(self, real_agent_config, mock_llm_create, agent_name):
+        """The CLI rejects retired semantic authoring names with migration guidance."""
+        from datus.utils.exceptions import DatusException
 
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_semantic_model")
-
-        assert isinstance(node, GenSemanticModelAgenticNode)
-        assert node.agent_config is real_agent_config
-
-    def test_gen_metrics_node_creation(self, real_agent_config, mock_llm_create):
-        """subagent_name='gen_metrics' creates a GenMetricsAgenticNode."""
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_metrics")
-
-        assert isinstance(node, GenMetricsAgenticNode)
-        assert node.agent_config is real_agent_config
+        with pytest.raises(DatusException, match="semantic_modeling"):
+            cmds._create_new_node(subagent_name=agent_name)
 
     def test_gen_sql_summary_node_creation(self, real_agent_config, mock_llm_create):
         """subagent_name='gen_sql_summary' creates a SqlSummaryAgenticNode."""
@@ -494,34 +483,14 @@ class TestCreateNodeInput:
         assert node_type == "gen_sql"
         assert node_input.user_message == "Generate SQL for users"
 
-    def test_semantic_model_node_input(self, real_agent_config, mock_llm_create):
-        """GenSemanticModelAgenticNode gets SemanticNodeInput with 'semantic' type."""
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_nodes_have_no_cli_input_path(self, real_agent_config, mock_llm_create, agent_name):
+        """The CLI cannot build inputs for retired semantic nodes."""
+        from datus.utils.exceptions import DatusException
 
         cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_semantic_model")
-        assert isinstance(node, GenSemanticModelAgenticNode)
-
-        node_input, node_type = cmds.create_node_input("Build semantic model", node, [], [], [])
-
-        assert isinstance(node_input, SemanticNodeInput)
-        assert node_type == "semantic"
-        assert node_input.user_message == "Build semantic model"
-
-    def test_gen_metrics_node_input(self, real_agent_config, mock_llm_create):
-        """GenMetricsAgenticNode gets SemanticNodeInput with 'semantic' type."""
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        cmds = _make_chat_commands(real_agent_config)
-        node = cmds._create_new_node(subagent_name="gen_metrics")
-        assert isinstance(node, GenMetricsAgenticNode)
-
-        node_input, node_type = cmds.create_node_input("Generate metrics", node, [], [], [])
-
-        assert isinstance(node_input, SemanticNodeInput)
-        assert node_type == "semantic"
+        with pytest.raises(DatusException, match="semantic_modeling"):
+            cmds._create_new_node(subagent_name=agent_name)
 
     def test_sql_summary_node_input(self, real_agent_config, mock_llm_create):
         """SqlSummaryAgenticNode gets SqlSummaryNodeInput with 'sql_summary' type."""
@@ -1419,8 +1388,8 @@ class TestEdgeCases:
     def test_should_create_new_node_none_subagent_with_existing_subagent(self, real_agent_config, mock_llm_create):
         """Switching from subagent to regular (None) creates new node."""
         cmds = _make_chat_commands(real_agent_config)
-        cmds.current_node = cmds._create_new_node(subagent_name="gen_metrics")
-        cmds.current_subagent_name = "gen_metrics"
+        cmds.current_node = cmds._create_new_node(subagent_name="gen_sql")
+        cmds.current_subagent_name = "gen_sql"
 
         assert cmds._should_create_new_node(subagent_name=None) is True
         assert cmds._should_create_new_node() is True
@@ -3874,35 +3843,12 @@ class TestCreateNewNodeExtended:
             chat_cmd._create_new_node(None)
         mock_init.assert_called_once()
 
-    def test_create_gen_semantic_model(self, chat_cmd):
-        mock_node = MagicMock()
-        with patch("datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode") as mock_cls:
-            mock_cls.return_value = mock_node
-            with patch.dict(
-                "sys.modules",
-                {"datus.agent.node.gen_semantic_model_agentic_node": MagicMock(GenSemanticModelAgenticNode=mock_cls)},
-            ):
-                result = chat_cmd._create_new_node("gen_semantic_model")
-        # _create_new_node returns the node; verify the correct class was instantiated
-        mock_cls.assert_called_once()
-        assert result is mock_node
+    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_nodes_are_rejected(self, chat_cmd, agent_name):
+        from datus.utils.exceptions import DatusException
 
-    def test_create_gen_metrics(self, chat_cmd):
-        mock_node = MagicMock()
-        with patch(
-            "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode",
-            return_value=mock_node,
-        ):
-            with patch.dict(
-                "sys.modules",
-                {
-                    "datus.agent.node.gen_metrics_agentic_node": MagicMock(
-                        GenMetricsAgenticNode=MagicMock(return_value=mock_node)
-                    )
-                },
-            ):
-                result = chat_cmd._create_new_node("gen_metrics")
-        assert result is mock_node
+        with pytest.raises(DatusException, match="semantic_modeling"):
+            chat_cmd._create_new_node(agent_name)
 
     def test_create_gen_sql_default(self, chat_cmd):
         mock_node = MagicMock()

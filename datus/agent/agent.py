@@ -399,13 +399,38 @@ class Agent:
         selected_components = self.args.components
 
         kb_update_strategy = self.args.kb_update_strategy
-        if "semantic_modeling" in selected_components and {"semantic_model", "metrics"}.intersection(
-            selected_components
-        ):
+        semantic_components = {"semantic_modeling", "semantic_model", "metrics"}
+        requested_semantic_components = [
+            component for component in selected_components if component in semantic_components
+        ]
+        uses_adapter = bool(getattr(self.args, "from_adapter", None))
+        uses_semantic_yaml = bool(getattr(self.args, "semantic_yaml", None))
+        uses_legacy_import = (uses_adapter or uses_semantic_yaml) and "semantic_modeling" not in selected_components
+        if "semantic_modeling" in selected_components and (uses_adapter or uses_semantic_yaml):
             return {
                 "status": "failed",
-                "message": "semantic_modeling cannot be combined with the legacy semantic_model or metrics components",
+                "message": (
+                    "semantic_modeling authors from --success_story; --from_adapter and --semantic_yaml are not "
+                    "supported"
+                ),
             }
+        semantic_authoring_requested = (
+            bool(requested_semantic_components)
+            and not uses_legacy_import
+            and (kb_update_strategy not in {"check", "refresh-profile"})
+        )
+        if semantic_authoring_requested:
+            from datus.agent.node.semantic_authoring import is_semantic_modeling_available
+
+            if not is_semantic_modeling_available(self.global_config):
+                from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
+
+                return {"status": "failed", "message": QUERY_ONLY_MIGRATION_MESSAGE}
+        semantic_authoring_scope = (
+            "full" if {"semantic_modeling", "metrics"}.intersection(requested_semantic_components) else "datasets"
+        )
+        semantic_execution_component = requested_semantic_components[0] if semantic_authoring_requested else None
+        semantic_execution_result = None
         if kb_update_strategy == "refresh-profile" and set(selected_components) != {"semantic_model"}:
             return {
                 "status": "failed",
@@ -522,26 +547,31 @@ class Agent:
                 results[component] = result
                 continue
 
-            elif component == "semantic_modeling":
-                uses_adapter = hasattr(self.args, "from_adapter") and self.args.from_adapter
-                uses_semantic_yaml = hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml
-                if uses_adapter or uses_semantic_yaml:
-                    results[component] = {
-                        "status": "failed",
-                        "message": (
-                            "semantic_modeling authors from --success_story; use semantic_model/metrics for "
-                            "--from_adapter or --semantic_yaml"
-                        ),
-                    }
+            elif component in semantic_components and semantic_authoring_requested:
+                if semantic_execution_result is not None:
+                    shared_result = dict(semantic_execution_result or {})
+                    shared_details = dict(shared_result.get("details") or {})
+                    shared_details.update(
+                        {
+                            "authoring_scope": semantic_authoring_scope,
+                            "shared_execution": semantic_execution_component,
+                        }
+                    )
+                    shared_result["details"] = shared_details
+                    results[component] = shared_result
                     continue
-
+                helper_kwargs = {
+                    "emit": self._emit_metrics_event,
+                    "build_mode": kb_update_strategy,
+                    "batch_size": getattr(self.args, "metrics_batch_size", 5),
+                }
+                if semantic_authoring_scope != "full":
+                    helper_kwargs["authoring_scope"] = semantic_authoring_scope
                 successful, error_message, details = init_success_story_semantic_modeling(
                     self.global_config,
                     self.args.success_story,
                     subject_tree,
-                    emit=self._emit_metrics_event,
-                    build_mode=kb_update_strategy,
-                    batch_size=getattr(self.args, "metrics_batch_size", 5),
+                    **helper_kwargs,
                 )
                 if successful:
                     details = details or {}
@@ -551,18 +581,44 @@ class Agent:
                             "semantic_modeling bootstrap completed, "
                             f"semantic_object_count={details.get('semantic_object_count', 0)}, "
                             f"metrics_count={details.get('metrics_count', 0)}, "
-                            f"sql_entries_covered={details.get('sql_entries_covered', 0)}"
+                            f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
+                            f"authoring_scope={semantic_authoring_scope}"
                         ),
                         "details": details,
                     }
                 else:
                     result = {"status": "failed", "message": error_message, "details": details}
+                semantic_execution_result = result
+                results[component] = result
+                continue
+
+            elif component == "semantic_modeling":
+                # Import modes were rejected before dispatch; only check reaches this branch.
+                successful, error_message, details = init_success_story_semantic_modeling(
+                    self.global_config,
+                    self.args.success_story,
+                    subject_tree,
+                    emit=self._emit_metrics_event,
+                    build_mode=kb_update_strategy,
+                    batch_size=getattr(self.args, "metrics_batch_size", 5),
+                )
+                result = (
+                    {
+                        "status": "success",
+                        "message": (
+                            "semantic_modeling check completed, "
+                            f"semantic_object_count={(details or {}).get('semantic_object_count', 0)}, "
+                            f"metrics_count={(details or {}).get('metrics_count', 0)}"
+                        ),
+                        "details": details or {},
+                    }
+                    if successful
+                    else {"status": "failed", "message": error_message, "details": details}
+                )
                 results[component] = result
                 continue
 
             elif component == "semantic_model":
-                uses_adapter = hasattr(self.args, "from_adapter") and self.args.from_adapter
-                uses_semantic_yaml = hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml
                 if kb_update_strategy == "check":
                     temp_rag = SemanticModelRAG(self.global_config)
                     profile_rag = TableSemanticProfileRAG(self.global_config)
@@ -636,7 +692,7 @@ class Agent:
                     successful, error_message = init_semantic_yaml_semantic_model(
                         self.args.semantic_yaml, self.global_config
                     )
-                else:
+                else:  # pragma: no cover - success-story authoring is routed above
                     successful, error_message = init_success_story_semantic_model(
                         self.global_config, self.args.success_story, build_mode=kb_update_strategy
                     )
@@ -653,8 +709,6 @@ class Agent:
                 continue
 
             elif component == "metrics":
-                uses_adapter = hasattr(self.args, "from_adapter") and self.args.from_adapter
-                uses_semantic_yaml = hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml
                 if kb_update_strategy == "check":
                     self.metrics_store = MetricRAG(self.global_config)
                     result = {
@@ -683,7 +737,7 @@ class Agent:
                     )
                 elif uses_semantic_yaml:
                     successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
-                else:
+                else:  # pragma: no cover - success-story authoring is routed above
                     successful, error_message, _ = init_success_story_metrics(
                         self.global_config,
                         self.args.success_story,

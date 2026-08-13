@@ -42,7 +42,7 @@ In "Q4 2025 Revenue Analysis", switch the revenue trend chart to monthly aggrega
 
 `gen_visual_report` accepts two equally valid starting points:
 
-- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see [Generate Metrics](gen_metrics.md) for how to create them).
+- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see [Semantic Modeling](semantic_modeling.md) for Dosi authoring).
   ```bash
   Build a Q4 2025 report around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, broken down by region.
   ```

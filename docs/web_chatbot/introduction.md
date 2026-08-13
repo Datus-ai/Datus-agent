@@ -58,8 +58,7 @@ The available list comes from built-in subagents plus any custom entries under `
 
 - `gen_sql`
 - `gen_report`
-- `gen_semantic_model`
-- `gen_metrics`
+- `semantic_modeling`
 - `gen_dashboard`
 - `scheduler`
 
@@ -74,8 +73,7 @@ The available list comes from built-in subagents plus any custom entries under `
 You can bookmark subagent URLs for quick access:
 
 ```
-http://localhost:8501/?subagent=gen_metrics
-http://localhost:8501/?subagent=gen_semantic_model
+http://localhost:8501/?subagent=semantic_modeling
 http://localhost:8501/?subagent=finance_report
 ```
 

@@ -118,11 +118,13 @@ def test_collect_template_shape(app: BootstrapApp) -> None:
 
 def test_collect_semantic_only_success_story(app: BootstrapApp) -> None:
     app._sem_success_story.text = "/data/success.csv"
+    app._sem_subject_tree.text = "Sales, Orders"
     opts = app._collect_for(_Tab.SEMANTIC)
     # No semantic_yaml / from_adapter / catalog / subject_path / source.
     assert opts == {
         "datasource": "ssb_sqlite",
         "success_story": "/data/success.csv",
+        "subject_tree": "Sales, Orders",
         "build_mode": "incremental",
     }
 
@@ -138,20 +140,6 @@ def test_collect_semantic_missing_success_story(app: BootstrapApp) -> None:
         app._collect_for(_Tab.SEMANTIC)
 
 
-def test_collect_metrics_full_form(app: BootstrapApp) -> None:
-    app._met_success_story.text = "/data/success.csv"
-    app._met_pool.text = "2"
-    app._met_subject_tree.text = "Finance"
-    opts = app._collect_for(_Tab.METRICS)
-    assert opts == {
-        "datasource": "ssb_sqlite",
-        "success_story": "/data/success.csv",
-        "pool_size": 2,
-        "subject_tree": "Finance",
-        "build_mode": "incremental",
-    }
-
-
 # ─────────────────────────────────────────────────────────────────────
 # Removed-fields guard — every tab must produce ONLY the simplified key
 # set; if anyone re-adds a stale field they'll trip these assertions.
@@ -162,8 +150,7 @@ _EXPECTED_KEYS = {
     _Tab.SCHEMA: {"datasource", "build_mode"},
     _Tab.SQL: {"datasource", "sql_dir", "pool_size", "subject_tree", "build_mode"},
     _Tab.TEMPLATE: {"datasource", "template_dir", "pool_size", "subject_tree", "build_mode"},
-    _Tab.SEMANTIC: {"datasource", "success_story", "build_mode"},
-    _Tab.METRICS: {"datasource", "success_story", "pool_size", "subject_tree", "build_mode"},
+    _Tab.SEMANTIC: {"datasource", "success_story", "subject_tree", "build_mode"},
 }
 
 
@@ -176,8 +163,6 @@ def test_no_unexpected_keys_per_tab(app: BootstrapApp, tab: _Tab) -> None:
         app._tpl_dir.text = "x"
     elif tab == _Tab.SEMANTIC:
         app._sem_success_story.text = "x"
-    elif tab == _Tab.METRICS:
-        app._met_success_story.text = "x"
     opts = app._collect_for(tab)
     assert set(opts.keys()) == _EXPECTED_KEYS[tab]
 

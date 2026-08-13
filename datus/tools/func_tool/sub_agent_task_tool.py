@@ -116,7 +116,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "from persisted SQL + rendered visualisations (the artifact is consumed by "
         "Datus-CLI HTML export and Datus-SaaS dynamic iframe renderer). "
         "When the user wants a report driven by existing or defined metrics / KPIs "
-        "(names specific metrics, or asks for it to be 'based on metrics / 基于指标'), "
+        "(names specific metrics, or asks for it to be based on metrics), "
         "this subagent is the right owner: it holds the semantic-layer tools "
         "(list_metrics / query_metrics) and dry-runs the canonical metric SQL as the "
         "build baseline. "
@@ -137,7 +137,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "(date range, region, segment, etc.) that should re-query data on demand, "
         "instead of a one-shot pre-baked report. "
         "When the user wants the dashboard driven by existing or defined metrics / KPIs "
-        "(names specific metrics, or asks for it to be 'based on metrics / 基于指标'), "
+        "(names specific metrics, or asks for it to be based on metrics), "
         "this subagent is the right owner: it holds the semantic-layer tools "
         "(list_metrics / query_metrics) and dry-runs the canonical metric SQL as the "
         "build baseline. "
@@ -158,31 +158,6 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Preserve table names, pasted SQL, or an explicitly named workspace SQL file path in the delegated prompt. "
         "Returns JSON with {response, semantic_models, status, tokens_used}."
     ),
-    "gen_semantic_model": (
-        "Generate semantic model YAML files from database table structures. "
-        "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
-        "For OSI metric generation, run this task first when the target domain semantic model does not exist, "
-        "wait for it to finish, and only then run gen_metrics; never run both tasks concurrently. "
-        "Preserve table names, pasted SQL, or an explicitly named workspace SQL file path in the delegated prompt. "
-        "The parent may read the file and pass its contents, or this agent may call read_file on the preserved path. "
-        "Returns JSON with {response, semantic_models (list of file paths), tokens_used}."
-    ),
-    "gen_metrics": (
-        "Define and generate semantic metric definitions. "
-        "Three input modes: "
-        "(1) SQL-based: provide SQL queries for metric extraction. "
-        "(2) Natural language: describe the business metric or calculation rules, "
-        "the agent will guide through interactive Q&A to define the metric. "
-        "(3) Batch: provide multiple SQL queries for AST-backed metric candidate extraction. "
-        "In OSI mode this task only creates or updates metrics in an existing domain semantic model. "
-        "If it returns code=semantic_model_required, run gen_semantic_model first and retry this task with "
-        "the original prompt. In MetricFlow mode it may create or extend semantic-model prerequisites itself. "
-        "Never run gen_metrics and gen_semantic_model concurrently. "
-        "Preserve pasted SQL or an explicitly named workspace SQL file path in the delegated prompt. "
-        "The parent may read the file and pass its contents, or this agent may call read_file on the preserved path. "
-        "The metrics agent will preserve final business output expressions and treat base measures as dependencies. "
-        "Returns JSON with {response, tokens_used}."
-    ),
     "gen_sql_summary": (
         "Analyze and summarize SQL queries into reusable knowledge base entries for semantic search. "
         "Use when asked to summarize, document, or index SQL queries for future reference. "
@@ -201,8 +176,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "(1) SQL-based: provide a JOIN/SELECT SQL → CTAS to create a wide table for query acceleration. "
         "(2) Natural language: describe the table structure (columns, types, purpose) → generate CREATE TABLE DDL. "
         "Both modes: the agent analyzes the input, proposes a table schema, asks for confirmation, "
-        "and executes the DDL. For semantic model generation on the new table, "
-        "use gen_semantic_model separately. Returns JSON with {response, tokens_used}."
+        "and executes the DDL. For Dosi semantic authoring on the new table, "
+        "use semantic_modeling separately. Returns JSON with {response, tokens_used}."
     ),
     "gen_job": (
         "Execute data pipeline jobs — BOTH intra-database ETL AND cross-database migration. "
@@ -468,28 +443,13 @@ class SubAgentTaskTool:
 
     def _create_builtin_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a builtin system subagent node with its non-standard constructor."""
+        from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
+
+        ensure_semantic_agent_available(subagent_type, self.agent_config)
         if subagent_type == "semantic_modeling":
             from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
             return SemanticModelingAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                is_subagent=True,
-                session_id=session_id,
-            )
-        elif subagent_type == "gen_semantic_model":
-            from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-
-            return GenSemanticModelAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                is_subagent=True,
-                session_id=session_id,
-            )
-        elif subagent_type == "gen_metrics":
-            from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-            return GenMetricsAgenticNode(
                 agent_config=self.agent_config,
                 execution_mode=self._resolve_execution_mode(),
                 is_subagent=True,
@@ -699,8 +659,6 @@ class SubAgentTaskTool:
         # Built-in system subagents (SYS_SUB_AGENTS)
         builtin_type_map = {
             "semantic_modeling": (NodeType.TYPE_SEMANTIC, "semantic_modeling"),
-            "gen_semantic_model": (NodeType.TYPE_SEMANTIC, "gen_semantic_model"),
-            "gen_metrics": (NodeType.TYPE_SEMANTIC, "gen_metrics"),
             "gen_sql_summary": (NodeType.TYPE_SQL_SUMMARY, "gen_sql_summary"),
             "ask_metrics": (NodeType.TYPE_ASK_METRICS, "ask_metrics"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
@@ -716,9 +674,14 @@ class SubAgentTaskTool:
         if not sub_config:
             raise ValueError(f"Unknown subagent type: {subagent_type}")
 
-        node_class = (
-            sub_config.get("node_class") if isinstance(sub_config, dict) else getattr(sub_config, "node_class", None)
-        )
+        if isinstance(sub_config, dict):
+            node_class = sub_config.get("node_class") or sub_config.get("type")
+        else:
+            node_class = getattr(sub_config, "node_class", None) or getattr(sub_config, "type", None)
+        from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
+
+        if node_class in RETIRED_SYS_SUB_AGENTS:
+            return NodeType.TYPE_SEMANTIC, "semantic_modeling"
         node_type = NODE_CLASS_MAP.get(node_class or "gen_sql", NodeType.TYPE_GEN_SQL)
         return node_type, subagent_type
 
@@ -803,6 +766,11 @@ class SubAgentTaskTool:
         allowed_types = self._get_available_types()
         raw_subagent_type = subagent_type
         normalized = subagent_type.strip().strip("\"'") if isinstance(subagent_type, str) else subagent_type
+        from datus.agent.node.semantic_authoring import retired_semantic_agent_message
+
+        retired_message = retired_semantic_agent_message(str(normalized or ""), self.agent_config)
+        if retired_message:
+            return FuncToolResult(success=0, error=retired_message)
         if normalized in allowed_types:
             subagent_type = normalized
         else:
@@ -1193,8 +1161,6 @@ class SubAgentTaskTool:
 
         # Built-in system subagent input types
         from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
         from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -1206,7 +1172,7 @@ class SubAgentTaskTool:
                 user_message=prompt,
             )
 
-        if isinstance(node, (SemanticModelingAgenticNode, GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
+        if isinstance(node, SemanticModelingAgenticNode):
             from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
             return SemanticNodeInput(
@@ -1582,7 +1548,9 @@ class SubAgentTaskTool:
         in SYS_SUB_AGENTS (which only guards reserved system names).
         """
         types = ["explore"]
-        builtin_types = {name for name in SYS_SUB_AGENTS if name != "feedback"}
+        from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS
+
+        builtin_types = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
         from datus.agent.node.semantic_authoring import is_semantic_modeling_available
 
         if not is_semantic_modeling_available(self.agent_config):

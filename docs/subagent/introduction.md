@@ -26,8 +26,7 @@ The current built-in set comes from `SYS_SUB_AGENTS` in code:
 1. `explore`: read-only schema, knowledge, and file exploration
 2. `gen_sql`: specialized SQL generation
 3. `gen_report`: structured report generation
-4. `gen_semantic_model`: MetricFlow semantic model generation
-5. `gen_metrics`: MetricFlow metric generation
+4. `semantic_modeling`: unified Dosi semantic-model and metric authoring
 6. `gen_sql_summary`: SQL summary generation
 7. `gen_table`: interactive table creation
 8. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
@@ -87,7 +86,7 @@ datus --datasource production
 Then launch a subagent with `/[name]`:
 
 ```text
-/gen_metrics Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
+/semantic_modeling Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
 /finance_report Analyze quarter-over-quarter revenue changes
 ```
 
@@ -108,7 +107,7 @@ datus --web --datasource production --subagent finance_report
 Direct URLs also work:
 
 ```text
-http://localhost:8501/?subagent=gen_metrics
+http://localhost:8501/?subagent=semantic_modeling
 http://localhost:8501/?subagent=finance_report
 ```
 
@@ -141,8 +140,7 @@ Important behavior:
 | `explore` | Gather schema, sample data, knowledge, or file context |
 | `gen_sql` | Generate SQL with deeper multi-step reasoning |
 | `gen_report` | Produce structured reports and analysis |
-| `gen_semantic_model` | Generate MetricFlow semantic models |
-| `gen_metrics` | Generate MetricFlow metrics |
+| `semantic_modeling` | Author Dosi semantic models and metrics |
 | `gen_sql_summary` | Summarize SQL into reusable knowledge |
 | `gen_table` | Create tables interactively |
 | `gen_job` | Build data pipeline jobs (single-database ETL or cross-database migration) |

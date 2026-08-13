@@ -205,7 +205,10 @@ def create_parser() -> argparse.ArgumentParser:
             "reference_template",
         ],
         default=["metadata"],
-        help="Knowledge base components to initialize",
+        help=(
+            "Knowledge base components to initialize. semantic_model is a datasets-only semantic_modeling alias; "
+            "metrics and semantic_modeling use full scope. Combined semantic components execute once."
+        ),
     )
     bootstrap_parser.add_argument("--storage_path", type=str, help="Parent directory for all storage components")
     bootstrap_parser.add_argument(

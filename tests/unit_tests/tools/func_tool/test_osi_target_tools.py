@@ -363,6 +363,29 @@ def test_semantic_plan_can_recover_unique_core_schema_invalid_model(tmp_path, mo
     assert calls == 1
 
 
+def test_dosi_plan_can_repair_legacy_osi_yaml_after_project_switch(tmp_path, monkeypatch):
+    config, model_dir = _config(tmp_path)
+    config.resolve_semantic_adapter = lambda _: "dosi"
+    target = model_dir / "legacy_osi.yml"
+    _write_model(target, name="orders_model")
+
+    def validate_for_active_adapter(document, *, semantic_adapter):
+        assert semantic_adapter == "dosi"
+        return "legacy OSI document requires Dosi repair"
+
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", validate_for_active_adapter)
+    tools = OsiSemanticModelTargetTools(config)
+
+    inventory = tools.list_existing_osi_semantic_models()
+    result = tools.plan_osi_semantic_model_target(semantic_model_name="orders_model")
+
+    assert inventory.result["status"] == "repairable"
+    assert inventory.result["issues"][0]["code"] == "invalid_dosi_model"
+    assert result.success
+    assert result.result["repair_required"] is True
+    assert tools.target_state.planned["absolute_path"] == str(target.resolve())
+
+
 def test_planned_existing_target_rejects_external_revision_change(tmp_path):
     config, model_dir = _config(tmp_path)
     target = model_dir / "orders.yml"

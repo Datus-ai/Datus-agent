@@ -35,8 +35,6 @@ logger = get_logger(__name__)
 # benefit, so the same exclusion applies to them.
 _FS_DEPENDENT_NODES: Set[str] = {
     "semantic_modeling",
-    "gen_semantic_model",
-    "gen_metrics",
     "gen_sql_summary",
     "gen_visual_report",
     "gen_visual_dashboard",

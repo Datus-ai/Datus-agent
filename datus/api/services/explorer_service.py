@@ -98,6 +98,33 @@ class ExplorerService:
             logger.warning(f"Semantic adapter unavailable: {e}")
             return None
 
+    def _semantic_mutation_rejection(self) -> Optional["Result[dict]"]:
+        """Reject semantic writes for legacy query-only projects."""
+        from datus.agent.node.semantic_authoring import (
+            is_semantic_modeling_available,
+            semantic_authoring_unavailable_message,
+        )
+        from datus.api.models.config_models import ErrorCode
+
+        if is_semantic_modeling_available(self.agent_config):
+            return None
+        return Result[dict](
+            success=False,
+            errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+            errorMessage=semantic_authoring_unavailable_message(self.agent_config),
+        )
+
+    def _semantic_agent_required_rejection(self) -> "Result[dict]":
+        """Reject KB-only semantic edits that cannot preserve YAML consistency."""
+        from datus.agent.node.semantic_authoring import semantic_authoring_unavailable_message
+        from datus.api.models.config_models import ErrorCode
+
+        return Result[dict](
+            success=False,
+            errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+            errorMessage=semantic_authoring_unavailable_message(self.agent_config),
+        )
+
     @staticmethod
     def _metric_name_from_yaml(yaml_text: str) -> Optional[str]:
         """Extract the metric name from OSI (top-level) or MetricFlow ({metric:}) YAML."""
@@ -171,6 +198,10 @@ class ExplorerService:
         should invoke it via ``asyncio.to_thread``.
         """
         from datus.api.models.config_models import ErrorCode
+
+        rejection = self._semantic_mutation_rejection()
+        if rejection is not None:
+            return rejection
 
         adapter = self._semantic_adapter()
         if adapter is None:
@@ -558,11 +589,18 @@ class ExplorerService:
 
             # Handle different types of subjects
             if request.type == SubjectNodeType.DIRECTORY:
+                node = self.subject_tree_store.get_node_by_path(request.subject_path)
+                if node:
+                    descendants = self.subject_tree_store.get_descendants(node["node_id"])
+                    candidate_node_ids = [node["node_id"]] + [item["node_id"] for item in descendants]
+                    if any(self.metric_rag.storage.list_entries(node_id) for node_id in candidate_node_ids):
+                        return self._semantic_agent_required_rejection()
                 # Rename directory in subject tree
                 self.subject_tree_store.rename(request.subject_path, request.new_subject_path)
             elif request.type == SubjectNodeType.METRIC:
-                # Rename metric entry
-                self.metric_rag.storage.rename(request.subject_path, request.new_subject_path)
+                # A KB-only rename would leave the YAML metric name and subject
+                # path unchanged. semantic_modeling owns this source-aware edit.
+                return self._semantic_agent_required_rejection()
             elif request.type == SubjectNodeType.REFERENCE_SQL:
                 # Rename reference SQL entry
                 self.reference_sql_rag.reference_sql_storage.rename(request.subject_path, request.new_subject_path)
@@ -1150,9 +1188,7 @@ class ExplorerService:
             )
 
     async def edit_semantic_model(self, request: EditSemanticModelInput) -> Result[dict]:
-        """Edit a semantic model entry (table or column).
-
-        Updates the vector DB and syncs changes back to the YAML file.
+        """Reject direct semantic-object edits in favor of YAML-first authoring.
 
         Args:
             request: Edit semantic model input with entry_id and update_values
@@ -1162,32 +1198,7 @@ class ExplorerService:
         """
         try:
             self._require_datasource()
-            from datus.api.models.config_models import ErrorCode
-
-            logger.info(f"Editing semantic model entry: {request.entry_id}")
-
-            if not request.entry_id:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="entry_id cannot be empty",
-                )
-
-            if not request.update_values:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="update_values cannot be empty",
-                )
-
-            self.semantic_model_rag.storage.update_entry(
-                entry_id=request.entry_id,
-                update_values=request.update_values,
-                extra_conditions=self.semantic_model_rag._sub_agent_conditions(),
-            )
-
-            logger.info(f"Successfully updated semantic model entry: {request.entry_id}")
-            return Result[dict](success=True, data={})
+            return self._semantic_agent_required_rejection()
 
         except Exception as e:
             logger.error(f"Failed to edit semantic model: {e}")
@@ -1219,6 +1230,11 @@ class ExplorerService:
             from datus.api.models.config_models import ErrorCode
             from datus.api.models.explorer_models import SubjectNodeType
 
+            if request.type == SubjectNodeType.METRIC:
+                rejection = self._semantic_mutation_rejection()
+                if rejection is not None:
+                    return rejection
+
             if not request.subject_path:
                 return Result[dict](
                     success=False,
@@ -1240,6 +1256,10 @@ class ExplorerService:
 
                 # Get all descendant nodes
                 descendants = self.subject_tree_store.get_descendants(node_id)
+
+                candidate_node_ids = [node_id] + [d["node_id"] for d in descendants]
+                if any(self.metric_rag.storage.list_entries(candidate_id) for candidate_id in candidate_node_ids):
+                    return self._semantic_agent_required_rejection()
 
                 # Delete all entries for this node and its descendants
                 all_node_ids = [node_id] + [d["node_id"] for d in descendants]

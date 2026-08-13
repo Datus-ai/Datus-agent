@@ -1,5 +1,9 @@
 # Metrics Generation Guide
 
+> **Retired:** `gen_metrics` is hidden and cannot be invoked. Use
+> [`semantic_modeling`](semantic_modeling.md) in a Dosi project. MetricFlow and
+> OSI projects keep query support but do not support new metric authoring.
+
 ## Overview
 
 The metrics generation feature helps you convert SQL queries into reusable metric definitions. The authored YAML format is selected by the configured semantic adapter: `metricflow` generates MetricFlow metric YAML, while `osi` generates strict OSI core metrics with Datus execution hints in `custom_extensions`. Using an AI assistant, you can analyze SQL business logic and automatically generate standardized metric configurations that can be queried consistently across your organization.

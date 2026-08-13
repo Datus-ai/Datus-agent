@@ -28,7 +28,9 @@ agent:
 
 完整配置见 [语义层配置](../configuration/semantic_layer.zh.md)。
 
-指标可以来自已有语义层资产，也可以由 [Generate Metrics](gen_metrics.zh.md) subagent 生成。使用 OSI 时，`ask_metrics` 仍然使用同一组 adapter tools，但会通过配置的执行后端查询 OSI-authored metrics。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。
+指标可以来自已有语义层资产，也可以由仅限 Dosi 的
+[`semantic_modeling`](semantic_modeling.md) subagent 生成。已有 MetricFlow 和 OSI 项目仍可查询，
+但在项目使用 Dosi 前不能进行语义创作。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。
 
 ## 快速开始
 
@@ -143,7 +145,7 @@ agent:
 
 | 需求 | 使用 |
 |------|------|
-| 从 SQL 生成新的指标定义 | [gen_metrics](gen_metrics.zh.md) |
+| 从 SQL 生成新的 Dosi 指标定义 | [semantic_modeling](semantic_modeling.md) |
 | 生成或修复原始表 SQL | [gen_sql](builtin_subagents.zh.md#gen_sql) |
 | 探索 schema、样本或参考上下文 | [explore](builtin_subagents.zh.md#explore) |
 | 构建可视化报告 artifact | [gen_visual_report](gen_visual_report.zh.md) |

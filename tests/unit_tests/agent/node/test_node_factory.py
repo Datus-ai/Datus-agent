@@ -23,6 +23,7 @@ from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput, A
 def _mock_agent_config(**kwargs):
     config = MagicMock()
     config.agentic_nodes = kwargs.get("agentic_nodes", None)
+    config.resolve_semantic_adapter.return_value = "dosi"
     return config
 
 
@@ -85,20 +86,29 @@ class TestCreateInteractiveNode:
         assert call_kwargs["node_id"] == "chat_test"
         assert call_kwargs["node_type"] == "chat"
 
-    @patch("datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__", return_value=None)
-    def test_gen_semantic_model(self, mock_init):
-        config = _mock_agent_config()
-        create_interactive_node("gen_semantic_model", config)
-        mock_init.assert_called_once_with(
-            agent_config=config, execution_mode="interactive", scope=None, session_id=None
-        )
+    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_agents_fail_with_replacement(self, agent_name):
+        from datus.utils.exceptions import DatusException
 
-    @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
-    def test_gen_metrics(self, mock_init):
         config = _mock_agent_config()
-        create_interactive_node("gen_metrics", config)
+        with pytest.raises(DatusException, match=rf"{agent_name} is retired. Use semantic_modeling instead"):
+            create_interactive_node(agent_name, config)
+
+    @pytest.mark.parametrize("config_key", ["node_class", "type"])
+    @pytest.mark.parametrize("node_class", ["gen_semantic_model", "gen_metrics"])
+    def test_custom_alias_with_retired_semantic_node_class_falls_back(self, config_key, node_class):
+        config = _mock_agent_config(agentic_nodes={"legacy_alias": {"node_class": node_class}})
+        config.agentic_nodes = {"legacy_alias": {config_key: node_class}}
+        with patch(
+            "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
+            return_value=None,
+        ) as mock_init:
+            create_interactive_node("legacy_alias", config)
         mock_init.assert_called_once_with(
-            agent_config=config, execution_mode="interactive", scope=None, session_id=None
+            agent_config=config,
+            execution_mode="interactive",
+            scope=None,
+            session_id=None,
         )
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
@@ -299,47 +309,61 @@ class TestCreateInteractiveNode:
 
 
 class TestNodeSemanticWiring:
-    @pytest.mark.parametrize(
-        ("node_name", "class_name", "patch_target"),
-        [
-            (
-                "semantic_modeling",
-                "SemanticModelingAgenticNode",
-                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
-            ),
-            (
-                "gen_metrics",
-                "GenMetricsAgenticNode",
-                "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__",
-            ),
-            (
-                "gen_semantic_model",
-                "GenSemanticModelAgenticNode",
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__",
-            ),
-        ],
-    )
-    def test_new_instance_routes_named_semantic_nodes(self, node_name, class_name, patch_target):
+    def test_new_instance_defaults_to_semantic_modeling(self):
         config = _mock_agent_config()
 
-        with patch(patch_target, return_value=None) as mock_init:
+        with patch(
+            "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
+            return_value=None,
+        ):
             node = Node.new_instance(
                 node_id="semantic_node",
                 description="semantic authoring",
                 node_type=NodeType.TYPE_SEMANTIC,
                 agent_config=config,
-                node_name=node_name,
+            )
+
+        assert node.__class__.__name__ == "SemanticModelingAgenticNode"
+
+    def test_new_instance_routes_semantic_modeling(self):
+        config = _mock_agent_config()
+
+        with patch(
+            "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
+            return_value=None,
+        ) as mock_init:
+            node = Node.new_instance(
+                node_id="semantic_node",
+                description="semantic authoring",
+                node_type=NodeType.TYPE_SEMANTIC,
+                agent_config=config,
+                node_name="semantic_modeling",
                 is_subagent=True,
                 session_id="session-1",
             )
 
-        assert node.__class__.__name__ == class_name
+        assert node.__class__.__name__ == "SemanticModelingAgenticNode"
         mock_init.assert_called_once_with(
             agent_config=config,
             execution_mode="workflow",
             is_subagent=True,
             session_id="session-1",
         )
+
+    @pytest.mark.parametrize("node_name", ["gen_semantic_model", "gen_metrics"])
+    def test_new_instance_rejects_retired_semantic_nodes(self, node_name):
+        from datus.utils.exceptions import DatusException
+
+        config = _mock_agent_config()
+        with pytest.raises(DatusException, match="Use semantic_modeling instead"):
+            Node.new_instance(
+                node_id="semantic_node",
+                description="semantic authoring",
+                node_type=NodeType.TYPE_SEMANTIC,
+                agent_config=config,
+                node_name=node_name,
+                is_subagent=True,
+            )
 
 
 class TestNodeAskMetricsWiring:
@@ -440,18 +464,11 @@ class TestCreateNodeInput:
                 {"user_message": "generate SQL", "plan_mode": True},
             ),
             (
-                "datus.agent.node.gen_semantic_model_agentic_node",
-                "GenSemanticModelAgenticNode",
+                "datus.agent.node.semantic_modeling_agentic_node",
+                "SemanticModelingAgenticNode",
                 "build model",
                 {"catalog": "cat", "prompt_language": "zh"},
                 {"user_message": "build model", "prompt_language": "zh"},
-            ),
-            (
-                "datus.agent.node.gen_metrics_agentic_node",
-                "GenMetricsAgenticNode",
-                "gen metrics",
-                {},
-                {"user_message": "gen metrics"},
             ),
             (
                 "datus.agent.node.sql_summary_agentic_node",

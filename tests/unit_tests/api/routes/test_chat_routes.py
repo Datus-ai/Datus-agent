@@ -216,6 +216,35 @@ class TestStreamChat404Gate:
         assert "nonexistent_xyz" in exc_info.value.detail
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
+    async def test_retired_semantic_agent_on_legacy_project_recommends_migration(self, retired_type):
+        svc = _mock_svc_with_nodes()
+        ctx = MagicMock()
+        request = StreamChatInput(message="update metrics", subagent_id=retired_type)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await stream_chat(request, svc, ctx, MagicMock())
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
+    async def test_retired_semantic_agent_on_dosi_project_recommends_semantic_modeling(self, retired_type):
+        svc = _mock_svc_with_nodes()
+        svc.agent_config.resolve_semantic_adapter.return_value = "dosi"
+        ctx = MagicMock()
+        request = StreamChatInput(message="update metrics", subagent_id=retired_type)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await stream_chat(request, svc, ctx, MagicMock())
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == f"{retired_type} is retired. Use semantic_modeling instead."
+
+    @pytest.mark.asyncio
     async def test_none_subagent_bypasses_gate(self):
         """Without a subagent_id the 404 gate is skipped — default routing handles it."""
         svc = _mock_svc_with_nodes()

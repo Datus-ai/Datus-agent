@@ -1,19 +1,20 @@
 # OSI Semantic Adapter
 
-This page describes Datus support for OSI (Open Semantic Interchange) semantic models and metrics. The implementation spans two repositories:
+This page describes query compatibility for existing OSI (Open Semantic Interchange) semantic models and metrics. The implementation spans two repositories:
 
-- `datus-agent`: generates strict OSI core YAML with LLM agents, validates and dry-runs generated assets, then syncs them to the Knowledge Base for `ask_metrics`.
+- `datus-agent`: loads existing strict OSI core YAML and makes its metrics available to `ask_metrics` and other query surfaces.
 - `datus-semantic-adapter`: provides the `datus-semantic-osi` adapter. It loads OSI YAML, validates the OSI core schema, compiles the document into Datus Semantic IR, and lowers it to an execution backend. The current backend is MetricFlow.
 
 ## Positioning
 
-In Datus, OSI is the authoring format for semantic models and metrics. MetricFlow is the default execution backend that renders SQL and executes metric queries.
+> **Query-only compatibility:** existing OSI projects remain queryable, but OSI
+> semantic authoring is retired. Migrate the project to Dosi before making
+> changes, then use `semantic_modeling`.
+
+In an existing OSI project, OSI is the source format and MetricFlow is the default execution backend that renders SQL and executes metric queries.
 
 ```text
-gen_semantic_model / gen_metrics
-        |
-        v
-strict OSI core YAML + DATUS custom_extensions
+existing strict OSI core YAML + DATUS custom_extensions
         |
         v
 datus-semantic-osi: validate -> compile IR -> lower to MetricFlow
@@ -68,16 +69,14 @@ agent:
 
 `execution_backend` defaults to `metricflow`; set it only when you need a different OSI execution backend.
 
-`datus-agent` resolves the authoring format from the active global semantic adapter:
-
-1. Use OSI authoring when `agent.services.semantic_layer.osi` is the active adapter.
-2. Otherwise, keep the MetricFlow authoring path.
+`datus-agent` uses the active global semantic adapter for query execution. An
+active `osi` adapter loads OSI assets; it does not enable semantic authoring.
 
 Legacy node-level `semantic_adapter` and `authoring_format` fields are ignored.
 
-## Semantic Model Generation
+## Existing Semantic Model Format
 
-In OSI mode, `gen_semantic_model` writes a strict OSI core document. The root shape is fixed:
+Existing OSI projects use a strict OSI core document. The root shape is fixed:
 
 ```yaml
 version: 0.2.0.dev0
@@ -118,13 +117,13 @@ Key rules:
 - Mark time fields with `dimension.is_time: true`; put the Datus `time_granularity` hint in `custom_extensions`.
 - Declare relationships under the semantic model object, not inside datasets.
 
-### Refreshing a table's model
+### Changing a table's model
 
-To regenerate a table's semantic model, re-run `gen_semantic_model` for it, then rebuild the vector KB with `/build-kb` so catalog facts such as `is_dimension` reflect the current model.
+To change a table's semantic model, migrate the project to Dosi first and use `semantic_modeling` so the YAML and Knowledge Base stay synchronized.
 
-## Metric Generation
+## Existing Metric Format
 
-In OSI mode, `gen_metrics` appends metrics under `semantic_model[0].metrics`. Business expressions live in OSI core `expression`; Datus execution hints live in `custom_extensions`.
+Existing OSI metrics live under `semantic_model[0].metrics`. Business expressions use OSI core `expression`; Datus execution hints live in `custom_extensions`.
 
 ```yaml
 version: 0.2.0.dev0
@@ -294,7 +293,7 @@ This metadata helps `ask_metrics` choose the correct metrics, dimensions, and qu
 
 ## SQL That Should Not Become Metrics
 
-`gen_metrics` does not force these SQL patterns into OSI metrics:
+The legacy OSI metric format does not force these SQL patterns into metrics:
 
 - Detail lists: `SELECT col1, col2 ...`
 - Distinct detail lists: `SELECT DISTINCT ...`
@@ -302,7 +301,7 @@ This metadata helps `ask_metrics` choose the correct metrics, dimensions, and qu
 - TopN per group, such as "top N activities per channel"
 - Queries whose main output is row-level records rather than aggregate metrics
 
-These patterns may be modeled later with derived datasets, materialized views, or a query layer, but they are outside the current `gen_metrics` metric-generation scope.
+These patterns may be modeled with derived datasets, materialized views, or a query layer, but they are outside the legacy OSI metric shape.
 
 ## Current Limits
 

@@ -61,7 +61,7 @@ class KbService:
         loop = asyncio.get_running_loop()
         summary: dict[str, dict] = {}
 
-        for comp_name in request.components:
+        for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
             if cancel_event.is_set():
                 yield self._make_event(
                     stream_id,
@@ -82,9 +82,21 @@ class KbService:
                 extra={"source": "api"},
             )
 
-            def _run_component_with_trace(trace_ctx=trace_ctx, comp_name=comp_name):
+            def _run_component_with_trace(
+                trace_ctx=trace_ctx,
+                comp_name=comp_name,
+                authoring_scope=authoring_scope,
+            ):
                 with trace_context(trace_ctx, replace=True):
-                    return self._run_component(request, comp_name, queue, loop, cancel_event, project_root)
+                    return self._run_component(
+                        request,
+                        comp_name,
+                        queue,
+                        loop,
+                        cancel_event,
+                        project_root,
+                        authoring_scope=authoring_scope,
+                    )
 
             future = loop.run_in_executor(None, _run_component_with_trace)
 
@@ -127,7 +139,9 @@ class KbService:
             # Final per-component event
             if component_error:
                 yield self._make_event(stream_id, comp_name, BatchStage.TASK_FAILED, error=str(component_error))
-                summary[comp_name] = {"status": "failed", "message": str(component_error)}
+                result_payload = {"status": "failed", "message": str(component_error)}
+                for alias in aliases:
+                    summary[alias] = result_payload
             else:
                 status = result.get("status", "success") if isinstance(result, dict) else "success"
                 message = result.get("message", "") if isinstance(result, dict) else str(result)
@@ -145,9 +159,25 @@ class KbService:
                         message=message,
                         payload=result if isinstance(result, dict) else None,
                     )
-                summary[comp_name] = (
-                    result if isinstance(result, dict) else {"status": "success", "message": str(result)}
-                )
+                result_payload = result if isinstance(result, dict) else {"status": "success", "message": str(result)}
+                for alias in aliases:
+                    if alias == comp_name:
+                        summary[alias] = result_payload
+                        continue
+                    alias_payload = dict(result_payload)
+                    details = dict(alias_payload.get("details") or {})
+                    details["shared_execution"] = comp_name
+                    alias_payload["details"] = details
+                    summary[alias] = alias_payload
+                    alias_stage = BatchStage.TASK_FAILED if status == "failed" else BatchStage.TASK_COMPLETED
+                    yield self._make_event(
+                        stream_id,
+                        alias,
+                        alias_stage,
+                        message=message,
+                        error=error_msg if status == "failed" else None,
+                        payload=alias_payload if status != "failed" else None,
+                    )
 
         # Final stream-end event
         yield self._make_event(
@@ -170,6 +200,8 @@ class KbService:
         loop: asyncio.AbstractEventLoop,
         cancel_event: asyncio.Event,
         project_root: str,
+        *,
+        authoring_scope: Optional[str] = None,
     ) -> dict:
         config = self.agent_config
         strategy = request.strategy
@@ -184,7 +216,6 @@ class KbService:
         args = self._build_args(request, project_root)
 
         subject_tree = request.subject_tree
-
         try:
             if strategy == "refresh-profile" and component != KbComponent.SEMANTIC_MODEL:
                 return {
@@ -194,6 +225,31 @@ class KbService:
 
             if component == KbComponent.METADATA:
                 return self._init_metadata(config, strategy, pool_size, dir_path, args, emit)
+
+            elif (
+                component
+                in {
+                    KbComponent.SEMANTIC_MODELING,
+                    KbComponent.SEMANTIC_MODEL,
+                    KbComponent.METRICS,
+                }
+                and authoring_scope is not None
+            ):
+                from datus.agent.node.semantic_authoring import (
+                    QUERY_ONLY_MIGRATION_MESSAGE,
+                    is_semantic_modeling_available,
+                )
+
+                if not is_semantic_modeling_available(config):
+                    return {"status": "failed", "message": QUERY_ONLY_MIGRATION_MESSAGE}
+                return self._init_semantic_modeling(
+                    config,
+                    strategy,
+                    args,
+                    subject_tree,
+                    emit,
+                    authoring_scope=authoring_scope,
+                )
 
             elif component == KbComponent.SEMANTIC_MODEL:
                 return self._init_semantic_model(config, strategy, dir_path, args, emit)
@@ -341,14 +397,21 @@ class KbService:
         args: types.SimpleNamespace,
         subject_tree: Optional[list[str]],
         emit: BatchEventEmitter,
+        *,
+        authoring_scope: str = "full",
     ) -> dict:
+        helper_kwargs = {
+            "emit": emit,
+            "build_mode": strategy,
+            "batch_size": args.metrics_batch_size,
+        }
+        if authoring_scope != "full":
+            helper_kwargs["authoring_scope"] = authoring_scope
         successful, error_message, details = init_success_story_semantic_modeling(
             config,
             args.success_story,
             subject_tree,
-            emit=emit,
-            build_mode=strategy,
-            batch_size=args.metrics_batch_size,
+            **helper_kwargs,
         )
         if not successful:
             return {"status": "failed", "message": error_message, "details": details}
@@ -360,7 +423,8 @@ class KbService:
                 "semantic_modeling bootstrap completed, "
                 f"semantic_object_count={details.get('semantic_object_count', 0)}, "
                 f"metrics_count={details.get('metrics_count', 0)}, "
-                f"sql_entries_covered={details.get('sql_entries_covered', 0)}"
+                f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
+                f"authoring_scope={authoring_scope}"
             ),
             "details": details,
         }
@@ -532,6 +596,40 @@ class KbService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _component_execution_specs(request: BootstrapKbInput) -> list[tuple[str, list[str], Optional[str]]]:
+        """Collapse semantic authoring aliases into one semantic_modeling execution."""
+        components = [
+            component.value if hasattr(component, "value") else str(component) for component in request.components
+        ]
+        semantic_components = {
+            KbComponent.SEMANTIC_MODELING.value,
+            KbComponent.SEMANTIC_MODEL.value,
+            KbComponent.METRICS.value,
+        }
+        requested_semantic = list(
+            dict.fromkeys(component for component in components if component in semantic_components)
+        )
+        normalize_authoring = bool(requested_semantic) and request.strategy not in {"check", "refresh-profile"}
+        if not normalize_authoring:
+            return [(component, [component], None) for component in components]
+
+        authoring_scope = (
+            "full"
+            if {KbComponent.SEMANTIC_MODELING.value, KbComponent.METRICS.value}.intersection(requested_semantic)
+            else "datasets"
+        )
+        first_semantic = requested_semantic[0]
+        specs: list[tuple[str, list[str], Optional[str]]] = []
+        semantic_added = False
+        for component in components:
+            if component not in semantic_components:
+                specs.append((component, [component], None))
+            elif not semantic_added and component == first_semantic:
+                specs.append((component, requested_semantic, authoring_scope))
+                semantic_added = True
+        return specs
 
     @staticmethod
     def _build_args(request: BootstrapKbInput, project_root: str) -> types.SimpleNamespace:

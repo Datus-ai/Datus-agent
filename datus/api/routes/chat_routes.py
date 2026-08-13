@@ -47,6 +47,7 @@ from datus.api.models.cli_models import (
 from datus.api.services.background_drain import track_background_task
 from datus.api.utils.stream_errors import humanize_stream_error
 from datus.tools.sql_policy import SqlPolicyConfig
+from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
@@ -169,6 +170,13 @@ async def stream_chat(
     http_request: Request,
 ):
     sub_agent_id = request.subagent_id
+    if sub_agent_id in RETIRED_SYS_SUB_AGENTS:
+        from datus.agent.node.semantic_authoring import retired_semantic_agent_message
+
+        raise HTTPException(
+            status_code=400,
+            detail=retired_semantic_agent_message(sub_agent_id, svc.agent_config),
+        )
     if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
         raise HTTPException(
             status_code=404,
