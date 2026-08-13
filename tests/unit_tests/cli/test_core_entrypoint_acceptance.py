@@ -251,7 +251,10 @@ async def test_bootstrap_semantic_modeling_stream_propagates_expected_failure() 
         resolve_semantic_adapter=lambda _value: "dosi",
     )
 
-    async def fake_semantic_modeling(*_args, **_kwargs):
+    async def fake_semantic_modeling(
+        *_args: object,
+        **_kwargs: object,
+    ) -> tuple[bool, str, None]:
         return False, "Invalid success-story input.", None
 
     with patch(
