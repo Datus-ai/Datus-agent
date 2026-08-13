@@ -8,6 +8,7 @@ import pytest
 from datus.api.services.chat_service import ChatService
 from datus.api.services.chat_task_manager import ChatTaskManager
 from datus.models.session_manager import SessionManager
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.exceptions import ErrorCode
 
 
@@ -207,6 +208,48 @@ class TestChatServiceGetHistory:
 
         result = chat_svc.get_history("empty-hist")
         assert result.success is True
+
+    def _assistant_response(self, text):
+        return ActionHistory(
+            action_id="a-" + text,
+            role=ActionRole.ASSISTANT,
+            action_type="response",
+            status=ActionStatus.SUCCESS,
+            output={"is_thinking": False, "response": text},
+        )
+
+    def _patch_messages(self, chat_svc, raw_messages):
+        fake_sm = MagicMock()
+        fake_sm.get_session_messages.return_value = raw_messages
+        return patch("datus.api.services.chat_service.SessionManager", return_value=fake_sm)
+
+    def test_get_history_renders_assistant_actions(self, chat_svc):
+        """Assistant actions convert to SSE payloads instead of erroring out."""
+        raw = [{"role": "assistant", "actions": [self._assistant_response("hello")]}]
+        with self._patch_messages(chat_svc, raw):
+            result = chat_svc.get_history("sid")
+
+        assert result.success is True
+        assert len(result.data.messages) == 1
+        assert result.data.messages[0].content[0].payload["content"] == "hello"
+
+    def test_get_history_dedupes_repeated_assistant_text(self, chat_svc):
+        """The fingerprint store is a dict of text -> owning message_id, not a set.
+
+        Passing a set made ``_should_skip_duplicate_assistant_message`` raise
+        ``'set' object has no attribute 'get'`` and failed the whole endpoint.
+        """
+        raw = [
+            {
+                "role": "assistant",
+                "actions": [self._assistant_response("same"), self._assistant_response("same")],
+            }
+        ]
+        with self._patch_messages(chat_svc, raw):
+            result = chat_svc.get_history("sid")
+
+        assert result.success is True
+        assert len(result.data.messages) == 1
 
 
 class TestChatServiceScopePropagation:
