@@ -160,6 +160,7 @@ jobs:
             --reinstall-package datus-doris \
             --reinstall-package datus-hologres \
             --reinstall-package datus-oracle \
+            --reinstall-package datus-gaussdb \
             --reinstall-package datus-storage-base \
             --reinstall-package datus-storage-postgresql \
             pytest-playwright \
@@ -183,6 +184,7 @@ jobs:
             ./external/datus-db-adapters/datus-greenplum \
             ./external/datus-db-adapters/datus-hive \
             ./external/datus-db-adapters/datus-spark \
+            ./external/datus-db-adapters/datus-gaussdb \
             ./external/datus-bi-adapters/datus-bi-core \
             ./external/datus-bi-adapters/datus-bi-superset \
             ./external/datus-bi-adapters/datus-bi-grafana \
@@ -315,6 +317,7 @@ jobs:
           echo "ADAPTERS_GP=1" >> $GITHUB_ENV
           echo "ADAPTERS_HIVE=1" >> $GITHUB_ENV
           echo "ADAPTERS_SPARK=1" >> $GITHUB_ENV
+          echo "ADAPTERS_GAUSSDB=1" >> $GITHUB_ENV
 
           # Use dedicated high host ports so nightly compose suites do not
           # collide with long-running services on the shared self-hosted runner.

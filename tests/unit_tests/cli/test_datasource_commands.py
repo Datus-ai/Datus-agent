@@ -443,7 +443,7 @@ class TestDatasourceAppViews:
             assert ("sqlite", "sqlite", True) in app._db_types
 
     def test_new_database_adapters_are_installable(self):
-        assert {"doris", "hologres", "oracle"} <= set(INSTALLABLE_TYPES)
+        assert {"doris", "gaussdb", "hologres", "oracle"} <= set(INSTALLABLE_TYPES)
 
     def test_enter_config_form(self):
         cli = _make_cli()

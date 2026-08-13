@@ -28,6 +28,7 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-greenplum": "datus-db-adapters/datus-greenplum",
     "datus-hive": "datus-db-adapters/datus-hive",
     "datus-spark": "datus-db-adapters/datus-spark",
+    "datus-gaussdb": "datus-db-adapters/datus-gaussdb",
     "datus-bi-core": "datus-bi-adapters/datus-bi-core",
     "datus-bi-superset": "datus-bi-adapters/datus-bi-superset",
     "datus-bi-grafana": "datus-bi-adapters/datus-bi-grafana",
@@ -71,6 +72,11 @@ DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
             "infer_transfer_type",
             "write_dataframe",
         ),
+    ),
+    "datus_gaussdb": DatabaseAdapterContract(
+        db_type="gaussdb",
+        parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
     ),
 }
 

@@ -29,6 +29,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | Apache Doris | datus-doris | `pip install datus-doris` | 可用 |
 | Hologres | datus-hologres | `pip install datus-hologres` | 可用 |
 | Oracle | datus-oracle | `pip install datus-oracle` | 可用 |
+| GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | 可用（仅 Linux） |
 
 ## 安装
 
@@ -73,6 +74,9 @@ pip install datus-hologres
 
 # Oracle
 pip install datus-oracle
+
+# GaussDB / openGauss（仅 Linux）
+pip install datus-gaussdb
 ```
 
 安装后，Datus Agent 会自动检测并加载适配器。
@@ -283,6 +287,24 @@ oracle_data:
 连接目标必须且只能配置一个：`service_name`（推荐）、`sid` 或 `dsn`。service/PDB 只用于选择连接目标，
 不属于 SQL 对象名；对象应使用 `SCHEMA.TABLE` 限定。
 
+### GaussDB
+
+```yaml
+gaussdb_data:
+  type: gaussdb
+  host: localhost
+  port: 5432
+  username: datus
+  password: ${GAUSSDB_PASSWORD}
+  database: postgres
+  schema: public   # 可选，默认为 public
+  driver: gaussdb  # 可选，默认为 gaussdb；可设为 psycopg2 作为兜底方案
+```
+
+GaussDB 与 openGauss 使用 PostgreSQL wire 协议。默认的 `gaussdb` 驱动为官方客户端，支持 sha256、md5
+和 sm3 认证；`psycopg2` 兜底方案仅适用于服务端配置为 md5 认证的场景。集中式与分布式部署均受支持，
+连接器会自动探测数据库的 A / B / PG 兼容模式，使生成的 SQL 遵循对应语义。
+
 ## 多数据库连接
 
 可以在 `agent.services.datasources` 下配置多个独立数据源连接：
@@ -384,6 +406,13 @@ agent:
 - 通过 `ALL_*` 数据字典视图发现 schema 范围内的元数据
 - Oracle 兼容的 profiling 和绑定参数数据传输
 
+#### GaussDB
+- PostgreSQL wire 协议（PostgreSQL 兼容 SQL 方言）
+- 通过官方 `gaussdb` 驱动支持 sha256、md5 和 sm3 认证
+- 自动探测 A / B / PG 兼容模式，使 SQL 生成遵循服务端语义
+- 同时支持集中式与分布式部署，并生成分布键感知的建表 DDL
+- 多 schema 数据源支持
+
 ## 故障排除
 
 ### 适配器未找到
@@ -416,6 +445,8 @@ pip install datus-mysql
 - **Apache Doris**：需要 `datus-mysql` 和 `pymysql`（自动安装）
 - **Hologres**：需要 `datus-postgresql` 和 `psycopg2-binary`（自动安装）
 - **Oracle**：需要 `oracledb`（自动安装；Thin 模式不需要 Oracle Client）
+- **GaussDB**：需要 `datus-postgresql` 和官方 `gaussdb` 驱动（自动安装）。该驱动依赖 GaussDB 系的
+  libpq，发布 wheel 中已内置 Linux 版本；官方未提供 macOS 版本，因此请在 Linux 环境中运行该适配器
 
 ## 架构
 
@@ -431,7 +462,8 @@ datus-agent (核心)
     │   │   ├── datus-starrocks
     │   │   └── datus-doris
     │   ├── datus-postgresql
-    │   │   └── datus-hologres
+    │   │   ├── datus-hologres
+    │   │   └── datus-gaussdb
     │   ├── datus-hive
     │   ├── datus-spark
     │   ├── datus-clickhouse

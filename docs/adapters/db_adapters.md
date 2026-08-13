@@ -29,6 +29,7 @@ This design keeps the core package lightweight while allowing you to add support
 | Apache Doris | datus-doris | `pip install datus-doris` | Ready |
 | Hologres | datus-hologres | `pip install datus-hologres` | Ready |
 | Oracle | datus-oracle | `pip install datus-oracle` | Ready |
+| GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | Ready (Linux only) |
 
 ## Installation
 
@@ -76,6 +77,9 @@ pip install datus-hologres
 
 # Oracle
 pip install datus-oracle
+
+# GaussDB / openGauss (Linux only)
+pip install datus-gaussdb
 ```
 
 Once installed, Datus Agent will automatically detect and load the adapter.
@@ -291,6 +295,25 @@ oracle_data:
 Configure exactly one connection target: `service_name` (recommended), `sid`, or `dsn`. The service/PDB
 selects the connection target but is not part of an SQL object name; qualify objects as `SCHEMA.TABLE`.
 
+### GaussDB
+
+```yaml
+gaussdb_data:
+  type: gaussdb
+  host: localhost
+  port: 5432
+  username: datus
+  password: ${GAUSSDB_PASSWORD}
+  database: postgres
+  schema: public   # optional, default is public
+  driver: gaussdb  # optional, default is gaussdb; set to psycopg2 as an escape hatch
+```
+
+GaussDB and openGauss speak the PostgreSQL wire protocol. The default `gaussdb` driver is the official
+client and supports sha256, md5, and sm3 authentication; the `psycopg2` escape hatch only works against
+servers configured for md5. Both centralized and distributed deployments are supported, and the connector
+auto-detects the database's A / B / PG compatibility mode so generated SQL follows the right semantics.
+
 ### Multiple Database Entries
 
 ```yaml
@@ -397,6 +420,13 @@ All adapters support:
 - Schema-scoped metadata discovery through `ALL_*` dictionary views
 - Oracle-compatible profiling and bound-parameter data transfers
 
+#### GaussDB
+- PostgreSQL wire protocol (PostgreSQL-compatible SQL dialect)
+- sha256, md5, and sm3 authentication through the official `gaussdb` driver
+- A / B / PG compatibility-mode auto-detection, so SQL generation follows the server's semantics
+- Centralized and distributed deployments, with distribution-aware table DDL
+- Multi-schema datasource support
+
 ## Troubleshooting
 
 ### Adapter Not Found
@@ -430,6 +460,9 @@ Some adapters require additional system dependencies:
 - **Apache Doris**: Requires `datus-mysql` and `pymysql` (installed automatically)
 - **Hologres**: Requires `datus-postgresql` and `psycopg2-binary` (installed automatically)
 - **Oracle**: Requires `oracledb` (installed automatically; Thin mode needs no Oracle Client)
+- **GaussDB**: Requires `datus-postgresql` and the official `gaussdb` driver (installed automatically).
+  That driver binds a GaussDB-family libpq, which release wheels bundle for Linux; no build is published
+  for macOS, so run the adapter inside a Linux environment
 
 ## Architecture
 
@@ -445,7 +478,8 @@ datus-agent (Core)
     │   │   ├── datus-starrocks
     │   │   └── datus-doris
     │   ├── datus-postgresql
-    │   │   └── datus-hologres
+    │   │   ├── datus-hologres
+    │   │   └── datus-gaussdb
     │   ├── datus-hive
     │   ├── datus-spark
     │   ├── datus-clickhouse
