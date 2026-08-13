@@ -41,10 +41,14 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         session_id: Optional[str] = None,
     ):
         from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
+        from datus.utils.exceptions import DatusException, ErrorCode
 
         ensure_semantic_agent_available(self.NODE_NAME, agent_config)
         if authoring_scope not in {"datasets", "full"}:
-            raise ValueError(f"Unsupported semantic-modeling authoring scope: {authoring_scope}")
+            raise DatusException(
+                ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"your_value": authoring_scope, "field_name": "authoring_scope"},
+            )
         self.authoring_scope = authoring_scope
         self._existing_models_checked = False
         super().__init__(

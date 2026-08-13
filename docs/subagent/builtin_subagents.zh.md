@@ -8,16 +8,16 @@
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[semantic_modeling](semantic_modeling.md)** — 创作 Dosi 语义模型和指标
-4. **[ask_metrics](ask_metrics.zh.md)** — 基于已有语义指标回答 KPI、趋势、分组指标和归因问题
-5. **[explore](#explore)** — 只读数据探索和上下文收集
-6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
-7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
-8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
-9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
-10. **[gen_skill](#gen_skill)** — skill 创建与优化
-11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-12. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
-13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+3. **[ask_metrics](ask_metrics.zh.md)** — 基于已有语义指标回答 KPI、趋势、分组指标和归因问题
+4. **[explore](#explore)** — 只读数据探索和上下文收集
+5. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
+6. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
+7. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
+8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
+9. **[gen_skill](#gen_skill)** — skill 创建与优化
+10. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
+11. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 

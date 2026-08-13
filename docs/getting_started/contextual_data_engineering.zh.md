@@ -183,7 +183,7 @@ datus
 > /bootstrap
 
 ──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   Schema   SQL   Template   Semantic   Metrics   Knowledge    (Tab or ←/→ to switch)
+   Schema   SQL   Template   Semantic Modeling   Knowledge    (Tab or ←/→ to switch)
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Schema
   Crawl the live database schema into the metadata RAG.
@@ -213,9 +213,9 @@ datasource:        california_schools
 
 更多介绍见[元数据管理](../knowledge_base/metadata.md)。
 
-### 步骤 3 —— 初始化 Dosi 语义模型和指标（Semantic tab）
+### 步骤 3 —— 初始化 Dosi 语义模型和指标（Semantic Modeling tab）
 
-切到 **Semantic** tab，填写：
+切到 **Semantic Modeling** tab，填写：
 
 ```text
 datasource:        california_schools

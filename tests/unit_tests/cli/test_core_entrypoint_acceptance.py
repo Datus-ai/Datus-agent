@@ -244,6 +244,38 @@ async def test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper() 
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_semantic_modeling_stream_propagates_expected_failure() -> None:
+    agent_config = SimpleNamespace(
+        current_datasource="",
+        project_name="acceptance-project",
+        resolve_semantic_adapter=lambda _value: "dosi",
+    )
+
+    async def fake_semantic_modeling(*_args, **_kwargs):
+        return False, "Invalid success-story input.", None
+
+    with patch(
+        "datus.storage.semantic_model.semantic_modeling_init.init_success_story_semantic_modeling_async",
+        side_effect=fake_semantic_modeling,
+    ):
+        actions = [
+            action
+            async for action in stream_semantic_modeling(
+                agent_config,
+                datasource="local",
+                success_story="/tmp/invalid.csv",
+            )
+        ]
+
+    assert any(
+        action.status == ActionStatus.FAILED.value and "Invalid success-story input" in action.messages
+        for action in actions
+    )
+    assert actions[-1].action_id.startswith("complete_")
+    assert actions[-1].status == ActionStatus.FAILED.value
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> None:
     agent_config = SimpleNamespace(
         current_datasource="local",

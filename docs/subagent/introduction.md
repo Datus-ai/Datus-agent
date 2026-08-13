@@ -27,13 +27,13 @@ The current built-in set comes from `SYS_SUB_AGENTS` in code:
 2. `gen_sql`: specialized SQL generation
 3. `gen_report`: structured report generation
 4. `semantic_modeling`: unified Dosi semantic-model and metric authoring
-6. `gen_sql_summary`: SQL summary generation
-7. `gen_table`: interactive table creation
-8. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
-9. `gen_skill`: skill creation and optimization
-10. `gen_dashboard`: BI dashboard creation and management
-11. `gen_visual_report`: Self-contained visual report under `reports/<slug>/`
-12. `scheduler`: Airflow job lifecycle management
+5. `gen_sql_summary`: SQL summary generation
+6. `gen_table`: interactive table creation
+7. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
+8. `gen_skill`: skill creation and optimization
+9. `gen_dashboard`: BI dashboard creation and management
+10. `gen_visual_report`: Self-contained visual report under `reports/<slug>/`
+11. `scheduler`: Airflow job lifecycle management
 
 See [Built-in subagents](./builtin_subagents.md) for details.
 

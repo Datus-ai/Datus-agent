@@ -142,9 +142,11 @@ class Node(ABC):
             if semantic_node_name == "semantic_modeling":
                 from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
+                authoring_scope = getattr(input_data, "authoring_scope", "full") if input_data is not None else "full"
                 node = SemanticModelingAgenticNode(
                     agent_config=agent_config,
                     execution_mode="workflow",
+                    authoring_scope=authoring_scope,
                     is_subagent=is_subagent,
                     session_id=session_id,
                 )

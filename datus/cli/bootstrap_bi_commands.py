@@ -189,6 +189,7 @@ class BootstrapBiCommands:
                         status=ActionStatus.FAILED,
                     )
                 )
+                return
 
         # 4. Build ScopedContext and persist the two sub-agent yamls.
         scoped = self._build_scoped_context(state)

@@ -342,32 +342,32 @@ async def test_stream_bi_metrics_skips_when_no_sqls(agent_config, state) -> None
     assert state.metrics == []
 
 
-def test_collects_dosi_metric_identifiers(agent_config, tmp_path: Path) -> None:
+@pytest.mark.parametrize("single_mapping", [False, True])
+def test_collects_dosi_metric_identifiers(agent_config, tmp_path: Path, single_mapping: bool) -> None:
     semantic_dir = tmp_path / "subject" / "semantic_models" / "metrics"
     semantic_dir.mkdir(parents=True)
     yaml_file = semantic_dir / "orders.yml"
+    semantic_model = {
+        "name": "commerce",
+        "datasets": [{"name": "orders", "source": "orders"}],
+        "metrics": [
+            {
+                "name": "total_orders",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                "custom_extensions": [
+                    {
+                        "vendor_name": "DATUS",
+                        "data": '{"dataset":"orders","subject_path":["superset","sales"]}',
+                    }
+                ],
+            }
+        ],
+    }
     yaml_file.write_text(
         yaml.safe_dump(
             {
                 "version": "0.2.0.dev0",
-                "semantic_model": [
-                    {
-                        "name": "commerce",
-                        "datasets": [{"name": "orders", "source": "orders"}],
-                        "metrics": [
-                            {
-                                "name": "total_orders",
-                                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
-                                "custom_extensions": [
-                                    {
-                                        "vendor_name": "DATUS",
-                                        "data": '{"dataset":"orders","subject_path":["superset","sales"]}',
-                                    }
-                                ],
-                            }
-                        ],
-                    }
-                ],
+                "semantic_model": semantic_model if single_mapping else [semantic_model],
             }
         ),
         encoding="utf-8",

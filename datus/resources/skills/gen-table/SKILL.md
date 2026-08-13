@@ -120,7 +120,7 @@ Output a summary including:
 - Row count (for CTAS) or column count (for CREATE TABLE)
 - Column list with types
 - Original SQL (for CTAS) or user description (for CREATE TABLE)
-- Hint: if the user needs a semantic model, suggest `task(type="semantic_modeling", prompt="{table_name}")`
+- Hint: if the user needs a semantic model and the project uses Dosi, suggest `task(type="semantic_modeling", prompt="{table_name}")`. For MetricFlow or OSI, explain that the project is query-only and must be migrated to Dosi before authoring.
 
 ## Important Rules
 
@@ -130,4 +130,4 @@ Output a summary including:
 - If the target table already exists, ask whether to drop/recreate/abort when interactive; require explicit replacement authorization when workflow mode.
 - Language: match user's language (Chinese input → Chinese output)
 - Do NOT modify the source tables — only create new tables
-- **Single responsibility** — gen-table only creates tables, does not generate semantic model YAML. For semantic authoring, suggest using `semantic_modeling`
+- **Single responsibility** — gen-table only creates tables and does not generate semantic model YAML. In a Dosi project, suggest `semantic_modeling` for semantic authoring; in MetricFlow or OSI, give the query-only migration guidance instead.

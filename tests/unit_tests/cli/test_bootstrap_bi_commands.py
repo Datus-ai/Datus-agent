@@ -163,7 +163,10 @@ async def test_run_plan_reports_unified_semantic_failure(agent_config, console) 
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_meta_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_ref_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_streams_no_yield),
+        patch(
+            "datus.cli.bootstrap_bi_commands.stream_bi_save_subagents",
+            side_effect=_streams_no_yield,
+        ) as save_subagents,
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["t"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
         patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
@@ -173,6 +176,8 @@ async def test_run_plan_reports_unified_semantic_failure(agent_config, console) 
     assert any(
         a.status == ActionStatus.FAILED.value and "Unified semantic modeling failed" in a.messages for a in actions
     )
+    save_subagents.assert_not_called()
+    assert not any("Sub-Agent build successful" in a.messages for a in actions)
 
 
 @pytest.mark.asyncio

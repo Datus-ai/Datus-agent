@@ -156,9 +156,17 @@ def log(msg: str) -> None:
 
 
 TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "3600"))
-# Worker count for the impacted full unit suite (pytest-xdist). Kept low because
-# CI runners are modest; override via env if a beefier runner is used.
-IMPACTED_UNIT_PARALLEL_WORKERS = os.environ.get("IMPACTED_UNIT_PARALLEL_WORKERS", "2")
+
+
+def _resolve_impacted_unit_parallel_workers() -> str:
+    """Use half of the available CPUs unless the runner provides an override."""
+    configured = os.environ.get("IMPACTED_UNIT_PARALLEL_WORKERS")
+    if configured:
+        return configured
+    return str(max(1, (os.cpu_count() or 1) // 2))
+
+
+IMPACTED_UNIT_PARALLEL_WORKERS = _resolve_impacted_unit_parallel_workers()
 GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))
 DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300"))
 _COMPARE_BRANCH_CACHE: dict[str, str | None] = {}
@@ -354,7 +362,7 @@ def _build_pytest_command(
     if parallel:
         # Distribute the suite across a few pytest-xdist workers so the full unit
         # run stays under TEST_CMD_TIMEOUT; pytest-cov merges per-worker data.
-        # Worker count stays low (default 2) because CI runners are modest.
+        # By default, use half of the available CPUs; runners may override this.
         cmd.extend(["-n", IMPACTED_UNIT_PARALLEL_WORKERS])
 
     cmd.append("--cov=datus")

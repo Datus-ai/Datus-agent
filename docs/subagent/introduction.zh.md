@@ -27,13 +27,13 @@ Subagent 可以是：
 2. `gen_sql`：专用 SQL 生成
 3. `gen_report`：结构化报告生成
 4. `semantic_modeling`：统一的 Dosi 语义模型和指标创作
-6. `gen_sql_summary`：SQL 摘要生成
-7. `gen_table`：交互式建表
-8. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
-9. `gen_skill`：skill 创建与优化
-10. `gen_dashboard`：BI 仪表盘创建与管理
-11. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
-12. `scheduler`：Airflow 作业生命周期管理
+5. `gen_sql_summary`：SQL 摘要生成
+6. `gen_table`：交互式建表
+7. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
+8. `gen_skill`：skill 创建与优化
+9. `gen_dashboard`：BI 仪表盘创建与管理
+10. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
+11. `scheduler`：Airflow 作业生命周期管理
 
 详细说明见 [内置 subagent](./builtin_subagents.zh.md)。
 

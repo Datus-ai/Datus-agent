@@ -8,16 +8,16 @@ This document covers the core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[semantic_modeling](semantic_modeling.md)** — Authors Dosi semantic models and metrics
-4. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
-5. **[explore](#explore)** — Read-only data exploration and context gathering
-6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
-7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
-8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
-9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
-10. **[gen_skill](#gen_skill)** — Skill creation and optimization
-11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-12. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
-13. **[scheduler](#scheduler)** — Airflow job lifecycle management
+3. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
+4. **[explore](#explore)** — Read-only data exploration and context gathering
+5. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
+6. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
+7. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
+8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
+9. **[gen_skill](#gen_skill)** — Skill creation and optimization
+10. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
+11. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+12. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 

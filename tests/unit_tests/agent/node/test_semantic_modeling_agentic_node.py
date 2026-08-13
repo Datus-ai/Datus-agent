@@ -103,7 +103,47 @@ def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agen
     prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
     assert "This run is datasets-only" in prompt
     assert "Do not author metrics in this datasets-only run" in prompt
+    assert "still author reusable native inputs." in prompt
+    assert "still author reusable native inputs and metrics." not in prompt
     assert "Keep all existing metric definitions unchanged" in prompt
+
+
+def test_node_factory_applies_datasets_only_scope_before_tool_setup(real_agent_config, mock_llm_create):
+    from datus.agent.node import Node
+    from datus.configuration.node_type import NodeType
+
+    _set_adapter(real_agent_config, "dosi")
+    input_data = SemanticNodeInput(user_message="Create reusable order datasets", authoring_scope="datasets")
+
+    node = Node.new_instance(
+        node_id="semantic_node",
+        description="dataset authoring",
+        node_type=NodeType.TYPE_SEMANTIC,
+        input_data=input_data,
+        agent_config=real_agent_config,
+        node_name="semantic_modeling",
+    )
+
+    assert node.authoring_scope == "datasets"
+    assert node.input is input_data
+    assert {"upsert_osi_metrics", "delete_osi_metrics"}.isdisjoint(tool.name for tool in node.tools)
+
+
+def test_invalid_authoring_scope_uses_structured_error(real_agent_config, mock_llm_create):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.utils.exceptions import DatusException, ErrorCode
+
+    _set_adapter(real_agent_config, "dosi")
+    with pytest.raises(DatusException) as exc_info:
+        SemanticModelingAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+            authoring_scope="metrics",
+        )
+
+    assert exc_info.value.code == ErrorCode.COMMON_UNSUPPORTED
+    assert "authoring_scope" in str(exc_info.value)
+    assert "metrics" in str(exc_info.value)
 
 
 def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(

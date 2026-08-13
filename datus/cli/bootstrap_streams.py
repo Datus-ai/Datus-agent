@@ -524,6 +524,8 @@ async def stream_semantic_modeling(
         yield message_action(str(exc), status=ActionStatus.FAILED)
         return
 
+    captured: Dict[str, Any] = {}
+
     async def _factory(emit, on_action):
         helper_kwargs = {
             "build_mode": build_mode,
@@ -531,17 +533,25 @@ async def stream_semantic_modeling(
         }
         if authoring_scope != "full":
             helper_kwargs["authoring_scope"] = authoring_scope
-        return await init_success_story_semantic_modeling_async(
+        ok, error, result = await init_success_story_semantic_modeling_async(
             agent_config,
             success_story,
             subject_tree,
             emit,
             **helper_kwargs,
         )
+        captured.update(ok=ok, error=error, result=result)
+        return ok
 
     async def _inner(_mgr):
         async for action in _run_helper_with_actions(_factory, function_name="semantic_modeling"):
             yield action
+        if captured.get("ok") is False:
+            yield message_action(
+                str(captured.get("error") or "Semantic modeling failed."),
+                action_type="semantic_modeling",
+                status=ActionStatus.FAILED,
+            )
 
     async for action in as_task_subagent(
         subagent_type="semantic_modeling",

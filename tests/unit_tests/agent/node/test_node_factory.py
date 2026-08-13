@@ -346,9 +346,38 @@ class TestNodeSemanticWiring:
         mock_init.assert_called_once_with(
             agent_config=config,
             execution_mode="workflow",
+            authoring_scope="full",
             is_subagent=True,
             session_id="session-1",
         )
+
+    def test_new_instance_propagates_datasets_only_scope_before_setup(self):
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+        config = _mock_agent_config()
+        input_data = SemanticNodeInput(user_message="Model the orders dataset", authoring_scope="datasets")
+
+        with patch(
+            "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
+            return_value=None,
+        ) as mock_init:
+            node = Node.new_instance(
+                node_id="semantic_node",
+                description="dataset authoring",
+                node_type=NodeType.TYPE_SEMANTIC,
+                input_data=input_data,
+                agent_config=config,
+                node_name="semantic_modeling",
+            )
+
+        mock_init.assert_called_once_with(
+            agent_config=config,
+            execution_mode="workflow",
+            authoring_scope="datasets",
+            is_subagent=False,
+            session_id=None,
+        )
+        assert node.input is input_data
 
     @pytest.mark.parametrize("node_name", ["gen_semantic_model", "gen_metrics"])
     def test_new_instance_rejects_retired_semantic_nodes(self, node_name):

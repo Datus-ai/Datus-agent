@@ -1,181 +1,19 @@
-# Semantic Model Generation Guide
+# `gen_semantic_model` (Retired)
 
-> **Retired:** `gen_semantic_model` is hidden and cannot be invoked. Use
-> [`semantic_modeling`](semantic_modeling.md) in a Dosi project. MetricFlow and
-> OSI projects keep query support but do not support semantic authoring.
+`gen_semantic_model` is retained only for configuration compatibility. It is hidden from subagent discovery, and direct invocation returns an error recommending [`semantic_modeling`](semantic_modeling.md).
 
-## Overview
+## Replacement
 
-The semantic model generation feature helps you create semantic models from database tables through an AI-powered assistant. The YAML format is selected by the configured semantic adapter: `metricflow` generates MetricFlow YAML, while `osi` generates strict OSI core YAML. The assistant analyzes your table structure and generates configuration files for the selected adapter.
-
-## What is a Semantic Model?
-
-A semantic model is a YAML configuration that defines:
-
-- **Measures**: Metrics and aggregations (SUM, COUNT, AVERAGE, etc.)
-- **Dimensions**: Categorical and time-based attributes
-- **Identifiers**: Primary and foreign keys for relationships
-- **Data Source**: Connection to your database table
-
-## How It Works
-
-Start Datus CLI with `datus --datasource <datasource>`, and begin with a subagent command:
+Use `semantic_modeling` in a Dosi project to create or update datasets, fields, relationships, model metadata, and metrics. The workflow edits Dosi YAML, validates the selected model, and reconciles the YAML source of truth with the Knowledge Base.
 
 ```text
-  /gen_semantic_model generate a semantic model for table <table_name>
+/semantic_modeling Model the orders and customers datasets and their relationship.
 ```
 
+MetricFlow and OSI projects remain queryable but are query-only for semantic changes. To modify an existing OSI project, first change its semantic type to Dosi, then use `semantic_modeling` to repair and validate the existing YAML. MetricFlow YAML migration is not supported.
 
-### Interactive Generation
+## Bootstrap compatibility
 
-When you request a semantic model, the AI assistant:
+On a Dosi project, `bootstrap-kb --components semantic_model` runs `semantic_modeling` with datasets-only scope. It may change datasets, fields, relationships, and model metadata, but it preserves every existing metric definition. Existing YAML import and profile parsing remain available for supported legacy files.
 
-1. Retrieves your table's DDL (structure)
-2. Checks if a semantic model already exists
-3. Generates a comprehensive YAML file
-4. Validates the configuration using the configured semantic adapter
-5. Syncs it to the Knowledge Base after validation passes
-
-### Generation Workflow
-
-```text
-User Request → DDL Analysis → YAML Generation → Validation → Storage
-```
-
-### Validation and Sync
-
-The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. Once validation passes, `publish_semantic_model` publishes the semantic model to the Knowledge Base automatically.
-
-## Configuration
-
-### Agent Configuration
-
-Most configurations are built-in. In `agent.yml`, minimal setup is needed:
-
-```yaml
-agent:
-  services:
-    semantic_layer:
-      metricflow: {}     # Key MUST equal the adapter type (e.g. `metricflow`).
-                         # If `type:` is given, it must match the key; otherwise Datus raises a config error at startup.
-
-  agentic_nodes:
-    gen_semantic_model:
-      model: claude      # Optional: defaults to configured model
-      max_turns: 30      # Optional: defaults to 30
-      semantic_adapter: metricflow   # Optional when only one semantic layer is configured
-```
-
-See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the full set of options.
-
-For OSI generation, see [OSI Semantic Adapter](../adapters/osi_semantic_adapter.md).
-
-### Skills (automatic)
-
-You never configure `skills:` — the assistant picks the right ones from the active semantic adapter:
-
-- The matching authoring guide (`metricflow-semantic-authoring` or `osi-semantic-authoring`) is always applied.
-- A historical-SQL profiler is available on demand (see below).
-
-To customize: set `skills: ""` to disable the optional profiler, or drop a folder with the same name under `./.datus/skills/` to replace a built-in guide with your own.
-
-### Triggering historical-SQL profiling
-
-By default the assistant models a table from its DDL and column comments — fast, no extra steps. When you want it to also mine your historical queries or sample real data distributions, **just ask for it in your request**:
-
-| What you want | Example request |
-|---|---|
-| Model from DDL only (default) | `/gen_semantic_model generate a semantic model for orders` |
-| Use past queries as modeling evidence | `/gen_semantic_model model orders and its joins; analyze these queries first: <paste SQL>` |
-| Sample real value distributions | `/gen_semantic_model model orders and profile its column statistics before writing the model` |
-
-Pasting SQL alone does **not** trigger profiling — the assistant still reads it as context, but only runs the profiler when you explicitly ask to analyze or profile. This keeps everyday generation quick.
-
-When profiling runs, its findings (value ranges, null rates, distinct counts, common filters, join reliability) are folded into the field descriptions. For example, a field the assistant would normally write as:
-
-```yaml
-- name: amount
-  expression:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: amount
-  dimension:
-    is_time: false
-  description: "Order amount"
-  custom_extensions:
-    - vendor_name: DATUS
-      data: '{"type":"numeric"}'
-```
-
-becomes, after profiling, self-documenting with observed evidence:
-
-```yaml
-  description: "Order amount; observed range 0–9,999, p50 ≈ 120; ~0.3% null"
-```
-
-**Built-in configurations** (automatically enabled):
-- **Tools**: Database tools, generation tools, and filesystem tools
-- **Hooks**: Validation evidence tracking and Knowledge Base sync
-- **Semantic Adapter**: validation through the configured semantic layer
-- **System Prompt**: Built-in template; the latest available version is used unless `prompt_version` is set
-- **Workspace**: `~/.datus/data/{datasource}/semantic_models`
-
-### Configuration Options
-
-| Parameter | Required | Description | Default |
-|-----------|----------|-------------|---------|
-| `model` | No | LLM model to use | Uses default configured model |
-| `max_turns` | No | Maximum conversation turns | 30 |
-
-## Semantic Model Structure
-
-### Basic Template
-
-```yaml
-data_source:
-  name: table_name                    # Required: lowercase with underscores
-  description: "Table description"
-
-  sql_table: schema.table_name        # For databases with schemas
-  # OR
-  sql_query: |                        # For custom queries
-    SELECT * FROM table_name
-
-  measures:
-    - name: total_amount              # Required
-      agg: SUM                        # Required: SUM|COUNT|AVERAGE|etc.
-      expr: amount_column             # Column or SQL expression
-      create_metric: true             # Auto-create queryable metric
-      description: "Total transaction amount"
-
-  dimensions:
-    - name: created_date
-      type: TIME                      # Required: TIME|CATEGORICAL
-      type_params:
-        is_primary: true              # One primary time dimension required
-        time_granularity: DAY         # Required for TIME: DAY|WEEK|MONTH|etc.
-
-    - name: status
-      type: CATEGORICAL
-      description: "Order status"
-
-  identifiers:
-    - name: order_id
-      type: PRIMARY                   # PRIMARY|FOREIGN|UNIQUE|NATURAL
-      expr: order_id
-
-    - name: customer
-      type: FOREIGN
-      expr: customer_id
-```
-
-## Summary
-
-The semantic model generation feature provides:
-
-- ✓ Automated YAML generation from table DDL
-- ✓ Interactive validation and error fixing
-- ✓ Automatic sync after validation passes
-- ✓ Knowledge Base integration
-- ✓ Duplicate prevention
-- ✓ Semantic adapter compatibility
+See [Semantic Modeling](semantic_modeling.md) and [Semantic Models](../knowledge_base/semantic_model.md) for the supported workflow.

@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 
 import defusedxml.ElementTree as ET
+import pytest
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / "ci" / "run-pr-tests.py"
 MODULE_SPEC = importlib.util.spec_from_file_location("run_pr_tests", MODULE_PATH)
@@ -250,6 +251,43 @@ def test_pr_harness_marker_expressions_route_component_tests():
     assert run_pr_tests.IMPACTED_UNIT_MARK_EXPR == (
         "not acceptance and not component and not llm_harness and not nightly and not quarantine"
     )
+
+
+@pytest.mark.parametrize(
+    ("cpu_count", "expected_workers"),
+    [
+        (None, "1"),
+        (1, "1"),
+        (2, "1"),
+        (3, "1"),
+        (4, "2"),
+        (8, "4"),
+    ],
+)
+def test_impacted_unit_worker_default_uses_half_available_cpus(monkeypatch, cpu_count, expected_workers):
+    monkeypatch.delenv("IMPACTED_UNIT_PARALLEL_WORKERS", raising=False)
+    monkeypatch.setattr(run_pr_tests.os, "cpu_count", lambda: cpu_count)
+
+    assert run_pr_tests._resolve_impacted_unit_parallel_workers() == expected_workers
+
+
+def test_impacted_unit_worker_env_override_takes_precedence(monkeypatch):
+    monkeypatch.setenv("IMPACTED_UNIT_PARALLEL_WORKERS", "6")
+    monkeypatch.setattr(run_pr_tests.os, "cpu_count", lambda: 16)
+
+    assert run_pr_tests._resolve_impacted_unit_parallel_workers() == "6"
+
+
+def test_impacted_unit_suite_uses_configured_workers(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "IMPACTED_UNIT_PARALLEL_WORKERS", "4")
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        parallel=True,
+    )
+
+    worker_flag = command.index("-n")
+    assert command[worker_flag : worker_flag + 2] == ["-n", "4"]
 
 
 def test_resolve_explicit_compare_ref_prefers_origin_for_branch_name(monkeypatch):

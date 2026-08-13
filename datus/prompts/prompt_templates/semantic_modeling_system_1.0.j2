@@ -24,7 +24,7 @@ The complete Dosi dataset and metric contracts are provided in the appended `<re
    - For physical tables that need new or changed fields or relationships, call `inspect_semantic_sources` once with the complete table set and use its live schema and relationship evidence.
    - {{ "By default, extract reusable fields and relationships. Do not author metrics in this datasets-only run." if authoring_scope == "datasets" else "By default, extract reusable fields, relationships, and native business metrics." }} Keep literal time ranges, grouping, ordering, and result layout as query-time concerns.
    - Choose a query-backed dataset when the complete request establishes the result itself as a durable reusable cohort/result set or asks for faithful one-query reproduction.
-   - Do not persist unsupported result-only outputs unless the query-backed condition above applies; still author reusable native inputs and metrics.
+   - Do not persist unsupported result-only outputs unless the query-backed condition above applies; {{ "still author reusable native inputs." if authoring_scope == "datasets" else "still author reusable native inputs and metrics." }}
    - {{ "Use the narrow dataset upsert/delete tools." if authoring_scope == "datasets" else "Use the narrow dataset and metric upsert/delete tools." }} Use `edit_file` for relationships or model metadata. {{ "Keep all existing metric definitions unchanged." if authoring_scope == "datasets" else "When both are needed, update datasets and relationships before dependent metrics." }}
 4. **Validate and finish**:
    - Validate the final selected model after the last mutation. Use `scope="all"` when it contains metrics and `scope="semantic_model"` when it does not.

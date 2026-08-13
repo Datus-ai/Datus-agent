@@ -1,6 +1,7 @@
 """Unit tests for semantic authoring format resolution."""
 
 import sys
+from contextlib import asynccontextmanager
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -435,3 +436,104 @@ def test_semantic_modeling_required_skills_are_dosi_native():
     node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
     node.agent_config = _agent_config("dosi")
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
+
+
+def test_semantic_authoring_base_configuration_is_neutral():
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    assert SemanticAuthoringAgenticNode.NODE_NAME == "semantic_authoring"
+    assert SemanticAuthoringAgenticNode.INCLUDE_OSI_CORE_SPEC is False
+    assert SemanticAuthoringAgenticNode.COMPACT_SOURCE_INSPECTION is False
+
+
+@pytest.mark.asyncio
+async def test_semantic_authoring_base_resets_request_local_state(monkeypatch):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    resets: list[str] = []
+
+    async def _parent_before_stream(_self, _ctx):
+        resets.append("parent")
+
+    monkeypatch.setattr(AgenticNode, "_before_stream", _parent_before_stream)
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.result = object()
+    node.generation_evidence = SimpleNamespace(reset=lambda: resets.append("evidence"))
+    node.osi_target_state = SimpleNamespace(reset=lambda: resets.append("target"))
+    node.osi_target_tools = SimpleNamespace(invalidate_inventory=lambda: resets.append("inventory"))
+    node.semantic_discovery_tools = SimpleNamespace(reset_request_cache=lambda: resets.append("discovery"))
+
+    await node._before_stream(object())
+
+    assert node.result is None
+    assert resets == ["parent", "evidence", "target", "inventory", "discovery"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_authoring_base_rolls_back_terminal_failure(monkeypatch):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    marker = object()
+    rolled_back: list[bool] = []
+
+    @asynccontextmanager
+    async def _guard(_agent_config):
+        yield
+
+    async def _parent_execute_stream(_self, _manager):
+        yield marker
+
+    monkeypatch.setattr(semantic_authoring, "semantic_authoring_guard", _guard)
+    monkeypatch.setattr(AgenticNode, "execute_stream", _parent_execute_stream)
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.agent_config = _agent_config("dosi")
+    node.result = SimpleNamespace(success=False)
+    node.filesystem_func_tool = SimpleNamespace(
+        rollback_failed_authoring=lambda: rolled_back.append(True) or True,
+    )
+
+    actions = [action async for action in node.execute_stream()]
+
+    assert actions == [marker]
+    assert rolled_back == [True]
+
+
+def test_semantic_authoring_base_reports_unavailable_warehouse_connection():
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.db_func_tool = None
+
+    assert node._warehouse_dry_run_compiled_sql("SELECT 1") == {
+        "status": "failed",
+        "error": "Database connection is unavailable.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("read_result", "expected"),
+    [
+        (
+            SimpleNamespace(success=False, error="EXPLAIN rejected"),
+            {"status": "failed", "error": "EXPLAIN rejected"},
+        ),
+        (
+            SimpleNamespace(success=True, error=None),
+            {"status": "success", "datasource": "warehouse", "database": "analytics"},
+        ),
+    ],
+)
+def test_semantic_authoring_base_validates_compiled_sql_with_warehouse_explain(read_result, expected):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    calls: list[tuple[str, str, str]] = []
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node._semantic_runtime_db_context = lambda: {"datasource": "warehouse", "database": "analytics"}
+    node.db_func_tool = SimpleNamespace(
+        read_query=lambda sql, *, datasource, database: calls.append((sql, datasource, database)) or read_result,
+    )
+
+    assert node._warehouse_dry_run_compiled_sql("SELECT 1;") == expected
+    assert calls == [("EXPLAIN SELECT 1", "warehouse", "analytics")]

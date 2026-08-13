@@ -184,7 +184,7 @@ Inside the REPL:
 > /bootstrap
 
 ──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   Schema   SQL   Template   Semantic   Metrics   Knowledge    (Tab or ←/→ to switch)
+   Schema   SQL   Template   Semantic Modeling   Knowledge    (Tab or ←/→ to switch)
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Schema
   Crawl the live database schema into the metadata RAG.
@@ -214,9 +214,9 @@ Press **Ctrl+R**. Expected output:
 
 Learn more about [metadata management](../knowledge_base/metadata.md).
 
-### Step 3 — Bootstrap Dosi Semantic Models and Metrics (Semantic tab)
+### Step 3 — Bootstrap Dosi Semantic Models and Metrics (Semantic Modeling tab)
 
-Switch to the **Semantic** tab and fill in:
+Switch to the **Semantic Modeling** tab and fill in:
 
 ```text
 datasource:    california_schools

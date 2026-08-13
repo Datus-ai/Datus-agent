@@ -566,6 +566,7 @@ flow_groups:
             nodeids:
               - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
@@ -575,6 +576,7 @@ flow_groups:
             nodeids:
               - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database

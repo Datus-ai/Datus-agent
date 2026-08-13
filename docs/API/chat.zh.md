@@ -17,7 +17,7 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 |------------------|----------|------|
 | `message`        | string   | 必填,用户消息 |
 | `session_id`     | string?  | 复用以延续已有会话 |
-| `subagent_id`    | string?  | 内置 subagent 名（如 `semantic_modeling`、`gen_sql`）或自定义 id；已退役的语义 agent 名称会返回明确错误。 |
+| `subagent_id`    | string?  | 内置 subagent 名（如 `semantic_modeling`、`gen_sql`）或自定义 id；`semantic_modeling` 仅适用于 Dosi 项目，MetricFlow 和 OSI 项目仅支持查询；已退役的语义 agent 名称会返回明确错误。 |
 | `model`          | string?  | 单次请求级 model 覆盖,格式 `provider/model_id`(如 `openai/gpt-4.1`、`custom/my-model`)。优先级高于服务端 `target` 与会话默认值。 |
 | `plan_mode`      | bool     | 是否启用 plan 模式 |
 | `catalog`/`database`/`db_schema` | string? | 数据库上下文 |

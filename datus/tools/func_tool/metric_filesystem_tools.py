@@ -444,7 +444,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     success=0,
                     error=(
                         "The selected semantic model needs datasets before metrics can be authored. "
-                        "Use semantic_modeling to add or repair the datasets first."
+                        "Add or repair the datasets with upsert_osi_datasets before authoring metrics."
                     ),
                     result={"code": "semantic_model_required", "semantic_model_file": resolved.display},
                 )
@@ -578,7 +578,8 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     success=0,
                     error=(
                         "The selected semantic model must exist before metrics can be deleted. "
-                        "Use semantic_modeling to select or repair the target first."
+                        "Select or repair the target with plan_osi_semantic_model_target or "
+                        "bind_osi_semantic_model_target before deleting metrics."
                     ),
                     result={"code": "semantic_model_required", "semantic_model_file": resolved.display},
                 )

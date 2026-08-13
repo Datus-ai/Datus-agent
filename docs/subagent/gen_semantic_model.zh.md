@@ -1,171 +1,19 @@
-# 语义模型生成指南
+# `gen_semantic_model`（已退役）
 
-> **已退役：**`gen_semantic_model` 已隐藏且不能调用。请在 Dosi 项目中使用
-> [`semantic_modeling`](semantic_modeling.md)。MetricFlow 和 OSI 项目保留查询能力，但不再支持语义建模。
+`gen_semantic_model` 仅为兼容旧配置而保留。它不会出现在 subagent 列表中，直接调用会返回错误并推荐使用 [`semantic_modeling`](semantic_modeling.md)。
 
-## 概览
+## 替代方案
 
-语义模型生成功能帮助你通过 AI 助手从数据库表创建语义模型。具体 YAML 格式由配置的 semantic adapter 决定：`metricflow` 生成 MetricFlow YAML，`osi` 生成 strict OSI core YAML。助手会分析表结构，并按所选适配器生成配置文件。
-
-## 什么是语义模型？
-
-语义模型是定义以下内容的 YAML 配置：
-
-- **度量（Measures）**：指标和聚合（SUM、COUNT、AVERAGE 等）
-- **维度（Dimensions）**：分类和时间属性
-- **标识符（Identifiers）**：用于关系的主键和外键
-- **数据源（Data Source）**：与数据库表的连接
-
-## 工作原理
-
-使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用子代理命令：
+在 Dosi 项目中使用 `semantic_modeling` 创建或修改 dataset、field、relationship、模型元数据和 metric。该流程会修改 Dosi YAML、校验选中的模型，并将 YAML 源文件与 Knowledge Base 完整对账。
 
 ```text
-  /gen_semantic_model generate a semantic model for table <table_name>
+/semantic_modeling 为 orders 和 customers 建模并定义二者的关系。
 ```
 
+MetricFlow 和 OSI 项目继续支持查询，但不支持语义写入。要修改已有 OSI 项目，请先把 semantic type 改为 Dosi，再使用 `semantic_modeling` 修复并校验已有 YAML。不支持迁移 MetricFlow YAML。
 
-### 交互式生成
+## Bootstrap 兼容行为
 
-当你请求语义模型时，AI 助手会：
+在 Dosi 项目中，`bootstrap-kb --components semantic_model` 会以 datasets-only scope 运行 `semantic_modeling`。它可以修改 dataset、field、relationship 和模型元数据，但会保留所有已有 metric 定义。受支持的旧格式仍可使用 YAML 导入和 profile 解析。
 
-1. 检索你的表的 DDL（结构）
-2. 检查是否已存在语义模型
-3. 生成全面的 YAML 文件
-4. 使用配置的 semantic adapter 验证配置
-5. 验证通过后同步到知识库
-
-### 生成工作流
-
-```text
-用户请求 → DDL 分析 → YAML 生成 → 验证 → 存储
-```
-
-### 验证和同步
-
-发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试；验证通过后，`publish_semantic_model` 会自动把语义模型同步到知识库。
-
-## 配置
-
-大部分配置是内置的。在 `agent.yml` 中，最小化设置即可：
-
-```yaml
-agent:
-  services:
-    semantic_layer:
-      metricflow: {}     # key 必须等于 adapter type（例如 `metricflow`）。
-                         # 如果同时写了 `type:` 字段，必须与 key 一致，否则 Datus 会在启动时抛出配置错误。
-
-  agentic_nodes:
-    gen_semantic_model:
-      model: claude      # 可选：默认使用已配置的模型
-      max_turns: 30      # 可选：默认为 30
-      semantic_adapter: metricflow   # 当仅配置了一个 semantic layer 时可省略
-```
-
-完整配置项见 [语义层配置](../configuration/semantic_layer.zh.md)。
-
-OSI 生成见 [OSI 语义适配器](../adapters/osi_semantic_adapter.zh.md)。
-
-### Skills（自动装配）
-
-你无需配置 `skills:`——助手会根据当前激活的 semantic adapter 自动选择：
-
-- 对应格式的建模规范（`metricflow-semantic-authoring` 或 `osi-semantic-authoring`）始终生效。
-- 一个历史 SQL profiler 按需可用（见下文）。
-
-如需自定义：设置 `skills: ""` 关闭可选 profiler；或在 `./.datus/skills/` 下放一个同名目录，用你自己的规范替换内置的。
-
-### 触发历史 SQL profiling
-
-默认情况下，助手只根据表的 DDL 和列注释建模——快、无需额外步骤。当你希望它同时挖掘历史查询或采样真实数据分布时，**在请求里直接说出来即可**：
-
-| 你想要 | 请求示例 |
-|---|---|
-| 仅按 DDL 建模（默认） | `/gen_semantic_model 为 orders 生成语义模型` |
-| 用历史查询作为建模证据 | `/gen_semantic_model 为 orders 及其 join 建模；先分析这些查询：<粘贴 SQL>` |
-| 采样真实值分布 | `/gen_semantic_model 为 orders 建模，写模型前先 profile 一下列的统计信息` |
-
-仅粘贴 SQL **不会**触发 profiling——助手仍会把它当作上下文阅读，但只有你明确要求分析或 profile 时才会真正运行 profiler。这让日常生成保持快速。
-
-profiling 运行时，其发现（取值范围、空值率、去重基数、常见过滤、join 可靠性）会被融入字段 description。例如，助手原本会写成：
-
-```yaml
-- name: amount
-  expression:
-    dialects:
-      - dialect: ANSI_SQL
-        expression: amount
-  dimension:
-    is_time: false
-  description: "订单金额"
-  custom_extensions:
-    - vendor_name: DATUS
-      data: '{"type":"numeric"}'
-```
-
-profiling 后，会带上观测证据、自解释：
-
-```yaml
-  description: "订单金额；观测范围 0–9999，p50 ≈ 120；约 0.3% 为空"
-```
-
-**内置配置**（自动启用）：
-- **工具**：数据库工具、生成工具和文件系统工具
-- **Hooks**：验证证据记录和知识库同步
-- **Semantic Adapter**：通过配置的语义层进行验证
-- **系统提示**：内置模板；未显式设置 `prompt_version` 时使用最新可用版本
-- **工作空间**：`~/.datus/data/{datasource}/semantic_models`
-
-## 语义模型结构
-
-### 基本模板
-
-```yaml
-data_source:
-  name: table_name                    # 必需：小写加下划线
-  description: "Table description"
-
-  sql_table: schema.table_name        # 对于有 schema 的数据库
-  # OR
-  sql_query: |                        # 对于自定义查询
-    SELECT * FROM table_name
-
-  measures:
-    - name: total_amount              # 必需
-      agg: SUM                        # 必需：SUM|COUNT|AVERAGE|etc.
-      expr: amount_column             # 列或 SQL 表达式
-      create_metric: true             # 自动创建可查询指标
-      description: "Total transaction amount"
-
-  dimensions:
-    - name: created_date
-      type: TIME                      # 必需：TIME|CATEGORICAL
-      type_params:
-        is_primary: true              # 需要一个主时间维度
-        time_granularity: DAY         # TIME 必需：DAY|WEEK|MONTH|etc.
-
-    - name: status
-      type: CATEGORICAL
-      description: "Order status"
-
-  identifiers:
-    - name: order_id
-      type: PRIMARY                   # PRIMARY|FOREIGN|UNIQUE|NATURAL
-      expr: order_id
-
-    - name: customer
-      type: FOREIGN
-      expr: customer_id
-```
-
-## 总结
-
-语义模型生成功能提供：
-
-- ✓ 从表 DDL 自动生成 YAML
-- ✓ 交互式验证和错误修复
-- ✓ 验证通过后自动同步
-- ✓ 知识库集成
-- ✓ 防止重复
-- ✓ Semantic adapter 兼容性
+支持的流程见 [Semantic Modeling](semantic_modeling.md) 和[语义模型](../knowledge_base/semantic_model.md)。
