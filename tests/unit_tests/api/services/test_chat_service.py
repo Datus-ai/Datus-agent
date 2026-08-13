@@ -1,6 +1,7 @@
 """Tests for datus.api.services.chat_service — chat session management."""
 
 import asyncio
+from contextlib import AbstractContextManager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -209,24 +210,24 @@ class TestChatServiceGetHistory:
         result = chat_svc.get_history("empty-hist")
         assert result.success is True
 
-    def _assistant_response(self, text):
+    def _assistant_response(self, action_id: str, text: str) -> ActionHistory:
         return ActionHistory(
-            action_id="a-" + text,
+            action_id=action_id,
             role=ActionRole.ASSISTANT,
             action_type="response",
             status=ActionStatus.SUCCESS,
             output={"is_thinking": False, "response": text},
         )
 
-    def _patch_messages(self, chat_svc, raw_messages):
+    def _patch_messages(self, raw_messages: list[dict]) -> AbstractContextManager[MagicMock]:
         fake_sm = MagicMock()
         fake_sm.get_session_messages.return_value = raw_messages
         return patch("datus.api.services.chat_service.SessionManager", return_value=fake_sm)
 
     def test_get_history_renders_assistant_actions(self, chat_svc):
         """Assistant actions convert to SSE payloads instead of erroring out."""
-        raw = [{"role": "assistant", "actions": [self._assistant_response("hello")]}]
-        with self._patch_messages(chat_svc, raw):
+        raw = [{"role": "assistant", "actions": [self._assistant_response("a1", "hello")]}]
+        with self._patch_messages(raw):
             result = chat_svc.get_history("sid")
 
         assert result.success is True
@@ -239,13 +240,14 @@ class TestChatServiceGetHistory:
         Passing a set made ``_should_skip_duplicate_assistant_message`` raise
         ``'set' object has no attribute 'get'`` and failed the whole endpoint.
         """
+        # Distinct action_ids so only the repeated text can drive the dedup.
         raw = [
             {
                 "role": "assistant",
-                "actions": [self._assistant_response("same"), self._assistant_response("same")],
+                "actions": [self._assistant_response("a1", "same"), self._assistant_response("a2", "same")],
             }
         ]
-        with self._patch_messages(chat_svc, raw):
+        with self._patch_messages(raw):
             result = chat_svc.get_history("sid")
 
         assert result.success is True
