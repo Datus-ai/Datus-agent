@@ -1020,8 +1020,6 @@
       
         
       
-        
-      
     
     
     
@@ -1184,14 +1182,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_metrics/" class="md-nav__link">
+      <a href="../semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    Semantic Modeling
   
 
     
@@ -1220,34 +1218,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Semantic Model
   
 
     
@@ -4394,7 +4364,7 @@
 <p><code>gen_visual_report</code> accepts two equally valid starting points:</p>
 <ul>
 <li>
-<p><strong>From metrics</strong> — reference an existing metric with <code>@Metrics &lt;subject&gt;.&lt;group&gt;.&lt;metric&gt;</code> (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see <a href="../gen_metrics/">Generate Metrics</a> for how to create them).
+<p><strong>From metrics</strong> — reference an existing metric with <code>@Metrics &lt;subject&gt;.&lt;group&gt;.&lt;metric&gt;</code> (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer. Best when your project already has a curated metric registry (see <a href="../semantic_modeling/">Semantic Modeling</a> for Dosi authoring).
   <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Build<span class="w"> </span>a<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>report<span class="w"> </span>around<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>and<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate,<span class="w"> </span>broken<span class="w"> </span>down<span class="w"> </span>by<span class="w"> </span>region.
 </span></code></pre></div></p>
 </li>

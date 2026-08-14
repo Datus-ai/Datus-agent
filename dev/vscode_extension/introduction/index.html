@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Semantic Model
   
 
     
@@ -4722,12 +4692,12 @@
 <li><strong>Rules</strong>: behavior rules, few-shot examples, conversational style, and so on.</li>
 </ol>
 <p><img alt="Add SubAgent wizard (Objects step)" src="../../assets/vscode-create-subagent.png" /></p>
-<p>Submitting the wizard writes the subagent into Datus-agent's configuration (equivalent to <code>/agent</code> in the CLI) and immediately makes it selectable from the SubAgent dropdown in the Chat panel. Built-in subagents (<code>gen_sql</code>, <code>gen_metrics</code>, <code>gen_dashboard</code>, <code>gen_semantic_model</code>, <code>gen_report</code>, <code>scheduler</code>, …) are read-only — you can inspect their Tools / Objects / Rules in the wizard but cannot edit them.</p>
+<p>Submitting the wizard writes the subagent into Datus-agent's configuration (equivalent to <code>/agent</code> in the CLI) and immediately makes it selectable from the SubAgent dropdown in the Chat panel. Built-in subagents (<code>gen_sql</code>, <code>semantic_modeling</code>, <code>gen_dashboard</code>, <code>gen_report</code>, <code>scheduler</code>, …) are read-only — you can inspect their Tools / Objects / Rules in the wizard but cannot edit them.</p>
 <h3 id="3-datus-studio-chat-panel">3. Datus Studio Chat Panel<a class="headerlink" href="#3-datus-studio-chat-panel" title="Permanent link">&para;</a></h3>
 <p>The right-hand <strong>Datus Studio</strong> is the main entry point for talking to Datus-agent. It mirrors Web Chatbot but stays closer to IDE workflow:</p>
 <ul>
 <li><strong>Plain conversation</strong>: ask in natural language; Datus generates SQL, calls tools, and returns results as Markdown / tables / links.</li>
-<li><strong>SubAgent switching</strong>: the <strong>Main...</strong> dropdown below the input lets you pick <code>gen_sql</code>, <code>gen_dashboard</code>, <code>gen_metrics</code>, or any custom subagent. Switching immediately routes the chat through that subagent's visible scope and rules.</li>
+<li><strong>SubAgent switching</strong>: the <strong>Main...</strong> dropdown below the input lets you pick <code>gen_sql</code>, <code>gen_dashboard</code>, <code>semantic_modeling</code>, or any custom subagent. Switching immediately routes the chat through that subagent's visible scope and rules.</li>
 <li><strong>Datasource switching</strong>: the <strong>database</strong> dropdown in the bottom-right switches the current session's datasource without a restart.</li>
 <li><strong>Plan mode</strong>: when enabled, Datus first emits an execution plan and a SQL draft, then waits for your confirmation before executing — well suited to high-risk queries on production data.</li>
 <li><strong>Session history</strong>: chat history is stored under <code>~/.datus/sessions/{project}/</code>, partitioned by project; the side panel can load past sessions to continue chatting or to compare side-by-side.</li>

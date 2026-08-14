@@ -1020,8 +1020,6 @@
       
         
       
-        
-      
     
     
     
@@ -1336,14 +1334,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_metrics/" class="md-nav__link">
+      <a href="../semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    Semantic Modeling
   
 
     
@@ -1372,34 +1370,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Semantic Model
   
 
     
@@ -4427,8 +4397,7 @@
 <li><code>explore</code>: read-only schema, knowledge, and file exploration</li>
 <li><code>gen_sql</code>: specialized SQL generation</li>
 <li><code>gen_report</code>: structured report generation</li>
-<li><code>gen_semantic_model</code>: MetricFlow semantic model generation</li>
-<li><code>gen_metrics</code>: MetricFlow metric generation</li>
+<li><code>semantic_modeling</code>: unified Dosi semantic-model and metric authoring</li>
 <li><code>gen_sql_summary</code>: SQL summary generation</li>
 <li><code>gen_table</code>: interactive table creation</li>
 <li><code>gen_job</code>: data pipeline jobs (single-database ETL AND cross-database migration)</li>
@@ -4474,7 +4443,7 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>production
 </span></code></pre></div>
 <p>Then launch a subagent with <code>/[name]</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/gen_metrics Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/semantic_modeling Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>/finance_report Analyze quarter-over-quarter revenue changes
 </span></code></pre></div>
 <h3 id="method-2-web-interface">Method 2: Web Interface<a class="headerlink" href="#method-2-web-interface" title="Permanent link">&para;</a></h3>
@@ -4485,7 +4454,7 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--web<span class="w"> </span>--datasource<span class="w"> </span>production<span class="w"> </span>--subagent<span class="w"> </span>finance_report
 </span></code></pre></div>
 <p>Direct URLs also work:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>http://localhost:8501/?subagent=gen_metrics
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>http://localhost:8501/?subagent=semantic_modeling
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>http://localhost:8501/?subagent=finance_report
 </span></code></pre></div>
 <h3 id="method-3-subagent-as-tool-task">Method 3: Subagent as Tool (<code>task()</code>)<a class="headerlink" href="#method-3-subagent-as-tool-task" title="Permanent link">&para;</a></h3>
@@ -4527,12 +4496,8 @@
 <td>Produce structured reports and analysis</td>
 </tr>
 <tr>
-<td><code>gen_semantic_model</code></td>
-<td>Generate MetricFlow semantic models</td>
-</tr>
-<tr>
-<td><code>gen_metrics</code></td>
-<td>Generate MetricFlow metrics</td>
+<td><code>semantic_modeling</code></td>
+<td>Author Dosi semantic models and metrics</td>
 </tr>
 <tr>
 <td><code>gen_sql_summary</code></td>

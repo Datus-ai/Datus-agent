@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Semantic Model
   
 
     
@@ -3575,22 +3545,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#semantic-model-generation" class="md-nav__link">
+  <a href="#existing-semantic-model-format" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Semantic Model Generation
+        Existing Semantic Model Format
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Semantic Model Generation">
+    <nav class="md-nav" aria-label="Existing Semantic Model Format">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#refreshing-a-tables-model" class="md-nav__link">
+  <a href="#changing-a-tables-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Refreshing a table's model
+        Changing a table's model
       
     </span>
   </a>
@@ -3603,10 +3573,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#metric-generation" class="md-nav__link">
+  <a href="#existing-metric-format" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Metric Generation
+        Existing Metric Format
       
     </span>
   </a>
@@ -4343,22 +4313,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#semantic-model-generation" class="md-nav__link">
+  <a href="#existing-semantic-model-format" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Semantic Model Generation
+        Existing Semantic Model Format
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Semantic Model Generation">
+    <nav class="md-nav" aria-label="Existing Semantic Model Format">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#refreshing-a-tables-model" class="md-nav__link">
+  <a href="#changing-a-tables-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Refreshing a table's model
+        Changing a table's model
       
     </span>
   </a>
@@ -4371,10 +4341,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#metric-generation" class="md-nav__link">
+  <a href="#existing-metric-format" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Metric Generation
+        Existing Metric Format
       
     </span>
   </a>
@@ -4473,23 +4443,25 @@
 
 
 <h1 id="osi-semantic-adapter">OSI Semantic Adapter<a class="headerlink" href="#osi-semantic-adapter" title="Permanent link">&para;</a></h1>
-<p>This page describes Datus support for OSI (Open Semantic Interchange) semantic models and metrics. The implementation spans two repositories:</p>
+<p>This page describes query compatibility for existing OSI (Open Semantic Interchange) semantic models and metrics. The implementation spans two repositories:</p>
 <ul>
-<li><code>datus-agent</code>: generates strict OSI core YAML with LLM agents, validates and dry-runs generated assets, then syncs them to the Knowledge Base for <code>ask_metrics</code>.</li>
+<li><code>datus-agent</code>: loads existing strict OSI core YAML and makes its metrics available to <code>ask_metrics</code> and other query surfaces.</li>
 <li><code>datus-semantic-adapter</code>: provides the <code>datus-semantic-osi</code> adapter. It loads OSI YAML, validates the OSI core schema, compiles the document into Datus Semantic IR, and lowers it to an execution backend. The current backend is MetricFlow.</li>
 </ul>
 <h2 id="positioning">Positioning<a class="headerlink" href="#positioning" title="Permanent link">&para;</a></h2>
-<p>In Datus, OSI is the authoring format for semantic models and metrics. MetricFlow is the default execution backend that renders SQL and executes metric queries.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>gen_semantic_model / gen_metrics
+<blockquote>
+<p><strong>Query-only compatibility:</strong> existing OSI projects remain queryable, but OSI
+semantic authoring is retired. Migrate the project to Dosi before making
+changes, then use <code>semantic_modeling</code>.</p>
+</blockquote>
+<p>In an existing OSI project, OSI is the source format and MetricFlow is the default execution backend that renders SQL and executes metric queries.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>existing strict OSI core YAML + DATUS custom_extensions
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>        |
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        v
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>strict OSI core YAML + DATUS custom_extensions
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>datus-semantic-osi: validate -&gt; compile IR -&gt; lower to MetricFlow
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        |
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        v
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>datus-semantic-osi: validate -&gt; compile IR -&gt; lower to MetricFlow
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        |
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        v
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>validate_semantic / query_metrics / ask_metrics
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>validate_semantic / query_metrics / ask_metrics
 </span></code></pre></div>
 <p>Users and LLM agents should not write MetricFlow YAML fields in OSI mode, such as <code>data_source</code>, <code>measures</code>, <code>measure_proxy</code>, or <code>type_params</code>. The OSI adapter generates those backend artifacts internally. They are disposable execution artifacts, not the source files users maintain.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
@@ -4522,14 +4494,11 @@
 </span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span></code></pre></div>
 <p><code>execution_backend</code> defaults to <code>metricflow</code>; set it only when you need a different OSI execution backend.</p>
-<p><code>datus-agent</code> resolves the authoring format from the active global semantic adapter:</p>
-<ol>
-<li>Use OSI authoring when <code>agent.services.semantic_layer.osi</code> is the active adapter.</li>
-<li>Otherwise, keep the MetricFlow authoring path.</li>
-</ol>
+<p><code>datus-agent</code> uses the active global semantic adapter for query execution. An
+active <code>osi</code> adapter loads OSI assets; it does not enable semantic authoring.</p>
 <p>Legacy node-level <code>semantic_adapter</code> and <code>authoring_format</code> fields are ignored.</p>
-<h2 id="semantic-model-generation">Semantic Model Generation<a class="headerlink" href="#semantic-model-generation" title="Permanent link">&para;</a></h2>
-<p>In OSI mode, <code>gen_semantic_model</code> writes a strict OSI core document. The root shape is fixed:</p>
+<h2 id="existing-semantic-model-format">Existing Semantic Model Format<a class="headerlink" href="#existing-semantic-model-format" title="Permanent link">&para;</a></h2>
+<p>Existing OSI projects use a strict OSI core document. The root shape is fixed:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2.0.dev0</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">semantic_model</span><span class="p">:</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">shop</span>
@@ -4567,10 +4536,10 @@
 <li>Mark time fields with <code>dimension.is_time: true</code>; put the Datus <code>time_granularity</code> hint in <code>custom_extensions</code>.</li>
 <li>Declare relationships under the semantic model object, not inside datasets.</li>
 </ul>
-<h3 id="refreshing-a-tables-model">Refreshing a table's model<a class="headerlink" href="#refreshing-a-tables-model" title="Permanent link">&para;</a></h3>
-<p>To regenerate a table's semantic model, re-run <code>gen_semantic_model</code> for it, then rebuild the vector KB with <code>/build-kb</code> so catalog facts such as <code>is_dimension</code> reflect the current model.</p>
-<h2 id="metric-generation">Metric Generation<a class="headerlink" href="#metric-generation" title="Permanent link">&para;</a></h2>
-<p>In OSI mode, <code>gen_metrics</code> appends metrics under <code>semantic_model[0].metrics</code>. Business expressions live in OSI core <code>expression</code>; Datus execution hints live in <code>custom_extensions</code>.</p>
+<h3 id="changing-a-tables-model">Changing a table's model<a class="headerlink" href="#changing-a-tables-model" title="Permanent link">&para;</a></h3>
+<p>To change a table's semantic model, migrate the project to Dosi first and use <code>semantic_modeling</code> so the YAML and Knowledge Base stay synchronized.</p>
+<h2 id="existing-metric-format">Existing Metric Format<a class="headerlink" href="#existing-metric-format" title="Permanent link">&para;</a></h2>
+<p>Existing OSI metrics live under <code>semantic_model[0].metrics</code>. Business expressions use OSI core <code>expression</code>; Datus execution hints live in <code>custom_extensions</code>.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2.0.dev0</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">semantic_model</span><span class="p">:</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">shop</span>
@@ -4741,7 +4710,7 @@
 </ul>
 <p>This metadata helps <code>ask_metrics</code> choose the correct metrics, dimensions, and query parameters.</p>
 <h2 id="sql-that-should-not-become-metrics">SQL That Should Not Become Metrics<a class="headerlink" href="#sql-that-should-not-become-metrics" title="Permanent link">&para;</a></h2>
-<p><code>gen_metrics</code> does not force these SQL patterns into OSI metrics:</p>
+<p>The legacy OSI metric format does not force these SQL patterns into metrics:</p>
 <ul>
 <li>Detail lists: <code>SELECT col1, col2 ...</code></li>
 <li>Distinct detail lists: <code>SELECT DISTINCT ...</code></li>
@@ -4749,7 +4718,7 @@
 <li>TopN per group, such as "top N activities per channel"</li>
 <li>Queries whose main output is row-level records rather than aggregate metrics</li>
 </ul>
-<p>These patterns may be modeled later with derived datasets, materialized views, or a query layer, but they are outside the current <code>gen_metrics</code> metric-generation scope.</p>
+<p>These patterns may be modeled with derived datasets, materialized views, or a query layer, but they are outside the legacy OSI metric shape.</p>
 <h2 id="current-limits">Current Limits<a class="headerlink" href="#current-limits" title="Permanent link">&para;</a></h2>
 <ul>
 <li>The OSI adapter currently defaults to the MetricFlow execution backend.</li>

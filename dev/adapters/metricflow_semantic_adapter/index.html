@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Semantic Model
   
 
     
@@ -3547,10 +3517,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authoring-model" class="md-nav__link">
+  <a href="#legacy-source-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authoring Model
+        Legacy Source Model
       
     </span>
   </a>
@@ -3558,10 +3528,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#generation-flow" class="md-nav__link">
+  <a href="#query-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generation Flow
+        Query Flow
       
     </span>
   </a>
@@ -3580,10 +3550,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#when-to-use-osi-instead" class="md-nav__link">
+  <a href="#other-semantic-formats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When to Use OSI Instead
+        Other Semantic Formats
       
     </span>
   </a>
@@ -4282,10 +4252,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authoring-model" class="md-nav__link">
+  <a href="#legacy-source-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Authoring Model
+        Legacy Source Model
       
     </span>
   </a>
@@ -4293,10 +4263,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#generation-flow" class="md-nav__link">
+  <a href="#query-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Generation Flow
+        Query Flow
       
     </span>
   </a>
@@ -4315,10 +4285,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#when-to-use-osi-instead" class="md-nav__link">
+  <a href="#other-semantic-formats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When to Use OSI Instead
+        Other Semantic Formats
       
     </span>
   </a>
@@ -4351,8 +4321,13 @@
 
 
 <h1 id="metricflow-semantic-adapter">MetricFlow Semantic Adapter<a class="headerlink" href="#metricflow-semantic-adapter" title="Permanent link">&para;</a></h1>
-<p>The MetricFlow semantic adapter connects Datus Agent to MetricFlow-native semantic model and metric YAML files.</p>
-<p>Use this adapter when you want generated semantic assets to be MetricFlow YAML and you expect MetricFlow to be the source format maintained by users or automation.</p>
+<p>The MetricFlow semantic adapter connects Datus Agent to existing MetricFlow-native semantic model and metric YAML files.</p>
+<blockquote>
+<p><strong>Query-only compatibility:</strong> existing MetricFlow projects remain queryable,
+but Datus no longer generates or edits MetricFlow semantic YAML. New semantic
+authoring is available only through <code>semantic_modeling</code> in Dosi projects.</p>
+</blockquote>
+<p>Use this adapter when MetricFlow YAML remains the source format maintained by external users or automation.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-semantic-metricflow
 </span></code></pre></div>
@@ -4379,9 +4354,9 @@
 <p>By default, Datus points MetricFlow at the current project's semantic model directory:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>{project_root}/subject/semantic_models/
 </span></code></pre></div>
-<p>Generated YAML under this directory is included in validation, even when the files are project-local or gitignored.</p>
-<h2 id="authoring-model">Authoring Model<a class="headerlink" href="#authoring-model" title="Permanent link">&para;</a></h2>
-<p>MetricFlow mode authors MetricFlow YAML directly.</p>
+<p>Existing YAML under this directory is included in validation, even when the files are project-local or gitignored.</p>
+<h2 id="legacy-source-model">Legacy Source Model<a class="headerlink" href="#legacy-source-model" title="Permanent link">&para;</a></h2>
+<p>MetricFlow projects load MetricFlow YAML directly.</p>
 <p>Semantic model files use <code>data_source</code> documents:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">data_source</span><span class="p">:</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
@@ -4409,15 +4384,14 @@
 </span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">measures</span><span class="p">:</span>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">revenue_sum</span>
 </span></code></pre></div>
-<h2 id="generation-flow">Generation Flow<a class="headerlink" href="#generation-flow" title="Permanent link">&para;</a></h2>
-<p>With MetricFlow as the active semantic layer:</p>
+<h2 id="query-flow">Query Flow<a class="headerlink" href="#query-flow" title="Permanent link">&para;</a></h2>
+<p>With MetricFlow as the active semantic layer, existing assets continue to support:</p>
 <ol>
-<li><code>gen_semantic_model</code> writes MetricFlow semantic model YAML.</li>
-<li><code>gen_metrics</code> writes MetricFlow metric YAML.</li>
 <li><code>validate_semantic()</code> validates the full MetricFlow model.</li>
-<li><code>query_metrics(..., dry_run=True)</code> verifies generated metrics can compile to SQL.</li>
-<li><code>publish_semantic_model</code> and <code>publish_metrics</code> sync validated assets to the Knowledge Base.</li>
+<li><code>query_metrics(...)</code> compiles and executes existing metrics.</li>
+<li><code>ask_metrics</code>, metric preview, API metric queries, reports, and dashboards use the same query path.</li>
 </ol>
+<p>The retired <code>gen_semantic_model</code> and <code>gen_metrics</code> names return an error that recommends migrating to Dosi and using <code>semantic_modeling</code>.</p>
 <h2 id="supported-query-features">Supported Query Features<a class="headerlink" href="#supported-query-features" title="Permanent link">&para;</a></h2>
 <p>The adapter supports the common semantic adapter methods:</p>
 <ul>
@@ -4428,8 +4402,8 @@
 </ul>
 <p>MetricFlow handles SQL generation, joins, time granularity, metric constraints, cumulative metrics, ratio metrics, expression metrics, and derived metrics according to the MetricFlow model.</p>
 <p>For the underlying MetricFlow engine concepts and supported warehouses, see <a href="../../metricflow/introduction/">Datus-MetricFlow Introduction</a>.</p>
-<h2 id="when-to-use-osi-instead">When to Use OSI Instead<a class="headerlink" href="#when-to-use-osi-instead" title="Permanent link">&para;</a></h2>
-<p>Use <a href="../osi_semantic_adapter/">OSI Semantic Adapter</a> when you want the authored source files to be strict OSI core YAML and want Datus/MetricFlow-specific execution hints isolated in <code>custom_extensions</code>.</p>
+<h2 id="other-semantic-formats">Other Semantic Formats<a class="headerlink" href="#other-semantic-formats" title="Permanent link">&para;</a></h2>
+<p>Use <a href="../osi_semantic_adapter/">OSI Semantic Adapter</a> to query existing strict OSI core YAML. Use Dosi for new semantic authoring.</p>
 
 
 

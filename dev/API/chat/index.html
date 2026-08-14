@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Semantic Model
   
 
     
@@ -5154,7 +5124,7 @@ else returns the standard <a href="../introduction/#response-envelope"><code>Res
 <tr>
 <td><code>subagent_id</code></td>
 <td>string?</td>
-<td>Built-in name (<code>gen_metrics</code>, <code>gen_semantic_model</code>, …) or custom subagent id</td>
+<td>Built-in name (<code>semantic_modeling</code>, <code>gen_sql</code>, …) or custom subagent id. <code>semantic_modeling</code> is available only in Dosi projects; MetricFlow and OSI projects are query-only. Retired semantic agent names return an actionable error.</td>
 </tr>
 <tr>
 <td><code>model</code></td>

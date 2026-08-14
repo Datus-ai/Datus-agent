@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Generate Metrics
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Semantic Model
   
 
     
@@ -4497,7 +4467,7 @@
 3. Fall back to ad-hoc SQL generation only if no metric exists</p>
 <p>This ensures consistent metric definitions across the organization.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<p><strong>Prerequisites</strong>: This command relies on <a href="../../adapters/semantic_adapters/">datus-semantic-metricflow</a>, install it first with <code>pip install datus-semantic-metricflow</code>.</p>
+<p>With <code>--success_story</code>, this compatibility component runs the full Dosi-only <code>semantic_modeling</code> workflow, including any datasets and relationships required by the generated metrics. Existing YAML import remains a non-LLM compatibility operation.</p>
 <h3 id="basic-command">Basic Command<a class="headerlink" href="#basic-command" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># From CSV (historical SQLs)</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
@@ -4566,6 +4536,7 @@
 </tr>
 </tbody>
 </table>
+<p>Combining <code>metrics</code> with <code>semantic_model</code> or <code>semantic_modeling</code> executes one full <code>semantic_modeling</code> run. Existing MetricFlow and OSI projects remain query-only for generated changes.</p>
 <h3 id="subject-tree-categorization">Subject Tree Categorization<a class="headerlink" href="#subject-tree-categorization" title="Permanent link">&para;</a></h3>
 <p>Organizes metrics using hierarchical taxonomy: <code>domain/layer1/layer2</code> (e.g., <code>Sales/Reporting/Daily</code>)</p>
 <p><strong>Two modes:</strong></p>
