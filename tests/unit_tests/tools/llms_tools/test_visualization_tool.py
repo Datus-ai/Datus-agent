@@ -623,3 +623,71 @@ class TestHeuristicLanguage:
         assert result.success is False
         assert not result.reason.isascii()
         assert result.error.isascii()
+
+
+class TestSamplingNote:
+    """``total_rows`` is how the caller says the rows it uploaded are a sample."""
+
+    @staticmethod
+    def _df():
+        return pd.DataFrame({"cat": ["a", "b"], "val": [1, 2]})
+
+    def test_note_states_both_counts(self):
+        tool = _make_tool()
+        note = tool._sampling_note(self._df(), total_rows=1000)
+        assert "2-row sample" in note
+        assert "1000-row result set" in note
+
+    def test_note_does_not_claim_which_rows_were_sampled(self):
+        """The tool is handed a row count, never which rows they are — saying
+        'the first N' would be a fact it cannot know, and one the model would
+        use (e.g. reading them as the earliest period)."""
+        tool = _make_tool()
+        note = tool._sampling_note(self._df(), total_rows=1000)
+        assert "first" not in note.lower()
+
+    def test_no_note_without_total_rows(self):
+        tool = _make_tool()
+        assert tool._sampling_note(self._df(), total_rows=None) == ""
+
+    def test_no_note_when_full_set_was_sent(self):
+        tool = _make_tool()
+        assert tool._sampling_note(self._df(), total_rows=2) == ""
+
+    def test_no_note_when_total_is_smaller_than_what_arrived(self):
+        """A total below the row count is a caller bug; claiming a sample would be worse."""
+        tool = _make_tool()
+        assert tool._sampling_note(self._df(), total_rows=1) == ""
+
+    def test_note_reaches_the_prompt(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.return_value = {
+            "chart_type": "Bar Chart",
+            "x_col": "cat",
+            "y_cols": ["val"],
+            "reason": "compare",
+        }
+        tool = _make_tool(model=mock_model)
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "prompt"
+            tool.execute(_make_input(self._df()), total_rows=1000)
+
+        assert "1000" in mock_gpm.return_value.render_template.call_args.kwargs["sampling_note"]
+
+    def test_note_reaches_the_context_prompt(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.return_value = {
+            "chart_type": "Bar Chart",
+            "x_col": "cat",
+            "y_cols": ["val"],
+            "reason": "compare",
+            "insight": "…",
+        }
+        tool = _make_tool(model=mock_model)
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "prompt"
+            tool.execute_with_context(_make_input(self._df()), sql="SELECT 1", total_rows=1000)
+
+        assert "1000" in mock_gpm.return_value.render_template.call_args.kwargs["sampling_note"]

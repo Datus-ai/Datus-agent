@@ -166,10 +166,12 @@ class TestServiceDelegation:
         valid_payload["sql"] = "SELECT date, sales FROM t"
         valid_payload["user_question"] = "Show me sales"
         valid_payload["language"] = "zh-CN"
+        valid_payload["total_rows"] = 1000
         client.post("/api/v1/data_visualization", json=valid_payload)
 
         kw = svc.visualization.generate.call_args.kwargs
         assert kw["chart_type"] == "Bar"
+        assert kw["total_rows"] == 1000
         assert kw["sql"] == "SELECT date, sales FROM t"
         assert kw["user_question"] == "Show me sales"
         assert kw["language"] == "zh-CN"
@@ -189,3 +191,4 @@ class TestServiceDelegation:
         assert kw["sql"] is None
         assert kw["user_question"] is None
         assert kw["language"] is None
+        assert kw["total_rows"] is None

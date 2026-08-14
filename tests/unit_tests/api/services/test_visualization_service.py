@@ -387,3 +387,42 @@ class TestResponseLanguage:
             svc.generate(csv_data)
 
         assert mock_cls.return_value.execute.call_args.kwargs["language"] is None
+
+
+class TestTotalRows:
+    """The row cap lives in the caller, so the full size has to travel separately."""
+
+    def test_forwarded_to_tool(self, mock_agent_config, csv_data):
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls, patch(_TOOL_PROMPT_PATH):
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data, total_rows=1000)
+
+        assert mock_cls.return_value.execute.call_args.kwargs["total_rows"] == 1000
+
+    def test_forwarded_to_tool_with_context(self, mock_agent_config, csv_data):
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls, patch(_TOOL_PROMPT_PATH):
+            mock_cls.return_value.execute_with_context.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data, sql="SELECT a", total_rows=1000)
+
+        assert mock_cls.return_value.execute_with_context.call_args.kwargs["total_rows"] == 1000
+
+    def test_different_total_rows_not_cached(self, mock_agent_config, csv_data):
+        """Same sample, different result size — the insight describes a different set."""
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data, total_rows=1000)
+            svc.generate(csv_data, total_rows=5000)
+
+        assert mock_cls.return_value.execute.call_count == 2
+
+    def test_same_total_rows_hits_cache(self, mock_agent_config, csv_data):
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data, total_rows=1000)
+            svc.generate(csv_data, total_rows=1000)
+
+        assert mock_cls.return_value.execute.call_count == 1

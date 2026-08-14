@@ -79,11 +79,17 @@ class VisualizationTool(BaseTool):
             logger.debug(f"Lazy visualization model resolution failed: {exc}")
             return None
 
-    def execute(self, input_data: VisualizationInput, language: Optional[str] = None) -> VisualizationOutput:
+    def execute(
+        self,
+        input_data: VisualizationInput,
+        language: Optional[str] = None,
+        total_rows: Optional[int] = None,
+    ) -> VisualizationOutput:
         """Generate visualization recommendation using LLM if available, otherwise heuristics.
 
         ``language`` pins the human-readable output (``reason``) to a language
         code; it falls back to ``agent_config.language`` when unset.
+        ``total_rows`` states the full result size when ``input_data`` is a sample.
         """
         if not isinstance(input_data, VisualizationInput):
             raise TypeError("VisualizationTool expects VisualizationInput as input data.")
@@ -104,7 +110,7 @@ class VisualizationTool(BaseTool):
         result = None
         if self.model:
             try:
-                result = self._llm_based_recommendation(dataframe, language=language)
+                result = self._llm_based_recommendation(dataframe, language=language, total_rows=total_rows)
             except Exception as exc:
                 logger.warning(f"LLM visualization recommendation failed, falling back to heuristics: {exc}")
 
@@ -119,6 +125,7 @@ class VisualizationTool(BaseTool):
         sql: Optional[str] = None,
         user_question: Optional[str] = None,
         language: Optional[str] = None,
+        total_rows: Optional[int] = None,
     ) -> VisualizationWithContextOutput:
         """Generate visualization with data context (showing, period, filters, insight).
 
@@ -127,7 +134,8 @@ class VisualizationTool(BaseTool):
 
         ``language`` pins the human-readable output (``reason``, ``filters``,
         ``insight``) to a language code; it falls back to
-        ``agent_config.language`` when unset.
+        ``agent_config.language`` when unset. ``total_rows`` states the full
+        result size when ``input_data`` is a sample.
         """
         if not isinstance(input_data, VisualizationInput):
             raise TypeError("VisualizationTool expects VisualizationInput as input data.")
@@ -160,7 +168,7 @@ class VisualizationTool(BaseTool):
         # Try context-aware LLM call
         if self.model:
             try:
-                result = self._llm_with_context(dataframe, sql, user_question, language=language)
+                result = self._llm_with_context(dataframe, sql, user_question, language=language, total_rows=total_rows)
                 if result is not None:
                     return result
             except Exception as exc:
@@ -186,6 +194,7 @@ class VisualizationTool(BaseTool):
         sql: Optional[str],
         user_question: Optional[str],
         language: Optional[str] = None,
+        total_rows: Optional[int] = None,
     ) -> Optional[VisualizationWithContextOutput]:
         """Single LLM call returning chart config + context metadata."""
         prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
@@ -193,6 +202,7 @@ class VisualizationTool(BaseTool):
             version=self.prompt_version,
             columns_info=self._format_columns_info(df),
             data_preview=self._format_data_preview(df),
+            sampling_note=self._sampling_note(df, total_rows),
             sql=sql or "",
             user_question=user_question or "",
             language_directive=self._language_directive(language),
@@ -305,7 +315,7 @@ class VisualizationTool(BaseTool):
     # LLM recommendation
     # ------------------------------------------------------------------ #
     def _llm_based_recommendation(
-        self, df: pd.DataFrame, language: Optional[str] = None
+        self, df: pd.DataFrame, language: Optional[str] = None, total_rows: Optional[int] = None
     ) -> Optional[VisualizationOutput]:
         """Use LLM to recommend visualization configuration."""
         prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
@@ -313,6 +323,7 @@ class VisualizationTool(BaseTool):
             version=self.prompt_version,
             columns_info=self._format_columns_info(df),
             data_preview=self._format_data_preview(df),
+            sampling_note=self._sampling_note(df, total_rows),
             language_directive=self._language_directive(language),
         )
 
@@ -402,6 +413,24 @@ class VisualizationTool(BaseTool):
             unique_count = df[column].nunique(dropna=True)
             info_parts.append(f"{column} ({dtype}, unique={unique_count})")
         return ", ".join(info_parts)
+
+    def _sampling_note(self, df: pd.DataFrame, total_rows: Optional[int]) -> str:
+        """Tell the model the rows it got are a sample, when the caller says so.
+
+        Both the preview and the per-column ``unique=`` counts are computed over
+        the rows we were handed, so a model told nothing would size the result
+        set by the sample and read its extremes as global ones.
+        """
+        rows = len(df)
+        if not total_rows or total_rows <= rows:
+            return ""
+
+        return (
+            f"The dataset below is a {rows}-row sample of a {total_rows}-row result set. "
+            "Which rows were sampled is not stated. The preview and the column cardinalities "
+            "describe that sample only — state the result size as the full total, and do not "
+            "present sample extremes as global ones."
+        )
 
     def _format_data_preview(self, df: pd.DataFrame) -> str:
         preview_df = df.head(self.preview_rows).replace({np.nan: None})
