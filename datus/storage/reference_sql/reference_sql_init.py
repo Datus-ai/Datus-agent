@@ -5,7 +5,9 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+import yaml
 
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -446,6 +448,95 @@ async def init_reference_sql_async(
         "provenance_entries": provenance_entries,
         "validation_errors": "\n".join(validate_errors) if validate_errors else None,
         "process_errors": "\n".join(process_errors) if process_errors else None,
+    }
+
+
+def init_reference_sql_from_summaries(
+    storage: ReferenceSqlRAG,
+    global_config: AgentConfig,
+    summaries_dir: str = "",
+    build_mode: str = "overwrite",
+) -> Dict[str, Any]:
+    """Rebuild reference-SQL vector rows from committed summary YAML — no LLM.
+
+    ``init_reference_sql`` derives a summary for every statement by calling the
+    LLM, which is the right thing when the corpus is raw ``.sql``. Once those
+    summaries exist under ``subject/sql_summaries/`` they already carry
+    everything a vector row needs (``sql``, ``summary``, ``search_text``,
+    ``subject_tree``, ``tags``), so re-deriving them costs time and API credit
+    and can drift from the reviewed originals. This path re-indexes the
+    committed YAML verbatim — the restore route for a fresh checkout, a
+    machine migration, or an unzipped ``datus package``.
+
+    Args:
+        storage: ReferenceSqlRAG instance
+        global_config: Global agent configuration
+        summaries_dir: Directory holding the summary YAML files; defaults to
+            the project's ``subject/sql_summaries``
+        build_mode: ``overwrite`` truncates first, ``incremental`` upserts
+
+    Returns:
+        Dict with the same shape as :func:`init_reference_sql`
+    """
+    directory = Path(summaries_dir) if summaries_dir else Path(global_config.path_manager.sql_summary_path())
+    if not directory.is_dir():
+        return {
+            "status": "success",
+            "message": f"reference_sql summaries directory not found: {directory}",
+            "valid_entries": 0,
+            "processed_entries": 0,
+            "total_stored_entries": storage.get_reference_sql_size(),
+        }
+
+    items: List[Dict[str, Any]] = []
+    invalid: List[str] = []
+    for path in sorted(directory.rglob("*.y*ml")):
+        if not path.is_file():
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                doc = yaml.safe_load(fh)
+        except (OSError, yaml.YAMLError) as exc:
+            invalid.append(f"{path.name}: unreadable ({exc})")
+            continue
+        if not isinstance(doc, dict):
+            invalid.append(f"{path.name}: not a YAML mapping")
+            continue
+
+        subject_path = [part.strip() for part in str(doc.get("subject_tree") or "").split("/") if part.strip()]
+        item = {
+            "id": doc.get("id"),
+            "name": doc.get("name"),
+            "sql": doc.get("sql"),
+            "comment": doc.get("comment", ""),
+            "summary": doc.get("summary"),
+            "search_text": doc.get("search_text") or doc.get("summary"),
+            "subject_path": subject_path,
+            "tags": doc.get("tags", ""),
+            "filepath": doc.get("filepath") or str(path),
+        }
+        missing = [key for key in ("name", "sql", "summary", "search_text") if not item.get(key)]
+        if missing or not subject_path:
+            invalid.append(f"{path.name}: missing {', '.join(missing + ([] if subject_path else ['subject_tree']))}")
+            continue
+        items.append(item)
+
+    if build_mode == "overwrite":
+        storage.truncate()
+        storage.store_batch(items)
+    else:
+        storage.upsert_batch(items)
+    storage.after_init()
+
+    logger.info("Reindexed %d reference SQL entries from %s (no LLM)", len(items), directory)
+    return {
+        "status": "success",
+        "message": f"reference_sql reindexed from summaries ({build_mode} mode)",
+        "valid_entries": len(items),
+        "processed_entries": len(items),
+        "invalid_entries": len(invalid),
+        "total_stored_entries": storage.get_reference_sql_size(),
+        "validation_errors": "\n".join(invalid) if invalid else None,
     }
 
 

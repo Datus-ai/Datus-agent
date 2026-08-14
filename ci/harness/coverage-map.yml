@@ -1065,6 +1065,41 @@ flow_groups:
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
 
+      - id: extension.project_package
+        title: Project packaging and handover
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/cli/package_command.md
+        entrypoints:
+          - "CLI: datus package (interactive wizard)"
+          - "CLI: datus package --yes (non-interactive defaults)"
+          - "Receiver: scripts/init.sh, scripts/rebuild_kb.sh, scripts/install_plugins.sh"
+        contracts:
+          - "The generated conf/agent.yml pins home: . and a fixed project_name, so an unzipped package runs without touching the receiver's ~/.datus."
+          - "No credential ever ships: every secret-bearing field becomes a ${VAR} placeholder and a final content scan fails the build on any surviving secret."
+          - Component selection (subagents, skills, metric datasources, subject areas, plugins, reports, dashboards) determines exactly what the archive carries.
+          - Knowledge-base sources travel as YAML with a generated rebuild script; binary indexes never ship.
+        coverage:
+          pr_acceptance:
+            status: covered
+            nodeids:
+              - tests/unit_tests/cli/test_package_builder.py
+              - tests/unit_tests/cli/test_package_cli.py
+          merge_queue:
+            status: covered
+            nodeids:
+              - tests/unit_tests/cli/test_package_builder.py
+              - tests/unit_tests/cli/test_package_cli.py
+          nightly:
+            status: not_applicable
+            notes: >
+              Packaging is fully deterministic — no LLM call, no remote service, no network. The
+              unit tier builds real archives and re-opens them, so a nightly run would add no signal.
+          weekly_benchmark:
+            status: not_applicable
+        gaps: []
+
       - id: extension.web_tools
         title: Web search and fetch tools
         priority: p1

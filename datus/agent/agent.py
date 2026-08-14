@@ -760,14 +760,20 @@ class Agent:
                 results[component] = result
                 continue
             elif component == "reference_sql":
-                if kb_update_strategy == "overwrite":
-                    # Also clear the sql_summaries directory (YAML files)
+                from_summaries = bool(getattr(self.args, "from_summaries", False))
+                if kb_update_strategy == "overwrite" and not from_summaries:
+                    # Also clear the sql_summaries directory (YAML files).
+                    # NEVER under --from_summaries: those YAML files are the
+                    # input this run is about to re-index, so wiping them
+                    # first would delete the corpus and index nothing.
                     sql_summary_dir = self.global_config.path_manager.sql_summary_path()
                     force = self._force_delete
                     if sql_summary_dir.exists() and not safe_rmtree(
                         sql_summary_dir, "SQL summary directory", force=force
                     ):
                         return {"status": "cancelled", "message": "User cancelled deletion of SQL summary directory"}
+                    self.global_config.save_storage_config("reference_sql")
+                elif kb_update_strategy == "overwrite":
                     self.global_config.save_storage_config("reference_sql")
                 else:
                     self.global_config.check_init_storage_config("reference_sql")
@@ -777,6 +783,18 @@ class Agent:
                 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 
                 self.reference_sql_store = ReferenceSqlRAG(self.global_config)
+                if from_summaries:
+                    # Re-index the committed summary YAML verbatim — no LLM.
+                    from datus.storage.reference_sql.reference_sql_init import init_reference_sql_from_summaries
+
+                    results[component] = init_reference_sql_from_summaries(
+                        self.reference_sql_store,
+                        self.global_config,
+                        summaries_dir=getattr(self.args, "summaries_dir", "") or "",
+                        build_mode=kb_update_strategy,
+                    )
+                    continue
+
                 if kb_update_strategy == "overwrite":
                     self.reference_sql_store.truncate()
                 self._reset_reference_sql_stream_state()

@@ -115,6 +115,7 @@ class ErrorCode(Enum):
 
     # Plugin store errors
     PLUGIN_STORE_ERROR = ("400030", "Plugin store error: {error_message}")
+    PACKAGE_BUILD_ERROR = ("400031", "Package build error: {error_message}")
 
     # Storage errors - Vector Database Operations
     STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")

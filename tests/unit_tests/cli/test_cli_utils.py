@@ -8,7 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.cli._cli_utils import _FREE_TEXT_SENTINEL, select_choice, select_list, select_multi_choice
+from datus.cli._cli_utils import (
+    _FREE_TEXT_SENTINEL,
+    MultiSelectState,
+    select_choice,
+    select_list,
+    select_multi_choice,
+)
 
 _KEY_ALIASES = {"enter": "c-m", "backspace": "c-h", "space": " "}
 
@@ -563,12 +569,14 @@ class TestPromptInputMultilineKeyBindings:
 # ---------------------------------------------------------------------------
 
 
-def _capture_multi_kb(choices, default_selected=None, allow_free_text=False):
+def _capture_multi_kb(choices, default_selected=None, allow_free_text=False, hierarchy=None, render=None):
     """Run select_multi_choice and capture the KeyBindings + exit mock.
 
     Returns ``(kb, exit_mock)``. The dual-mode refactor moved the
     "finish" call off of ``event.app.exit`` and onto the captured
     Application's ``.exit`` via an internal ``_finish`` indirection.
+    When ``render`` is a list, the control's text callable is appended to
+    it so a test can re-render after driving the key bindings.
     """
     captured = {}
 
@@ -576,6 +584,8 @@ def _capture_multi_kb(choices, default_selected=None, allow_free_text=False):
         captured["kb"] = kwargs.get("key_bindings")
         # Capture the layout so we can invoke _get_formatted_text
         captured["layout"] = kwargs.get("layout")
+        if render is not None:
+            render.append(kwargs["layout"].container.content.text)
         app = MagicMock()
         app.run.return_value = list(default_selected or [])
         captured["app"] = app
@@ -587,6 +597,7 @@ def _capture_multi_kb(choices, default_selected=None, allow_free_text=False):
             choices=choices,
             default_selected=default_selected,
             allow_free_text=allow_free_text,
+            hierarchy=hierarchy,
         )
 
     return captured["kb"], captured["app"].exit
@@ -780,3 +791,101 @@ class TestSelectMultiChoiceKeyBindings:
         _find_handler(kb, "enter")(enter_event)
         result = exit_mock.call_args[1]["result"]
         assert "a" in result
+
+
+class TestMultiSelectState:
+    """Tree-checkbox semantics (used by the ``datus package`` subject menu)."""
+
+    TREE = {"a/x": "a", "a/y": "a", "b/x": "b"}
+    KEYS = ["a", "a/x", "a/y", "b", "b/x"]
+
+    def _state(self, initial=()):
+        return MultiSelectState(self.KEYS, list(initial), self.TREE)
+
+    @pytest.mark.ci
+    def test_checking_a_parent_checks_its_children(self):
+        state = self._state()
+        state.toggle("a")
+        assert state.selected() == ["a", "a/x", "a/y"]
+
+    @pytest.mark.ci
+    def test_unchecking_a_parent_unchecks_its_children(self):
+        state = self._state(self.KEYS)
+        state.toggle("a")
+        assert state.selected() == ["b", "b/x"]
+
+    @pytest.mark.ci
+    def test_parent_follows_its_children(self):
+        """All children checked ⇒ parent checked; one child off ⇒ parent off."""
+        state = self._state()
+        state.toggle("a/x")
+        assert not state.is_checked("a")
+        state.toggle("a/y")
+        assert state.is_checked("a")
+        state.toggle("a/y")
+        assert not state.is_checked("a") and state.selected() == ["a/x"]
+
+    @pytest.mark.ci
+    def test_partial_parent_is_marked_but_not_selected(self):
+        state = self._state()
+        state.toggle("a/x")
+        assert state.is_partial("a") and not state.is_checked("a")
+        assert not state.is_partial("b")  # nothing checked underneath
+        state.toggle("a/y")
+        assert not state.is_partial("a")  # fully checked reads as checked
+
+    @pytest.mark.ci
+    def test_defaults_are_reconciled_on_construction(self):
+        """Both directions hold for pre-selection too: children roll up into
+        their parent, a parent pushes down into its children."""
+        assert MultiSelectState(self.KEYS, ["a/x", "a/y"], self.TREE).selected() == ["a", "a/x", "a/y"]
+        assert MultiSelectState(self.KEYS, ["a"], self.TREE).selected() == ["a", "a/x", "a/y"]
+        assert MultiSelectState(self.KEYS, ["a/x"], self.TREE).selected() == ["a/x"]
+
+    @pytest.mark.ci
+    def test_toggle_all_covers_the_whole_tree(self):
+        state = self._state()
+        state.toggle_all()
+        assert state.selected() == self.KEYS
+        state.toggle_all()
+        assert state.selected() == []
+
+    @pytest.mark.ci
+    def test_leaves_are_independent_without_a_hierarchy(self):
+        state = MultiSelectState(["a", "b"], [])
+        state.toggle("a")
+        assert state.selected() == ["a"] and not state.is_partial("a")
+
+    @pytest.mark.ci
+    def test_unknown_keys_are_ignored(self):
+        state = MultiSelectState(["a"], ["ghost"], {"a": "ghost"})
+        state.toggle("a")
+        assert state.selected() == ["a"]
+
+    @pytest.mark.ci
+    def test_space_on_a_parent_cascades_through_the_key_binding(self):
+        """The cascade must reach the actual prompt, not just the state
+        object — and a partial parent renders as ``-``."""
+        render = []
+        kb, exit_mock = _capture_multi_kb(
+            {k: k for k in self.KEYS}, default_selected=[], hierarchy=self.TREE, render=render
+        )
+        _find_handler(kb, "space")(_make_event())  # cursor is on 'a'
+        _find_handler(kb, "enter")(_make_event())
+        assert exit_mock.call_args[1]["result"] == ["a", "a/x", "a/y"]
+
+        assert self._marks(render[0]) == {"a": "✓", "a/x": "✓", "a/y": "✓", "b": " ", "b/x": " "}
+
+        _find_handler(kb, "down")(_make_event())  # onto 'a/x'
+        _find_handler(kb, "space")(_make_event())
+        marks = self._marks(render[0])
+        assert marks["a"] == "-" and marks["a/y"] == "✓"
+
+    def _marks(self, render_fn):
+        """{choice: checkbox mark} as the user actually sees the menu."""
+        marks = {}
+        for _style, text in render_fn():
+            line = text.strip()
+            if len(line) > 3 and line[0] == "[" and line[2] == "]" and line[3:].strip() in self.KEYS:
+                marks[line[3:].strip()] = line[1]
+        return marks

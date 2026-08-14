@@ -4,11 +4,11 @@ Pins the node-level invariants we depend on at runtime:
 
 * ``BaseArtifactAskAgenticNode._resolve_artifact_binding_early`` resolves
   the artifact from either an in-memory ``artifact_blob`` injected into the
-  agentic_nodes entry (backend / SaaS path) or, for kinds with
-  ``BLOB_REQUIRED = False``, the on-disk ``<kind>/<slug>/`` directory.
-  Failures (missing slug, malformed slug, unresolvable disk path,
-  symlink redirection, blob required but absent) raise ``DatusException``
-  at init.
+  agentic_nodes entry (optional, host-provided) or the on-disk
+  ``<kind>/<slug>/`` directory — the fallback for both kinds; local
+  directories are the source of truth. Failures (missing slug, malformed
+  slug, unresolvable disk path, symlink redirection) raise
+  ``DatusException`` at init.
 * The filesystem tool is anchored correctly per source:
   - blob source ⇒ :class:`MemoryFilesystemFuncTool` (no disk),
   - disk source ⇒ :class:`FilesystemFuncTool` rooted at the artifact dir.
@@ -33,6 +33,7 @@ covered by ``test_chat_agentic_node.py`` and unaffected by ask_*.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -153,12 +154,12 @@ def _blob_from_disk(project_root: str, kind: str, slug: str) -> dict:
 
 
 def _make_ask_report_node(agent_config, *, name: str = "ask_demo_report", slug: str = "demo_report"):
-    """Build an AskReportAgenticNode against a published-blob fixture.
+    """Build an AskReportAgenticNode against an injected-blob fixture.
 
-    Mirrors production: backend's ``config_loader`` snapshots the latest
-    published version into ``artifact_blob`` and AskReport runs against
-    that. We seed the disk tree only as a convenient way to construct the
-    blob via :func:`_blob_from_disk` — the node never touches it.
+    When a host injects ``artifact_blob`` into the agentic_nodes entry,
+    the node binds in-memory and never touches disk. We seed the disk
+    tree only as a convenient way to construct the blob via
+    :func:`_blob_from_disk`.
     """
     _seed_artifact(agent_config.project_root, "report", slug)
     blob = _blob_from_disk(agent_config.project_root, "report", slug)
@@ -173,11 +174,8 @@ def _make_ask_report_node(agent_config, *, name: str = "ask_demo_report", slug: 
 
 
 def _make_ask_dashboard_node(agent_config, *, name: str = "ask_demo_dash", slug: str = "demo_dash"):
-    """Build an AskDashboardAgenticNode against the on-disk fallback path.
-
-    Dashboards have ``BLOB_REQUIRED = False`` until the publish flow lands,
-    so they exercise the legacy on-disk binding.
-    """
+    """Build an AskDashboardAgenticNode against the on-disk binding path
+    (no blob injected — the CLI-mode default for both kinds)."""
     _seed_artifact(agent_config.project_root, "dashboard", slug)
     _register_ask_agent(agent_config, name=name, kind="dashboard", slug=slug)
     return AskDashboardAgenticNode(
@@ -234,10 +232,10 @@ class TestArtifactBinding:
             pytest.param({"manifest": "string", "files": []}, id="manifest_wrong_type"),
         ],
     )
-    def test_report_degenerate_blob_fails_loud(self, real_agent_config, degenerate_blob):
+    def test_report_degenerate_blob_falls_back_to_disk(self, real_agent_config, degenerate_blob):
         """Degenerate blob shapes must NOT silently bind to an empty
-        filesystem — they trip the same BLOB_REQUIRED branch as a
-        missing blob so the publish half-bound state is visible at init.
+        filesystem — they are treated as a missing blob, and the node
+        falls back to the on-disk artifact root just like a dashboard.
         """
         _seed_artifact(real_agent_config.project_root, "report", "degenerate")
         _register_ask_agent(
@@ -247,13 +245,39 @@ class TestArtifactBinding:
             slug="degenerate",
             blob=degenerate_blob,
         )
+        node = AskReportAgenticNode(
+            node_id="x",
+            description="d",
+            node_type="chat",
+            agent_config=real_agent_config,
+            node_name="ask_degenerate",
+        )
+        # Disk fallback engaged: in-memory file map untouched, disk root
+        # populated and pointing at the seeded report tree.
+        assert node._artifact_files is None
+        assert node._artifact_root.name == "degenerate"
+        assert node._artifact_root.parent.name == "reports"
+
+    @pytest.mark.parametrize("kind", ["report", "dashboard"])
+    def test_degenerate_blob_and_missing_disk_dir_raises(self, real_agent_config, kind):
+        """A degenerate blob with no disk directory to fall back to is a
+        genuinely half-bound agent — that combination must still fail
+        loud at init rather than binding to nothing."""
+        node_cls = AskReportAgenticNode if kind == "report" else AskDashboardAgenticNode
+        _register_ask_agent(
+            real_agent_config,
+            name="ask_double_ghost",
+            kind=kind,
+            slug="double_ghost",
+            blob={"manifest": {"slug": "double_ghost"}, "files": []},
+        )
         with pytest.raises(DatusException):
-            AskReportAgenticNode(
+            node_cls(
                 node_id="x",
                 description="d",
                 node_type="chat",
                 agent_config=real_agent_config,
-                node_name="ask_degenerate",
+                node_name="ask_double_ghost",
             )
 
     def test_dashboard_degenerate_blob_falls_back_to_disk(self, real_agent_config):
@@ -281,24 +305,26 @@ class TestArtifactBinding:
         assert node._artifact_files is None
         assert node._artifact_root.name == "deg_dash"
 
-    def test_report_without_blob_raises_fail_loud(self, real_agent_config):
-        """``ask_report`` declares ``BLOB_REQUIRED = True``. Half-bound
-        state (subagent exists, no published version → config_loader didn't
-        attach ``artifact_blob``) must fail at init rather than silently
-        falling back to a disk path that the backend may not even have
-        access to."""
-        # Disk dir exists, but no blob — simulates "subagent created but
-        # report never finished publishing".
+    def test_report_without_blob_falls_back_to_disk(self, real_agent_config):
+        """Behavioral contract: datus-agent is not SaaS-aware — local
+        ``reports/<slug>/`` directories are the source of truth, and a
+        report subagent without an injected blob binds to disk exactly
+        like a dashboard. (This is what makes ``ask_report`` usable in
+        plain CLI mode, standalone datus-api, and packaged projects.)"""
         _seed_artifact(real_agent_config.project_root, "report", "no_blob")
         _register_ask_agent(real_agent_config, name="ask_no_blob", kind="report", slug="no_blob")
-        with pytest.raises(DatusException):
-            AskReportAgenticNode(
-                node_id="x",
-                description="d",
-                node_type="chat",
-                agent_config=real_agent_config,
-                node_name="ask_no_blob",
-            )
+        node = AskReportAgenticNode(
+            node_id="x",
+            description="d",
+            node_type="chat",
+            agent_config=real_agent_config,
+            node_name="ask_no_blob",
+        )
+        assert node._artifact_files is None
+        assert node._artifact_root.name == "no_blob"
+        assert node._artifact_root.parent.name == "reports"
+        # Disk binding loaded the anchors the same way blob mode does.
+        assert node._artifact_manifest["slug"] == "no_blob"
 
     def test_report_with_blob_loads_from_memory(self, real_agent_config):
         """Healthy report binding: blob loaded, no disk root set."""
@@ -413,11 +439,11 @@ class TestArtifactBinding:
         assert set(node._artifact_files.keys()) == {"ok.md", "manifest.json"}
         assert node._artifact_files["ok.md"] == "real file"
 
-    # --- Disk-fallback path lives on dashboard until publish lands ---
+    # --- Disk binding (both kinds fall back to disk when no blob) ---
 
     def test_dashboard_binding_uses_dashboards_root(self, real_agent_config):
-        """``ask_dashboard`` has ``BLOB_REQUIRED = False`` so it still
-        resolves from disk under ``dashboards/<slug>/``."""
+        """``ask_dashboard`` without a blob resolves from disk under
+        ``dashboards/<slug>/``."""
         node = _make_ask_dashboard_node(real_agent_config)
         # Concrete path-shape assertions (name + parent) — also implicitly
         # confirms ``_artifact_root`` is a populated Path rather than None.
@@ -426,40 +452,46 @@ class TestArtifactBinding:
         # Disk path → no in-memory file map.
         assert node._artifact_files is None
 
-    def test_dashboard_missing_disk_dir_raises(self, real_agent_config):
-        """Disk path still fails loud when the directory is missing."""
-        _register_ask_agent(real_agent_config, name="ask_ghost_dash", kind="dashboard", slug="ghost_dash")
+    @pytest.mark.parametrize("kind", ["report", "dashboard"])
+    def test_missing_disk_dir_raises(self, real_agent_config, kind):
+        """Disk binding fails loud when the directory is missing — for
+        both kinds now that reports reach the disk path too."""
+        node_cls = AskReportAgenticNode if kind == "report" else AskDashboardAgenticNode
+        _register_ask_agent(real_agent_config, name="ask_ghost", kind=kind, slug="ghost_slug")
         with pytest.raises(DatusException):
-            AskDashboardAgenticNode(
+            node_cls(
                 node_id="x",
                 description="d",
                 node_type="chat",
                 agent_config=real_agent_config,
-                node_name="ask_ghost_dash",
+                node_name="ask_ghost",
             )
 
-    def test_dashboard_symlink_redirect_within_project_root_rejected(self, real_agent_config):
+    @pytest.mark.parametrize("kind", ["report", "dashboard"])
+    def test_symlink_redirect_within_project_root_rejected(self, real_agent_config, kind):
         """Defence-in-depth on the disk path: a symlink redirecting the
         artifact dir to a sibling directory inside ``project_root`` is
         rejected by comparing the resolved path against the unresolved
-        expected location. Migrated to dashboard since the disk binding
-        is now dashboard-only."""
+        expected location. Covers both kinds — the disk path is newly
+        reachable for reports."""
+        node_cls = AskReportAgenticNode if kind == "report" else AskDashboardAgenticNode
+        kind_dir = "reports" if kind == "report" else "dashboards"
         project_root = Path(real_agent_config.project_root)
-        other_dir = project_root / "dashboards" / "actual_target"
+        other_dir = project_root / kind_dir / "actual_target"
         other_dir.mkdir(parents=True, exist_ok=True)
         slug = "redirect_slug"
-        symlink_path = project_root / "dashboards" / slug
+        symlink_path = project_root / kind_dir / slug
         symlink_path.parent.mkdir(parents=True, exist_ok=True)
         symlink_path.symlink_to(other_dir, target_is_directory=True)
-        _register_ask_agent(real_agent_config, name="ask_redirect_dash", kind="dashboard", slug=slug)
+        _register_ask_agent(real_agent_config, name="ask_redirect", kind=kind, slug=slug)
 
         with pytest.raises(DatusException):
-            AskDashboardAgenticNode(
+            node_cls(
                 node_id="x",
                 description="d",
                 node_type="chat",
                 agent_config=real_agent_config,
-                node_name="ask_redirect_dash",
+                node_name="ask_redirect",
             )
 
     def test_dashboard_with_blob_uses_memory_path(self, real_agent_config):
@@ -748,10 +780,8 @@ def _seed_analysis_extras(
 def _make_dashboard_with_queries(agent_config, *, slug: str, queries: list[dict], subject_refs: dict | None = None):
     """Build a dashboard node bound to a fully-seeded artifact.
 
-    Dashboards keep ``BLOB_REQUIRED = False`` so we test the disk path
-    here — the same renderer code runs in blob mode (see the parity
-    test) but disk mode is the production path for ``ask_dashboard``
-    until publish lands."""
+    Exercises the disk path (no blob) — the same renderer code runs in
+    blob mode (see the parity test)."""
     _seed_artifact(agent_config.project_root, "dashboard", slug)
     root = Path(agent_config.project_root) / "dashboards" / slug
     _seed_query_files(root, "dashboard", queries)
@@ -779,11 +809,10 @@ def _make_report_with_queries(
 ):
     """Build a report node from a fully-seeded artifact via the blob path.
 
-    Reports have ``BLOB_REQUIRED = True`` so the artifact must travel
-    through ``_blob_from_disk`` — the helper that mirrors the backend
-    publish wire shape. We seed disk first as a convenient construction
-    vehicle then snapshot it into the blob; the node never touches the
-    disk tree at runtime.
+    Exercises the injected-blob mode: we seed disk first as a convenient
+    construction vehicle, snapshot it into the blob via
+    ``_blob_from_disk``, and the node binds in-memory without touching
+    the disk tree at runtime.
     """
     _seed_artifact(agent_config.project_root, "report", slug)
     root = Path(agent_config.project_root) / "reports" / slug
@@ -1409,13 +1438,15 @@ class TestArtifactContextBlockInlining:
     # --- Disk ↔ blob parity ---------------------------------------------
 
     def test_blob_and_disk_modes_render_identically(self, real_agent_config):
-        """Same artifact seeded once and read once via the disk path and
-        once via the blob path renders the same content block (modulo
-        the source-line: in-memory snapshot vs Root path). This is the
+        """Same-kind parity: ONE report artifact, seeded once on disk,
+        bound once via the disk path (no blob) and once via the blob
+        path (snapshot of the same tree), must render byte-identical
+        context blocks modulo the single source line (``- **Root**:``
+        vs ``- **Source**: in-memory snapshot``). This is the
         cross-component contract between the disk-backed
-        FilesystemFuncTool flow (CLI) and the MemoryFilesystemFuncTool flow (SaaS) —
-        if rendering drifts between the two, the same artifact would
-        answer differently depending on deployment.
+        FilesystemFuncTool flow and the MemoryFilesystemFuncTool flow —
+        if rendering drifts, the same artifact would answer differently
+        depending on how it was bound.
         """
         slug = "parity"
         queries = [
@@ -1426,33 +1457,48 @@ class TestArtifactContextBlockInlining:
                 "sql": "SELECT v FROM t",
             }
         ]
+        _seed_artifact(real_agent_config.project_root, "report", slug)
+        root = Path(real_agent_config.project_root) / "reports" / slug
+        _seed_query_files(root, "report", queries)
 
-        # Disk path via dashboard kind (BLOB_REQUIRED=False).
-        node_disk = _make_dashboard_with_queries(real_agent_config, slug=f"{slug}_d", queries=queries)
+        # Disk binding: no blob in the entry.
+        _register_ask_agent(real_agent_config, name="ask_parity_disk", kind="report", slug=slug)
+        node_disk = AskReportAgenticNode(
+            node_id="parity_disk_test",
+            description="d",
+            node_type="chat",
+            agent_config=real_agent_config,
+            node_name="ask_parity_disk",
+        )
         block_disk = node_disk._render_artifact_context_block()
 
-        # Blob path via report kind (BLOB_REQUIRED=True). Note: this is
-        # a different kind, so the test compares structural similarity
-        # rather than byte-identical rendering. We pin the load-bearing
-        # cross-mode behavior: the per-query data shows up the same way
-        # regardless of where the files came from.
-        node_blob = _make_report_with_queries(
-            real_agent_config,
-            slug=f"{slug}_r",
-            queries=queries,
+        # Blob binding: snapshot of the exact same tree.
+        blob = _blob_from_disk(real_agent_config.project_root, "report", slug)
+        _register_ask_agent(real_agent_config, name="ask_parity_blob", kind="report", slug=slug, blob=blob)
+        node_blob = AskReportAgenticNode(
+            node_id="parity_blob_test",
+            description="d",
+            node_type="chat",
+            agent_config=real_agent_config,
+            node_name="ask_parity_blob",
         )
         block_blob = node_blob._render_artifact_context_block()
 
-        # Header per-mode differs (Root vs in-memory snapshot); verify
-        # the kind-agnostic per-query rendering matches structure.
-        assert "#### `parity_q`" in block_blob
-        # Dashboard renders sample_params if params present; since this
-        # fixture only seeded a report-shape result, the dashboard side
-        # has no params, so its entry header is "no data file".
-        assert "#### `parity_q` — no data file" in block_disk
-        # SQL appears in BOTH renderings.
-        assert "SELECT v FROM t" in block_disk
-        assert "SELECT v FROM t" in block_blob
+        def _normalize(block: str) -> list[str]:
+            # Two legitimate per-mode differences: the header source line
+            # (Root path vs in-memory snapshot) and the layout root label
+            # (artifact dir name on disk vs the kind dir for blobs).
+            lines = []
+            for line in block.splitlines():
+                if line.startswith("- **Root**:") or line.startswith("- **Source**:"):
+                    continue
+                lines.append(re.sub(r"resolve under `[^`]+/`", "resolve under `<root>/`", line))
+            return lines
+
+        assert _normalize(block_disk) == _normalize(block_blob)
+        # And the source lines themselves reflect the binding mode.
+        assert any(line.startswith("- **Root**:") for line in block_disk.splitlines())
+        assert any(line.startswith("- **Source**: in-memory snapshot") for line in block_blob.splitlines())
 
     # --- Rule 1 contract -----------------------------------------------
 

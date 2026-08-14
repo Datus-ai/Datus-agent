@@ -13,16 +13,12 @@ permissions, etc.) and add three things:
 
 1. **Artifact binding** — bind to one specific artifact via either of two
    sources: an in-memory ``artifact_blob`` injected into the agentic_nodes
-   entry by the backend (a frozen ``{manifest, files}`` snapshot of the
-   latest published version), or an on-disk ``reports/<slug>/`` /
-   ``dashboards/<slug>/`` directory under ``project_root``. The blob
-   source wins when present; the disk source remains the fallback for
-   CLI runs and kinds that have not yet been wired through publish
-   (currently ``ask_dashboard``). ``BLOB_REQUIRED = True`` on a subclass
-   turns missing-blob into a hard failure rather than a disk fallback —
-   used by ``ask_report`` where every live SaaS session must answer
-   against the published artifact, not whatever happens to be on local
-   disk.
+   entry by an embedding host (a frozen ``{manifest, files}`` snapshot),
+   or an on-disk ``reports/<slug>/`` / ``dashboards/<slug>/`` directory
+   under ``project_root``. The blob source wins when present and usable;
+   otherwise both kinds fall back to the disk directory — local
+   directories are the source of truth, and blob injection is purely an
+   optional capability of whoever builds the agentic_nodes entry.
 2. **Constrained filesystem view** — override ``_make_filesystem_tool``
    so the LLM's ``read_file`` / ``glob`` / ``grep`` calls are anchored
    at the artifact root. Relative paths in prompts (``analysis/intent.md``,
@@ -55,8 +51,7 @@ by explicit instruction. The earlier ``interpretation.json`` preload
 was removed along with the file itself.
 
 Per-kind specialization (``ARTIFACT_KIND`` / template name / whether
-``insights.json`` is expected / whether ``BLOB_REQUIRED``) lives in the
-two concrete subclasses.
+``insights.json`` is expected) lives in the two concrete subclasses.
 """
 
 from __future__ import annotations
@@ -151,16 +146,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     # datasource but must never mutate it. ``execute_sql`` is write-capable, so
     # construct its DBFuncTool in read-only mode to hard-reject non-read SQL.
     _db_read_only: bool = True
-    # When True, a missing ``artifact_blob`` in the agentic_nodes entry is a
-    # fatal startup error rather than a signal to fall back to the on-disk
-    # ``<kind>/<slug>/`` directory. Kinds whose backend publish flow always
-    # produces a blob (currently ``ask_report``) set this to True so the
-    # half-bound state (subagent exists, no published version) errors at init
-    # instead of silently grounding the LLM against an unrelated on-disk
-    # tree (or worse, the backend's own filesystem which won't have the
-    # artifact at all). Kinds without a publish flow yet
-    # (``ask_dashboard``) keep this False so the disk path stays available.
-    BLOB_REQUIRED: ClassVar[bool] = False
 
     # Tool groups selectable via the subagent's ``tools`` whitelist, mapped to
     # the node attribute that holds the built tool instance. An ask_* agent's
@@ -514,14 +499,11 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         Resolution order:
 
-        1. If ``entry["artifact_blob"]`` is present, bind to the in-memory
-           bundle (``{manifest, files}``). The filesystem tool then runs
-           against :class:`MemoryFilesystemFuncTool` and ``_artifact_root`` stays None.
-        2. Otherwise, if ``BLOB_REQUIRED`` is True, fail — the caller is
-           contractually supposed to provide a blob for this kind.
-        3. Otherwise, fall back to resolving the on-disk
-           ``<project_root>/<kind>/<slug>/`` directory (legacy CLI flow and
-           kinds without a backend publish path yet).
+        1. If ``entry["artifact_blob"]`` is present and usable, bind to the
+           in-memory bundle (``{manifest, files}``). The filesystem tool then
+           runs against :class:`MemoryFilesystemFuncTool` and ``_artifact_root`` stays None.
+        2. Otherwise, fall back to resolving the on-disk
+           ``<project_root>/<kind>/<slug>/`` directory.
 
         Failures raise :class:`DatusException` — there is no useful default
         for a missing binding and we'd rather see a clear startup error
@@ -569,13 +551,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         self._artifact_slug = slug
 
-        # Path 1: in-memory blob from the agentic_nodes entry. Backend
-        # populates this for ``ask_report`` from the latest VisualReportVersion
-        # at config-build time. Reject obviously degenerate shapes (empty
-        # dict, ``{"files": []}``, missing manifest) before binding so a
-        # malformed blob ends up in the BLOB_REQUIRED / disk-fallback
-        # branches below instead of silently binding to an empty
-        # filesystem — without this, a half-bound report would answer
+        # Path 1: in-memory blob from the agentic_nodes entry, when the
+        # embedding host injected one at config-build time. Reject obviously
+        # degenerate shapes (empty dict, ``{"files": []}``, missing
+        # manifest) before binding so a malformed blob falls back to the
+        # disk directory instead of silently binding to an empty
+        # filesystem — without this, a half-bound artifact would answer
         # "File not found" to every read and look like a working agent.
         blob = entry.get("artifact_blob")
         if self._is_usable_blob(blob):
@@ -584,29 +565,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
         if blob is not None:
             logger.warning(
-                "%s artifact_blob present but unusable (type=%s, keys=%s); routing to BLOB_REQUIRED/disk fallback",
+                "%s artifact_blob present but unusable (type=%s, keys=%s); falling back to disk binding",
                 self.NODE_NAME,
                 type(blob).__name__,
                 sorted(blob.keys()) if isinstance(blob, dict) else None,
-            )
-
-        if self.BLOB_REQUIRED:
-            logger.error(
-                "%s init failing: slug=%s has no usable artifact_blob and BLOB_REQUIRED=True",
-                self.NODE_NAME,
-                slug,
-            )
-            raise DatusException(
-                code=ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={
-                    "config_error": (
-                        f"{self.NODE_NAME} agent for slug {slug!r} has no "
-                        "``artifact_blob`` in its agentic_nodes entry. The "
-                        f"{self.ARTIFACT_KIND} has not been published yet — "
-                        "publish it first so the latest version's artifact is "
-                        "snapshotted into the subagent config."
-                    )
-                },
             )
 
         self._bind_artifact_from_disk(agent_config, slug)
@@ -615,17 +577,13 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     def _is_usable_blob(blob: Any) -> bool:
         """Return True only for blobs that carry real artifact content.
 
-        The backend's wire shape is ``{manifest: {...}, files: [{path,
-        content}, ...]}`` and a successful publish always populates both:
-        ``manifest`` is required on the source ``VisualReportVersion`` and
-        ``files`` covers the per-prefix allowlist (render/queries/analysis)
-        which is non-empty for any artifact that passed the publish
-        validator. So an empty dict, a ``files``-only blob with no
-        manifest, or a blob with ``files: []`` is a degenerate/half-bound
-        signal — treat it as a missing blob so the BLOB_REQUIRED branch
-        fires for kinds that need it (rather than the agent silently
-        binding to an empty filesystem and answering "File not found" to
-        every read).
+        The injected wire shape is ``{manifest: {...}, files: [{path,
+        content}, ...]}`` and a well-formed snapshot always populates
+        both. So an empty dict, a ``files``-only blob with no manifest,
+        or a blob with ``files: []`` is a degenerate/half-bound signal —
+        treat it as a missing blob so binding falls back to the disk
+        directory (rather than the agent silently binding to an empty
+        filesystem and answering "File not found" to every read).
         """
         if not isinstance(blob, dict):
             return False

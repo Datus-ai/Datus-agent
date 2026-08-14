@@ -270,6 +270,19 @@ def create_parser() -> argparse.ArgumentParser:
         "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"
     )
     bootstrap_parser.add_argument(
+        "--from_summaries",
+        action="store_true",
+        help=(
+            "reference_sql only: re-index the committed subject/sql_summaries/*.yaml verbatim "
+            "instead of re-deriving summaries from --sql_dir through the LLM"
+        ),
+    )
+    bootstrap_parser.add_argument(
+        "--summaries_dir",
+        type=str,
+        help="Override the summaries directory used by --from_summaries (default: subject/sql_summaries)",
+    )
+    bootstrap_parser.add_argument(
         "--template_dir", type=str, help="Directory containing J2 template files for reference_template component"
     )
     bootstrap_parser.add_argument(
