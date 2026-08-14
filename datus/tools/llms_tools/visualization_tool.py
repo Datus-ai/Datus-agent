@@ -426,9 +426,10 @@ class VisualizationTool(BaseTool):
             return ""
 
         return (
-            f"The dataset below is the first {rows} rows of a {total_rows}-row result set. "
-            "The preview and the column cardinalities describe that sample only — state the "
-            "result size as the full total, and do not present sample extremes as global ones."
+            f"The dataset below is a {rows}-row sample of a {total_rows}-row result set. "
+            "Which rows were sampled is not stated. The preview and the column cardinalities "
+            "describe that sample only — state the result size as the full total, and do not "
+            "present sample extremes as global ones."
         )
 
     def _format_data_preview(self, df: pd.DataFrame) -> str:

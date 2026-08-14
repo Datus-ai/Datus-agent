@@ -635,7 +635,16 @@ class TestSamplingNote:
     def test_note_states_both_counts(self):
         tool = _make_tool()
         note = tool._sampling_note(self._df(), total_rows=1000)
-        assert "2" in note and "1000" in note
+        assert "2-row sample" in note
+        assert "1000-row result set" in note
+
+    def test_note_does_not_claim_which_rows_were_sampled(self):
+        """The tool is handed a row count, never which rows they are — saying
+        'the first N' would be a fact it cannot know, and one the model would
+        use (e.g. reading them as the earliest period)."""
+        tool = _make_tool()
+        note = tool._sampling_note(self._df(), total_rows=1000)
+        assert "first" not in note.lower()
 
     def test_no_note_without_total_rows(self):
         tool = _make_tool()
