@@ -40,6 +40,27 @@ from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
+# Session-list pagination bounds. Overridable via the ``api`` section of
+# agent.yml (``api.default_session_page_size`` / ``api.max_session_page_size``),
+# mirroring ``api.max_prefetch_tables``. Both are finite so that the default
+# request path — clients that omit ``limit`` entirely — stays bounded.
+_DEFAULT_SESSION_PAGE_SIZE = 50
+_DEFAULT_MAX_SESSION_PAGE_SIZE = 200
+
+
+def _positive_int(raw: Any, fallback: int) -> int:
+    """Coerce an ``api`` config value to a positive int, falling back on junk.
+
+    Operator-supplied YAML is untrusted here: a missing key, ``null``, a
+    non-numeric string, or a non-positive number all fall back to *fallback*
+    rather than producing an empty or reversed page.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
+
 
 class ChatService:
     """Thin service that delegates chat execution to ChatTaskManager.
@@ -118,15 +139,35 @@ class ChatService:
         final ``last_updated``-based sort applied to the enriched page below;
         the two can disagree at page boundaries in rare cases, which is an
         accepted tradeoff for avoiding an eager full-directory sqlite scan.
+
+        The page size is always finite. ``limit=None`` (the caller omitted it)
+        means "server default", not "unbounded" — otherwise the default request
+        path would still open every session file and re-trigger the very
+        timeouts pagination was added to prevent. An explicitly requested
+        ``limit`` is clamped down to ``api.max_session_page_size`` rather than
+        rejected, so an over-large page still returns a valid first page;
+        ``total_count`` reports the unpaginated total for callers to page
+        through. Both bounds come from the ``api`` section of agent.yml.
         """
         try:
+            api_config = getattr(self.agent_config, "api_config", {}) or {}
+            max_page_size = _positive_int(api_config.get("max_session_page_size"), _DEFAULT_MAX_SESSION_PAGE_SIZE)
+            default_page_size = min(
+                _positive_int(api_config.get("default_session_page_size"), _DEFAULT_SESSION_PAGE_SIZE),
+                max_page_size,
+            )
+            page_size = default_page_size if limit is None else min(limit, max_page_size)
+            # The route pins ``ge=0``; clamp again for non-HTTP callers, since a
+            # negative offset would silently slice from the tail of the list.
+            offset = max(offset, 0)
+
             session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
             all_ids = session_mgr.list_sessions(sort_by_modified=True)
             if subagent_id is not None:
                 all_ids = [sid for sid in all_ids if session_matches_agent(sid, subagent_id)]
 
             total_count = len(all_ids)
-            page_ids = all_ids[offset:] if limit is None else all_ids[offset : offset + limit]
+            page_ids = all_ids[offset : offset + page_size]
 
             sessions = []
             for sid in page_ids:

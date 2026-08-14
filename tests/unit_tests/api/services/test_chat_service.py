@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from datus.api.services.chat_service import ChatService
+from datus.api.services.chat_service import (
+    _DEFAULT_MAX_SESSION_PAGE_SIZE,
+    _DEFAULT_SESSION_PAGE_SIZE,
+    ChatService,
+)
 from datus.api.services.chat_task_manager import ChatTaskManager
 from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
@@ -230,7 +234,8 @@ class TestChatServiceListSessionsPagination:
 
         assert fake.get_session_info.call_count == 20
 
-    def test_no_limit_enriches_everything_from_offset(self, chat_svc):
+    def test_omitted_limit_still_honours_offset(self, chat_svc):
+        """A page smaller than the default page size is returned whole."""
         ids = [f"session-{i}" for i in range(5)]
         fake = self._fake_session_manager(ids)
         with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
@@ -238,6 +243,103 @@ class TestChatServiceListSessionsPagination:
 
         assert [s.session_id for s in result.data.sessions] == ids[2:]
         assert result.data.total_count == 5
+
+    def test_omitted_limit_falls_back_to_finite_default_page_size(self, chat_svc):
+        """Clients that omit ``limit`` are the ones that timed out in #1222, so
+        the default path must be bounded too — not just the opt-in one."""
+        ids = [f"session-{i}" for i in range(300)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions()
+
+        assert len(result.data.sessions) == _DEFAULT_SESSION_PAGE_SIZE
+        assert fake.get_session_info.call_count == _DEFAULT_SESSION_PAGE_SIZE
+        assert result.data.total_count == 300
+
+    def test_default_page_size_reads_from_api_config(self, chat_svc):
+        chat_svc.agent_config.api_config = {"default_session_page_size": 7}
+        ids = [f"session-{i}" for i in range(50)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions()
+
+        assert [s.session_id for s in result.data.sessions] == ids[:7]
+        assert fake.get_session_info.call_count == 7
+
+    def test_explicit_limit_above_max_is_clamped(self, chat_svc):
+        """An over-large explicit limit must not re-open the unbounded path."""
+        ids = [f"session-{i}" for i in range(500)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(limit=10_000)
+
+        assert len(result.data.sessions) == _DEFAULT_MAX_SESSION_PAGE_SIZE
+        assert fake.get_session_info.call_count == _DEFAULT_MAX_SESSION_PAGE_SIZE
+        assert result.data.total_count == 500
+
+    def test_max_page_size_reads_from_api_config(self, chat_svc):
+        chat_svc.agent_config.api_config = {"max_session_page_size": 3}
+        ids = [f"session-{i}" for i in range(50)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(offset=1, limit=100)
+
+        assert [s.session_id for s in result.data.sessions] == ids[1:4]
+
+    def test_explicit_limit_below_max_is_honoured_verbatim(self, chat_svc):
+        chat_svc.agent_config.api_config = {"max_session_page_size": 100}
+        ids = [f"session-{i}" for i in range(50)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(limit=4)
+
+        assert len(result.data.sessions) == 4
+
+    def test_configured_default_cannot_exceed_configured_max(self, chat_svc):
+        """A misconfigured default larger than the max must not defeat the cap."""
+        chat_svc.agent_config.api_config = {
+            "default_session_page_size": 100,
+            "max_session_page_size": 10,
+        }
+        ids = [f"session-{i}" for i in range(50)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions()
+
+        assert len(result.data.sessions) == 10
+
+    @pytest.mark.parametrize("bad_value", [0, -1, None, "abc", "", []])
+    def test_junk_page_size_config_falls_back_to_shipped_defaults(self, chat_svc, bad_value):
+        """Operator YAML is untrusted: junk must not yield an empty or reversed page."""
+        chat_svc.agent_config.api_config = {
+            "default_session_page_size": bad_value,
+            "max_session_page_size": bad_value,
+        }
+        ids = [f"session-{i}" for i in range(300)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions()
+
+        assert len(result.data.sessions) == _DEFAULT_SESSION_PAGE_SIZE
+
+    def test_fractional_page_size_config_truncates_to_a_bounded_int(self, chat_svc):
+        """A float still coerces to a positive int, so it bounds rather than falls back."""
+        chat_svc.agent_config.api_config = {"default_session_page_size": 3.5}
+        ids = [f"session-{i}" for i in range(50)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions()
+
+        assert [s.session_id for s in result.data.sessions] == ids[:3]
+
+    def test_negative_offset_is_clamped_to_the_first_page(self, chat_svc):
+        """The route pins ge=0; a direct caller must not slice from the tail."""
+        ids = [f"session-{i}" for i in range(10)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(offset=-5, limit=3)
+
+        assert [s.session_id for s in result.data.sessions] == ids[:3]
 
     def test_subagent_filter_applied_before_pagination(self, chat_svc):
         ids = ["chat_session_a", "gen_metrics_session_a", "chat_session_b", "gen_metrics_session_b", "chat_session_c"]

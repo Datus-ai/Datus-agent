@@ -66,10 +66,15 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `subagent_id` | string? | 按 subagent 过滤。传 `chat` 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户全部会话。 |
+| `subagent_id` | string? | 按 subagent 过滤。传 `chat` 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户所有 agent 的会话。 |
+| `offset` | int | 跳过的会话数,默认 `0`,必须 `>= 0`。 |
+| `limit` | int? | 每页数量,必须 `>= 1`。省略时使用服务端默认值(`api.default_session_page_size`,默认 `50`)。超过 `api.max_session_page_size`(默认 `200`)的取值会被截断到上限,而非报错。 |
 
-**响应**:`Result[ChatSessionData]`,数组元素为 `{ session_id, user_query, created_at, last_updated,
-total_turns, token_count, last_sql_queries, is_active }`。
+该接口始终分页:省略 `limit` 返回的是默认页,而非全部会话。每次只从磁盘读取所请求的那一页,因此响应耗时不会随
+用户的历史会话总数增长。可结合 `total_count`(未分页的总数)与 `offset` 翻页获取其余会话。
+
+**响应**:`Result[ChatSessionData]`,含 `total_count`,数组元素为 `{ session_id, user_query, created_at,
+last_updated, total_turns, token_count, last_sql_queries, is_active }`。
 
 ### `DELETE /api/v1/chat/sessions/{session_id}`
 
