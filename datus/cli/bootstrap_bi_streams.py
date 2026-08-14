@@ -366,11 +366,11 @@ def _collect_metrics_from_semantic_models(
 ) -> List[str]:
     """Resolve each generated semantic-model YAML and pull metric identifiers.
 
-    Reuses :func:`generation_hooks.resolve_kb_sandbox_path` to keep metric
+    Reuses :func:`datus.storage.artifact_path.resolve_kb_sandbox_path` to keep metric
     paths inside the project's KB sandbox. Returns dotted ``subject.metric``
     identifiers ready for ``ScopedContext.metrics``.
     """
-    from datus.cli.generation_hooks import resolve_kb_sandbox_path
+    from datus.storage.artifact_path import resolve_kb_sandbox_path
     from datus.tools.semantic_tools.osi_document import load_osi_document
 
     knowledge_base_dir = str(agent_config.path_manager.subject_dir)

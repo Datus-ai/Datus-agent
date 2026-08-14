@@ -29,7 +29,7 @@ def _resolve_semantic_yaml_refresh_path(yaml_file_path: str, agent_config: Optio
     path_manager = getattr(agent_config, "path_manager", None) if agent_config is not None else None
     subject_dir = getattr(path_manager, "subject_dir", None) if path_manager is not None else None
     if isinstance(subject_dir, (str, os.PathLike)):
-        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+        from datus.storage.artifact_path import resolve_kb_sandbox_path
 
         return resolve_kb_sandbox_path(raw_path, "semantic", os.fspath(subject_dir))
     return os.path.realpath(raw_path)

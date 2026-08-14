@@ -429,7 +429,8 @@ class GenerationTools:
                     }
                 )
 
-            from datus.cli.generation_hooks import GenerationHooks, resolve_kb_sandbox_path
+            from datus.cli.generation_hooks import GenerationHooks
+            from datus.storage.artifact_path import resolve_kb_sandbox_path
 
             subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
             resolved_semantic_files = []
@@ -575,7 +576,7 @@ class GenerationTools:
             # Resolve LLM-reported paths against the project's subject/ tree.
             # Reject anything that escapes the per-kind semantic-model sandbox
             # before opening or syncing files.
-            from datus.cli.generation_hooks import resolve_kb_sandbox_path
+            from datus.storage.artifact_path import resolve_kb_sandbox_path
 
             subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
 
@@ -942,7 +943,7 @@ class GenerationTools:
     def _resolve_generation_path(self, path: str, kind: str) -> str:
         if not path:
             return ""
-        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+        from datus.storage.artifact_path import resolve_kb_sandbox_path
 
         subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
         return resolve_kb_sandbox_path(path, kind, subject_root) or ""

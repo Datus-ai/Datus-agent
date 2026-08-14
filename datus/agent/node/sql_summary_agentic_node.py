@@ -517,7 +517,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         try:
             import os
 
-            from datus.cli.generation_hooks import resolve_kb_sandbox_path
+            from datus.storage.artifact_path import resolve_kb_sandbox_path
 
             full_path = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", self.knowledge_base_dir)
             if not full_path:

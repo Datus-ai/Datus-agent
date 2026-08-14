@@ -74,7 +74,7 @@ def _resolve_generated_summary_file_path(
     """
     knowledge_base_dir = getattr(node, "knowledge_base_dir", None)
     if isinstance(knowledge_base_dir, (str, os.PathLike)) and not hasattr(knowledge_base_dir, "mock_calls"):
-        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+        from datus.storage.artifact_path import resolve_kb_sandbox_path
 
         resolved = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", str(knowledge_base_dir))
         return Path(resolved) if resolved else None

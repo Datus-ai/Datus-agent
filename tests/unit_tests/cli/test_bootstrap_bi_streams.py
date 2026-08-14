@@ -373,7 +373,7 @@ def test_collects_dosi_metric_identifiers(agent_config, tmp_path: Path, single_m
         encoding="utf-8",
     )
 
-    with patch("datus.cli.generation_hooks.resolve_kb_sandbox_path", return_value=str(yaml_file)):
+    with patch("datus.storage.artifact_path.resolve_kb_sandbox_path", return_value=str(yaml_file)):
         metrics = _collect_metrics_from_semantic_models(["semantic_models/metrics/orders.yml"], agent_config)
 
     assert metrics == ["superset.sales.total_orders"]
@@ -400,7 +400,7 @@ def test_validate_semantic_model_sync_passes_requested_scope(agent_config, monke
 
 
 def test_collect_metrics_skips_files_outside_sandbox(agent_config) -> None:
-    with patch("datus.cli.generation_hooks.resolve_kb_sandbox_path", return_value=None):
+    with patch("datus.storage.artifact_path.resolve_kb_sandbox_path", return_value=None):
         out = _collect_metrics_from_semantic_models(["sketchy.yml"], agent_config)
     assert out == []
 
@@ -408,6 +408,6 @@ def test_collect_metrics_skips_files_outside_sandbox(agent_config) -> None:
 def test_collect_metrics_skips_when_yaml_missing_subject(tmp_path: Path, agent_config) -> None:
     yaml_file = tmp_path / "metric.yml"
     yaml_file.write_text(yaml.safe_dump({"metric": {"name": "x", "locked_metadata": {"tags": []}}}), encoding="utf-8")
-    with patch("datus.cli.generation_hooks.resolve_kb_sandbox_path", return_value=str(yaml_file)):
+    with patch("datus.storage.artifact_path.resolve_kb_sandbox_path", return_value=str(yaml_file)):
         out = _collect_metrics_from_semantic_models(["metric.yml"], agent_config)
     assert out == []

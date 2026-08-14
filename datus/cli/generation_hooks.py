@@ -17,13 +17,13 @@ from datus_storage_base.conditions import And, eq
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.artifact_path import normalize_kb_relative_path
 from datus.storage.artifact_replacement import (
     delete_stale_artifact_rows,
     restore_artifact_replacements,
     snapshot_artifact_replacements,
 )
 from datus.storage.metric.store import MetricRAG, build_metric_id
-from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools import connector_registry
@@ -36,96 +36,6 @@ logger = get_logger(__name__)
 
 class GenerationCancelledException(Exception):
     """Exception raised when user cancels generation flow."""
-
-
-# Maps generation kind → top-level KB subdir name beneath the project's subject/
-# directory (e.g. ``{project_root}/subject/semantic_models``).
-_KIND_TO_SUBDIR = {
-    "semantic": "semantic_models",
-    "metric": "semantic_models",
-    "sql_summary": "sql_summaries",
-}
-
-
-def normalize_kb_relative_path(path: str, kind: Optional[str]) -> str:
-    """
-    Silently normalize a relative path so that it lands under the typed
-    sub-directory of the project's ``subject/`` tree, even when the caller
-    forgets the ``{subdir}/`` prefix.
-
-    Rules:
-      * Empty / absolute paths → unchanged.
-      * "." / "./" → unchanged (workspace-root directory operations).
-      * Path starts with a parent-traversal segment (``..``) → unchanged so
-        the downstream sandbox check decides whether to reject.
-      * Unknown ``kind`` → unchanged.
-      * Path already starts with any known KB subdir (semantic_models /
-        sql_summaries) → unchanged (caller is being explicit).
-      * Otherwise → prepend ``{subdir}/``.
-    """
-    if not path or os.path.isabs(path):
-        return path
-    if path in (".", "./"):
-        return path
-    parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".")]
-    if not parts:
-        return path
-    if parts[0] == "..":
-        return path
-    # After the ``subject/`` relocation, prompts emit fully-qualified paths
-    # like ``subject/semantic_models/orders.yml``. ``_resolve_path`` joins the
-    # result with ``kb_home`` (``{project_root}/subject``), so strip a leading
-    # ``subject/`` segment first to avoid ``subject/subject/...`` drift.
-    if parts[0] == "subject":
-        parts = parts[1:]
-        if not parts:
-            return path
-    subdir = _KIND_TO_SUBDIR.get(kind or "")
-    if not subdir:
-        return "/".join(parts)
-    head = parts[0]
-    if head in set(_KIND_TO_SUBDIR.values()):
-        return "/".join(parts)
-    return f"{subdir}/{'/'.join(parts)}"
-
-
-def resolve_kb_sandbox_path(
-    raw_path: str,
-    kind: str,
-    knowledge_base_dir: str,
-) -> Optional[str]:
-    """
-    Resolve an LLM-reported file path to an absolute path under the sandbox
-    ``{knowledge_base_dir}/{kind_subdir}/`` for the given ``kind``.
-
-    Used by workflow-mode ``_save_to_db()`` helpers where the path comes from
-    the model's final JSON (not from a ``write_file`` tool result), so it must
-    be validated against the per-kind sandbox before syncing — otherwise a
-    fabricated response could cause an arbitrary file on disk to be imported.
-    Returns ``None`` when the path escapes the sandbox so callers can skip it.
-    """
-    if not raw_path:
-        return None
-    if os.path.isabs(raw_path):
-        candidate = os.path.normpath(raw_path)
-    else:
-        normalized = normalize_kb_relative_path(raw_path, kind)
-        candidate = os.path.normpath(os.path.join(knowledge_base_dir, normalized))
-    subdir = _KIND_TO_SUBDIR.get(kind or "")
-    if not subdir:
-        return candidate
-    try:
-        sandbox = os.path.realpath(os.path.join(knowledge_base_dir, subdir))
-        candidate_real = os.path.realpath(candidate)
-        if os.path.commonpath([sandbox, candidate_real]) != sandbox:
-            logger.warning(
-                f"Rejected path {raw_path!r} for kind={kind}: resolved {candidate_real!r} escapes sandbox {sandbox!r}."
-            )
-            return None
-    except ValueError:
-        logger.warning(f"Rejected path {raw_path!r} for kind={kind}: cannot verify containment under sandbox.")
-        return None
-    return candidate
 
 
 class GenerationHooks(AgentHooks):
@@ -1122,144 +1032,26 @@ class GenerationHooks(AgentHooks):
     ) -> dict:
         """
         Sync reference template YAML file to Knowledge Base.
+
+        ``build_mode`` is accepted for caller compatibility but ignored: the
+        YAML artifact is the source of truth, so re-syncing an existing ID
+        updates the stored row.
         """
-        try:
-            from datus.storage.reference_template.init_utils import (
-                exists_reference_templates,
-                gen_reference_template_id,
-            )
-            from datus.storage.reference_template.store import ReferenceTemplateRAG
+        del build_mode
+        from datus.storage.reference_template.artifact_sync import sync_reference_template_artifact_to_kb
 
-            with open(file_path, "r", encoding="utf-8") as f:
-                doc = yaml.safe_load(f)
-
-            if isinstance(doc, dict) and "sql" in doc:
-                reference_template_data = doc
-            else:
-                return {"success": False, "error": "No reference_template data found in YAML file"}
-
-            # The template content is stored in the "sql" field by SqlSummaryAgenticNode
-            template_content = reference_template_data.get("sql", "")
-            if not isinstance(template_content, str) or not template_content.strip():
-                return {"success": False, "error": "Reference template 'sql' must be a non-empty string"}
-            comment = reference_template_data.get("comment", "")
-            item_id = reference_template_data.get("id", "")
-
-            if not item_id or item_id == "auto_generated":
-                item_id = gen_reference_template_id(template_content)
-                reference_template_data["id"] = item_id
-
-            storage = ReferenceTemplateRAG(agent_config)
-            existing_ids = exists_reference_templates(storage, build_mode=build_mode)
-
-            if item_id in existing_ids:
-                logger.info(f"Reference template {item_id} already exists in Knowledge Base, skipping")
-                return {
-                    "success": True,
-                    "message": f"Reference template '{reference_template_data.get('name', '')}' already exists, skipped",
-                }
-
-            subject_path = []
-            subject_tree_str = reference_template_data.get("subject_tree", "")
-            if subject_tree_str:
-                parts = subject_tree_str.split("/")
-                subject_path = [part.strip() for part in parts if part.strip()]
-
-            # Extract parameters from template content
-            import json
-
-            from datus.storage.reference_template.template_file_processor import extract_template_parameters
-
-            parameters = extract_template_parameters(template_content)
-
-            reference_template_dict = {
-                "id": item_id,
-                "name": reference_template_data.get("name", ""),
-                "template": template_content,
-                "parameters": json.dumps(parameters),
-                "comment": comment,
-                "summary": reference_template_data.get("summary", ""),
-                "search_text": reference_template_data.get("search_text", ""),
-                "filepath": file_path,
-                "subject_path": subject_path,
-                "tags": reference_template_data.get("tags", ""),
-            }
-
-            storage.upsert_batch([reference_template_dict])
-
-            logger.info(f"Successfully synced reference template {item_id} to Knowledge Base")
-            return {"success": True, "message": f"Synced reference template: {reference_template_dict['name']}"}
-
-        except Exception as e:
-            logger.error(f"Error syncing reference template to DB: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+        return sync_reference_template_artifact_to_kb(file_path, agent_config)
 
     @staticmethod
     def _sync_reference_sql_to_db(file_path: str, agent_config: AgentConfig, build_mode: str = "incremental") -> dict:
         """
         Sync reference SQL YAML file to Knowledge Base.
+
+        ``build_mode`` is accepted for caller compatibility but ignored: the
+        YAML artifact is the source of truth, so re-syncing an existing ID
+        updates the stored row.
         """
-        try:
-            from datus.storage.reference_sql.init_utils import exists_reference_sql, gen_reference_sql_id
+        del build_mode
+        from datus.storage.reference_sql.artifact_sync import sync_reference_sql_artifact_to_kb
 
-            # Load YAML file
-            with open(file_path, "r", encoding="utf-8") as f:
-                doc = yaml.safe_load(f)
-
-            if isinstance(doc, dict) and "sql" in doc:
-                # Direct format without reference_sql wrapper
-                reference_sql_data = doc
-            else:
-                return {"success": False, "error": "No reference_sql data found in YAML file"}
-
-            # Generate ID if not present or if it's a placeholder
-            sql_query = reference_sql_data.get("sql", "")
-            comment = reference_sql_data.get("comment", "")
-            item_id = reference_sql_data.get("id", "")
-
-            if not item_id or item_id == "auto_generated":
-                item_id = gen_reference_sql_id(sql_query)
-                reference_sql_data["id"] = item_id
-
-            # Get storage and check if item already exists
-            storage = ReferenceSqlRAG(agent_config)
-            existing_ids = exists_reference_sql(storage, build_mode=build_mode)
-
-            # Check for duplicate
-            if item_id in existing_ids:
-                logger.info(f"Reference SQL {item_id} already exists in Knowledge Base, skipping")
-                return {
-                    "success": True,
-                    "message": f"Reference SQL '{reference_sql_data.get('name', '')}' already exists, skipped",
-                }
-
-            # Parse subject_tree if available
-            subject_path = []
-            subject_tree_str = reference_sql_data.get("subject_tree", "")
-            if subject_tree_str:
-                # Parse subject_tree format: "path/component1/component2/..."
-                parts = subject_tree_str.split("/")
-                subject_path = [part.strip() for part in parts if part.strip()]
-
-            # Ensure all required fields are present
-            reference_sql_dict = {
-                "id": item_id,
-                "name": reference_sql_data.get("name", ""),
-                "sql": sql_query,
-                "comment": comment,
-                "summary": reference_sql_data.get("summary", ""),
-                "search_text": reference_sql_data.get("search_text", ""),
-                "filepath": file_path,
-                "subject_path": subject_path,
-                "tags": reference_sql_data.get("tags", ""),
-            }
-
-            # Store to Knowledge Base (use upsert to handle duplicates)
-            storage.upsert_batch([reference_sql_dict])
-
-            logger.info(f"Successfully synced reference SQL {item_id} to Knowledge Base")
-            return {"success": True, "message": f"Synced reference SQL: {reference_sql_dict['name']}"}
-
-        except Exception as e:
-            logger.error(f"Error syncing reference SQL to DB: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+        return sync_reference_sql_artifact_to_kb(file_path, agent_config)
