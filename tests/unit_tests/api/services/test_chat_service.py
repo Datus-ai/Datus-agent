@@ -332,6 +332,33 @@ class TestChatServiceListSessionsPagination:
 
         assert [s.session_id for s in result.data.sessions] == ids[:3]
 
+    @pytest.mark.parametrize("bad_limit", [0, -1, -3])
+    def test_non_positive_limit_falls_back_to_the_default_page(self, chat_svc, bad_limit):
+        """A negative limit would slice all_ids[offset:-n] and enrich nearly every
+        session — the exact sqlite cost this pagination exists to bound."""
+        ids = [f"session-{i}" for i in range(300)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(limit=bad_limit)
+
+        assert len(result.data.sessions) == _DEFAULT_SESSION_PAGE_SIZE
+        assert fake.get_session_info.call_count == _DEFAULT_SESSION_PAGE_SIZE
+
+    def test_infinite_page_size_config_does_not_break_the_endpoint(self, chat_svc):
+        """YAML ``.inf`` parses to float infinity, which int() refuses to convert;
+        an uncaught OverflowError would fail every session-list request."""
+        chat_svc.agent_config.api_config = {
+            "default_session_page_size": float("inf"),
+            "max_session_page_size": float("inf"),
+        }
+        ids = [f"session-{i}" for i in range(300)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions()
+
+        assert result.success is True
+        assert len(result.data.sessions) == _DEFAULT_SESSION_PAGE_SIZE
+
     def test_negative_offset_is_clamped_to_the_first_page(self, chat_svc):
         """The route pins ge=0; a direct caller must not slice from the tail."""
         ids = [f"session-{i}" for i in range(10)]

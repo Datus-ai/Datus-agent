@@ -49,15 +49,17 @@ _DEFAULT_MAX_SESSION_PAGE_SIZE = 200
 
 
 def _positive_int(raw: Any, fallback: int) -> int:
-    """Coerce an ``api`` config value to a positive int, falling back on junk.
+    """Coerce a config value or caller-supplied page size to a positive int.
 
-    Operator-supplied YAML is untrusted here: a missing key, ``null``, a
-    non-numeric string, or a non-positive number all fall back to *fallback*
-    rather than producing an empty or reversed page.
+    Both operator YAML and direct (non-HTTP) callers are untrusted here: a
+    missing key, ``null``, a non-numeric string, or a non-positive number all
+    fall back to *fallback* rather than producing an empty or reversed page.
+    ``OverflowError`` is caught alongside the usual pair because YAML ``.inf``
+    parses to float infinity, which ``int()`` refuses to convert.
     """
     try:
         value = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return fallback
     return value if value > 0 else fallback
 
@@ -145,9 +147,15 @@ class ChatService:
         path would still open every session file and re-trigger the very
         timeouts pagination was added to prevent. An explicitly requested
         ``limit`` is clamped down to ``api.max_session_page_size`` rather than
-        rejected, so an over-large page still returns a valid first page;
-        ``total_count`` reports the unpaginated total for callers to page
-        through. Both bounds come from the ``api`` section of agent.yml.
+        rejected, so an over-large page still returns a valid first page, and a
+        non-positive one falls back to the default; ``total_count`` reports the
+        unpaginated total for callers to page through. Both bounds come from
+        the ``api`` section of agent.yml.
+
+        Note that only the *sqlite enrichment* is page-bounded. Listing the
+        directory and stat-ing each file for the mtime sort still costs one
+        ``stat`` per session, so that pass scales with the total; it is orders
+        of magnitude cheaper than the per-file sqlite open it replaces.
         """
         try:
             api_config = getattr(self.agent_config, "api_config", {}) or {}
@@ -156,9 +164,13 @@ class ChatService:
                 _positive_int(api_config.get("default_session_page_size"), _DEFAULT_SESSION_PAGE_SIZE),
                 max_page_size,
             )
-            page_size = default_page_size if limit is None else min(limit, max_page_size)
-            # The route pins ``ge=0``; clamp again for non-HTTP callers, since a
-            # negative offset would silently slice from the tail of the list.
+            # A non-positive ``limit`` is treated as unspecified rather than
+            # passed through: the route pins ``ge=1``, but a direct caller
+            # passing -1 would otherwise slice ``all_ids[offset:-1]`` and
+            # enrich nearly every session — the exact cost this bounds.
+            page_size = min(_positive_int(limit, default_page_size), max_page_size)
+            # Likewise the route pins ``ge=0``; clamp again for non-HTTP callers,
+            # since a negative offset would silently slice from the tail.
             offset = max(offset, 0)
 
             session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)

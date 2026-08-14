@@ -67,13 +67,14 @@ List chat sessions for the current user.
 
 | Param | Type | Notes |
 |-------|------|-------|
-| `subagent_id` | string? | Filter by subagent. Pass `chat` for the default chat agent, or any builtin/custom subagent id. Omit to return sessions for every agent. |
+| `subagent_id` | string? | Filter by subagent. Pass `chat` for the default chat agent, or any built-in/custom subagent id. Omit to return sessions for every agent. |
 | `offset` | int | Number of sessions to skip. Defaults to `0`; must be `>= 0`. |
 | `limit` | int? | Page size; must be `>= 1`. Omit to use the server default (`api.default_session_page_size`, default `50`). Values above `api.max_session_page_size` (default `200`) are clamped down rather than rejected. |
 
 The response is always paginated — omitting `limit` yields the default page, not the full list. Only the
-requested page is read from disk, so response time doesn't scale with the user's total session count. Use
-`total_count` (the unpaginated total) with `offset` to page through the rest.
+requested page is opened as SQLite, so the dominant per-session cost no longer scales with the user's total
+session count; enumerating the session directory and stat-ing each file for the mtime sort still does, at a
+far lower cost per session. Use `total_count` (the unpaginated total) with `offset` to page through the rest.
 
 **Response**: `Result[ChatSessionData]` with `total_count` and an array of `{ session_id, user_query,
 created_at, last_updated, total_turns, token_count, last_sql_queries, is_active }`.

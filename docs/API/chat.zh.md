@@ -70,8 +70,9 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 | `offset` | int | 跳过的会话数,默认 `0`,必须 `>= 0`。 |
 | `limit` | int? | 每页数量,必须 `>= 1`。省略时使用服务端默认值(`api.default_session_page_size`,默认 `50`)。超过 `api.max_session_page_size`(默认 `200`)的取值会被截断到上限,而非报错。 |
 
-该接口始终分页:省略 `limit` 返回的是默认页,而非全部会话。每次只从磁盘读取所请求的那一页,因此响应耗时不会随
-用户的历史会话总数增长。可结合 `total_count`(未分页的总数)与 `offset` 翻页获取其余会话。
+该接口始终分页:省略 `limit` 返回的是默认页,而非全部会话。只有所请求的那一页会被以 SQLite 打开,因此占主导的
+单会话开销不再随用户的历史会话总数增长;但枚举会话目录、以及为按 mtime 排序而对每个文件执行 stat,其耗时仍与
+会话总数相关,只是单会话成本远低于前者。可结合 `total_count`(未分页的总数)与 `offset` 翻页获取其余会话。
 
 **响应**:`Result[ChatSessionData]`,含 `total_count`,数组元素为 `{ session_id, user_query, created_at,
 last_updated, total_turns, token_count, last_sql_queries, is_active }`。
