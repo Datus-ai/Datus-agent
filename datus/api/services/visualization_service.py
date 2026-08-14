@@ -65,12 +65,14 @@ class DataVisualizationService:
         sql: Optional[str],
         user_question: Optional[str],
         language: Optional[str],
+        total_rows: Optional[int] = None,
     ) -> str:
         """Compute a stable hash for the request payload."""
         payload = json.dumps(
             {
                 "columns": csv_data.columns,
                 "data": csv_data.data,
+                "total_rows": total_rows,
                 "chart_type": chart_type,
                 "sql": sql,
                 "user_question": user_question,
@@ -99,8 +101,12 @@ class DataVisualizationService:
         sql: Optional[str] = None,
         user_question: Optional[str] = None,
         language: Optional[str] = None,
+        total_rows: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return a chart recommendation dict, using cache when available.
+
+        ``total_rows`` states how large the full result set is when ``csv_data``
+        is only a sample of it — the caller may cap the rows it uploads.
 
         The language is part of the cache key: the same dataset asked for in
         two languages must not share one cached answer. It has to be the
@@ -109,14 +115,14 @@ class DataVisualizationService:
         would serve the old answer after that default changes.
         """
         effective_language = language or getattr(self._agent_config, "language", None)
-        key = self._cache_key(csv_data, chart_type, sql, user_question, effective_language)
+        key = self._cache_key(csv_data, chart_type, sql, user_question, effective_language, total_rows)
 
         cached = self._cache.get(key)
         if cached is not None:
             self._cache.move_to_end(key)
             return cached
 
-        result = self._generate_uncached(csv_data, chart_type, sql, user_question, language)
+        result = self._generate_uncached(csv_data, chart_type, sql, user_question, language, total_rows)
         self._cache_set(key, result)
         return result
 
@@ -131,6 +137,7 @@ class DataVisualizationService:
         sql: Optional[str],
         user_question: Optional[str],
         language: Optional[str] = None,
+        total_rows: Optional[int] = None,
     ) -> Dict[str, Any]:
         # ── Build DataFrame ───────────────────────────────────────
         try:
@@ -163,9 +170,15 @@ class DataVisualizationService:
         try:
             viz_input = VisualizationInput(data=df)
             if has_context:
-                result = tool.execute_with_context(viz_input, sql=sql, user_question=user_question, language=language)
+                result = tool.execute_with_context(
+                    viz_input,
+                    sql=sql,
+                    user_question=user_question,
+                    language=language,
+                    total_rows=total_rows,
+                )
             else:
-                result = tool.execute(viz_input, language=language)
+                result = tool.execute(viz_input, language=language, total_rows=total_rows)
         except Exception as exc:
             logger.error(f"Visualization tool execution failed: {exc}")
             return {

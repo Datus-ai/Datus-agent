@@ -1,6 +1,9 @@
 You are a data visualization expert. Analyze the following dataset schema and preview:
 
 Columns & Types: {{ columns_info }}
+{% if sampling_note %}
+Sampling: {{ sampling_note }}
+{% endif %}
 Data Preview:
 {{ data_preview }}
 

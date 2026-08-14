@@ -2,6 +2,10 @@ You are a data visualization and analysis expert. Analyze the following dataset 
 
 ## Dataset Schema
 Columns & Types: {{ columns_info }}
+{% if sampling_note %}
+## Sampling
+{{ sampling_note }}
+{% endif %}
 
 ## Data Preview
 {{ data_preview }}
