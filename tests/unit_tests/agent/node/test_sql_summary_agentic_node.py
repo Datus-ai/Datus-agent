@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from datus.schemas.action_history import ActionRole, ActionStatus
+from datus.schemas.action_history import ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
@@ -56,8 +56,7 @@ class TestSqlSummaryAgenticNodeInit:
 
         assert node.configured_node_name == "gen_sql_summary"
         assert node.execution_mode == "workflow"
-        assert node.build_mode == "incremental"
-        assert node.hooks is None  # No hooks in workflow mode
+        assert node.hooks is None
         assert node.get_node_name() == "gen_sql_summary"
 
     def test_sql_summary_has_tools(self, real_agent_config, mock_llm_create):
@@ -85,11 +84,6 @@ class TestSqlSummaryAgenticNodeInit:
         node = _create_node(real_agent_config)
         assert node.max_turns == 5  # Set in conftest real_agent_config
 
-    def test_sql_summary_build_mode(self, real_agent_config, mock_llm_create):
-        """build_mode can be configured."""
-        node = _create_node(real_agent_config, build_mode="overwrite")
-        assert node.build_mode == "overwrite"
-
     def test_sql_summary_subject_tree(self, real_agent_config, mock_llm_create):
         """subject_tree can be passed and stored."""
         tree = ["Analytics", "Reports"]
@@ -102,112 +96,306 @@ class TestSqlSummaryAgenticNodeInit:
 # ===========================================================================
 
 
+SUMMARY_REL_PATH = "subject/sql_summaries/avg_scores_001.yaml"
+
+VALID_SUMMARY_YAML = (
+    "id: auto_generated\n"
+    'name: "avg_scores"\n'
+    "sql: |\n"
+    "  SELECT AVG(AvgScrRead) FROM satscores\n"
+    "summary: >\n"
+    "  Average SAT reading score aggregation\n"
+    'search_text: "average sat reading score"\n'
+    f"filepath: {SUMMARY_REL_PATH}\n"
+    'subject_tree: "Analytics/Scores"\n'
+    'tags: "test"\n'
+)
+
+# YAML that parses fine but is missing the required non-empty ``sql`` field.
+YAML_WITHOUT_SQL = 'name: "no_sql"\nsummary: >\n  Missing sql field\n'
+
+FINAL_RESPONSE = json.dumps({"sql_summary_file": SUMMARY_REL_PATH, "output": "Summary generated"})
+
+SYNC_OK = {"success": True, "message": "Synced reference SQL: avg_scores"}
+
+
+def _write_file_call(path: str = SUMMARY_REL_PATH, content: str = VALID_SUMMARY_YAML) -> MockToolCall:
+    return MockToolCall(name="write_file", arguments=json.dumps({"path": path, "content": content}))
+
+
+def _patch_reference_sql_sync(**kwargs):
+    from unittest.mock import patch
+
+    return patch("datus.storage.reference_sql.artifact_sync.sync_reference_sql_artifact_to_kb", **kwargs)
+
+
+async def _run_stream(node):
+    actions = []
+    async for action in node.execute_stream():
+        actions.append(action)
+    return actions
+
+
 @pytest.mark.component
 @pytest.mark.llm_harness
 class TestSqlSummaryAgenticNodeExecution:
-    """Tests for SqlSummaryAgenticNode.execute_stream() with real tools."""
+    """Tests for SqlSummaryAgenticNode.execute_stream() with real tools.
+
+    The KB sync boundary (``sync_reference_sql_artifact_to_kb``) is mocked;
+    its own behavior is covered in tests/unit_tests/storage/reference_sql/.
+    Everything else — filesystem tool, mutation tracking, finalizer — is real.
+    """
 
     @pytest.mark.asyncio
-    async def test_sql_summary_simple_response(self, real_agent_config, mock_llm_create):
-        """execute_stream with a simple LLM response produces USER + SUCCESS actions."""
-        node = _create_node(real_agent_config, execution_mode="workflow")
+    @pytest.mark.parametrize("execution_mode", ["interactive", "workflow"])
+    async def test_happy_path_writes_and_syncs_artifact(self, real_agent_config, mock_llm_create, execution_mode):
+        """Both execution modes run the same finalizer: write_file + final JSON
+        path → node succeeds and the artifact is synced to the KB."""
+        if execution_mode == "interactive":
+            # The interactive "normal" profile gates INTERNAL writes behind an
+            # ASK prompt; there is no broker to answer it in tests, so run the
+            # write-permitting "auto" profile instead.
+            real_agent_config.active_profile_name = "auto"
+        node = _create_node(real_agent_config, execution_mode=execution_mode)
 
         mock_llm_create.reset(
-            responses=[
-                build_simple_response("SQL summary created for the revenue query"),
-            ]
+            responses=[build_tool_then_response(tool_calls=[_write_file_call()], content=FINAL_RESPONSE)]
         )
         node.model = mock_llm_create
-
         node.input = SqlSummaryNodeInput(
             user_message="Summarize this SQL query",
             sql_query="SELECT AVG(AvgScrRead) FROM satscores",
-            comment="Average SAT reading score aggregation",
         )
 
-        actions = []
-        async for action in node.execute_stream():
-            actions.append(action)
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            actions = await _run_stream(node)
 
-        # Should have at least: USER action + final SUCCESS action
-        assert len(actions) >= 2
-        roles = [a.role for a in actions]
-        assert ActionRole.USER in roles
         assert actions[-1].status == ActionStatus.SUCCESS
         assert actions[-1].action_type == "gen_sql_summary_response"
+        sync_mock.assert_called_once()
+        synced_path = sync_mock.call_args.args[0]
+        assert synced_path.endswith("subject/sql_summaries/avg_scores_001.yaml")
+        assert sync_mock.call_args.args[1] is real_agent_config
+
+        if execution_mode == "interactive":
+            last_output = actions[-1].output
+            assert isinstance(last_output, dict)
+            assert last_output["tokens_used"] > 0
 
     @pytest.mark.asyncio
-    async def test_sql_summary_with_tool_calls(self, real_agent_config, mock_llm_create):
-        """LLM calls filesystem tools then responds; tools are ACTUALLY EXECUTED."""
+    async def test_reference_template_storage_uses_template_sync(self, real_agent_config, mock_llm_create):
+        from unittest.mock import patch
+
+        node = _create_node(real_agent_config, execution_mode="workflow", storage_type="reference_template")
+
+        mock_llm_create.reset(
+            responses=[build_tool_then_response(tool_calls=[_write_file_call()], content=FINAL_RESPONSE)]
+        )
+        node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(
+            user_message="Summarize this template",
+            sql_query="SELECT * FROM t WHERE x = '{{val}}'",
+        )
+
+        with patch(
+            "datus.storage.reference_template.artifact_sync.sync_reference_template_artifact_to_kb",
+            return_value={"success": True, "message": "ok"},
+        ) as sync_mock:
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.SUCCESS
+        sync_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_missing_final_path_fails_node(self, real_agent_config, mock_llm_create):
+        """A response without sql_summary_file must fail the node instead of
+        silently succeeding with nothing synced."""
         node = _create_node(real_agent_config, execution_mode="workflow")
 
-        response_content = json.dumps(
-            {
-                "sql_summary_file": "summary_001.yaml",
-                "output": "Summary with filesystem operations",
-            }
+        mock_llm_create.reset(responses=[build_simple_response("SQL summary created for the revenue query")])
+        node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(
+            user_message="Summarize this SQL query",
+            sql_query="SELECT AVG(AvgScrRead) FROM satscores",
         )
+
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        sync_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_file_not_written_this_request_fails_and_survives(self, real_agent_config, mock_llm_create):
+        """A pre-existing file the LLM merely references (never wrote) fails
+        the finalizer and must NOT be deleted by the rollback."""
+        from pathlib import Path
+
+        pre_existing = Path(real_agent_config.project_root) / SUMMARY_REL_PATH
+        pre_existing.parent.mkdir(parents=True, exist_ok=True)
+        pre_existing.write_text(VALID_SUMMARY_YAML, encoding="utf-8")
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
+        mock_llm_create.reset(responses=[build_simple_response(FINAL_RESPONSE)])
+        node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(user_message="Summarize", sql_query="SELECT 1")
+
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        sync_mock.assert_not_called()
+        assert pre_existing.read_text(encoding="utf-8") == VALID_SUMMARY_YAML
+
+    @pytest.mark.asyncio
+    async def test_out_of_sandbox_write_rejected_by_guard(self, real_agent_config, mock_llm_create):
+        """The mutation guard rejects writes outside subject/sql_summaries at
+        the tool layer, so the file never lands on disk."""
+        from pathlib import Path
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
+
+        outside_rel = "outside.yaml"
+        final = json.dumps({"sql_summary_file": outside_rel, "output": "x"})
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[_write_file_call(path=outside_rel, content=VALID_SUMMARY_YAML)],
+                    content=final,
+                )
+            ]
+        )
+        node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(user_message="Summarize", sql_query="SELECT 1")
+
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        sync_mock.assert_not_called()
+        assert not (Path(real_agent_config.project_root) / outside_rel).exists()
+
+    @pytest.mark.asyncio
+    async def test_invalid_artifact_fails_and_rolls_back_new_file(self, real_agent_config, mock_llm_create):
+        """A written artifact without a usable ``sql`` field fails validation
+        and the newly created file is removed on rollback."""
+        from pathlib import Path
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
+        mock_llm_create.reset(
+            responses=[
+                build_tool_then_response(
+                    tool_calls=[_write_file_call(content=YAML_WITHOUT_SQL)],
+                    content=FINAL_RESPONSE,
+                )
+            ]
+        )
+        node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(user_message="Summarize", sql_query="SELECT 1")
+
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        sync_mock.assert_not_called()
+        assert not (Path(real_agent_config.project_root) / SUMMARY_REL_PATH).exists()
+
+    @pytest.mark.asyncio
+    async def test_kb_sync_failure_fails_node_and_rolls_back(self, real_agent_config, mock_llm_create):
+        """A failed KB sync fails the node; the half-written YAML is removed so
+        no 'YAML saved but KB not updated' state survives."""
+        from pathlib import Path
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
+        mock_llm_create.reset(
+            responses=[build_tool_then_response(tool_calls=[_write_file_call()], content=FINAL_RESPONSE)]
+        )
+        node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(user_message="Summarize", sql_query="SELECT 1")
+
+        with _patch_reference_sql_sync(return_value={"success": False, "error": "lancedb down"}) as sync_mock:
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        sync_mock.assert_called_once()
+        assert not (Path(real_agent_config.project_root) / SUMMARY_REL_PATH).exists()
+
+    @pytest.mark.asyncio
+    async def test_rollback_restores_overwritten_file(self, real_agent_config, mock_llm_create):
+        """When the request overwrites an existing artifact and then fails,
+        the original content is restored."""
+        from pathlib import Path
+
+        original = 'id: old\nname: "old"\nsql: |\n  SELECT 0\n'
+        pre_existing = Path(real_agent_config.project_root) / SUMMARY_REL_PATH
+        pre_existing.parent.mkdir(parents=True, exist_ok=True)
+        pre_existing.write_text(original, encoding="utf-8")
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
+        mock_llm_create.reset(
+            responses=[build_tool_then_response(tool_calls=[_write_file_call()], content=FINAL_RESPONSE)]
+        )
+        node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(user_message="Summarize", sql_query="SELECT 1")
+
+        with _patch_reference_sql_sync(return_value={"success": False, "error": "boom"}):
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        assert pre_existing.read_text(encoding="utf-8") == original
+
+    @pytest.mark.asyncio
+    async def test_rewrite_after_bad_write_syncs_latest_content(self, real_agent_config, mock_llm_create):
+        """A bad first write corrected by a second write in the same request
+        finalizes successfully with the latest on-disk content."""
+        from pathlib import Path
+
+        node = _create_node(real_agent_config, execution_mode="workflow")
         mock_llm_create.reset(
             responses=[
                 build_tool_then_response(
                     tool_calls=[
-                        MockToolCall(
-                            name="glob",
-                            arguments=json.dumps({"pattern": "*"}),
-                        ),
+                        _write_file_call(content=YAML_WITHOUT_SQL),
+                        _write_file_call(content=VALID_SUMMARY_YAML),
                     ],
-                    content=response_content,
-                ),
+                    content=FINAL_RESPONSE,
+                )
             ]
         )
         node.model = mock_llm_create
+        node.input = SqlSummaryNodeInput(user_message="Summarize", sql_query="SELECT 1")
 
-        node.input = SqlSummaryNodeInput(
-            user_message="Create summary for SAT scores query",
-            sql_query="SELECT AVG(AvgScrRead) FROM satscores",
-        )
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            actions = await _run_stream(node)
 
-        actions = []
-        async for action in node.execute_stream():
-            actions.append(action)
-
-        # Should include TOOL actions from real tool execution
-        tool_actions = [a for a in actions if a.role == ActionRole.TOOL]
-        assert len(tool_actions) >= 2  # PROCESSING + SUCCESS for glob
-
-        # Verify tool was actually executed
-        tool_success_actions = [a for a in tool_actions if a.status == ActionStatus.SUCCESS]
-        assert len(tool_success_actions) >= 1
-
-        # Final action should be SUCCESS
         assert actions[-1].status == ActionStatus.SUCCESS
+        sync_mock.assert_called_once()
+        on_disk = (Path(real_agent_config.project_root) / SUMMARY_REL_PATH).read_text(encoding="utf-8")
+        assert on_disk == VALID_SUMMARY_YAML
 
     @pytest.mark.asyncio
-    async def test_sql_summary_workflow_mode(self, real_agent_config, mock_llm_create):
-        """Node in workflow mode does not set up hooks."""
+    async def test_mutation_state_reset_between_requests(self, real_agent_config, mock_llm_create):
+        """A reused node instance must not treat the previous request's file
+        as written by the current request."""
         node = _create_node(real_agent_config, execution_mode="workflow")
-        assert node.hooks is None
-        assert node.execution_mode == "workflow"
 
         mock_llm_create.reset(
-            responses=[
-                build_simple_response("Summary generated in workflow mode"),
-            ]
+            responses=[build_tool_then_response(tool_calls=[_write_file_call()], content=FINAL_RESPONSE)]
         )
         node.model = mock_llm_create
-
-        node.input = SqlSummaryNodeInput(
-            user_message="Generate summary",
-            sql_query="SELECT 1",
-        )
-
-        actions = []
-        async for action in node.execute_stream():
-            actions.append(action)
-
-        assert len(actions) >= 2
+        node.input = SqlSummaryNodeInput(user_message="Summarize", sql_query="SELECT 1")
+        with _patch_reference_sql_sync(return_value=SYNC_OK):
+            actions = await _run_stream(node)
         assert actions[-1].status == ActionStatus.SUCCESS
-        assert actions[-1].action_type == "gen_sql_summary_response"
+
+        # Second request references the same file but never writes it.
+        mock_llm_create.reset(responses=[build_simple_response(FINAL_RESPONSE)])
+        node.input = SqlSummaryNodeInput(user_message="Summarize again", sql_query="SELECT 2")
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            actions = await _run_stream(node)
+
+        assert actions[-1].status == ActionStatus.FAILED
+        sync_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sql_summary_input_not_set_raises(self, real_agent_config, mock_llm_create):
@@ -227,9 +415,7 @@ class TestSqlSummaryAgenticNodeExecution:
         node = _create_node(real_agent_config, execution_mode="workflow")
 
         mock_llm_create.reset(
-            responses=[
-                build_simple_response("Summary for complex query with context"),
-            ]
+            responses=[build_tool_then_response(tool_calls=[_write_file_call()], content=FINAL_RESPONSE)]
         )
         node.model = mock_llm_create
 
@@ -244,9 +430,8 @@ class TestSqlSummaryAgenticNodeExecution:
             db_schema="main",
         )
 
-        actions = []
-        async for action in node.execute_stream():
-            actions.append(action)
+        with _patch_reference_sql_sync(return_value=SYNC_OK):
+            actions = await _run_stream(node)
 
         # Should complete successfully
         assert len(actions) >= 2
@@ -258,36 +443,6 @@ class TestSqlSummaryAgenticNodeExecution:
         prompt = call.get("prompt", "")
         # The enhanced message should contain the SQL query
         assert "SELECT s.County, AVG(sc.AvgScrRead)" in prompt
-
-    @pytest.mark.asyncio
-    async def test_sql_summary_interactive_mode_token_tracking(self, real_agent_config, mock_llm_create):
-        """Test that interactive mode tracks token usage from action history."""
-        node = _create_node(real_agent_config, execution_mode="interactive")
-
-        mock_llm_create.reset(
-            responses=[
-                build_simple_response("SQL summary created in interactive mode"),
-            ]
-        )
-        node.model = mock_llm_create
-
-        node.input = SqlSummaryNodeInput(
-            user_message="Summarize this SQL query",
-            sql_query="SELECT COUNT(*) FROM satscores",
-        )
-
-        actions = []
-        async for action in node.execute_stream():
-            actions.append(action)
-
-        assert len(actions) >= 2
-        assert actions[-1].status == ActionStatus.SUCCESS
-
-        # In interactive mode, the final result should have tokens_used > 0
-        last_output = actions[-1].output
-        assert isinstance(last_output, dict)
-        assert "tokens_used" in last_output
-        assert last_output["tokens_used"] > 0
 
 
 # ===========================================================================
@@ -432,8 +587,9 @@ Done.
         assert output is None
 
 
-class TestSqlSummarySaveToDbSandbox:
-    """``_save_to_db`` must reject paths outside the per-kind, per-datasource sandbox.
+class TestSqlSummaryFinalizerSandbox:
+    """``_finalize_sql_summary_artifact`` must reject paths outside the
+    per-kind sandbox.
 
     These paths come from the LLM's final JSON (not from the write_file tool
     result), so the containment check is the last line of defence against a
@@ -441,28 +597,30 @@ class TestSqlSummarySaveToDbSandbox:
     """
 
     def test_rejects_out_of_sandbox_absolute_path(self, real_agent_config, mock_llm_create, tmp_path):
-        from unittest.mock import patch
+        from datus.utils.exceptions import DatusException
 
         node = _create_node(real_agent_config)
         outside = tmp_path / "outside" / "malicious.yaml"
         outside.parent.mkdir(parents=True)
         outside.write_text("x: y\n")
 
-        with patch("datus.cli.generation_hooks.GenerationHooks._sync_reference_sql_to_db") as sync_mock:
-            node._save_to_db(str(outside))
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            with pytest.raises(DatusException, match="escapes"):
+                node._finalize_sql_summary_artifact(str(outside))
             sync_mock.assert_not_called()
 
-    def test_rejects_cross_datasource_prefix(self, real_agent_config, mock_llm_create):
-        from unittest.mock import patch
+    def test_rejects_missing_file(self, real_agent_config, mock_llm_create):
+        from datus.utils.exceptions import DatusException
 
         node = _create_node(real_agent_config)
-        with patch("datus.cli.generation_hooks.GenerationHooks._sync_reference_sql_to_db") as sync_mock:
-            node._save_to_db("sql_summaries/other_db/q_001.yaml")
+        with _patch_reference_sql_sync(return_value=SYNC_OK) as sync_mock:
+            with pytest.raises(DatusException, match="does not exist"):
+                node._finalize_sql_summary_artifact("sql_summaries/other_db/q_001.yaml")
             sync_mock.assert_not_called()
 
 
 class TestSqlSummaryFilesystemRootPath:
-    """FilesystemFuncTool now uses project_root; write-scope enforcement moved to GenerationHooks."""
+    """FilesystemFuncTool uses project_root; write-scope enforcement lives in the node's mutation guard."""
 
     def test_filesystem_root_is_project_root(self, real_agent_config, mock_llm_create):
         from pathlib import Path

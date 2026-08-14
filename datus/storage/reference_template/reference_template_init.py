@@ -186,7 +186,6 @@ def _action_status_value(action: Any) -> Optional[str]:
 async def process_template_item(
     item: dict,
     agent_config: AgentConfig,
-    build_mode: str = "incremental",
     subject_tree: Optional[list] = None,
     event_helper: Optional[BatchEventHelper] = None,
     template_id: Optional[str] = None,
@@ -199,7 +198,6 @@ async def process_template_item(
     Args:
         item: Dict containing template, comment, parameters, filepath fields
         agent_config: Agent configuration
-        build_mode: "overwrite" or "incremental"
         subject_tree: Optional predefined subject tree categories
         event_helper: Optional BatchEventHelper to stream progress events
         template_id: Optional precomputed template identifier
@@ -233,7 +231,6 @@ async def process_template_item(
             node_name="gen_sql_summary",
             agent_config=agent_config,
             execution_mode="workflow",
-            build_mode=build_mode,
             subject_tree=subject_tree,
             storage_type="reference_template",
         )
@@ -516,7 +513,6 @@ async def init_reference_template_async(
                     result = await process_template_item(
                         item,
                         global_config,
-                        build_mode,
                         subject_tree,
                         event_helper=event_helper,
                         template_id=tpl_id,

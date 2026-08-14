@@ -161,7 +161,7 @@ class TestProcessSqlItem:
             "datus.storage.reference_sql.reference_sql_init.SqlSummaryAgenticNode",
             return_value=mock_node,
         ):
-            result = await process_sql_item(item, mock_config, build_mode="overwrite")
+            result = await process_sql_item(item, mock_config)
 
         assert result == "subject/sql_summaries/ref_001.yaml"
         assert item["name"] == "new_product_activity_query"

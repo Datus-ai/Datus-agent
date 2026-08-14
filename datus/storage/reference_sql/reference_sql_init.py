@@ -94,7 +94,6 @@ def _resolve_generated_summary_file_path(
 async def process_sql_item(
     item: dict,
     agent_config: AgentConfig,
-    build_mode: str = "incremental",
     subject_tree: Optional[list] = None,
     event_helper: Optional[BatchEventHelper] = None,
     sql_id: Optional[str] = None,
@@ -106,7 +105,6 @@ async def process_sql_item(
     Args:
         item: Dict containing sql, comment, summary, filepath fields
         agent_config: Agent configuration
-        build_mode: "overwrite" or "incremental" - controls whether to skip existing entries
         subject_tree: Optional predefined subject tree categories
         event_helper: Optional BatchEventHelper to stream progress events
         sql_id: Optional precomputed SQL identifier
@@ -134,7 +132,6 @@ async def process_sql_item(
             node_name="gen_sql_summary",
             agent_config=agent_config,
             execution_mode="workflow",
-            build_mode=build_mode,
             subject_tree=subject_tree,
         )
 
@@ -367,7 +364,6 @@ async def init_reference_sql_async(
                     result = await process_sql_item(
                         item,
                         global_config,
-                        build_mode,
                         subject_tree,
                         event_helper=event_helper,
                         sql_id=sql_id,
