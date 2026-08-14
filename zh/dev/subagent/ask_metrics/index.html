@@ -11,10 +11,10 @@
         <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/subagent/ask_metrics/">
       
       
-        <link rel="prev" href="../gen_metrics/">
+        <link rel="prev" href="../semantic_modeling/">
       
       
-        <link rel="next" href="../gen_semantic_model/">
+        <link rel="next" href="../scheduler/">
       
       
         
@@ -1020,8 +1020,6 @@
       
         
       
-        
-      
     
     
     
@@ -1184,14 +1182,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_metrics/" class="md-nav__link">
+      <a href="../semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    生成指标
+    Semantic Modeling
   
 
     
@@ -1380,34 +1378,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成语义模型
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -4424,7 +4394,9 @@
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 </span></code></pre></div>
 <p>完整配置见 <a href="../../configuration/semantic_layer/">语义层配置</a>。</p>
-<p>指标可以来自已有语义层资产，也可以由 <a href="../gen_metrics/">Generate Metrics</a> subagent 生成。使用 OSI 时，<code>ask_metrics</code> 仍然使用同一组 adapter tools，但会通过配置的执行后端查询 OSI-authored metrics。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。</p>
+<p>指标可以来自已有语义层资产，也可以由仅限 Dosi 的
+<a href="../semantic_modeling/"><code>semantic_modeling</code></a> subagent 生成。已有 MetricFlow 和 OSI 项目仍可查询，
+但在项目使用 Dosi 前不能进行语义创作。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。</p>
 <h2 id="_3">快速开始<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>使用包含指标的 datasource 启动 Datus：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>production
@@ -4543,8 +4515,8 @@
 </thead>
 <tbody>
 <tr>
-<td>从 SQL 生成新的指标定义</td>
-<td><a href="../gen_metrics/">gen_metrics</a></td>
+<td>从 SQL 生成新的 Dosi 指标定义</td>
+<td><a href="../semantic_modeling/">semantic_modeling</a></td>
 </tr>
 <tr>
 <td>生成或修复原始表 SQL</td>
@@ -4593,7 +4565,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../gen_metrics/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 生成指标">
+          <a href="../semantic_modeling/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Semantic Modeling">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4603,20 +4575,20 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                生成指标
+                Semantic Modeling
               </div>
             </div>
           </a>
         
         
           
-          <a href="../gen_semantic_model/" class="md-footer__link md-footer__link--next" aria-label="下一页: 生成语义模型">
+          <a href="../scheduler/" class="md-footer__link md-footer__link--next" aria-label="下一页: 调度器">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                生成语义模型
+                调度器
               </div>
             </div>
             <div class="md-footer__button md-icon">

@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    生成指标
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成语义模型
   
 
     
@@ -4722,12 +4692,12 @@
 <li><strong>Rules</strong>：补充行为规则、Few-shot 示例、对话风格等。</li>
 </ol>
 <p><img alt="创建 SubAgent 向导（Objects 步骤）" src="../../assets/vscode-create-subagent.png" /></p>
-<p>向导提交后，子代理会写入 Datus-agent 的配置（与 CLI 中的 <code>/agent</code> 等价），随即在 Chat 面板的 SubAgent 下拉中可选。Built-in 子代理（<code>gen_sql</code>、<code>gen_metrics</code>、<code>gen_dashboard</code>、<code>gen_semantic_model</code>、<code>gen_report</code>、<code>scheduler</code>、…）只读展示，可在向导中查看其 Tools / Objects / Rules。</p>
+<p>向导提交后，子代理会写入 Datus-agent 的配置（与 CLI 中的 <code>/agent</code> 等价），随即在 Chat 面板的 SubAgent 下拉中可选。Built-in 子代理（<code>gen_sql</code>、<code>semantic_modeling</code>、<code>gen_dashboard</code>、<code>gen_report</code>、<code>scheduler</code>、…）只读展示，可在向导中查看其 Tools / Objects / Rules。</p>
 <h3 id="3-datus-studio-chat">3. Datus Studio Chat 面板<a class="headerlink" href="#3-datus-studio-chat" title="Permanent link">&para;</a></h3>
 <p>右侧 <strong>Datus Studio</strong> 是与 Datus-agent 对话的主入口，对齐 Web Chatbot 但更贴近 IDE 工作流：</p>
 <ul>
 <li><strong>普通对话</strong>：自然语言提问，Datus 会生成 SQL、调工具、并把结果以 Markdown / 表格 / 链接渲染回来。</li>
-<li><strong>SubAgent 切换</strong>：输入框下方 <strong>Main...</strong> 下拉，选择 <code>gen_sql</code>、<code>gen_dashboard</code>、<code>gen_metrics</code> 或自定义子代理。切换后 Chat 上下文随即接入该子代理的可见范围与规则。</li>
+<li><strong>SubAgent 切换</strong>：输入框下方 <strong>Main...</strong> 下拉，选择 <code>gen_sql</code>、<code>gen_dashboard</code>、<code>semantic_modeling</code> 或自定义子代理。切换后 Chat 上下文随即接入该子代理的可见范围与规则。</li>
 <li><strong>Datasource 切换</strong>：右下 <strong>数据库</strong> 下拉，无需重启即可切换当前会话的数据源。</li>
 <li><strong>Plan mode</strong>：开启后，Datus 会先输出执行计划与 SQL 草稿，等你确认再执行；适合生产数据上的高风险查询。</li>
 <li><strong>会话历史</strong>：聊天历史按 <code>~/.datus/sessions/{project}/</code> 分项目存储，插件侧边可加载历史会话继续聊或对照查看。</li>

@@ -1020,8 +1020,6 @@
       
         
       
-        
-      
     
     
     
@@ -1184,14 +1182,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_metrics/" class="md-nav__link">
+      <a href="../semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    生成指标
+    Semantic Modeling
   
 
     
@@ -1220,34 +1218,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成语义模型
   
 
     
@@ -4394,7 +4364,7 @@
 <p><code>gen_visual_report</code> 接受两种同样合法的起点：</p>
 <ul>
 <li>
-<p><strong>从 metric 出发</strong> —— 用 <code>@Metrics &lt;subject&gt;.&lt;group&gt;.&lt;metric&gt;</code> 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何生成指标见 <a href="../gen_metrics/">Generate Metrics</a>）。
+<p><strong>从 metric 出发</strong> —— 用 <code>@Metrics &lt;subject&gt;.&lt;group&gt;.&lt;metric&gt;</code> 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何创作 Dosi 指标见 <a href="../semantic_modeling/">Semantic Modeling</a>）。
   <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>围绕<span class="w"> </span>@Metrics<span class="w"> </span>revenue.daily.dau<span class="w"> </span>和<span class="w"> </span>@Metrics<span class="w"> </span>conversion.weekly.signup_rate<span class="w"> </span>做一份<span class="w"> </span>Q4<span class="w"> </span><span class="m">2025</span><span class="w"> </span>报告，按地区拆分
 </span></code></pre></div></p>
 </li>

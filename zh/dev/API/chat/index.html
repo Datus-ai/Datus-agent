@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    生成指标
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成语义模型
   
 
     
@@ -5154,7 +5124,7 @@
 <tr>
 <td><code>subagent_id</code></td>
 <td>string?</td>
-<td>内置 subagent 名(<code>gen_metrics</code>、<code>gen_semantic_model</code> 等)或自定义 id</td>
+<td>内置 subagent 名（如 <code>semantic_modeling</code>、<code>gen_sql</code>）或自定义 id；<code>semantic_modeling</code> 仅适用于 Dosi 项目，MetricFlow 和 OSI 项目仅支持查询；已退役的语义 agent 名称会返回明确错误。</td>
 </tr>
 <tr>
 <td><code>model</code></td>

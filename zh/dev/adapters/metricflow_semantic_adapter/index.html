@@ -1018,8 +1018,6 @@
       
         
       
-        
-      
     
     
     
@@ -1182,14 +1180,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    生成指标
+    Semantic Modeling
   
 
     
@@ -1218,34 +1216,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成语义模型
   
 
     
@@ -3547,21 +3517,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authoring" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Authoring 模型
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        生成流程
+        旧格式源模型
       
     </span>
   </a>
@@ -3572,6 +3531,17 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
+        查询流程
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
         支持的查询能力
       
     </span>
@@ -3580,10 +3550,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#osi" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        什么时候改用 OSI
+        其他语义格式
       
     </span>
   </a>
@@ -4282,21 +4252,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#authoring" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Authoring 模型
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        生成流程
+        旧格式源模型
       
     </span>
   </a>
@@ -4307,6 +4266,17 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
+        查询流程
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
         支持的查询能力
       
     </span>
@@ -4315,10 +4285,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#osi" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        什么时候改用 OSI
+        其他语义格式
       
     </span>
   </a>
@@ -4351,8 +4321,12 @@
 
 
 <h1 id="metricflow">MetricFlow 语义适配器<a class="headerlink" href="#metricflow" title="Permanent link">&para;</a></h1>
-<p>MetricFlow 语义适配器把 Datus Agent 连接到 MetricFlow 原生的 semantic model 和 metric YAML 文件。</p>
-<p>当你希望生成的语义资产就是 MetricFlow YAML，并且团队会直接维护 MetricFlow 源文件时，适合使用这个适配器。</p>
+<p>MetricFlow 语义适配器把 Datus Agent 连接到已有的 MetricFlow 原生 semantic model 和 metric YAML 文件。</p>
+<blockquote>
+<p><strong>仅查询兼容：</strong>已有 MetricFlow 项目仍可查询，但 Datus 不再生成或编辑 MetricFlow 语义 YAML。
+新的语义创作只允许在 Dosi 项目中通过 <code>semantic_modeling</code> 完成。</p>
+</blockquote>
+<p>当团队仍通过外部工具或流程维护 MetricFlow 源文件时，适合使用这个适配器。</p>
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-semantic-metricflow
 </span></code></pre></div>
@@ -4379,9 +4353,9 @@
 <p>默认情况下，Datus 会把 MetricFlow 指向当前项目的语义模型目录：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>{project_root}/subject/semantic_models/
 </span></code></pre></div>
-<p>该目录下生成的 YAML 都会参与验证，即使这些文件是项目本地文件或被 gitignore 忽略。</p>
-<h2 id="authoring">Authoring 模型<a class="headerlink" href="#authoring" title="Permanent link">&para;</a></h2>
-<p>MetricFlow 模式直接编写 MetricFlow YAML。</p>
+<p>该目录下已有的 YAML 都会参与验证，即使这些文件是项目本地文件或被 gitignore 忽略。</p>
+<h2 id="_4">旧格式源模型<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>MetricFlow 项目直接加载 MetricFlow YAML。</p>
 <p>语义模型文件使用 <code>data_source</code> 文档：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">data_source</span><span class="p">:</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
@@ -4409,16 +4383,15 @@
 </span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">measures</span><span class="p">:</span>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">revenue_sum</span>
 </span></code></pre></div>
-<h2 id="_4">生成流程<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>当 MetricFlow 是 active semantic layer 时：</p>
+<h2 id="_5">查询流程<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<p>当 MetricFlow 是 active semantic layer 时，已有资产继续支持：</p>
 <ol>
-<li><code>gen_semantic_model</code> 写入 MetricFlow semantic model YAML。</li>
-<li><code>gen_metrics</code> 写入 MetricFlow metric YAML。</li>
 <li><code>validate_semantic()</code> 校验完整 MetricFlow model。</li>
-<li><code>query_metrics(..., dry_run=True)</code> 确认生成指标可以编译成 SQL。</li>
-<li><code>publish_semantic_model</code> 和 <code>publish_metrics</code> 将通过校验的资产同步到 Knowledge Base。</li>
+<li><code>query_metrics(...)</code> 编译并执行已有指标。</li>
+<li><code>ask_metrics</code>、指标预览、API 指标查询、report 和 dashboard 复用同一查询链路。</li>
 </ol>
-<h2 id="_5">支持的查询能力<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<p>已退役的 <code>gen_semantic_model</code> 和 <code>gen_metrics</code> 会返回明确错误，提示迁移到 Dosi 并使用 <code>semantic_modeling</code>。</p>
+<h2 id="_6">支持的查询能力<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <p>该适配器支持通用 semantic adapter 方法：</p>
 <ul>
 <li><code>list_metrics</code></li>
@@ -4428,8 +4401,8 @@
 </ul>
 <p>MetricFlow 按自身模型处理 SQL 生成、join、时间粒度、metric constraint、cumulative metric、ratio metric、expression metric 和 derived metric。</p>
 <p>底层 MetricFlow 引擎概念和支持的数据仓库见 <a href="../../metricflow/introduction/">Datus-MetricFlow 介绍</a>。</p>
-<h2 id="osi">什么时候改用 OSI<a class="headerlink" href="#osi" title="Permanent link">&para;</a></h2>
-<p>如果你希望源文件是 strict OSI core YAML，并且希望 Datus / MetricFlow 执行提示隔离在 <code>custom_extensions</code> 中，请使用 <a href="../osi_semantic_adapter/">OSI 语义适配器</a>。</p>
+<h2 id="_7">其他语义格式<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p>如需查询已有 strict OSI core YAML，请使用 <a href="../osi_semantic_adapter/">OSI 语义适配器</a>。新的语义创作请使用 Dosi。</p>
 
 
 

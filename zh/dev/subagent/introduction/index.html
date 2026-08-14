@@ -1020,8 +1020,6 @@
       
         
       
-        
-      
     
     
     
@@ -1336,14 +1334,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_metrics/" class="md-nav__link">
+      <a href="../semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    生成指标
+    Semantic Modeling
   
 
     
@@ -1372,34 +1370,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成语义模型
   
 
     
@@ -4427,8 +4397,7 @@
 <li><code>explore</code>：只读的结构、知识和文件探索</li>
 <li><code>gen_sql</code>：专用 SQL 生成</li>
 <li><code>gen_report</code>：结构化报告生成</li>
-<li><code>gen_semantic_model</code>：MetricFlow 语义模型生成</li>
-<li><code>gen_metrics</code>：MetricFlow 指标生成</li>
+<li><code>semantic_modeling</code>：统一的 Dosi 语义模型和指标创作</li>
 <li><code>gen_sql_summary</code>：SQL 摘要生成</li>
 <li><code>gen_table</code>：交互式建表</li>
 <li><code>gen_job</code>：数据管道作业（单库 ETL 和跨库迁移）</li>
@@ -4474,7 +4443,7 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>production
 </span></code></pre></div>
 <p>然后使用 <code>/[name]</code> 启动 subagent：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/gen_metrics 根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/semantic_modeling 根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>/finance_report 分析本季度与上季度的收入变化
 </span></code></pre></div>
 <h3 id="2web">方法 2：Web 界面<a class="headerlink" href="#2web" title="Permanent link">&para;</a></h3>
@@ -4485,7 +4454,7 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--web<span class="w"> </span>--datasource<span class="w"> </span>production<span class="w"> </span>--subagent<span class="w"> </span>finance_report
 </span></code></pre></div>
 <p>也可以直接访问 URL：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>http://localhost:8501/?subagent=gen_metrics
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>http://localhost:8501/?subagent=semantic_modeling
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>http://localhost:8501/?subagent=finance_report
 </span></code></pre></div>
 <h3 id="3-task">方法 3：作为 <code>task()</code> 工具被自动委派<a class="headerlink" href="#3-task" title="Permanent link">&para;</a></h3>
@@ -4527,12 +4496,8 @@
 <td>生成结构化分析报告</td>
 </tr>
 <tr>
-<td><code>gen_semantic_model</code></td>
-<td>生成 MetricFlow 语义模型</td>
-</tr>
-<tr>
-<td><code>gen_metrics</code></td>
-<td>生成 MetricFlow 指标</td>
+<td><code>semantic_modeling</code></td>
+<td>创作 Dosi 语义模型和指标</td>
 </tr>
 <tr>
 <td><code>gen_sql_summary</code></td>

@@ -1272,8 +1272,6 @@
       
         
       
-        
-      
     
     
     
@@ -1436,14 +1434,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    生成指标
+    Semantic Modeling
   
 
     
@@ -1472,34 +1470,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成语义模型
   
 
     
@@ -4848,88 +4818,69 @@ PostgreSQL 暴露在 <code>127.0.0.1:5433</code>，默认库为 <code>superset_e
 </span><span id="__span-12-46"><a id="__codelineno-12-46" name="__codelineno-12-46" href="#__codelineno-12-46"></a>
 </span><span id="__span-12-47"><a id="__codelineno-12-47" name="__codelineno-12-47" href="#__codelineno-12-47"></a>⏺ 💬 Collected 9 reference SQL identifier(s).
 </span></code></pre></div>
-<p><strong>3. 生成语义模型</strong></p>
-<p>Datus 综合所有图表 SQL，构建包含度量、维度和关系的语义模型并校验：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>⏺ gen_semantic_model(World Bank&#39;s Data)
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a> ⎿  Done (13 tool uses · 96.4s)
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>⏺ 💬 gen_semantic_model (World Bank&#39;s Data):
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>Semantic Model Generation Summary
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>Analysis
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a> • SQL Queries Analyzed: 9 queries from the World Bank&#39;s Data dashboard
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a> • Tables Identified: 1 — public.wb_health_population
-</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a> • Column Usage Patterns: Analyzed 4 actively-filtered columns (year, region, country_name, country_code)
+<p><strong>3. 统一语义建模</strong></p>
+<p>Datus 将所有图表 SQL 交给一次 Dosi <code>semantic_modeling</code> 流程，统一创作并校验 dataset、relationship 和 metric：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>⏺ semantic_modeling(World Bank&#39;s Data)
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>  ⎿  Dosi YAML validated and reconciled to the Knowledge Base
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>⏺ 💬 semantic_modeling completed: 9 SQL queries, 1 dataset, 4 core metrics
 </span></code></pre></div>
-<p><strong>4. 提取指标</strong></p>
-<p>基于校验通过的语义模型，对图表中的聚合表达式做去重和归并，得到一组核心指标：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>⏺ gen_metrics(World Bank&#39;s Data)
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>  ⎿  Done (18 tool uses · 64.0s)
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>⏺ 💬 gen_metrics (World Bank&#39;s Data):
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>Metric Generation Summary
-</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
-</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>Analyzed: 9 SQL queries from the World Bank&#39;s Data dashboard (public.wb_health_population)
-</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>
-</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>Deduplication Result: 9 queries → 4 unique aggregation patterns → 4 core metrics
-</span></code></pre></div>
+<p><strong>4. 对账语义资产</strong></p>
+<p>通过校验的 Dosi YAML 是唯一事实源。Bootstrap 会在成功返回前，将其中的语义对象和去重后的指标完整同步到 Knowledge Base。</p>
 <h3 id="_5">输出<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
 <p>Bootstrap 完成后，您将获得可直接使用的子代理：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>⏺ save_subagents(superset_world_bank_s)
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>  ⎿  Done (2 tool uses · 0.0s)
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>⏺ 💬 Sub-Agent build successful.
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>&gt; /agent
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>───────────────────────────── Agent Management ─────────────────────────────
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>   Custom   Built-in    (Tab or ←/→ to switch)
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>────────────────────────────────────────────────────────────────────────────
-</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>    superset_world_bank_s
-</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    superset_world_bank_s_attribution
-</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    + Add agent…
-</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>
-</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>────────────────────────────────────────────────────────────────────────────
-</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>  ↑↓ navigate   Enter set as current   e edit   a add   d delete   Tab/←→ switch   Esc back   Ctrl+C cancel
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>⏺ save_subagents(superset_world_bank_s)
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>  ⎿  Done (2 tool uses · 0.0s)
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>⏺ 💬 Sub-Agent build successful.
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>&gt; /agent
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>───────────────────────────── Agent Management ─────────────────────────────
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>   Custom   Built-in    (Tab or ←/→ to switch)
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    superset_world_bank_s
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    superset_world_bank_s_attribution
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    + Add agent…
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>  ↑↓ navigate   Enter set as current   e edit   a add   d delete   Tab/←→ switch   Esc back   Ctrl+C cancel
 </span></code></pre></div>
 <h2 id="4">步骤 4：使用生成的子代理<a class="headerlink" href="#4" title="Permanent link">&para;</a></h2>
 <p>Bootstrap 一次生成两个子代理：用于自助取数的<strong>主子代理</strong>，以及面向指标分析的<strong>归因子代理</strong>。两者均可通过 <code>@Agent &lt;name&gt;</code>（例如 <code>@Agent superset_world_bank_s</code>）直接调用，也可在 <code>/agent</code> 中切换为当前默认 agent。</p>
 <h3 id="sql">SQL 取数 — 主子代理<a class="headerlink" href="#sql" title="Permanent link">&para;</a></h3>
 <p>主子代理基于仪表盘的表与参考 SQL 生成查询并取数，适合临时分析、明细取数等场景。</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>&gt;<span class="w"> </span>@Agent<span class="w"> </span>superset_world_bank_s<span class="w"> </span>show<span class="w"> </span>top<span class="w"> </span><span class="m">10</span><span class="w"> </span>countries<span class="w"> </span>by<span class="w"> </span>life<span class="w"> </span>expectancy<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">2020</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>&gt;<span class="w"> </span>@Agent<span class="w"> </span>superset_world_bank_s<span class="w"> </span>show<span class="w"> </span>top<span class="w"> </span><span class="m">10</span><span class="w"> </span>countries<span class="w"> </span>by<span class="w"> </span>life<span class="w"> </span>expectancy<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">2020</span>
 </span></code></pre></div>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>⏴ superset_world_bank_s(Top 10 countries by life expectancy in 2020 using World Bank data)
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>  ⎿  Done ✓ (7 tool uses · 42.9s)
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>🌍 Top 10 Countries by Life Expectancy
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
-</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>▌ ⚠️ Note: The dataset only contains data up to 2013. Year 2020 is not available — results below are for the most recent available year: 2013.
-</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>
-</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>────────────────────────────────────────────────────────────────────────────
-</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>🏆 Top 10 Countries by Life Expectancy at Birth (2013)
-</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>
-</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>
-</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>  Rank   Country                   Region                       Life Expectancy
-</span><span id="__span-17-14"><a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-</span><span id="__span-17-15"><a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>  🥇 1   🇭🇰 Hong Kong SAR, China   East Asia &amp; Pacific          83.83 yrs
-</span><span id="__span-17-16"><a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>  🥈 2   🇯🇵 Japan                  East Asia &amp; Pacific          83.33 yrs
-</span><span id="__span-17-17"><a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>  🥉 3   🇮🇸 Iceland                Europe &amp; Central Asia        83.12 yrs
-</span><span id="__span-17-18"><a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>  4      🇨🇭 Switzerland            Europe &amp; Central Asia        82.75 yrs
-</span><span id="__span-17-19"><a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a>  5      🇪🇸 Spain                  Europe &amp; Central Asia        82.43 yrs
-</span><span id="__span-17-20"><a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a>  6      🇱🇮 Liechtenstein          Europe &amp; Central Asia        82.38 yrs
-</span><span id="__span-17-21"><a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>  7      🇸🇬 Singapore              East Asia &amp; Pacific          82.35 yrs
-</span><span id="__span-17-22"><a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a>  8      🇮🇹 Italy                  Europe &amp; Central Asia        82.29 yrs
-</span><span id="__span-17-23"><a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a>  9      🇦🇺 Australia              East Asia &amp; Pacific          82.20 yrs
-</span><span id="__span-17-24"><a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>  10     🇮🇱 Israel                 Middle East &amp; North Africa   82.06 yrs
-</span><span id="__span-17-25"><a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a>
-</span><span id="__span-17-26"><a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a>────────────────────────────────────────────────────────────────────────────
-</span><span id="__span-17-27"><a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a>📌 Key Insights
-</span><span id="__span-17-28"><a id="__codelineno-17-28" name="__codelineno-17-28" href="#__codelineno-17-28"></a>
-</span><span id="__span-17-29"><a id="__codelineno-17-29" name="__codelineno-17-29" href="#__codelineno-17-29"></a> • 🥇 Hong Kong SAR, China leads globally at 83.83 years
-</span><span id="__span-17-30"><a id="__codelineno-17-30" name="__codelineno-17-30" href="#__codelineno-17-30"></a> • 🌏 East Asia &amp; Pacific dominates with 4 out of 10 top countries (Hong Kong, Japan, Singapore, Australia)
-</span><span id="__span-17-31"><a id="__codelineno-17-31" name="__codelineno-17-31" href="#__codelineno-17-31"></a> • 🌍 Europe &amp; Central Asia is strongly represented with 5 entries (Iceland, Switzerland, Spain, Liechtenstein, Italy)
-</span><span id="__span-17-32"><a id="__codelineno-17-32" name="__codelineno-17-32" href="#__codelineno-17-32"></a> • All top 10 countries exceed 82 years of life expectancy at birth
-</span><span id="__span-17-33"><a id="__codelineno-17-33" name="__codelineno-17-33" href="#__codelineno-17-33"></a> • 🇮🇱 Israel is the sole representative from the Middle East &amp; North Africa region
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>⏴ superset_world_bank_s(Top 10 countries by life expectancy in 2020 using World Bank data)
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>  ⎿  Done ✓ (7 tool uses · 42.9s)
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>🌍 Top 10 Countries by Life Expectancy
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>▌ ⚠️ Note: The dataset only contains data up to 2013. Year 2020 is not available — results below are for the most recent available year: 2013.
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>🏆 Top 10 Countries by Life Expectancy at Birth (2013)
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
+</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>  Rank   Country                   Region                       Life Expectancy
+</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>  🥇 1   🇭🇰 Hong Kong SAR, China   East Asia &amp; Pacific          83.83 yrs
+</span><span id="__span-16-16"><a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>  🥈 2   🇯🇵 Japan                  East Asia &amp; Pacific          83.33 yrs
+</span><span id="__span-16-17"><a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>  🥉 3   🇮🇸 Iceland                Europe &amp; Central Asia        83.12 yrs
+</span><span id="__span-16-18"><a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a>  4      🇨🇭 Switzerland            Europe &amp; Central Asia        82.75 yrs
+</span><span id="__span-16-19"><a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a>  5      🇪🇸 Spain                  Europe &amp; Central Asia        82.43 yrs
+</span><span id="__span-16-20"><a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a>  6      🇱🇮 Liechtenstein          Europe &amp; Central Asia        82.38 yrs
+</span><span id="__span-16-21"><a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a>  7      🇸🇬 Singapore              East Asia &amp; Pacific          82.35 yrs
+</span><span id="__span-16-22"><a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a>  8      🇮🇹 Italy                  Europe &amp; Central Asia        82.29 yrs
+</span><span id="__span-16-23"><a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a>  9      🇦🇺 Australia              East Asia &amp; Pacific          82.20 yrs
+</span><span id="__span-16-24"><a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a>  10     🇮🇱 Israel                 Middle East &amp; North Africa   82.06 yrs
+</span><span id="__span-16-25"><a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a>
+</span><span id="__span-16-26"><a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-16-27"><a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a>📌 Key Insights
+</span><span id="__span-16-28"><a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a>
+</span><span id="__span-16-29"><a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a> • 🥇 Hong Kong SAR, China leads globally at 83.83 years
+</span><span id="__span-16-30"><a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a> • 🌏 East Asia &amp; Pacific dominates with 4 out of 10 top countries (Hong Kong, Japan, Singapore, Australia)
+</span><span id="__span-16-31"><a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a> • 🌍 Europe &amp; Central Asia is strongly represented with 5 entries (Iceland, Switzerland, Spain, Liechtenstein, Italy)
+</span><span id="__span-16-32"><a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a> • All top 10 countries exceed 82 years of life expectancy at birth
+</span><span id="__span-16-33"><a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a> • 🇮🇱 Israel is the sole representative from the Middle East &amp; North Africa region
 </span></code></pre></div>
 <h3 id="_6">归因分析 — 归因子代理<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
 <p>归因子代理面向指标和语义模型工作，专注于指标对比、维度重要性排序与增量贡献归因，适合回答「为什么」类问题。其能力包括：</p>
@@ -4938,56 +4889,56 @@ PostgreSQL 暴露在 <code>127.0.0.1:5433</code>，默认库为 <code>superset_e
 <li><strong>增量贡献计算</strong> —— 量化每个因素对整体变化的贡献</li>
 <li><strong>根因识别</strong> —— 精确定位驱动指标变动的具体值</li>
 </ul>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>&gt;<span class="w"> </span>@Agent<span class="w"> </span>superset_world_bank_s_attribution<span class="w"> </span>compare<span class="w"> </span><span class="m">2014</span><span class="w"> </span>and<span class="w"> </span><span class="m">2004</span>,<span class="w"> </span>find<span class="w"> </span>the<span class="w"> </span>reason<span class="w"> </span>of<span class="w"> </span>population<span class="w"> </span>growth
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>&gt;<span class="w"> </span>@Agent<span class="w"> </span>superset_world_bank_s_attribution<span class="w"> </span>compare<span class="w"> </span><span class="m">2014</span><span class="w"> </span>and<span class="w"> </span><span class="m">2004</span>,<span class="w"> </span>find<span class="w"> </span>the<span class="w"> </span>reason<span class="w"> </span>of<span class="w"> </span>population<span class="w"> </span>growth
 </span></code></pre></div>
 <p>分析生成包含关键发现的完整报告：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>⏴ superset_world_bank_s_attribution(Attribution analysis for population growth between 2004 and 2014 using World Bank data)
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>  ⎿  Done ✓ (15 tool uses · 71.3s)
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>🌍 World Population Growth: 2004 vs 2014 — Attribution Analysis
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>Global population grew from ~6.41 billion (2004) to ~7.24 billion (2014), an increase of +825 million people (+12.7%). Here&#39;s what drove it:
-</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>
-</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>────────────────────────────────────────────────────────────────────────────
-</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>
-</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>📊 Population by Region
-</span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a>
-</span><span id="__span-19-13"><a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a>
-</span><span id="__span-19-14"><a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>  Region                       2004    2014    Δ Growth   Δ %
-</span><span id="__span-19-15"><a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-</span><span id="__span-19-16"><a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a>  East Asia &amp; Pacific          2.09B   2.24B   +148.6M    +7.1%
-</span><span id="__span-19-17"><a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a>  South Asia                   1.49B   1.72B   +234.4M    +15.8%
-</span><span id="__span-19-18"><a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a>  Europe &amp; Central Asia        870M    903M    +32.9M     +3.8%
-</span><span id="__span-19-19"><a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a>  Sub-Saharan Africa           742M    974M    +231.9M    +31.2% 🔴
-</span><span id="__span-19-20"><a id="__codelineno-19-20" name="__codelineno-19-20" href="#__codelineno-19-20"></a>  Latin America &amp; Caribbean    556M    626M    +70.8M     +12.7%
-</span><span id="__span-19-21"><a id="__codelineno-19-21" name="__codelineno-19-21" href="#__codelineno-19-21"></a>  Middle East &amp; North Africa   340M    417M    +77.5M     +22.8%
-</span><span id="__span-19-22"><a id="__codelineno-19-22" name="__codelineno-19-22" href="#__codelineno-19-22"></a>  North America                325M    354M    +29.6M     +9.1%
-</span><span id="__span-19-23"><a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a>
-</span><span id="__span-19-24"><a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a>
-</span><span id="__span-19-25"><a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a>────────────────────────────────────────────────────────────────────────────
-</span><span id="__span-19-26"><a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a>
-</span><span id="__span-19-27"><a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a>🔍 Root Cause Attribution
-</span><span id="__span-19-28"><a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a>
-</span><span id="__span-19-29"><a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a>1. 🍼 Fertility Rate — Top Driver (Score: 8.77)
-</span><span id="__span-19-30"><a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a>
-</span><span id="__span-19-31"><a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a>The single most powerful factor. Sub-Saharan Africa (~5.0+ births/woman) and South Asia (~2.8) sustained large birth cohorts. Even with modest fertility declines, the sheer base
-</span><span id="__span-19-32"><a id="__codelineno-19-32" name="__codelineno-19-32" href="#__codelineno-19-32"></a>population size translated into massive absolute additions.
-</span><span id="__span-19-33"><a id="__codelineno-19-33" name="__codelineno-19-33" href="#__codelineno-19-33"></a>
-</span><span id="__span-19-34"><a id="__codelineno-19-34" name="__codelineno-19-34" href="#__codelineno-19-34"></a>2. 👶 Infant Mortality Rate Decline — Driver #2 (Score: 1.65)
-</span><span id="__span-19-35"><a id="__codelineno-19-35" name="__codelineno-19-35" href="#__codelineno-19-35"></a>
-</span><span id="__span-19-36"><a id="__codelineno-19-36" name="__codelineno-19-36" href="#__codelineno-19-36"></a>More children survived to adulthood, compounding population growth:
-</span><span id="__span-19-37"><a id="__codelineno-19-37" name="__codelineno-19-37" href="#__codelineno-19-37"></a>
-</span><span id="__span-19-38"><a id="__codelineno-19-38" name="__codelineno-19-38" href="#__codelineno-19-38"></a> • South Asia: 57.8 → ~39.3 deaths/1,000 births (−32%)
-</span><span id="__span-19-39"><a id="__codelineno-19-39" name="__codelineno-19-39" href="#__codelineno-19-39"></a> • Sub-Saharan Africa: Still high (~71.5), but declining — more children surviving
-</span><span id="__span-19-40"><a id="__codelineno-19-40" name="__codelineno-19-40" href="#__codelineno-19-40"></a>
-</span><span id="__span-19-41"><a id="__codelineno-19-41" name="__codelineno-19-41" href="#__codelineno-19-41"></a>3. 🌾 Rural Population Growth Rate — Driver #3 (Score: 1.65)
-</span><span id="__span-19-42"><a id="__codelineno-19-42" name="__codelineno-19-42" href="#__codelineno-19-42"></a>
-</span><span id="__span-19-43"><a id="__codelineno-19-43" name="__codelineno-19-43" href="#__codelineno-19-43"></a>High rural growth (especially Sub-Saharan Africa and South Asia) correlates with higher fertility norms and limited access to family planning services.
-</span><span id="__span-19-44"><a id="__codelineno-19-44" name="__codelineno-19-44" href="#__codelineno-19-44"></a>
-</span><span id="__span-19-45"><a id="__codelineno-19-45" name="__codelineno-19-45" href="#__codelineno-19-45"></a>4. 🔄 Net Migration — Minor Factor (Score: 1.0)
-</span><span id="__span-19-46"><a id="__codelineno-19-46" name="__codelineno-19-46" href="#__codelineno-19-46"></a>
-</span><span id="__span-19-47"><a id="__codelineno-19-47" name="__codelineno-19-47" href="#__codelineno-19-47"></a>Redistributes population globally but has minimal impact on total world population.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>⏴ superset_world_bank_s_attribution(Attribution analysis for population growth between 2004 and 2014 using World Bank data)
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>  ⎿  Done ✓ (15 tool uses · 71.3s)
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>🌍 World Population Growth: 2004 vs 2014 — Attribution Analysis
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>Global population grew from ~6.41 billion (2004) to ~7.24 billion (2014), an increase of +825 million people (+12.7%). Here&#39;s what drove it:
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>
+</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a>
+</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>📊 Population by Region
+</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>
+</span><span id="__span-18-13"><a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>
+</span><span id="__span-18-14"><a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>  Region                       2004    2014    Δ Growth   Δ %
+</span><span id="__span-18-15"><a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+</span><span id="__span-18-16"><a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>  East Asia &amp; Pacific          2.09B   2.24B   +148.6M    +7.1%
+</span><span id="__span-18-17"><a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a>  South Asia                   1.49B   1.72B   +234.4M    +15.8%
+</span><span id="__span-18-18"><a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a>  Europe &amp; Central Asia        870M    903M    +32.9M     +3.8%
+</span><span id="__span-18-19"><a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a>  Sub-Saharan Africa           742M    974M    +231.9M    +31.2% 🔴
+</span><span id="__span-18-20"><a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a>  Latin America &amp; Caribbean    556M    626M    +70.8M     +12.7%
+</span><span id="__span-18-21"><a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a>  Middle East &amp; North Africa   340M    417M    +77.5M     +22.8%
+</span><span id="__span-18-22"><a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a>  North America                325M    354M    +29.6M     +9.1%
+</span><span id="__span-18-23"><a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a>
+</span><span id="__span-18-24"><a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a>
+</span><span id="__span-18-25"><a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a>────────────────────────────────────────────────────────────────────────────
+</span><span id="__span-18-26"><a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a>
+</span><span id="__span-18-27"><a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a>🔍 Root Cause Attribution
+</span><span id="__span-18-28"><a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a>
+</span><span id="__span-18-29"><a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a>1. 🍼 Fertility Rate — Top Driver (Score: 8.77)
+</span><span id="__span-18-30"><a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a>
+</span><span id="__span-18-31"><a id="__codelineno-18-31" name="__codelineno-18-31" href="#__codelineno-18-31"></a>The single most powerful factor. Sub-Saharan Africa (~5.0+ births/woman) and South Asia (~2.8) sustained large birth cohorts. Even with modest fertility declines, the sheer base
+</span><span id="__span-18-32"><a id="__codelineno-18-32" name="__codelineno-18-32" href="#__codelineno-18-32"></a>population size translated into massive absolute additions.
+</span><span id="__span-18-33"><a id="__codelineno-18-33" name="__codelineno-18-33" href="#__codelineno-18-33"></a>
+</span><span id="__span-18-34"><a id="__codelineno-18-34" name="__codelineno-18-34" href="#__codelineno-18-34"></a>2. 👶 Infant Mortality Rate Decline — Driver #2 (Score: 1.65)
+</span><span id="__span-18-35"><a id="__codelineno-18-35" name="__codelineno-18-35" href="#__codelineno-18-35"></a>
+</span><span id="__span-18-36"><a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a>More children survived to adulthood, compounding population growth:
+</span><span id="__span-18-37"><a id="__codelineno-18-37" name="__codelineno-18-37" href="#__codelineno-18-37"></a>
+</span><span id="__span-18-38"><a id="__codelineno-18-38" name="__codelineno-18-38" href="#__codelineno-18-38"></a> • South Asia: 57.8 → ~39.3 deaths/1,000 births (−32%)
+</span><span id="__span-18-39"><a id="__codelineno-18-39" name="__codelineno-18-39" href="#__codelineno-18-39"></a> • Sub-Saharan Africa: Still high (~71.5), but declining — more children surviving
+</span><span id="__span-18-40"><a id="__codelineno-18-40" name="__codelineno-18-40" href="#__codelineno-18-40"></a>
+</span><span id="__span-18-41"><a id="__codelineno-18-41" name="__codelineno-18-41" href="#__codelineno-18-41"></a>3. 🌾 Rural Population Growth Rate — Driver #3 (Score: 1.65)
+</span><span id="__span-18-42"><a id="__codelineno-18-42" name="__codelineno-18-42" href="#__codelineno-18-42"></a>
+</span><span id="__span-18-43"><a id="__codelineno-18-43" name="__codelineno-18-43" href="#__codelineno-18-43"></a>High rural growth (especially Sub-Saharan Africa and South Asia) correlates with higher fertility norms and limited access to family planning services.
+</span><span id="__span-18-44"><a id="__codelineno-18-44" name="__codelineno-18-44" href="#__codelineno-18-44"></a>
+</span><span id="__span-18-45"><a id="__codelineno-18-45" name="__codelineno-18-45" href="#__codelineno-18-45"></a>4. 🔄 Net Migration — Minor Factor (Score: 1.0)
+</span><span id="__span-18-46"><a id="__codelineno-18-46" name="__codelineno-18-46" href="#__codelineno-18-46"></a>
+</span><span id="__span-18-47"><a id="__codelineno-18-47" name="__codelineno-18-47" href="#__codelineno-18-47"></a>Redistributes population globally but has minimal impact on total world population.
 </span></code></pre></div>
 <p>报告包括：</p>
 <ul>
