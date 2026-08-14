@@ -6,17 +6,15 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure workflow nodes for schema linking, SQL generation, reasoning, and other processing tasks">
       
       
-      
-        <link rel="canonical" href="https://docs.datus.ai/dev/dev/configuration/nodes/">
-      
-      
-        <link rel="prev" href="../storage/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/dev/cli/package_command/">
       
       
-        <link rel="next" href="../../adapters/db_adapters/">
+        <link rel="prev" href="../skill_command/">
+      
+      
+        <link rel="next" href="../reference/">
       
       
         
@@ -31,7 +29,7 @@
     
     
       
-        <title>Nodes - Datus Docs</title>
+        <title>Package Command - Datus Docs</title>
       
     
     
@@ -78,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#overview" class="md-skip">
+        <a href="#package-command" class="md-skip">
           Skip to content
         </a>
       
@@ -115,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Nodes
+              Package Command
             
           </span>
         </div>
@@ -631,8 +629,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -665,11 +665,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -690,7 +690,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -708,7 +708,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -736,7 +736,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/chat_command/" class="md-nav__link">
+      <a href="../chat_command/" class="md-nav__link">
         
   
   
@@ -764,7 +764,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/context_command/" class="md-nav__link">
+      <a href="../context_command/" class="md-nav__link">
         
   
   
@@ -792,7 +792,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/execution_command/" class="md-nav__link">
+      <a href="../execution_command/" class="md-nav__link">
         
   
   
@@ -820,7 +820,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/mcp_extensions/" class="md-nav__link">
+      <a href="../mcp_extensions/" class="md-nav__link">
         
   
   
@@ -848,7 +848,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/sql_execution/" class="md-nav__link">
+      <a href="../sql_execution/" class="md-nav__link">
         
   
   
@@ -876,7 +876,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/skill_command/" class="md-nav__link">
+      <a href="../skill_command/" class="md-nav__link">
         
   
   
@@ -901,10 +901,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../cli/package_command/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Command
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -920,6 +947,176 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#design-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design guarantees
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wizard-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wizard steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Wizard steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#subject-area-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subject-area tree
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#package-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package layout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Package layout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#never-packaged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Never packaged
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Secrets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#receiving-a-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receiving a package
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example session
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -932,7 +1129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/reference/" class="md-nav__link">
+      <a href="../reference/" class="md-nav__link">
         
   
   
@@ -960,7 +1157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/plan_mode/" class="md-nav__link">
+      <a href="../plan_mode/" class="md-nav__link">
         
   
   
@@ -988,7 +1185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/other_commands/" class="md-nav__link">
+      <a href="../other_commands/" class="md-nav__link">
         
   
   
@@ -2761,10 +2958,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -2795,11 +2990,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12" >
         
           
           <label class="md-nav__link" for="__nav_1_12" id="__nav_1_12_label" tabindex="0">
@@ -2820,7 +3015,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_12_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_12_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_12">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2838,7 +3033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../configuration/introduction/" class="md-nav__link">
         
   
   
@@ -2866,7 +3061,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../agent/" class="md-nav__link">
+      <a href="../../configuration/agent/" class="md-nav__link">
         
   
   
@@ -2894,7 +3089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../compact/" class="md-nav__link">
+      <a href="../../configuration/compact/" class="md-nav__link">
         
   
   
@@ -2922,7 +3117,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../workflow/" class="md-nav__link">
+      <a href="../../configuration/workflow/" class="md-nav__link">
         
   
   
@@ -2950,7 +3145,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../benchmark/" class="md-nav__link">
+      <a href="../../configuration/benchmark/" class="md-nav__link">
         
   
   
@@ -2978,7 +3173,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_policy/" class="md-nav__link">
+      <a href="../../configuration/sql_policy/" class="md-nav__link">
         
   
   
@@ -3006,7 +3201,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web_tool/" class="md-nav__link">
+      <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
   
@@ -3094,7 +3289,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/" class="md-nav__link">
+      <a href="../../configuration/datasources/" class="md-nav__link">
         
   
   
@@ -3122,7 +3317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../semantic_layer/" class="md-nav__link">
+      <a href="../../configuration/semantic_layer/" class="md-nav__link">
         
   
   
@@ -3150,7 +3345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../bi_platforms/" class="md-nav__link">
+      <a href="../../configuration/bi_platforms/" class="md-nav__link">
         
   
   
@@ -3178,7 +3373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../schedulers/" class="md-nav__link">
+      <a href="../../configuration/schedulers/" class="md-nav__link">
         
   
   
@@ -3214,7 +3409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage/" class="md-nav__link">
+      <a href="../../configuration/storage/" class="md-nav__link">
         
   
   
@@ -3239,35 +3434,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Nodes
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../configuration/nodes/" class="md-nav__link">
         
   
   
@@ -3283,246 +3453,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration-structure" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration Structure
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#core-nodes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core Nodes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Core Nodes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#schema-linking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Schema Linking
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gensql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GenSQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reasoning" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reasoning
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#search-metrics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Search Metrics
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#processing-nodes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Processing Nodes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Processing Nodes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#reflect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reflect
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#output" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Output
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#interactive-nodes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Nodes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Interactive Nodes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#chat" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chat
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#utility-nodes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Utility Nodes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Utility Nodes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#date-parser" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Date Parser
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compare" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compare
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fix" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fix
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#complete-node-configuration-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Complete Node Configuration Example
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#model-assignment-strategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Model Assignment Strategy
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -4380,6 +4310,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -4388,10 +4320,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
+  <a href="#design-guarantees" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Overview
+        Design guarantees
       
     </span>
   </a>
@@ -4399,33 +4331,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configuration-structure" class="md-nav__link">
+  <a href="#usage" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration Structure
+        Usage
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#core-nodes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core Nodes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Core Nodes">
+    <nav class="md-nav" aria-label="Usage">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#schema-linking" class="md-nav__link">
+  <a href="#options" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Schema Linking
+        Options
       
     </span>
   </a>
@@ -4433,32 +4354,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#gensql" class="md-nav__link">
+  <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        GenSQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reasoning" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reasoning
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#search-metrics" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Search Metrics
+        Exit codes
       
     </span>
   </a>
@@ -4471,33 +4370,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#processing-nodes" class="md-nav__link">
+  <a href="#wizard-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Processing Nodes
+        Wizard steps
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Processing Nodes">
+    <nav class="md-nav" aria-label="Wizard steps">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#reflect" class="md-nav__link">
+  <a href="#subject-area-tree" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reflect
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#output" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Output
+        Subject-area tree
       
     </span>
   </a>
@@ -4510,22 +4398,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#interactive-nodes" class="md-nav__link">
+  <a href="#package-layout" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Interactive Nodes
+        Package layout
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Interactive Nodes">
+    <nav class="md-nav" aria-label="Package layout">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#chat" class="md-nav__link">
+  <a href="#never-packaged" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chat
+        Never packaged
       
     </span>
   </a>
@@ -4538,60 +4426,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#utility-nodes" class="md-nav__link">
+  <a href="#secrets" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Utility Nodes
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Utility Nodes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#date-parser" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Date Parser
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compare" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Compare
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fix" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fix
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#complete-node-configuration-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Complete Node Configuration Example
+        Secrets
       
     </span>
   </a>
@@ -4599,10 +4437,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#model-assignment-strategy" class="md-nav__link">
+  <a href="#receiving-a-package" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Model Assignment Strategy
+        Receiving a package
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example session
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related
       
     </span>
   </a>
@@ -4626,7 +4486,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/nodes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/package_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4634,219 +4494,282 @@
   
 
 
-  <h1>Nodes</h1>
-
-<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>Nodes are the building blocks of Datus Agent workflows. Each node performs a specific task in the data processing pipeline, from schema linking and SQL generation to reasoning and output formatting. This guide covers how to configure each node type for optimal performance.</p>
-<h2 id="configuration-structure">Configuration Structure<a class="headerlink" href="#configuration-structure" title="Permanent link">&para;</a></h2>
-<p>Fixed workflow nodes are configured in <code>nodes</code>; agentic workflow nodes such as <code>gen_sql</code> are configured in <code>agentic_nodes</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">nodes</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">node_name</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">provider_name</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="c1"># Additional node-specific parameters</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">gen_sql</span><span class="p">:</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">provider_name</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_sql</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+<h1 id="package-command">Package Command<a class="headerlink" href="#package-command" title="Permanent link">&para;</a></h1>
+<p>The <code>datus package</code> command exports the current project directory as a <strong>self-contained zip</strong>. The receiver unzips it, exports a few environment variables, runs one setup script, and has a working Datus project — no shared <code>~/.datus</code>, no manual config editing, and no credentials travelling in the archive.</p>
+<h2 id="design-guarantees">Design guarantees<a class="headerlink" href="#design-guarantees" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Guarantee</th>
+<th>How it is enforced</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Self-contained</strong></td>
+<td>The generated <code>conf/agent.yml</code> pins <code>home: .</code> and a fixed <code>project_name</code>, so the unzipped directory is the entire runtime. The receiver's <code>~/.datus</code> is never read or written.</td>
+</tr>
+<tr>
+<td><strong>Zero secrets</strong></td>
+<td><code>conf/agent.yml</code> and <code>conf/.mcp.json</code> are <em>generated</em>, never copied. Every credential-bearing field is replaced with a <code>${VAR}</code> placeholder. A final content scan over the staged files fails the build if anything secret-looking survives — there is no bypass flag.</td>
+</tr>
+<tr>
+<td><strong>Sources, not indexes</strong></td>
+<td>Metric / semantic-model / reference-SQL <strong>YAML sources</strong> ship together with a generated <code>scripts/rebuild_kb.sh</code>. Binary LanceDB indexes never ship — the receiver rebuilds them locally.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Interactive wizard (the normal path)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w"> </span>package
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Non-interactive: package everything with defaults</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus<span class="w"> </span>package<span class="w"> </span>-y
 </span></code></pre></div>
-<div class="admonition tip">
-<p class="admonition-title">Tip</p>
-<p>The <code>model</code> parameter in node configurations references provider keys defined in <a href="../agent/#models-configuration"><code>models</code></a>.</p>
+<p>All parameters are collected through the wizard — <code>-y/--yes</code> is the only flag, and it exists as the scripting / non-TTY escape hatch. Run the command from the project root; the current working directory is what gets packaged.</p>
+<p>Press <code>Ctrl+C</code> at any step to abort. Nothing is written, and if the interrupt lands during zip assembly the partially written archive is deleted.</p>
+<h3 id="options">Options<a class="headerlink" href="#options" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-y</code>, <code>--yes</code></td>
+<td>Skip the wizard and package everything with defaults. Required when stdin/stdout is not a TTY.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>Package built</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>Build failed (including a secret detected by the final scan)</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>Usage error, or non-interactive terminal without <code>--yes</code></td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>No agent configuration found (<code>./conf/agent.yml</code> or <code>~/.datus/conf/agent.yml</code>)</td>
+</tr>
+<tr>
+<td><code>130</code></td>
+<td>Cancelled with <code>Ctrl+C</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="wizard-steps">Wizard steps<a class="headerlink" href="#wizard-steps" title="Permanent link">&para;</a></h2>
+<p>The wizard runs as a linear flow. Empty categories are skipped silently.</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>What it asks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Output path</strong></td>
+<td>Where to write the zip. Defaults to <code>./&lt;project_name&gt;.zip</code>; must end in <code>.zip</code>. Prompts before overwriting an existing file.</td>
+</tr>
+<tr>
+<td><strong>File scope</strong></td>
+<td>Package all files, or supply comma-separated <strong>include / exclude regex patterns</strong>. Patterns are validated on the spot and re-asked if invalid.</td>
+</tr>
+<tr>
+<td><strong>Subagents</strong></td>
+<td>Which agentic nodes from <code>agent.yml</code> to carry. Their prompt templates are pulled in automatically.</td>
+</tr>
+<tr>
+<td><strong>Skills</strong></td>
+<td>Project skills (<code>./.datus/skills</code>) and global skills (<code>~/.datus/skills</code>); the source of each is shown.</td>
+</tr>
+<tr>
+<td><strong>Metric datasources</strong></td>
+<td>Which <code>subject/semantic_models/&lt;datasource&gt;</code> trees to ship.</td>
+</tr>
+<tr>
+<td><strong>Subject areas</strong></td>
+<td>A two-level subject tree. Gates <strong>both</strong> metric documents and reference-SQL summaries — see below.</td>
+</tr>
+<tr>
+<td><strong>Plugins</strong></td>
+<td>Installed plugins to record in <code>scripts/install_plugins.sh</code>.</td>
+</tr>
+<tr>
+<td><strong>Reports</strong> / <strong>Dashboards</strong></td>
+<td>Which artifacts under <code>reports/</code> and <code>dashboards/</code> to include.</td>
+</tr>
+<tr>
+<td><strong>Report dist</strong></td>
+<td>Only asked when reports are selected: bundle the <code>web-artifact-render</code> dist so <code>index.html</code> opens over <code>file://</code>, or leave it loading from the CDN (default).</td>
+</tr>
+<tr>
+<td><strong>Summary</strong></td>
+<td>A table of every choice, then a final confirm. Declining exits with <code>130</code> and writes nothing.</td>
+</tr>
+</tbody>
+</table>
+<p>Each multi-select screen starts fully selected: <code>Space</code> toggles, <code>a</code> toggles all, <code>Enter</code> confirms. Deselecting an entire category asks for confirmation, so a stray <code>Ctrl+C</code> cannot silently drop one.</p>
+<h3 id="subject-area-tree">Subject-area tree<a class="headerlink" href="#subject-area-tree" title="Permanent link">&para;</a></h3>
+<p>Subject areas are read from the project's subject tree in the vector store and rendered <strong>two levels deep</strong> — roots plus their direct children, with anything deeper folded into its depth-2 parent:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>[✓] 营销分析 (24 reference SQL)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>[✓]   └ 活动统计 (15 reference SQL)
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>[-]   └ 预算分析 (2 reference SQL)
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>[ ] 运营 (22 metrics)
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>[ ]   └ 活动 (22 metrics)
+</span></code></pre></div>
+<ul>
+<li>Counts <strong>roll up</strong>, so a root shows the full cost of taking everything beneath it.</li>
+<li>Checkboxes <strong>cascade</strong>: toggling a parent toggles all of its children, and a parent becomes checked exactly when all of its children are. A partially selected parent is marked <code>[-]</code>.</li>
+<li>Selection matches by path prefix, so picking <code>营销分析</code> keeps its whole subtree while <code>营销分析/活动统计</code> narrows to that branch.</li>
+</ul>
+<p>A metric document is matched through its <code>subject_tree:</code> tag and filtered <strong>per document</strong>, not per file — one metrics YAML can span several subject areas and only the matching documents travel. Reference SQL is matched through the <code>subject_tree</code> field of each summary in <code>subject/sql_summaries/</code>.</p>
+<p>Metric documents and summaries carrying no subject tag are packaged anyway, with a warning — they belong to no subject area and would otherwise vanish from every filtered package.</p>
+<h2 id="package-layout">Package layout<a class="headerlink" href="#package-layout" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>&lt;project_name&gt;.zip
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>├── README.md                    # generated: quickstart + required env vars
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>├── requirements.txt             # generated: pinned datus packages
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>├── package_manifest.json        # generated: format, selections, per-file sha256
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>├── conf/
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>│   ├── agent.yml                # generated: home: ., ${VAR} placeholders
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>│   └── .mcp.json                # generated (only when MCP servers are configured)
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>├── .datus/
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>│   ├── config.yml               # generated: pinned project_name / default datasource
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>│   └── skills/                  # selected project skills
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>├── scripts/
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>│   ├── init.sh                  # generated: dependencies → plugins → knowledge base
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>│   ├── install_plugins.sh       # generated: datus plugin install --force, per plugin
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>│   └── rebuild_kb.sh            # generated: bootstrap-kb per source YAML
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>├── subject/
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>│   ├── semantic_models/&lt;ds&gt;/    # selected semantic models + metric documents
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>│   └── sql_summaries/           # selected reference-SQL summaries
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>├── template/                    # prompt templates for the selected subagents
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>├── reports/ · dashboards/       # selected artifacts
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>└── ...                          # the rest of your project files
+</span></code></pre></div>
+<p><code>package_manifest.json</code> records the package format version, the exact selections, the required environment variables, and a <code>sha256</code> plus a <code>generated</code> / <code>project</code> provenance flag for every file.</p>
+<h3 id="never-packaged">Never packaged<a class="headerlink" href="#never-packaged" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Entries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Runtime state (top level)</td>
+<td><code>sessions/</code> <code>data/</code> <code>logs/</code> <code>run/</code> <code>cache/</code> <code>save/</code> <code>trajectory/</code> <code>output*/</code> <code>.venv/</code> <code>.git/</code>, and the REPL <code>history</code> file</td>
+</tr>
+<tr>
+<td>Secrets and OS/editor litter</td>
+<td><code>.env</code> <code>.DS_Store</code> <code>._*</code> (macOS AppleDouble sidecars) <code>__MACOSX/</code> <code>__pycache__/</code> <code>*.swp</code> <code>*.swo</code> <code>*~</code> <code>*.duckdb.wal</code>, plus volume metadata such as <code>.Spotlight-V100/</code></td>
+</tr>
+<tr>
+<td>Binary indexes</td>
+<td>LanceDB data under <code>data/</code> — rebuilt by <code>scripts/rebuild_kb.sh</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>reports/</code>, <code>dashboards/</code> and <code>template/</code> are owned by the selectors: only what you pick in the wizard ships, even when "package all files" is chosen.</p>
+<h2 id="secrets">Secrets<a class="headerlink" href="#secrets" title="Permanent link">&para;</a></h2>
+<p>Every credential field in <code>agent.yml</code> is rewritten to a <code>${VAR}</code> placeholder before the config is written into the package:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">home</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">project_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">baisheng</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">providers</span><span class="p">:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">deepseek</span><span class="p">:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="nt">starrocks</span><span class="p">:</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_HOST:-127.0.0.1}</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PORT:-9030}</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PASSWORD}</span>
+</span></code></pre></div>
+<ul>
+<li>Fields that already used <code>${VAR}</code> or <code>${VAR:-default}</code> in the source config keep their variable name and default.</li>
+<li>Detection is <strong>schema-driven</strong> — the field's role decides, not the value, because a plaintext key and an ordinary string are indistinguishable.</li>
+<li>Database URIs have only the password component replaced, so host, port and database name survive: <code>postgresql://svc:${DATUS_DS_PG_URI_PASSWORD}@db.example.com/warehouse</code>.</li>
+<li>Plugin profiles are sanitized from each plugin's config schema. A plugin whose schema cannot be loaded degrades to replacing <em>every</em> string field, with a warning — safe by default.</li>
+</ul>
+<p>After staging, a content scan runs over the whole package. If any real-looking secret is found the build <strong>fails</strong> and the offending file plus locator is printed; fix the source config (or exclude the file) and retry.</p>
+<p>The generated <code>README.md</code> lists every required variable and where it is used:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DEEPSEEK_API_KEY</code></td>
+<td>providers.deepseek.api_key</td>
+</tr>
+<tr>
+<td><code>STARROCKS_PASSWORD</code></td>
+<td>services.datasources.starrocks.password</td>
+</tr>
+</tbody>
+</table>
+<h2 id="receiving-a-package">Receiving a package<a class="headerlink" href="#receiving-a-package" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>unzip<span class="w"> </span>baisheng.zip<span class="w"> </span>-d<span class="w"> </span>baisheng<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>baisheng
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DEEPSEEK_API_KEY</span><span class="o">=</span>...<span class="w"> </span><span class="nv">STARROCKS_PASSWORD</span><span class="o">=</span>...<span class="w">   </span><span class="c1"># see README.md</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>bash<span class="w"> </span>scripts/init.sh
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>datus-api<span class="w">        </span><span class="c1"># or `datus` for the interactive console</span>
+</span></code></pre></div>
+<p><code>init.sh</code> installs dependencies, then plugins, then rebuilds the knowledge base. It is safe to re-run: pip is idempotent, plugin installs pass <code>--force</code>, and the KB steps overwrite. Each step is also available on its own — <code>scripts/rebuild_kb.sh</code> is worth re-running after editing the subject YAML.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code>.env</code> files are <strong>not</strong> auto-loaded when datus-agent is installed via pip. Export the variables in your shell, or run <code>set -a; source .env; set +a</code>.</p>
 </div>
-<h2 id="core-nodes">Core Nodes<a class="headerlink" href="#core-nodes" title="Permanent link">&para;</a></h2>
-<h3 id="schema-linking">Schema Linking<a class="headerlink" href="#schema-linking" title="Permanent link">&para;</a></h3>
-<p>The schema linking node uses vector search to match table metadata, sample data, and extended knowledge definitions related to user questions.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">schema_linking</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span><span class="w">                    </span><span class="c1"># LLM model for schema selection</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">matching_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fast</span><span class="w">              </span><span class="c1"># fast/medium/slow/from_llm</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span><span class="w">            </span><span class="c1"># Prompt version to use</span>
+<p><code>init.sh</code> uses <code>$PYTHON</code> (default <code>python3</code>) and prefers <code>uv</code> over <code>pip</code>, so it works inside a uv-created virtualenv that has no <code>pip</code> module. Set <code>PYTHON=/path/to/python</code> to target a specific interpreter.</p>
+<h2 id="example-session">Example session<a class="headerlink" href="#example-session" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>$ datus package
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>Packaging project &#39;baisheng&#39; from /Users/me/baisheng-project
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>Output zip path [/Users/me/baisheng-project/baisheng.zip]:
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>Package all files? [Y/n]: y
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>Subagents: Space toggles, &#39;a&#39; toggles all, Enter confirms
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>...
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>Subject areas: Space toggles, &#39;a&#39; toggles all, Enter confirms
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>...
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>             Package summary
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>  Item                Value
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>  Project             baisheng
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>  Output              /Users/me/baisheng-project/baisheng.zip
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>  Subject areas       营销分析/活动统计
+</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>  Metric datasources  starrocks
+</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>  ...
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>Build the package now? [Y/n]: y
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>✓ Package built: /Users/me/baisheng-project/baisheng.zip
+</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>  163 files, 4.2 MB uncompressed
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>  Subject areas: 营销分析/活动统计 → 15 reference-SQL summaries
+</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>  Receiver must export: DEEPSEEK_API_KEY, STARROCKS_PASSWORD
 </span></code></pre></div>
-<p><strong>Configuration Parameters:</strong></p>
+<p>The result always spells out what the selection produced. Counting zip entries by hand is unreliable — <code>unzip -l</code> wraps long or CJK filenames onto several lines, which makes a correctly filtered package look unfiltered.</p>
+<h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>model</strong>: LLM model key from top-level <code>models</code> configuration</li>
-<li><strong>matching_rate</strong>: Controls how many matching results to return<ul>
-<li><code>fast</code>: Top 5 matching data (fastest, least comprehensive)</li>
-<li><code>medium</code>: Top 10 matching data (balanced)</li>
-<li><code>slow</code>: Top 20 matching data (most comprehensive)</li>
-<li><code>from_llm</code>: Use LLM to select the most relevant tables from all available metadata</li>
-</ul>
-</li>
-<li><strong>prompt_version</strong>: Version of the prompt template to use</li>
-</ul>
-<h3 id="gensql">GenSQL<a class="headerlink" href="#gensql" title="Permanent link">&para;</a></h3>
-<p>Uses the agentic SQL generator to produce and validate SQL with database, semantic, and context-search tools.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">gen_sql</span><span class="p">:</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek_v3</span><span class="w">                    </span><span class="c1"># LLM for SQL generation</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_sql</span><span class="w">                </span><span class="c1"># Uses the canonical gen_sql_system prompt</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.2&quot;</span><span class="w">                 </span><span class="c1"># Prompt template version</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db_tools.*, context_search_tools.*</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
-</span></code></pre></div>
-<p><strong>Configuration Parameters:</strong></p>
-<ul>
-<li><strong>model</strong>: LLM model for SQL generation</li>
-<li><strong>system_prompt</strong>: Prompt family for SQL generation; use <code>gen_sql</code>, which maps to the canonical <code>gen_sql_system</code> template</li>
-<li><strong>prompt_version</strong>: Prompt template version (latest used by default)</li>
-<li><strong>tools</strong>: Tool patterns available to the SQL generator</li>
-<li><strong>max_turns</strong>: Maximum number of tool-assisted reasoning turns</li>
-</ul>
-<h3 id="reasoning">Reasoning<a class="headerlink" href="#reasoning" title="Permanent link">&para;</a></h3>
-<p>Iteratively generates, executes, and optimizes SQL queries based on database feedback.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">reasoning</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic</span><span class="w">                      </span><span class="c1"># LLM for reasoning</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span><span class="w">                 </span><span class="c1"># Prompt template version</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">max_table_schemas_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4000</span><span class="w">        </span><span class="c1"># Max length for table metadata</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">max_data_details_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2000</span><span class="w">         </span><span class="c1"># Max length for sample data</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">max_context_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8000</span><span class="w">              </span><span class="c1"># Max context length</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">max_value_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">500</span><span class="w">                 </span><span class="c1"># Max length per sample value</span>
-</span></code></pre></div>
-<p><strong>Configuration Parameters:</strong>
-- Reasoning keeps its own fixed-node limits and may fall back to <code>gen_sql</code> when regeneration is needed</p>
-<h3 id="search-metrics">Search Metrics<a class="headerlink" href="#search-metrics" title="Permanent link">&para;</a></h3>
-<p>Matches relevant metrics through vector search based on user questions.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">search_metrics</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span><span class="w">                    </span><span class="c1"># LLM model for metric selection</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">matching_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">medium</span><span class="w">            </span><span class="c1"># fast/medium/slow</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span><span class="w">            </span><span class="c1"># Prompt version to use</span>
-</span></code></pre></div>
-<p><strong>Configuration Parameters:</strong>
-- Same as <code>schema_linking</code> node - specialized for metric discovery</p>
-<h2 id="processing-nodes">Processing Nodes<a class="headerlink" href="#processing-nodes" title="Permanent link">&para;</a></h2>
-<h3 id="reflect">Reflect<a class="headerlink" href="#reflect" title="Permanent link">&para;</a></h3>
-<p>Evaluates SQL execution results and provides improvement suggestions.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">reflect</span><span class="p">:</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span><span class="w">            </span><span class="c1"># Prompt template version</span>
-</span></code></pre></div>
-<p><strong>Configuration Parameters:</strong>
-- <strong>prompt_version</strong>: Version of reflection prompt template to use</p>
-<h3 id="output">Output<a class="headerlink" href="#output" title="Permanent link">&para;</a></h3>
-<p>Formats and outputs SQL results to files and provides final responses.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">output</span><span class="p">:</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic</span><span class="w">                 </span><span class="c1"># LLM for output formatting</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span><span class="w">            </span><span class="c1"># Prompt template version</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">check_result</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">               </span><span class="c1"># Enable result validation</span>
-</span></code></pre></div>
-<p><strong>Configuration Parameters:</strong></p>
-<ul>
-<li><strong>model</strong>: LLM model for result formatting and validation</li>
-<li><strong>prompt_version</strong>: Output formatting prompt version</li>
-<li><strong>check_result</strong>: When true, LLM validates generated SQL and results for completeness and accuracy</li>
-</ul>
-<h2 id="interactive-nodes">Interactive Nodes<a class="headerlink" href="#interactive-nodes" title="Permanent link">&para;</a></h2>
-<h3 id="chat">Chat<a class="headerlink" href="#chat" title="Permanent link">&para;</a></h3>
-<p>Enables multi-turn conversations with access to databases, files, metrics, and knowledge bases.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">chat</span><span class="p">:</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">workspace_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sql2</span><span class="w">             </span><span class="c1"># Root directory for file operations</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic</span><span class="w">                 </span><span class="c1"># LLM for conversation</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">25</span><span class="w">                    </span><span class="c1"># Maximum conversation turns</span>
-</span></code></pre></div>
-<p><strong>Configuration Parameters:</strong></p>
-<ul>
-<li><strong>workspace_root</strong>: Root directory where file tools can operate</li>
-<li><strong>model</strong>: LLM model for multi-turn dialogue</li>
-<li><strong>max_turns</strong>: Maximum number of tool-assisted reasoning turns</li>
-</ul>
-<h2 id="utility-nodes">Utility Nodes<a class="headerlink" href="#utility-nodes" title="Permanent link">&para;</a></h2>
-<h3 id="date-parser">Date Parser<a class="headerlink" href="#date-parser" title="Permanent link">&para;</a></h3>
-<p>Parses and interprets date-related queries in user questions.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">date_parser</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="c1"># Typically uses default configuration</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span></code></pre></div>
-<h3 id="compare">Compare<a class="headerlink" href="#compare" title="Permanent link">&para;</a></h3>
-<p>Compares generated SQL with reference SQL for benchmarking purposes.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">compare</span><span class="p">:</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="c1"># Used primarily in benchmark scenarios</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span></code></pre></div>
-<h3 id="fix">Fix<a class="headerlink" href="#fix" title="Permanent link">&para;</a></h3>
-<p>Analyzes and fixes SQL queries using dialect-specific rules.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">fix</span><span class="p">:</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span><span class="w">                    </span><span class="c1"># LLM for SQL fixing</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span><span class="w">            </span><span class="c1"># Prompt version</span>
-</span></code></pre></div>
-<h2 id="complete-node-configuration-example">Complete Node Configuration Example<a class="headerlink" href="#complete-node-configuration-example" title="Permanent link">&para;</a></h2>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">nodes</span><span class="p">:</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="c1"># Schema discovery and linking</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span><span class="nt">schema_linking</span><span class="p">:</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="nt">matching_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fast</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">  </span><span class="c1"># Metric discovery</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">  </span><span class="nt">search_metrics</span><span class="p">:</span>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">    </span><span class="nt">matching_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">medium</span>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="w">  </span><span class="c1"># Advanced reasoning</span>
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="w">  </span><span class="nt">reasoning</span><span class="p">:</span>
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic</span>
-</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="w">    </span><span class="nt">max_table_schemas_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4000</span>
-</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="w">    </span><span class="nt">max_data_details_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2000</span>
-</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a><span class="w">    </span><span class="nt">max_context_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8000</span>
-</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="w">    </span><span class="nt">max_value_length</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">500</span>
-</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>
-</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a><span class="w">  </span><span class="c1"># Result reflection and improvement</span>
-</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a><span class="w">  </span><span class="nt">reflect</span><span class="p">:</span>
-</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>
-</span><span id="__span-11-27"><a id="__codelineno-11-27" name="__codelineno-11-27" href="#__codelineno-11-27"></a><span class="w">  </span><span class="c1"># Output formatting and validation</span>
-</span><span id="__span-11-28"><a id="__codelineno-11-28" name="__codelineno-11-28" href="#__codelineno-11-28"></a><span class="w">  </span><span class="nt">output</span><span class="p">:</span>
-</span><span id="__span-11-29"><a id="__codelineno-11-29" name="__codelineno-11-29" href="#__codelineno-11-29"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic</span>
-</span><span id="__span-11-30"><a id="__codelineno-11-30" name="__codelineno-11-30" href="#__codelineno-11-30"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-11-31"><a id="__codelineno-11-31" name="__codelineno-11-31" href="#__codelineno-11-31"></a><span class="w">    </span><span class="nt">check_result</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-11-32"><a id="__codelineno-11-32" name="__codelineno-11-32" href="#__codelineno-11-32"></a>
-</span><span id="__span-11-33"><a id="__codelineno-11-33" name="__codelineno-11-33" href="#__codelineno-11-33"></a><span class="w">  </span><span class="c1"># Date parsing</span>
-</span><span id="__span-11-34"><a id="__codelineno-11-34" name="__codelineno-11-34" href="#__codelineno-11-34"></a><span class="w">  </span><span class="nt">date_parser</span><span class="p">:</span>
-</span><span id="__span-11-35"><a id="__codelineno-11-35" name="__codelineno-11-35" href="#__codelineno-11-35"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-11-36"><a id="__codelineno-11-36" name="__codelineno-11-36" href="#__codelineno-11-36"></a>
-</span><span id="__span-11-37"><a id="__codelineno-11-37" name="__codelineno-11-37" href="#__codelineno-11-37"></a><span class="w">  </span><span class="c1"># SQL fixing</span>
-</span><span id="__span-11-38"><a id="__codelineno-11-38" name="__codelineno-11-38" href="#__codelineno-11-38"></a><span class="w">  </span><span class="nt">fix</span><span class="p">:</span>
-</span><span id="__span-11-39"><a id="__codelineno-11-39" name="__codelineno-11-39" href="#__codelineno-11-39"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-11-40"><a id="__codelineno-11-40" name="__codelineno-11-40" href="#__codelineno-11-40"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
-</span><span id="__span-11-41"><a id="__codelineno-11-41" name="__codelineno-11-41" href="#__codelineno-11-41"></a>
-</span><span id="__span-11-42"><a id="__codelineno-11-42" name="__codelineno-11-42" href="#__codelineno-11-42"></a><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-11-43"><a id="__codelineno-11-43" name="__codelineno-11-43" href="#__codelineno-11-43"></a><span class="w">  </span><span class="c1"># SQL generation</span>
-</span><span id="__span-11-44"><a id="__codelineno-11-44" name="__codelineno-11-44" href="#__codelineno-11-44"></a><span class="w">  </span><span class="nt">gen_sql</span><span class="p">:</span>
-</span><span id="__span-11-45"><a id="__codelineno-11-45" name="__codelineno-11-45" href="#__codelineno-11-45"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek_v3</span>
-</span><span id="__span-11-46"><a id="__codelineno-11-46" name="__codelineno-11-46" href="#__codelineno-11-46"></a><span class="w">    </span><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_sql</span>
-</span><span id="__span-11-47"><a id="__codelineno-11-47" name="__codelineno-11-47" href="#__codelineno-11-47"></a><span class="w">    </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.2&quot;</span>
-</span><span id="__span-11-48"><a id="__codelineno-11-48" name="__codelineno-11-48" href="#__codelineno-11-48"></a><span class="w">    </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db_tools.*, context_search_tools.*</span>
-</span><span id="__span-11-49"><a id="__codelineno-11-49" name="__codelineno-11-49" href="#__codelineno-11-49"></a><span class="w">    </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
-</span><span id="__span-11-50"><a id="__codelineno-11-50" name="__codelineno-11-50" href="#__codelineno-11-50"></a>
-</span><span id="__span-11-51"><a id="__codelineno-11-51" name="__codelineno-11-51" href="#__codelineno-11-51"></a><span class="w">  </span><span class="c1"># Interactive chat</span>
-</span><span id="__span-11-52"><a id="__codelineno-11-52" name="__codelineno-11-52" href="#__codelineno-11-52"></a><span class="w">  </span><span class="nt">chat</span><span class="p">:</span>
-</span><span id="__span-11-53"><a id="__codelineno-11-53" name="__codelineno-11-53" href="#__codelineno-11-53"></a><span class="w">    </span><span class="nt">workspace_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">workspace</span>
-</span><span id="__span-11-54"><a id="__codelineno-11-54" name="__codelineno-11-54" href="#__codelineno-11-54"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic</span>
-</span><span id="__span-11-55"><a id="__codelineno-11-55" name="__codelineno-11-55" href="#__codelineno-11-55"></a><span class="w">    </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">25</span>
-</span></code></pre></div>
-<h2 id="model-assignment-strategy">Model Assignment Strategy<a class="headerlink" href="#model-assignment-strategy" title="Permanent link">&para;</a></h2>
-<p>The model names below refer to the <code>model</code> field inside each <code>models.&lt;key&gt;</code> provider entry (not the <code>nodes.*.model</code> key, which should use the provider key name like <code>openai</code> or <code>anthropic</code>).</p>
-<p><strong>For Schema Linking:</strong></p>
-<ul>
-<li>Use fast, cost-effective models: <code>gpt-3.5-turbo</code>, <code>deepseek-chat</code></li>
-<li>For complex schemas: <code>gpt-4</code>, <code>claude-4-sonnet</code></li>
-</ul>
-<p><strong>For SQL Generation:</strong></p>
-<ul>
-<li>Recommended: <code>deepseek-chat</code>, <code>gpt-4-turbo</code>, <code>claude-4-sonnet</code></li>
-<li>Avoid: Basic models that struggle with complex SQL</li>
-</ul>
-<p><strong>For Reasoning:</strong></p>
-<ul>
-<li>Best: <code>claude-4-sonnet</code>, <code>gpt-4-turbo</code>, <code>claude-4-opus</code></li>
-<li>Good: <code>gemini-2.5-flash</code></li>
-</ul>
-<p><strong>For Output and Chat:</strong></p>
-<ul>
-<li>Recommended: <code>claude-4-sonnet</code>, <code>gpt-4-turbo</code></li>
-<li>Good for formatting: <code>anthropic</code> models</li>
+<li><a href="../../knowledge_base/reference_sql/">Knowledge Base — Reference SQL</a></li>
+<li><a href="../../knowledge_base/metrics/">Knowledge Base — Metrics</a></li>
+<li><a href="../../configuration/agent/">Configuration — Agent</a></li>
 </ul>
 
 
@@ -4854,9 +4777,6 @@
 
 
 
-
-  
-  
 
 
 
@@ -4880,7 +4800,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../storage/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Storage">
+          <a href="../skill_command/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Skill Command">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4890,20 +4810,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Storage
+                Skill Command
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../adapters/db_adapters/" class="md-footer__link md-footer__link--next" aria-label="Next: Database Adapters">
+          <a href="../reference/" class="md-footer__link md-footer__link--next" aria-label="Next: Reference">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Database Adapters
+                Reference
               </div>
             </div>
             <div class="md-footer__button md-icon">
