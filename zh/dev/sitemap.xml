@@ -133,6 +133,12 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/cli/other_commands/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/zh/dev/dev/cli/package_command/</loc>
+        <lastmod>2026-08-14</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/cli/package_command/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/zh/dev/dev/cli/plan_mode/</loc>
         <lastmod>2026-08-14</lastmod>
         <changefreq>daily</changefreq>

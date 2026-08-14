@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/skills/session_summarize/">
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/cli/package_command/">
       
       
-        <link rel="prev" href="../memory_organization/">
+        <link rel="prev" href="../skill_command/">
       
       
-        <link rel="next" href="../../plugin/introduction/">
+        <link rel="next" href="../reference/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>会话总结 - Datus Docs</title>
+        <title>打包命令 - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#session-summarize" class="md-skip">
+        <a href="#_1" class="md-skip">
           跳转至
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              会话总结
+              打包命令
             
           </span>
         </div>
@@ -629,8 +629,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -663,11 +665,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -688,7 +690,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -706,7 +708,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -734,7 +736,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/chat_command/" class="md-nav__link">
+      <a href="../chat_command/" class="md-nav__link">
         
   
   
@@ -762,7 +764,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/context_command/" class="md-nav__link">
+      <a href="../context_command/" class="md-nav__link">
         
   
   
@@ -790,7 +792,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/execution_command/" class="md-nav__link">
+      <a href="../execution_command/" class="md-nav__link">
         
   
   
@@ -818,7 +820,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/mcp_extensions/" class="md-nav__link">
+      <a href="../mcp_extensions/" class="md-nav__link">
         
   
   
@@ -846,7 +848,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/sql_execution/" class="md-nav__link">
+      <a href="../sql_execution/" class="md-nav__link">
         
   
   
@@ -874,7 +876,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/skill_command/" class="md-nav__link">
+      <a href="../skill_command/" class="md-nav__link">
         
   
   
@@ -899,10 +901,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../cli/package_command/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    打包命令
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -918,6 +947,176 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        设计保证
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        使用方法
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="使用方法">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        选项
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        退出码
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        向导步骤
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="向导步骤">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主题树选择
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        包结构
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="包结构">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        永不入包的内容
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        密钥处理
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        接收方使用
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        示例会话
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -930,7 +1129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/reference/" class="md-nav__link">
+      <a href="../reference/" class="md-nav__link">
         
   
   
@@ -958,7 +1157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/plan_mode/" class="md-nav__link">
+      <a href="../plan_mode/" class="md-nav__link">
         
   
   
@@ -986,7 +1185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli/other_commands/" class="md-nav__link">
+      <a href="../other_commands/" class="md-nav__link">
         
   
   
@@ -1439,10 +1638,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1457,11 +1654,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_5" >
         
           
           <label class="md-nav__link" for="__nav_1_5" id="__nav_1_5_label" tabindex="0">
@@ -1482,7 +1679,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1500,7 +1697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../skills/introduction/" class="md-nav__link">
         
   
   
@@ -1525,10 +1722,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -1551,11 +1746,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_5_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_5_2" >
         
           
           <label class="md-nav__link" for="__nav_1_5_2" id="__nav_1_5_2_label" tabindex="0">
@@ -1576,7 +1771,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_5_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_5_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_5_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1594,7 +1789,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../init/" class="md-nav__link">
+      <a href="../../skills/init/" class="md-nav__link">
         
   
   
@@ -1622,7 +1817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../build_kb/" class="md-nav__link">
+      <a href="../../skills/build_kb/" class="md-nav__link">
         
   
   
@@ -1650,7 +1845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage_classify/" class="md-nav__link">
+      <a href="../../skills/storage_classify/" class="md-nav__link">
         
   
   
@@ -1678,7 +1873,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../extract_knowledge/" class="md-nav__link">
+      <a href="../../skills/extract_knowledge/" class="md-nav__link">
         
   
   
@@ -1706,7 +1901,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../memory_organization/" class="md-nav__link">
+      <a href="../../skills/memory_organization/" class="md-nav__link">
         
   
   
@@ -1731,37 +1926,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    会话总结
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../skills/session_summarize/" class="md-nav__link">
         
   
   
@@ -1777,70 +1945,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="目录">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      目录
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        功能作用
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        何时使用
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        如何使用
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        示例
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -4216,21 +4320,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        功能作用
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        何时使用
+        设计保证
       
     </span>
   </a>
@@ -4241,7 +4334,102 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        如何使用
+        使用方法
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="使用方法">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        选项
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        退出码
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        向导步骤
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="向导步骤">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        主题树选择
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        包结构
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="包结构">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        永不入包的内容
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        密钥处理
       
     </span>
   </a>
@@ -4249,10 +4437,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
-        示例
+        接收方使用
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        示例会话
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
       
     </span>
   </a>
@@ -4276,7 +4486,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/skills/session_summarize.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/package_command.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4284,26 +4494,283 @@
   
 
 
-<h1 id="session-summarize">Session Summarize<a class="headerlink" href="#session-summarize" title="Permanent link">&para;</a></h1>
-<p><code>session-summarize</code> 回顾一次聊天会话并持久化重要内容。它会通读对话，识别值得长期保留的产出，并把每一项路由到合适的存储。在一次工作会话结束时使用它，让下一次能从你离开的地方继续。</p>
-<h2 id="_1">功能作用<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>一次工作会话往往会产生值得保留的内容——你发现的一条业务规则、你陈述的一项偏好、你验证过的一段查询。<code>session-summarize</code> 会回顾整段对话，挑出这些持久的产出，并把每一项保存到合适的存储（通过 <a href="../storage_classify/">Storage Classify</a>）：事实存入 knowledge，偏好存入 memory，已验证查询存入参考 SQL，依此类推。</p>
-<h2 id="_2">何时使用<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h1 id="_1">打包命令<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p><code>datus package</code> 命令将当前项目目录导出为一个<strong>自包含的 zip 包</strong>。接收方解压、导出几个环境变量、运行一条初始化脚本，就得到一个可用的 Datus 项目 —— 不依赖共享的 <code>~/.datus</code>，无需手工改配置，也不会有任何凭据随包外流。</p>
+<h2 id="_2">设计保证<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>保证</th>
+<th>实现方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>自包含</strong></td>
+<td>生成的 <code>conf/agent.yml</code> 固定 <code>home: .</code> 和 <code>project_name</code>，解压出的目录就是完整运行时。接收方的 <code>~/.datus</code> 不会被读写。</td>
+</tr>
+<tr>
+<td><strong>零密钥</strong></td>
+<td><code>conf/agent.yml</code> 和 <code>conf/.mcp.json</code> 是<strong>重新生成</strong>的，从不直接拷贝。每个凭据字段都被替换为 <code>${VAR}</code> 占位符。打包前会对所有待写入文件做一次内容扫描，一旦发现疑似密钥就直接构建失败 —— 没有跳过开关。</td>
+</tr>
+<tr>
+<td><strong>只带源文件，不带索引</strong></td>
+<td>指标 / 语义模型 / Reference SQL 的 <strong>YAML 源文件</strong>随包发出，并附带生成的 <code>scripts/rebuild_kb.sh</code>。二进制 LanceDB 索引不入包，由接收方本地重建。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_3">使用方法<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 交互式向导（常规用法）</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w"> </span>package
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># 非交互：按默认值打包全部内容</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus<span class="w"> </span>package<span class="w"> </span>-y
+</span></code></pre></div>
+<p>所有参数都通过向导收集 —— <code>-y/--yes</code> 是唯一的命令行开关，用于脚本 / 非 TTY 场景。请在项目根目录下执行，被打包的就是当前工作目录。</p>
+<p>任意步骤按 <code>Ctrl+C</code> 均可中断。中断时不会留下任何产物；若中断发生在写 zip 的过程中，已写了一半的归档会被删除。</p>
+<h3 id="_4">选项<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>描述</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-y</code>, <code>--yes</code></td>
+<td>跳过向导，按默认值打包全部内容。stdin/stdout 不是 TTY 时必须使用。</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_5">退出码<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>退出码</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>打包成功</td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>构建失败（包括最终扫描发现密钥）</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>参数错误，或非交互终端且未传 <code>--yes</code></td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>未找到 agent 配置（<code>./conf/agent.yml</code> 或 <code>~/.datus/conf/agent.yml</code>）</td>
+</tr>
+<tr>
+<td><code>130</code></td>
+<td>被 <code>Ctrl+C</code> 取消</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_6">向导步骤<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<p>向导是线性流程，内容为空的分类会被静默跳过。</p>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>询问内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>输出路径</strong></td>
+<td>zip 的写入位置，默认 <code>./&lt;project_name&gt;.zip</code>，必须以 <code>.zip</code> 结尾。目标文件已存在时会先确认。</td>
+</tr>
+<tr>
+<td><strong>文件范围</strong></td>
+<td>打包全部文件，或提供逗号分隔的 <strong>include / exclude 正则</strong>。正则会当场校验，非法时重新询问。</td>
+</tr>
+<tr>
+<td><strong>Subagents</strong></td>
+<td>选择要携带的 <code>agent.yml</code> agentic node，其提示词模板会自动一并打包。</td>
+</tr>
+<tr>
+<td><strong>Skills</strong></td>
+<td>项目技能（<code>./.datus/skills</code>）与全局技能（<code>~/.datus/skills</code>），列表中标注来源。</td>
+</tr>
+<tr>
+<td><strong>指标数据源</strong></td>
+<td>选择要携带的 <code>subject/semantic_models/&lt;datasource&gt;</code> 目录。</td>
+</tr>
+<tr>
+<td><strong>主题域（Subject areas）</strong></td>
+<td>两层主题树。<strong>同时</strong>约束指标文档与 Reference SQL 摘要 —— 见下文。</td>
+</tr>
+<tr>
+<td><strong>插件</strong></td>
+<td>已安装的插件，写入 <code>scripts/install_plugins.sh</code>。</td>
+</tr>
+<tr>
+<td><strong>报告</strong> / <strong>看板</strong></td>
+<td>选择 <code>reports/</code> 与 <code>dashboards/</code> 下要包含的产物。</td>
+</tr>
+<tr>
+<td><strong>报告 dist</strong></td>
+<td>仅在选了报告时询问：是否内置 <code>web-artifact-render</code> dist 以便 <code>index.html</code> 通过 <code>file://</code> 打开；默认走 CDN。</td>
+</tr>
+<tr>
+<td><strong>确认摘要</strong></td>
+<td>列出全部选择的表格，最后确认。选择「否」以 <code>130</code> 退出且不写任何文件。</td>
+</tr>
+</tbody>
+</table>
+<p>每个多选界面默认全选：<code>Space</code> 切换、<code>a</code> 全选/全不选、<code>Enter</code> 确认。整类取消时会二次确认，避免一次误触的 <code>Ctrl+C</code> 悄无声息地丢掉一整类内容。</p>
+<h3 id="_7">主题树选择<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<p>主题域读自项目在向量库中的 subject tree，<strong>最多渲染两层</strong> —— 根节点及其直接子节点，更深的路径折叠进它的第二层父节点：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>[✓] 营销分析 (24 reference SQL)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>[✓]   └ 活动统计 (15 reference SQL)
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>[-]   └ 预算分析 (2 reference SQL)
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>[ ] 运营 (22 metrics)
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>[ ]   └ 活动 (22 metrics)
+</span></code></pre></div>
 <ul>
-<li>会话产生了持久的事实、偏好或已验证的 SQL。</li>
-<li>你想保存或记住这次会话。</li>
-<li>在切换到其他项目或任务之前。</li>
+<li>计数<strong>向上汇总</strong>，所以根节点直接说明「全选它要付多少代价」。</li>
+<li>复选框<strong>双向联动</strong>：勾选父节点会连带勾选全部子节点；子节点全部选中时父节点自动勾选。部分选中的父节点标记为 <code>[-]</code>。</li>
+<li>匹配按路径前缀进行：选 <code>营销分析</code> 保留整棵子树，选 <code>营销分析/活动统计</code> 则收窄到该分支。</li>
 </ul>
-<h2 id="_3">如何使用<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>在会话结束时以 skill 方式运行 <code>session-summarize</code>。你可以选择性地给它聚焦提示；不带提示时，它会回顾整段会话。它只捕获值得保留的产出——一次性的来回讨论会被略去。</p>
-<h2 id="_4">示例<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>你用一次会话弄清了一个流失率查询。过程中你确认了一段已验证的 SQL，得知 <code>plan_tier = 0</code> 表示免费账户，并决定更喜欢把结果四舍五入到整数百分比。结束时，<code>session-summarize</code> 会保存：</p>
+<p>指标文档通过 <code>subject_tree:</code> 标签匹配，并且是<strong>按文档过滤而非按文件</strong> —— 一个 metrics YAML 可能横跨多个主题域，只有命中的文档会随包发出。Reference SQL 通过 <code>subject/sql_summaries/</code> 中每份摘要的 <code>subject_tree</code> 字段匹配。</p>
+<p>没有主题标签的指标文档和摘要仍会被打包，同时给出警告 —— 它们不属于任何主题域，否则会从所有过滤后的包中消失。</p>
+<h2 id="_8">包结构<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>&lt;project_name&gt;.zip
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>├── README.md                    # 生成：快速上手 + 所需环境变量
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>├── requirements.txt             # 生成：固定版本的 datus 依赖
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>├── package_manifest.json        # 生成：格式、选择项、逐文件 sha256
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>├── conf/
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>│   ├── agent.yml                # 生成：home: .，凭据为 ${VAR} 占位符
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>│   └── .mcp.json                # 生成（仅当配置了 MCP server）
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>├── .datus/
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>│   ├── config.yml               # 生成：固定 project_name / 默认数据源
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>│   └── skills/                  # 选中的项目技能
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>├── scripts/
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>│   ├── init.sh                  # 生成：装依赖 → 装插件 → 重建知识库
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>│   ├── install_plugins.sh       # 生成：逐个 datus plugin install --force
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>│   └── rebuild_kb.sh            # 生成：逐份源 YAML 执行 bootstrap-kb
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>├── subject/
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>│   ├── semantic_models/&lt;ds&gt;/    # 选中的语义模型与指标文档
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>│   └── sql_summaries/           # 选中的 Reference SQL 摘要
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>├── template/                    # 选中 subagent 的提示词模板
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>├── reports/ · dashboards/       # 选中的产物
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>└── ...                          # 项目的其余文件
+</span></code></pre></div>
+<p><code>package_manifest.json</code> 记录包格式版本、精确的选择项、所需环境变量，以及每个文件的 <code>sha256</code> 和 <code>generated</code> / <code>project</code> 来源标记。</p>
+<h3 id="_9">永不入包的内容<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>条目</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>运行时状态（顶层）</td>
+<td><code>sessions/</code> <code>data/</code> <code>logs/</code> <code>run/</code> <code>cache/</code> <code>save/</code> <code>trajectory/</code> <code>output*/</code> <code>.venv/</code> <code>.git/</code>，以及 REPL 的 <code>history</code> 文件</td>
+</tr>
+<tr>
+<td>密钥与系统/编辑器垃圾</td>
+<td><code>.env</code> <code>.DS_Store</code> <code>._*</code>（macOS AppleDouble 附属文件）<code>__MACOSX/</code> <code>__pycache__/</code> <code>*.swp</code> <code>*.swo</code> <code>*~</code> <code>*.duckdb.wal</code>，以及 <code>.Spotlight-V100/</code> 等卷元数据</td>
+</tr>
+<tr>
+<td>二进制索引</td>
+<td><code>data/</code> 下的 LanceDB 数据 —— 由 <code>scripts/rebuild_kb.sh</code> 重建</td>
+</tr>
+</tbody>
+</table>
+<p><code>reports/</code>、<code>dashboards/</code>、<code>template/</code> 由选择器接管：即便选了「打包全部文件」，也只有向导中勾选的内容会入包。</p>
+<h2 id="_10">密钥处理<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<p>写入包之前，<code>agent.yml</code> 中的每个凭据字段都会被改写为 <code>${VAR}</code> 占位符：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">home</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">project_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">baisheng</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">providers</span><span class="p">:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">deepseek</span><span class="p">:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="nt">starrocks</span><span class="p">:</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_HOST:-127.0.0.1}</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PORT:-9030}</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PASSWORD}</span>
+</span></code></pre></div>
 <ul>
-<li>流失率查询 → <strong>参考 SQL</strong>，</li>
-<li><code>plan_tier = 0</code> 规则 → <strong>knowledge</strong>，</li>
-<li>四舍五入偏好 → <strong>memory</strong>。</li>
+<li>源配置中本来就写成 <code>${VAR}</code> 或 <code>${VAR:-default}</code> 的字段，会保留原变量名和默认值。</li>
+<li>识别是<strong>基于 schema</strong> 的 —— 由字段的角色决定，而不是看值，因为明文密钥和普通字符串在值这一层无法区分。</li>
+<li>数据库 URI 只替换密码部分，主机、端口、库名原样保留：<code>postgresql://svc:${DATUS_DS_PG_URI_PASSWORD}@db.example.com/warehouse</code>。</li>
+<li>插件配置按各插件的 config schema 脱敏。schema 加载失败的插件会退化为替换<strong>所有</strong>字符串字段并给出警告 —— 默认偏安全。</li>
 </ul>
-<p>下一次会话会自动获取这三者。</p>
+<p>暂存完成后会对整个包做一次内容扫描。一旦发现疑似真实密钥，构建<strong>失败</strong>并打印出问题文件及定位；修正源配置（或排除该文件）后重试即可。</p>
+<p>生成的 <code>README.md</code> 会列出全部所需变量及其用途：</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>用于</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DEEPSEEK_API_KEY</code></td>
+<td>providers.deepseek.api_key</td>
+</tr>
+<tr>
+<td><code>STARROCKS_PASSWORD</code></td>
+<td>services.datasources.starrocks.password</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_11">接收方使用<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>unzip<span class="w"> </span>baisheng.zip<span class="w"> </span>-d<span class="w"> </span>baisheng<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>baisheng
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DEEPSEEK_API_KEY</span><span class="o">=</span>...<span class="w"> </span><span class="nv">STARROCKS_PASSWORD</span><span class="o">=</span>...<span class="w">   </span><span class="c1"># 见 README.md</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>bash<span class="w"> </span>scripts/init.sh
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>datus-api<span class="w">        </span><span class="c1"># 或 `datus` 进入交互式控制台</span>
+</span></code></pre></div>
+<p><code>init.sh</code> 依次执行：安装依赖 → 安装插件 → 重建知识库。可以反复运行：pip 是幂等的，插件安装带 <code>--force</code>，知识库步骤为覆盖写。每一步也可单独执行 —— 修改过 subject YAML 之后单跑 <code>scripts/rebuild_kb.sh</code> 即可。</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>通过 pip 安装的 datus-agent <strong>不会</strong>自动加载 <code>.env</code> 文件。请在 shell 中导出变量，或执行 <code>set -a; source .env; set +a</code>。</p>
+</div>
+<p><code>init.sh</code> 使用 <code>$PYTHON</code>（默认 <code>python3</code>）并优先选择 <code>uv</code> 而非 <code>pip</code>，因此在没有 <code>pip</code> 模块的 uv 虚拟环境中同样可用。需要指定解释器时设置 <code>PYTHON=/path/to/python</code>。</p>
+<h2 id="_12">示例会话<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>$ datus package
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>Packaging project &#39;baisheng&#39; from /Users/me/baisheng-project
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>Output zip path [/Users/me/baisheng-project/baisheng.zip]:
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>Package all files? [Y/n]: y
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>Subagents: Space toggles, &#39;a&#39; toggles all, Enter confirms
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>...
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>Subject areas: Space toggles, &#39;a&#39; toggles all, Enter confirms
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>...
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>             Package summary
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>  Item                Value
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>  Project             baisheng
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>  Output              /Users/me/baisheng-project/baisheng.zip
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>  Subject areas       营销分析/活动统计
+</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>  Metric datasources  starrocks
+</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>  ...
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>Build the package now? [Y/n]: y
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>✓ Package built: /Users/me/baisheng-project/baisheng.zip
+</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>  163 files, 4.2 MB uncompressed
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>  Subject areas: 营销分析/活动统计 → 15 reference-SQL summaries
+</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>  Receiver must export: DEEPSEEK_API_KEY, STARROCKS_PASSWORD
+</span></code></pre></div>
+<p>结果始终会明确说明这次选择到底产出了什么。手工数 zip 条目并不可靠 —— <code>unzip -l</code> 会把过长或中文文件名折行显示，让过滤正确的包看起来像没过滤。</p>
+<h2 id="_13">相关文档<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../knowledge_base/reference_sql/">知识库 —— Reference SQL</a></li>
+<li><a href="../../knowledge_base/metrics/">知识库 —— 指标</a></li>
+<li><a href="../../configuration/agent/">配置 —— Agent</a></li>
+</ul>
 
 
 
@@ -4333,7 +4800,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../memory_organization/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 记忆整理">
+          <a href="../skill_command/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 技能命令">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4343,20 +4810,20 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                记忆整理
+                技能命令
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../plugin/introduction/" class="md-footer__link md-footer__link--next" aria-label="下一页: 介绍">
+          <a href="../reference/" class="md-footer__link md-footer__link--next" aria-label="下一页: 参考">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                介绍
+                参考
               </div>
             </div>
             <div class="md-footer__button md-icon">
