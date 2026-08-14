@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Node types whose GenerationHooks depend on local filesystem tools (write_file, etc.)
+# Node types whose success-path finalizers depend on local filesystem tools (write_file, etc.)
 # Their filesystem_tools must NOT be proxied; other tools are still proxied.
 # gen_visual_report / gen_visual_dashboard author their render/*.jsx tree
 # server-side and surface it via ``/api/v1/(report|dashboard)/detail``; proxying
@@ -111,7 +111,7 @@ def apply_proxy_tools(
     parsed = _parse_patterns(proxy_patterns)
     registry = node.tool_registry.to_dict()
 
-    # Auto-detect nodes whose GenerationHooks depend on filesystem tools
+    # Auto-detect nodes whose finalizers depend on filesystem tools
     exclude_categories: Optional[Set[str]] = None
     node_name = getattr(node, "get_node_name", lambda: "")()
     if node_name in _FS_DEPENDENT_NODES:

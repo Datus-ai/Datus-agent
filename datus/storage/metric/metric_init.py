@@ -10,7 +10,7 @@ import asyncio
 import os
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from datus.agent.node.semantic_authoring import AUTHORING_FORMAT_OSI, resolve_authoring_format
+from datus.agent.node.semantic_authoring import AUTHORING_FORMAT_OSI
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.batch_events import BatchEventEmitter
 from datus.utils.loggings import get_logger
@@ -89,22 +89,22 @@ def init_semantic_yaml_metrics(
         logger.error("Semantic YAML file %s not found", yaml_file_path)
         return False, f"Semantic YAML file {yaml_file_path} not found"
 
-    authoring_format = resolve_authoring_format(agent_config)
-    if authoring_format == AUTHORING_FORMAT_OSI:
-        from datus.tools.func_tool.generation_tools import GenerationTools
+    from datus.storage.semantic_model.semantic_model_init import reject_non_dosi_semantic_yaml
 
-        result = GenerationTools(agent_config=agent_config, authoring_format=AUTHORING_FORMAT_OSI).sync_osi_to_db(
-            yaml_file_path,
-            include_semantic_objects=False,
-            include_metrics=True,
-        )
-        if result.get("success"):
-            return True, result.get("message", "")
-        return False, result.get("error", "Unknown error")
+    error = reject_non_dosi_semantic_yaml(yaml_file_path, agent_config)
+    if error:
+        return False, error
 
-    from datus.storage.semantic_model.semantic_model_init import process_semantic_yaml_file
+    from datus.tools.func_tool.generation_tools import GenerationTools
 
-    return process_semantic_yaml_file(yaml_file_path, agent_config, include_semantic_objects=False)
+    result = GenerationTools(agent_config=agent_config, authoring_format=AUTHORING_FORMAT_OSI).sync_osi_to_db(
+        yaml_file_path,
+        include_semantic_objects=False,
+        include_metrics=True,
+    )
+    if result.get("success"):
+        return True, result.get("message", "")
+    return False, result.get("error", "Unknown error")
 
 
 __all__ = [

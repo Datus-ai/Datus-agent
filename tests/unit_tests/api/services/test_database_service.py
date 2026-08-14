@@ -1,11 +1,10 @@
 """Tests for datus.api.services.database_service — datasource management."""
 
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import NoReturn
 from unittest.mock import MagicMock, patch
 
@@ -121,7 +120,8 @@ class TestSemanticLayerServiceBranches:
         svc = _service_with_semantic_adapter(" OSI ")
 
         assert svc._active_semantic_adapter() == "osi"
-        assert svc._is_osi_semantic_layer() is True
+        # Plain OSI is query-only now; only Dosi counts as the authoring layer.
+        assert svc._is_osi_semantic_layer() is False
 
     def test_dosi_is_classified_as_osi_semantic_layer(self):
         svc = _service_with_semantic_adapter(" DOSI ")
@@ -136,69 +136,11 @@ class TestSemanticLayerServiceBranches:
         assert svc._active_semantic_adapter() == ""
         assert svc._is_osi_semantic_layer() is False
 
-    def test_validate_osi_semantic_yaml_success(self, monkeypatch):
-        calls = []
-        package_mod = ModuleType("datus_semantic_osi")
-        profile_mod = ModuleType("datus_semantic_osi.profile")
-
-        def _load_osi_path(path, *, normalize):
-            calls.append((path, normalize))
-
-        profile_mod.load_osi_path = _load_osi_path
-        package_mod.profile = profile_mod
-        monkeypatch.setitem(sys.modules, "datus_semantic_osi", package_mod)
-        monkeypatch.setitem(sys.modules, "datus_semantic_osi.profile", profile_mod)
-
-        is_valid, errors = DatasourceService._validate_osi_semantic_yaml("kind: semantic_model\n", "orders.yml")
-
-        assert is_valid is True
-        assert errors == []
-        assert len(calls) == 1
-        assert calls[0][1] is True
-
-    def test_validate_osi_semantic_yaml_reports_errors_and_ignores_cleanup_failure(self, monkeypatch):
-        package_mod = ModuleType("datus_semantic_osi")
-        profile_mod = ModuleType("datus_semantic_osi.profile")
-
-        def _load_osi_path(path, *, normalize):
-            raise ValueError("bad osi yaml")
-
-        def _raise_os_error(path):
-            raise OSError("busy")
-
-        profile_mod.load_osi_path = _load_osi_path
-        package_mod.profile = profile_mod
-        monkeypatch.setitem(sys.modules, "datus_semantic_osi", package_mod)
-        monkeypatch.setitem(sys.modules, "datus_semantic_osi.profile", profile_mod)
-        monkeypatch.setattr("datus.api.services.database_service.os.unlink", _raise_os_error)
-
-        is_valid, errors = DatasourceService._validate_osi_semantic_yaml("not: osi\n", "orders.yml")
-
-        assert is_valid is False
-        assert errors == ["bad osi yaml"]
-
-    @pytest.mark.asyncio
-    async def test_validate_semantic_model_uses_osi_validator(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
-        yaml_file, selector = _write_model(tmp_path, _osi_yaml())
-        svc._validate_osi_semantic_yaml = MagicMock(return_value=(False, ["missing semantic_models"]))
-        request = ValidateSemanticModelInput(
-            semantic_model_file=selector,
-            yaml="version: 1.0.0\nsemantic_model:\n  - name: orders\n    datasets: []\n",
-        )
-
-        result = await svc.validate_semantic_model(request)
-
-        assert result.success is True
-        assert result.data == ValidateSemanticModelData(valid=False, invalid_message=["missing semantic_models"])
-        svc._validate_osi_semantic_yaml.assert_called_once_with(request.yaml, str(yaml_file.resolve()))
-
     @pytest.mark.asyncio
     async def test_validate_semantic_model_uses_dosi_validator(self, tmp_path):
         svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         _yaml_file, selector = _write_model(tmp_path, _osi_yaml())
         svc._validate_dosi_semantic_yaml = MagicMock(return_value=(False, ["native Dosi validation failed"]))
-        svc._validate_osi_semantic_yaml = MagicMock()
         request = ValidateSemanticModelInput(
             semantic_model_file=selector,
             yaml=_osi_yaml(),
@@ -212,32 +154,25 @@ class TestSemanticLayerServiceBranches:
             invalid_message=["native Dosi validation failed"],
         )
         svc._validate_dosi_semantic_yaml.assert_called_once_with(request.yaml)
-        svc._validate_osi_semantic_yaml.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_validate_semantic_model_uses_metricflow_validator(self, tmp_path):
+    async def test_validate_semantic_model_rejects_non_dosi_project(self, tmp_path):
+        """Contract: semantic authoring is Dosi-only — the validate endpoint
+        refuses non-Dosi projects with the query-only migration message."""
         svc = _service_with_semantic_adapter("metricflow", models_root=tmp_path)
-        yaml_file, selector = _write_model(tmp_path, "semantic_model:\n  name: orders\n")
-        request = ValidateSemanticModelInput(
-            semantic_model_file=selector,
-            yaml="semantic_model:\n  name: orders\n",
+        _yaml_file, selector = _write_model(tmp_path, "semantic_model:\n  name: orders\n")
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml="semantic_model:\n  name: orders\n")
         )
 
-        with patch("datus.api.utils.semantic_validation.validate_semantic_yaml", return_value=(True, [])) as validate:
-            result = await svc.validate_semantic_model(request)
-
-        assert result.success is True
-        assert result.data == ValidateSemanticModelData(valid=True, invalid_message=None)
-        validate.assert_called_once_with(
-            yaml_content=request.yaml,
-            file_path=str(yaml_file.resolve()),
-            datus_home="/datus-home",
-            datasource="warehouse",
-        )
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert "query-only" in result.errorMessage
 
     @pytest.mark.asyncio
     async def test_validate_semantic_model_rejects_unknown_file(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
 
         result = await svc.validate_semantic_model(
             ValidateSemanticModelInput(
@@ -252,12 +187,12 @@ class TestSemanticLayerServiceBranches:
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_uses_osi_sync_tool(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         yaml_file, selector = _write_model(
             tmp_path,
             "version: 1.0.0\nsemantic_model:\n  - name: orders\n    datasets: []\n",
         )
-        svc._validate_osi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
         svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
         request = SaveSemanticModelInput(
             semantic_model_file=selector,
@@ -287,34 +222,26 @@ class TestSemanticLayerServiceBranches:
         )
 
     @pytest.mark.asyncio
-    async def test_save_semantic_model_uses_metricflow_sync(self, tmp_path):
+    async def test_save_semantic_model_rejects_non_dosi_project_before_writing(self, tmp_path):
+        """Contract: non-Dosi projects are query-only — save must fail before
+        reading, validating, or writing anything, so the artifact on disk is
+        untouched."""
+        original = "semantic_model:\n  name: orders\n"
         svc = _service_with_semantic_adapter("metricflow", models_root=tmp_path)
-        yaml_file, selector = _write_model(tmp_path, "semantic_model:\n  name: orders\n")
-        request = SaveSemanticModelInput(
-            semantic_model_file=selector,
-            yaml="semantic_model:\n  name: updated_orders\n",
+        yaml_file, selector = _write_model(tmp_path, original)
+
+        result = await svc.save_semantic_model(
+            SaveSemanticModelInput(semantic_model_file=selector, yaml="semantic_model:\n  name: updated_orders\n")
         )
 
-        with (
-            patch("datus.api.utils.semantic_validation.validate_semantic_yaml", return_value=(True, [])),
-            patch(
-                "datus.api.services.database_service.GenerationHooks._sync_semantic_to_db",
-                return_value={"success": True},
-            ) as sync,
-        ):
-            result = await svc.save_semantic_model(request)
-
-        assert result.success is True
-        sync.assert_called_once_with(
-            str(yaml_file),
-            svc.agent_config,
-            include_semantic_objects=True,
-            include_metrics=False,
-        )
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert "query-only" in result.errorMessage
+        assert yaml_file.read_text(encoding="utf-8") == original
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_rejects_stale_revision(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         original = _osi_yaml()
         yaml_file, selector = _write_model(tmp_path, original)
 
@@ -333,11 +260,11 @@ class TestSemanticLayerServiceBranches:
         assert yaml_file.read_text() == original
 
     def test_api_save_serializes_against_agent_metric_mutation(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         original = _osi_yaml()
         updated = _osi_yaml(metric_name="api_metric")
         yaml_file, selector = _write_model(tmp_path, original)
-        svc._validate_osi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
 
         validation_started = threading.Event()
         release_validation = threading.Event()
@@ -361,7 +288,6 @@ class TestSemanticLayerServiceBranches:
         agent_tool = MetricFilesystemFuncTool(
             root_path=str(yaml_file.parent),
             current_node="gen_metrics",
-            authoring_format="osi",
             osi_target_state=target_state,
         )
         agent_lock_attempted = threading.Event()
@@ -409,10 +335,10 @@ class TestSemanticLayerServiceBranches:
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_restores_yaml_after_full_validation_failure(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         original = _osi_yaml()
         yaml_file, selector = _write_model(tmp_path, original)
-        svc._validate_osi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
         svc._full_osi_validation = MagicMock(
             return_value=(False, {"valid": False, "issues": [{"message": "bad metric"}]}, "bad metric")
         )
@@ -428,10 +354,10 @@ class TestSemanticLayerServiceBranches:
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_restores_yaml_when_full_validation_raises(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         original = _osi_yaml()
         yaml_file, selector = _write_model(tmp_path, original)
-        svc._validate_osi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
         svc._full_osi_validation = MagicMock(side_effect=RuntimeError("validator unavailable"))
 
         result = await svc.save_semantic_model(
@@ -446,9 +372,9 @@ class TestSemanticLayerServiceBranches:
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_keeps_valid_yaml_when_sync_fails(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         yaml_file, selector = _write_model(tmp_path, _osi_yaml())
-        svc._validate_osi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
         svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
         updated = _osi_yaml(metric_name="order_count")
 
@@ -465,10 +391,10 @@ class TestSemanticLayerServiceBranches:
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_unchanged_yaml_still_repairs_kb(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         content = _osi_yaml()
         _yaml_file, selector = _write_model(tmp_path, content)
-        svc._validate_osi_semantic_yaml = MagicMock(return_value=(True, []))
+        svc._validate_dosi_semantic_yaml = MagicMock(return_value=(True, []))
         svc._full_osi_validation = MagicMock(return_value=(True, {"valid": True, "issues": []}, ""))
 
         with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
@@ -489,7 +415,7 @@ class TestGetSemanticModel:
     """Tests for the file-addressed get_semantic_model."""
 
     def test_get_semantic_model_returns_stable_file_identity_and_revision(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         content = _osi_yaml()
         _yaml_file, selector = _write_model(tmp_path, content)
 
@@ -503,7 +429,7 @@ class TestGetSemanticModel:
 
     def test_get_semantic_model_reaches_a_non_active_datasource(self, tmp_path):
         """Resolution spans the whole tree, not just the first configured datasource."""
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         content = _osi_yaml()
         _yaml_file, selector = _write_model(tmp_path, content, datasource="lakehouse")
 
@@ -520,7 +446,7 @@ class TestGetSemanticModel:
         ``current_datasource``, so saving another datasource's artifact would
         file its rows under the wrong datasource.
         """
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
 
         result = await svc.save_semantic_model(SaveSemanticModelInput(semantic_model_file=selector, yaml=_osi_yaml()))
@@ -532,7 +458,7 @@ class TestGetSemanticModel:
 
     @pytest.mark.asyncio
     async def test_validate_semantic_model_rejects_a_non_active_datasource(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
 
         result = await svc.validate_semantic_model(
@@ -543,7 +469,7 @@ class TestGetSemanticModel:
         assert result.errorCode == "INVALID_PARAMETERS"
 
     def test_get_semantic_model_accepts_a_selector_without_the_subject_prefix(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         _yaml_file, _selector = _write_model(tmp_path, _osi_yaml())
 
         result = svc.get_semantic_model("warehouse/orders.yml")
@@ -552,7 +478,7 @@ class TestGetSemanticModel:
         assert result.data.semantic_model_file == "subject/semantic_models/warehouse/orders.yml"
 
     def test_get_semantic_model_rejects_unknown_file(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
 
         result = svc.get_semantic_model("subject/semantic_models/warehouse/ghost.yml")
 
@@ -561,7 +487,7 @@ class TestGetSemanticModel:
         assert isinstance(result, Result)
 
     def test_get_semantic_model_rejects_absolute_path(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         yaml_file, _selector = _write_model(tmp_path, _osi_yaml())
 
         result = svc.get_semantic_model(str(yaml_file))
@@ -571,7 +497,7 @@ class TestGetSemanticModel:
         assert "project-relative" in result.errorMessage
 
     def test_get_semantic_model_rejects_non_yaml_suffix(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
         (tmp_path / "warehouse").mkdir(parents=True, exist_ok=True)
         (tmp_path / "warehouse" / "orders.txt").write_text("nope")
 
@@ -582,7 +508,7 @@ class TestGetSemanticModel:
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_rejects_file_escape(self, tmp_path):
-        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        svc = _service_with_semantic_adapter("dosi", models_root=tmp_path)
 
         result = await svc.save_semantic_model(
             SaveSemanticModelInput(

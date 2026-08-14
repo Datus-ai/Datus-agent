@@ -43,7 +43,7 @@
 
 ## 使用方法
 
-**前置条件**：此命令依赖 [datus-semantic-metricflow](../adapters/semantic_adapters.md)，请先运行 `pip install datus-semantic-metricflow` 安装。
+使用 `--success_story` 时，该兼容组件会运行 Dosi-only 的 `semantic_modeling` 工作流（datasets-only 范围），不会创建、更新或删除指标。YAML 导入与 profile 刷新是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。
 
 ### 基本命令
 
@@ -79,7 +79,7 @@ datus-agent bootstrap-kb \
 | `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件。从 YAML 导入和 `refresh-profile` 都需要。 | `semantic_model.yaml` |
 | `--kb_update_strategy` | ❌ | 更新策略。默认是 `check`；`refresh-profile` 仅支持 `semantic_model` 组件。 | `check`/`overwrite`/`incremental`/`refresh-profile` |
 
-`refresh-profile` 会原地更新已有 MetricFlow 或 OSI 语义模型 YAML。它会根据 `--success_story` 中的历史 SQL
+`refresh-profile` 会原地更新已有 Dosi/OSI 语义模型 YAML（MetricFlow YAML 会被拒绝）。它会根据 `--success_story` 中的历史 SQL
 重新做有界、只读的数据 profile，替换表和字段 description 中生成的 `Observed profile:` 片段，并把更新后的 YAML
 同步回语义模型向量库。它不会重新运行完整 LLM 语义模型生成，也不会清空 semantic model store。
 
@@ -102,7 +102,7 @@ Agent 分析这些 SQL 以：
 
 ### YAML 格式
 
-兼容 MetricFlow 的语义模型 YAML：
+YAML 导入仅接受 Dosi/OSI 文档。下面的旧版 MetricFlow 格式仅作参考，已不再支持导入：
 
 ```yaml
 data_source:

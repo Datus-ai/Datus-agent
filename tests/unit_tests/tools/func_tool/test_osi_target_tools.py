@@ -17,6 +17,13 @@ from datus.tools.func_tool.osi_target_tools import (
 @pytest.fixture(autouse=True)
 def _stub_osi_schema_validation(monkeypatch):
     monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
+    # CI runs without the optional datus-semantic-dosi package; route the
+    # dosi-adapter document validation through the stubbed core validator.
+    monkeypatch.setattr(
+        semantic_authoring,
+        "validate_osi_authoring_document",
+        lambda document, *, semantic_adapter: semantic_authoring.validate_osi_core_document(document),
+    )
 
 
 def _config(tmp_path: Path):
@@ -29,7 +36,7 @@ def _config(tmp_path: Path):
             semantic_model_path=lambda datasource: model_root / datasource,
         ),
         project_root=tmp_path,
-        resolve_semantic_adapter=lambda _: "osi",
+        resolve_semantic_adapter=lambda _: "dosi",
     ), model_dir
 
 
@@ -329,7 +336,7 @@ def test_inventory_excludes_core_schema_invalid_yaml(tmp_path, monkeypatch):
             "repair_required": True,
         }
     ]
-    assert inventory.result["issues"][0]["code"] == "invalid_osi_core_schema"
+    assert inventory.result["issues"][0]["code"] == "invalid_dosi_model"
     assert not bound.success
     assert bound.result["code"] == "semantic_model_target_invalid"
 

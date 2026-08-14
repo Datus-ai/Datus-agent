@@ -4,7 +4,7 @@ Explorer service for catalog and subject tree management.
 
 import asyncio
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
@@ -78,12 +78,6 @@ class ExplorerService:
                 message_args={"error_message": "No datasource is selected; select a datasource first"},
             )
 
-    def _is_osi_authoring(self) -> bool:
-        """Whether the active semantic adapter authors OSI (vs MetricFlow)."""
-        from datus.agent.node.semantic_authoring import is_osi_authoring
-
-        return bool(is_osi_authoring(self.agent_config))
-
     def _semantic_adapter(self):
         """Resolve the configured semantic adapter, or None if unavailable.
 
@@ -127,7 +121,7 @@ class ExplorerService:
 
     @staticmethod
     def _metric_name_from_yaml(yaml_text: str) -> Optional[str]:
-        """Extract the metric name from OSI (top-level) or MetricFlow ({metric:}) YAML."""
+        """Extract the metric name from OSI (top-level) or legacy ``{metric:}`` YAML."""
         import yaml
 
         try:
@@ -140,26 +134,16 @@ class ExplorerService:
             return doc["metric"].get("name")
         return doc.get("name")
 
-    def _sync_file_to_kb(self, is_osi: bool, file_path: str) -> dict:
-        """Re-index a semantic source file into the Knowledge Base.
+    def _sync_file_to_kb(self, file_path: str) -> dict:
+        """Re-index an OSI semantic source file into the Knowledge Base.
 
         The authoring adapter only writes the YAML file; the KB is a derived
-        index that must be re-synced through the format's own entry point —
-        the OSI vectorizer or the MetricFlow GenerationHooks sync.
+        index that must be re-synced through the OSI vectorizer. Authoring is
+        Dosi-only, so this always runs the OSI sync.
         """
-        if is_osi:
-            from datus.tools.func_tool.generation_tools import GenerationTools
+        from datus.tools.func_tool.generation_tools import GenerationTools
 
-            return GenerationTools(self.agent_config).sync_osi_to_db(file_path)
-
-        from datus.cli.generation_hooks import GenerationHooks
-
-        return GenerationHooks._sync_semantic_to_db(
-            file_path,
-            self.agent_config,
-            include_semantic_objects=False,
-            include_metrics=True,
-        )
+        return GenerationTools(self.agent_config).sync_osi_to_db(file_path)
 
     @staticmethod
     def _is_metric_absent_error(exc: Exception) -> bool:
@@ -183,16 +167,12 @@ class ExplorerService:
     ) -> "Result[dict]":
         """Validate + write a metric to its source file, then re-index the KB.
 
-        Format-agnostic orchestration shared by create/edit for OSI and
-        MetricFlow: the adapter owns file placement/structure (source of truth),
-        this method handles name resolution, the validation gate, the
-        format-aware KB re-sync, and rollback so the file and the KB never drift
-        (a failed create is deleted, a failed edit is restored).
-
-        Validation depth is format-specific: OSI is fully validated inside the
-        adapter write (jsonschema + profile parse, before persisting), while
-        MetricFlow is validated with the real MetricFlow model validator on the
-        written file, rolling back if it fails.
+        Shared orchestration for create/edit: the adapter owns file
+        placement/structure (source of truth), this method handles name
+        resolution, the validation gate (jsonschema + profile parse inside the
+        adapter write, before persisting), the KB re-sync, and rollback so the
+        file and the KB never drift (a failed create is deleted, a failed edit
+        is restored).
 
         Runs synchronously (file I/O + KB embedding); callers off the event loop
         should invoke it via ``asyncio.to_thread``.
@@ -219,8 +199,6 @@ class ExplorerService:
                 errorMessage="No metric name found in YAML content.",
             )
 
-        is_osi = self._is_osi_authoring()
-
         # Snapshot current content so an edit can be rolled back on later failure
         # (a create rolls back by deleting).
         previous_source = None
@@ -230,9 +208,8 @@ class ExplorerService:
             except Exception as e:  # noqa: BLE001 - restore is best-effort
                 logger.warning(f"Could not snapshot metric before edit; rollback disabled: {e}")
 
-        # Write the file. OSI validates fully inside write (raises before
-        # persisting); MetricFlow does a light structural check here and the
-        # real model validation runs on the written file below.
+        # Write the file. The adapter validates fully inside write (raises
+        # before persisting).
         try:
             # Empty parent_path (root-level metric) means "no categorization" —
             # pass None so the adapter does not inject an empty subject tag.
@@ -245,28 +222,9 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-        # MetricFlow: run the real (model-level) validation on the written file
-        # and roll back if it fails, preserving the legacy validation strength.
-        if not is_osi:
-            try:
-                with open(mutation.file_path, encoding="utf-8") as f:
-                    written = f.read()
-            except OSError as e:
-                written = None
-                logger.warning(f"Could not re-read written metric file for validation: {e}")
-            if written is not None:
-                is_valid, error_messages = self._validate_metric_yaml(written, mutation.file_path)
-                if not is_valid:
-                    self._rollback_metric_write(adapter, name, parent_path, create, previous_source)
-                    return Result[dict](
-                        success=False,
-                        errorCode=ErrorCode.INVALID_PARAMETERS,
-                        errorMessage=f"YAML validation failed: {'; '.join(error_messages)}",
-                    )
-
         # Re-index the changed file into the KB. On failure, undo the write so
         # the file and the KB stay consistent.
-        sync_result = self._sync_file_to_kb(is_osi, mutation.file_path)
+        sync_result = self._sync_file_to_kb(mutation.file_path)
         if not sync_result.get("success", False):
             self._rollback_metric_write(adapter, name, parent_path, create, previous_source)
             return Result[dict](
@@ -1087,25 +1045,6 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    def _validate_metric_yaml(self, yaml_content: str, file_path: str) -> Tuple[bool, List[str]]:
-        """Validate metric YAML content using metricflow when available.
-
-        Args:
-            yaml_content: The YAML content to validate
-            file_path: The target file path (used to determine filename)
-
-        Returns:
-            Tuple of (is_valid, error_messages)
-        """
-        from datus.api.utils.semantic_validation import validate_semantic_yaml
-
-        return validate_semantic_yaml(
-            yaml_content=yaml_content,
-            file_path=file_path,
-            datus_home=self.agent_config.home,
-            datasource=self.agent_config.current_datasource,
-        )
-
     async def create_metric(self, request: EditMetricInput) -> Result[dict]:
         """Create a new metric from YAML.
 
@@ -1122,9 +1061,9 @@ class ExplorerService:
             logger.info(f"Creating metric at parent path: {request.subject_path}")
 
             # subject_path is the parent directory; the metric name is taken from
-            # the YAML. Both OSI and MetricFlow author through the adapter (the
-            # YAML file is the source of truth), then the changed file is
-            # re-indexed into the KB.
+            # the YAML. Authoring goes through the adapter (the YAML file is
+            # the source of truth), then the changed file is re-indexed into
+            # the KB.
             parent_path = request.subject_path if request.subject_path else []
             return await asyncio.to_thread(self._author_metric, parent_path, request.yaml, create=True)
 

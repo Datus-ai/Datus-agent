@@ -177,10 +177,10 @@ class TestSqlSummaryAgenticNodeExecution:
         assert synced_path.endswith("subject/sql_summaries/avg_scores_001.yaml")
         assert sync_mock.call_args.args[1] is real_agent_config
 
-        if execution_mode == "interactive":
-            last_output = actions[-1].output
-            assert isinstance(last_output, dict)
-            assert last_output["tokens_used"] > 0
+        last_output = actions[-1].output
+        assert isinstance(last_output, dict)
+        # Only interactive mode extracts token usage from the action history.
+        assert (last_output["tokens_used"] > 0) == (execution_mode == "interactive")
 
     @pytest.mark.asyncio
     async def test_reference_template_storage_uses_template_sync(self, real_agent_config, mock_llm_create):

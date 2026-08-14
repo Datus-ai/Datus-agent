@@ -47,7 +47,7 @@ query_metrics(
 
 ## 使用方法
 
-**前置条件**：此命令依赖 [datus-semantic-metricflow](../adapters/semantic_adapters.md)，请先运行 `pip install datus-semantic-metricflow` 安装。
+使用 `--success_story` 时，该兼容组件会运行完整的 Dosi-only `semantic_modeling` 工作流，包括生成指标所需的 datasets 与 relationships。YAML 导入是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。
 
 ### 基本命令
 
@@ -111,17 +111,7 @@ metric:
 
 **YAML 导入注意事项：**
 
-使用 `--semantic_yaml` 从 YAML 文件同步指标到 lancedb 时，必须在 YAML 文件中手动添加包含 subject_tree 格式的 `locked_metadata.tags` 才能成功分类。系统不会自动对从 YAML 导入的指标进行分类，需要自行添加标签：
-
-```yaml
-metric:
-  name: your_metric
-  # ... 其他字段
-  locked_metadata:
-    tags:
-      - "YourDomain"
-      - "subject_tree: Domain/Layer1/Layer2"
-```
+`--semantic_yaml` 仅接受 Dosi/OSI 语义 YAML，且仅在 Dosi 项目中可用。MetricFlow YAML（`data_source:` / `metric:` 文档）会被明确拒绝；请先把项目迁移到 Dosi，再用 `semantic_modeling` 重新生成模型。
 
 ## 数据源格式
 

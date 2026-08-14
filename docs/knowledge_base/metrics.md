@@ -113,17 +113,7 @@ metric:
 
 **Important for YAML Import:**
 
-When using `--semantic_yaml` to sync metrics from YAML files to lancedb, you must manually add the `locked_metadata.tags` with subject_tree format in your YAML file for successful categorization. The system will not automatically classify metrics imported from YAML - you need to include the tags yourself:
-
-```yaml
-metric:
-  name: your_metric
-  # ... other fields
-  locked_metadata:
-    tags:
-      - "YourDomain"
-      - "subject_tree: Domain/Layer1/Layer2"
-```
+`--semantic_yaml` accepts Dosi/OSI semantic YAML only, and only in Dosi projects. MetricFlow YAML (`data_source:` / `metric:` documents) is rejected with an explicit error; migrate the project to Dosi and re-author the model with `semantic_modeling`.
 
 ## Data Source Formats
 

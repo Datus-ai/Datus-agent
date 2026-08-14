@@ -311,9 +311,13 @@ class TestCompareBuildSuccessResultFallback:
 
 
 class TestSqlSummaryBuildSuccessResultFallback:
+    # The artifact finalizer is stubbed out: these tests only cover the
+    # response-content fallback selection, not the artifact sync contract
+    # (covered in test_sql_summary_agentic_node.py).
     def test_falls_back_to_raw_output_dict(self):
         node = _bare_node(SqlSummaryAgenticNode, agent_config=None)
         node._extract_sql_summary_and_output_from_response = lambda payload: (None, None)  # type: ignore[assignment]
+        node._finalize_sql_summary_artifact = lambda path: None  # type: ignore[assignment]
         ctx = _ctx(last_successful_output={"raw_output": {"summary_file": "s.yml"}})
         result = node._build_success_result(ctx)
         assert "summary_file" in result.response
@@ -321,6 +325,7 @@ class TestSqlSummaryBuildSuccessResultFallback:
     def test_falls_back_to_str_of_last_successful_output(self):
         node = _bare_node(SqlSummaryAgenticNode, agent_config=None)
         node._extract_sql_summary_and_output_from_response = lambda payload: (None, None)  # type: ignore[assignment]
+        node._finalize_sql_summary_artifact = lambda path: None  # type: ignore[assignment]
         ctx = _ctx(last_successful_output={"raw_output": ""})
         result = node._build_success_result(ctx)
         assert "raw_output" in result.response
