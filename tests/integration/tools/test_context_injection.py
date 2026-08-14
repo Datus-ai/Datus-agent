@@ -17,7 +17,7 @@ SQL-generation path:
   assert a tool action occurred and the run succeeded.
 
 Modelled after tests/integration/tools/test_context_search.py (retrieval) and
-tests/integration/agent/test_gen_metrics_agentic.py (execute_stream).
+the standard agentic ``execute_stream`` integration pattern.
 """
 
 import os

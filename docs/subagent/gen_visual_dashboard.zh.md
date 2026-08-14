@@ -50,7 +50,7 @@ uv run datus --datasource <你的数据源> --web
 
 `gen_visual_dashboard` 接受两种同样合法的起点:
 
-- **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标(subject 树路径 + 指标名),agent 会自动从语义层加载定义、维度和时间窗,并据此生成对应的筛选器。项目里已经沉淀了 metric 注册表时最适用(如何生成指标见 [Generate Metrics](gen_metrics.zh.md))。
+- **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标(subject 树路径 + 指标名),agent 会自动从语义层加载定义、维度和时间窗,并据此生成对应的筛选器。项目里已经沉淀了 metric 注册表时最适用(如何创作 Dosi 指标见 [Semantic Modeling](semantic_modeling.md))。
   ```bash
   围绕 @Metrics revenue.daily.dau 和 @Metrics conversion.weekly.signup_rate 做一份运营总览,支持按地区、日期范围筛选
   ```

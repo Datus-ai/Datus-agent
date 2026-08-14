@@ -762,7 +762,7 @@ class AgentService:
                     }
                 },
             )
-        if agent_id == "semantic_modeling":
+        if agent_id in SYS_SUB_AGENTS:
             return Result(success=False, errorCode="AGENT_NOT_FOUND", errorMessage=f"Agent '{agent_id}' not found")
 
         # 2. Query custom sub-agent from agent.yml (dict keyed by name, treated as id)
@@ -829,7 +829,7 @@ class AgentService:
                 "description": _read_description(node),
             }
             for name, node in sorted(agentic_nodes.items())
-            if name != "semantic_modeling"
+            if name not in SYS_SUB_AGENTS
         ]
 
         return Result(success=True, data={"agents": builtin + custom})
@@ -877,7 +877,7 @@ class AgentService:
 
         # Check name not taken
         agentic_nodes = agent_config.agentic_nodes or {}
-        if request.name in agentic_nodes or request.name in BUILTIN_SUBAGENTS:
+        if request.name in agentic_nodes or request.name in SYS_SUB_AGENTS:
             return Result(
                 success=False,
                 errorCode="AGENT_ALREADY_EXISTS",
@@ -1243,7 +1243,7 @@ class AgentService:
         is the source of truth for whether the agent exists).
         """
 
-        if agent_id in BUILTIN_SUBAGENTS:
+        if agent_id in SYS_SUB_AGENTS:
             return Result(
                 success=False,
                 errorCode="BUILTIN_AGENT_IMMUTABLE",

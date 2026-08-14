@@ -1,6 +1,7 @@
 """Unit tests for semantic authoring format resolution."""
 
 import sys
+from contextlib import asynccontextmanager
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -105,7 +106,7 @@ def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", None)
 
     with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
-        semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "gen_metrics")
+        semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
 
 
 def test_legacy_node_config_fields_are_ignored():
@@ -373,12 +374,8 @@ def test_adapter_type_resolution_propagates_agent_config_errors():
         ("semantic_modeling", "metricflow", ""),
         ("semantic_modeling", "osi", ""),
         ("semantic_modeling", "dosi", "dosi-semantic-authoring"),
-        ("gen_semantic_model", "metricflow", "metricflow-semantic-authoring"),
-        ("gen_semantic_model", "osi", "osi-semantic-authoring"),
-        ("gen_semantic_model", "dosi", "dosi-semantic-authoring"),
-        ("gen_metrics", "metricflow", "gen-metrics"),
-        ("gen_metrics", "osi", "osi-metrics-authoring"),
-        ("gen_metrics", "dosi", "dosi-semantic-authoring"),
+        ("gen_semantic_model", "dosi", ""),
+        ("gen_metrics", "dosi", ""),
         ("unknown_node", "metricflow", ""),
     ],
 )
@@ -391,10 +388,9 @@ def test_required_authoring_skills_derive_from_format(node_name, adapter, expect
     [
         ("semantic_modeling", "metricflow", ""),
         ("semantic_modeling", "osi", ""),
-        ("gen_semantic_model", "metricflow", "semantic-sql-history-profiler"),
-        ("gen_semantic_model", "osi", "semantic-sql-history-profiler"),
-        ("gen_metrics", "metricflow", "metricflow-semantic-authoring"),
-        ("gen_metrics", "osi", ""),
+        ("semantic_modeling", "dosi", ""),
+        ("gen_semantic_model", "metricflow", ""),
+        ("gen_metrics", "metricflow", ""),
         ("unknown_node", "osi", ""),
     ],
 )
@@ -402,74 +398,142 @@ def test_default_optional_skills_derive_from_format(node_name, adapter, expected
     assert default_optional_skills(_agent_config(adapter), node_name) == expected
 
 
-@pytest.mark.parametrize("adapter", ["metricflow", "osi", "dosi"])
-def test_node_skill_defaults_follow_authoring_format(monkeypatch, adapter):
-    """Both nodes default node_config['skills'] from the format, then defer to the base setup."""
+def test_semantic_modeling_skill_defaults_follow_dosi_adapter(monkeypatch):
+    """The unified node defers optional-skill setup to the shared runtime."""
     from datus.agent.node.agentic_node import AgenticNode
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     parent_calls = []
     monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", lambda self: parent_calls.append(type(self).__name__))
 
-    metrics_node = GenMetricsAgenticNode.__new__(GenMetricsAgenticNode)
-    metrics_node.agent_config = _agent_config(adapter)
-    metrics_node.node_config = {}
-    metrics_node._setup_skill_func_tools()
-
-    semantic_node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
-    semantic_node.agent_config = _agent_config(adapter)
+    semantic_node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
+    semantic_node.agent_config = _agent_config("dosi")
     semantic_node.node_config = {}
     semantic_node._setup_skill_func_tools()
 
-    assert parent_calls == ["GenMetricsAgenticNode", "GenSemanticModelAgenticNode"]
-    assert semantic_node.node_config["skills"] == "semantic-sql-history-profiler"
-    expected_metrics_optional = "metricflow-semantic-authoring" if adapter == "metricflow" else ""
-    assert metrics_node.node_config["skills"] == expected_metrics_optional
+    assert parent_calls == ["SemanticModelingAgenticNode"]
+    assert semantic_node.node_config["skills"] == ""
 
 
 def test_node_skill_defaults_respect_explicit_config(monkeypatch):
     """An explicit skills entry (including opt-out '') is never overwritten."""
     from datus.agent.node.agentic_node import AgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", lambda self: None)
 
-    node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
-    node.agent_config = _agent_config("osi")
+    node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
+    node.agent_config = _agent_config("dosi")
     node.node_config = {"skills": ""}
     node._setup_skill_func_tools()
 
     assert node.node_config["skills"] == ""
 
 
+def test_semantic_modeling_required_skills_are_dosi_native():
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
+    node.agent_config = _agent_config("dosi")
+    assert node._get_required_skills() == ["dosi-semantic-authoring"]
+
+
+def test_semantic_authoring_base_configuration_is_neutral():
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    assert SemanticAuthoringAgenticNode.NODE_NAME == "semantic_authoring"
+    assert SemanticAuthoringAgenticNode.INCLUDE_OSI_CORE_SPEC is False
+    assert SemanticAuthoringAgenticNode.COMPACT_SOURCE_INSPECTION is False
+
+
+@pytest.mark.asyncio
+async def test_semantic_authoring_base_resets_request_local_state(monkeypatch):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    resets: list[str] = []
+
+    async def _parent_before_stream(_self, _ctx):
+        resets.append("parent")
+
+    monkeypatch.setattr(AgenticNode, "_before_stream", _parent_before_stream)
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.result = object()
+    node.generation_evidence = SimpleNamespace(reset=lambda: resets.append("evidence"))
+    node.osi_target_state = SimpleNamespace(reset=lambda: resets.append("target"))
+    node.osi_target_tools = SimpleNamespace(invalidate_inventory=lambda: resets.append("inventory"))
+    node.semantic_discovery_tools = SimpleNamespace(reset_request_cache=lambda: resets.append("discovery"))
+
+    await node._before_stream(object())
+
+    assert node.result is None
+    assert resets == ["parent", "evidence", "target", "inventory", "discovery"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_authoring_base_rolls_back_terminal_failure(monkeypatch):
+    from datus.agent.node.agentic_node import AgenticNode
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    marker = object()
+    rolled_back: list[bool] = []
+
+    @asynccontextmanager
+    async def _guard(_agent_config):
+        yield
+
+    async def _parent_execute_stream(_self, _manager):
+        yield marker
+
+    monkeypatch.setattr(semantic_authoring, "semantic_authoring_guard", _guard)
+    monkeypatch.setattr(AgenticNode, "execute_stream", _parent_execute_stream)
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.agent_config = _agent_config("dosi")
+    node.result = SimpleNamespace(success=False)
+    node.filesystem_func_tool = SimpleNamespace(
+        rollback_failed_authoring=lambda: rolled_back.append(True) or True,
+    )
+
+    actions = [action async for action in node.execute_stream()]
+
+    assert actions == [marker]
+    assert rolled_back == [True]
+
+
+def test_semantic_authoring_base_reports_unavailable_warehouse_connection():
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
+
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node.db_func_tool = None
+
+    assert node._warehouse_dry_run_compiled_sql("SELECT 1") == {
+        "status": "failed",
+        "error": "Database connection is unavailable.",
+    }
+
+
 @pytest.mark.parametrize(
-    "adapter, expected",
+    ("read_result", "expected"),
     [
-        ("metricflow", ["metricflow-semantic-authoring"]),
-        ("osi", ["osi-semantic-authoring"]),
-        ("dosi", ["dosi-semantic-authoring"]),
+        (
+            SimpleNamespace(success=False, error="EXPLAIN rejected"),
+            {"status": "failed", "error": "EXPLAIN rejected"},
+        ),
+        (
+            SimpleNamespace(success=True, error=None),
+            {"status": "success", "datasource": "warehouse", "database": "analytics"},
+        ),
     ],
 )
-def test_gen_semantic_model_required_skills(adapter, expected):
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+def test_semantic_authoring_base_validates_compiled_sql_with_warehouse_explain(read_result, expected):
+    from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
 
-    node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
-    node.agent_config = _agent_config(adapter)
-    assert node._get_required_skills() == expected
+    calls: list[tuple[str, str, str]] = []
+    node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
+    node._semantic_runtime_db_context = lambda: {"datasource": "warehouse", "database": "analytics"}
+    node.db_func_tool = SimpleNamespace(
+        read_query=lambda sql, *, datasource, database: calls.append((sql, datasource, database)) or read_result,
+    )
 
-
-@pytest.mark.parametrize(
-    "adapter, expected",
-    [
-        ("metricflow", ["gen-metrics"]),
-        ("osi", ["osi-metrics-authoring"]),
-        ("dosi", ["dosi-semantic-authoring"]),
-    ],
-)
-def test_gen_metrics_required_skills(adapter, expected):
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-    node = GenMetricsAgenticNode.__new__(GenMetricsAgenticNode)
-    node.agent_config = _agent_config(adapter)
-    assert node._get_required_skills() == expected
+    assert node._warehouse_dry_run_compiled_sql("SELECT 1;") == expected
+    assert calls == [("EXPLAIN SELECT 1", "warehouse", "analytics")]

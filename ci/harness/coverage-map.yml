@@ -141,18 +141,17 @@ flow_groups:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_helpers
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper
               - tests/integration/storage/test_storage_layout.py
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_helpers
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper
               - tests/integration/storage/test_storage_layout.py
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_gen_semantic_model_agentic.py
-              - tests/integration/agent/test_gen_metrics_agentic.py
+              - tests/integration/agent/test_semantic_modeling_agentic.py
               - tests/integration/agent/test_sql_summary_agentic.py
           weekly_benchmark:
             status: covered
@@ -530,7 +529,7 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_kb_path_e2e.py
+              - tests/integration/agent/test_semantic_modeling_agentic.py
           weekly_benchmark:
             status: covered
             notes: Metadata is part of the Baisheng scenario context.
@@ -543,8 +542,7 @@ flow_groups:
         docs:
           - docs/knowledge_base/semantic_model.md
           - docs/knowledge_base/metrics.md
-          - docs/subagent/gen_semantic_model.md
-          - docs/subagent/gen_metrics.md
+          - docs/subagent/semantic_modeling.md
           - docs/subagent/ask_metrics.md
           - docs/configuration/semantic_layer.md
           - docs/adapters/metricflow_semantic_adapter.md
@@ -552,8 +550,7 @@ flow_groups:
           - docs/adapters/dosi_semantic_adapter.md
         entrypoints:
           - CLI bootstrap
-          - Gen semantic model subagent
-          - Gen metrics subagent
+          - Semantic modeling subagent
           - Ask metrics subagent
           - Extract-knowledge skill
           - Context search tools
@@ -561,6 +558,7 @@ flow_groups:
           - Bootstrap and agentic generation persist semantic objects that are available to query-time retrieval.
           - Metrics and semantic models remain separable by kind and datasource scope, and extracted knowledge is captured as markdown via the extract-knowledge skill.
           - Existing metrics can be queried through the metric-first AskMetrics subagent without falling back to raw SQL generation.
+          - New semantic authoring is Dosi-only; MetricFlow and OSI projects remain query-only until an OSI project is switched to Dosi.
           - Runtime database context is propagated into semantic adapter initialization so validation can use the selected catalog/database/schema without a static datasource database.
         coverage:
           pr_acceptance:
@@ -568,6 +566,7 @@ flow_groups:
             nodeids:
               - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
@@ -577,6 +576,7 @@ flow_groups:
             nodeids:
               - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
               - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
+              - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
               - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
@@ -586,8 +586,7 @@ flow_groups:
             nodeids:
               - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
               - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_validate_semantic_initializes_adapter_with_runtime_database
-              - tests/integration/agent/test_gen_semantic_model_agentic.py
-              - tests/integration/agent/test_gen_metrics_agentic.py
+              - tests/integration/agent/test_semantic_modeling_agentic.py
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark exercises retrieval-backed query generation.

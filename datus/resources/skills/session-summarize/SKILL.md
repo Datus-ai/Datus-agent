@@ -18,7 +18,7 @@ You run in the main agent context, so you may call `task`, `load_skill`, `todo_w
 
 **Routing authority is `storage-classify`.** This skill decides *what to harvest from the session*; the `storage-classify` skill owns *which content goes to which store, written with which mechanism*. Do NOT re-invent storage routing rules here — load and follow `storage-classify` in Step 2.
 
-**Two-phase contract (important).** Heavy generation (`gen_semantic_model` / `gen_metrics` / `gen_sql_summary` / `gen_skill` / `extract-knowledge`) costs tokens and writes real files. So there is a hard **turn boundary** after classification: you produce a Summary Manifest and then **end your turn**. Do NOT call `ask_user` for this confirmation — just present the manifest and stop. The user confirms or corrects it in their next message; only then do you run Step 3.
+**Two-phase contract (important).** Heavy generation (`semantic_modeling` / `gen_sql_summary` / `gen_skill` / `extract-knowledge`) costs tokens and writes real files. So there is a hard **turn boundary** after classification: you produce a Summary Manifest and then **end your turn**. Do NOT call `ask_user` for this confirmation — just present the manifest and stop. The user confirms or corrects it in their next message; only then do you run Step 3.
 
 ---
 
@@ -48,7 +48,7 @@ candidate
   → store: semantic_models | metrics | reference_sql | knowledge | skills | memory | AGENTS.md | none
     → ref: the table / SQL / file / fact it refers to
        rationale: one line — the decision-tree branch that matched and why
-       prompt-seed: the self-contained seed to hand the downstream mechanism — the ref PLUS the context the generator needs (datasource, the business question, the rule that explains it): e.g. table names + column encodings for gen_semantic_model; the full SQL + the question it answered for gen_sql_summary; the atomic fact + its source for extract-knowledge
+       prompt-seed: the self-contained seed to hand the downstream mechanism — the ref PLUS the context the generator needs (datasource, the business question, the rule that explains it): e.g. table names + column encodings for semantic_modeling; the full SQL + the question it answered for gen_sql_summary; the atomic fact + its source for extract-knowledge
 ```
 
 A single `(question, gold_sql)` pair may route to **both** `reference_sql` (the example) and `knowledge` (the atomic rule mined from *why* the SQL is written that way) — record both.
@@ -63,7 +63,7 @@ Aggregate every verdict, **dedupe** refs that appear more than once, and build a
 |------|-------|------|-----------|---------|
 | order status encoding | knowledge | `orders.status` enum | `extract-knowledge` (lite) | atomic field-encoding fact |
 | top-SKU ranking query | reference_sql | the validated SQL | `task(gen_sql_summary)` | reusable ranking example |
-| GMV metric | metrics | GMV on `orders` | `task(gen_metrics)` | built on orders measures |
+| GMV metric | metrics | GMV on `orders` | `task(semantic_modeling)` | built on orders measures |
 | prefers DuckDB dialect | memory | — | `add_memory` | session preference (≤ 2000 B) |
 
 **STOP here.** After printing the manifest, **end your turn**. Do **NOT** call any generation `task`, `extract-knowledge`, `gen_skill`, `add_memory`, or write any store yet. Do **NOT** call `ask_user`. State plainly: *"Reply to confirm, or correct / drop any row, and I'll persist the rest."* Wait for the user's next message.
@@ -80,12 +80,11 @@ Once the user confirms or corrects the manifest:
 2. **Make every delegated prompt self-contained (see storage-classify's *Context Handoff*).** Each generator runs in a fresh context and sees none of this session — so inline the **datasource (+ dialect)**, the **business intent / question** the session established, and the **rules/encodings surfaced this session** that the artifact must honor. Use the `prompt-seed` you recorded in Step 2 as the carrier, not a bare ref. Route each item with the prescribed mechanism:
    - **Light items** → write directly: `memory` via `add_memory` / `edit_memory` (≤ 2000 bytes); small `AGENTS.md` notes via `edit_file` (never overwrite `## Knowledge` entries owned by `extract-knowledge`).
    - **Heavy items** → delegate (placeholders are the *minimum* each prompt must carry):
-     - semantic_models → `task(type="gen_semantic_model", prompt="<datasource> · <table name(s)> · intent · known column encodings / join-key traps>")`
-     - metrics → `task(type="gen_metrics", prompt="<datasource> · metric name + definition · the base semantic model / measure it builds on · any mandatory filter>")`
+     - semantic_models / metrics → `task(type="semantic_modeling", prompt="<datasource> · table(s) · metric definitions if any · intent · known column encodings, join-key traps, and mandatory filters>")`
      - reference_sql → `task(type="gen_sql_summary", prompt="<datasource/dialect> · the complete SQL · the business question it answered · why it is written this way>")` — one call per SQL (instruct the generator: when the original question is known, use it verbatim as `search_text`)
      - skills → `task(type="gen_skill", prompt="<skill intent + the concrete steps the session repeated>")`
      - knowledge → run `extract-knowledge` in **lite** mode (do NOT trigger its deep blind-SQL flow); pass the **source and the specific fact to mine**, plus the datasource it applies to
-3. **Ordering:** metrics build on semantic models — generate all `semantic_models` items **before** their dependent `metrics` items. When a `reference_sql` item comes from a `(question, gold_sql)` pair, also feed that pair to `extract-knowledge` (lite): one source, two stores (the example teaches answer shape; the mined rule teaches *why*).
+3. **Grouping:** default to one coherent `semantic_modeling` request per business domain, including dependent datasets, relationships, and metrics. Follow an explicit user grouping instead. When a `reference_sql` item comes from a `(question, gold_sql)` pair, also feed that pair to `extract-knowledge` (lite): one source, two stores (the example teaches answer shape; the mined rule teaches *why*).
 4. **Concurrency ≤ 3:** dispatch heavy `task` calls in batches of at most 3, waiting for each batch. Update each item's todo (`in_progress` → `completed` / `failed`) as you go.
 
 End with a short human-readable summary: how many items were persisted, where each was routed (or why it was dropped), and any item still awaiting user confirmation.

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import pandas as pd
 
@@ -34,6 +34,7 @@ logger = get_logger(__name__)
 BIZ_NAME = "semantic_modeling_init"
 DEFAULT_SEMANTIC_MODELING_BATCH_SIZE = 5
 SEMANTIC_MODELING_RESPONSE_ACTION_TYPE = f"{SemanticModelingAgenticNode.NODE_NAME}_response"
+SemanticAuthoringScope = Literal["datasets", "full"]
 
 
 def _action_status_value(action: Any) -> str:
@@ -45,12 +46,21 @@ def _build_batch_prompt(
     source_queries: list[SourceQueryEvidence],
     *,
     subject_tree: Optional[list[str]] = None,
+    authoring_scope: SemanticAuthoringScope = "full",
 ) -> str:
-    intro = (
-        "Use the unified Dosi semantic-modeling workflow for this bootstrap batch. "
-        "Author the reusable datasets, relationships, and native metrics supported by one semantic model, "
-        "using the SQL as evidence rather than as a required result shape."
-    )
+    if authoring_scope == "datasets":
+        intro = (
+            "Use the unified Dosi semantic-modeling workflow for this bootstrap batch. "
+            "Author only reusable datasets, fields, relationships, and model metadata supported by one semantic "
+            "model. Do not create, update, or delete metrics, and preserve all existing metric definitions. "
+            "Use the SQL as evidence rather than as a required result shape."
+        )
+    else:
+        intro = (
+            "Use the unified Dosi semantic-modeling workflow for this bootstrap batch. "
+            "Author the reusable datasets, relationships, and native metrics supported by one semantic model, "
+            "using the SQL as evidence rather than as a required result shape."
+        )
     parts = [intro]
     if subject_tree:
         parts.append(f"Preferred subject tree: {', '.join(subject_tree)}")
@@ -120,18 +130,22 @@ async def _run_semantic_modeling_batch(
     event_helper: BatchEventHelper,
     batch_index: int,
     action_callback: Optional[Callable[["ActionHistory"], None]],
+    authoring_scope: SemanticAuthoringScope = "full",
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     catalog, database, schema = _runtime_database_context(agent_config)
     node = SemanticModelingAgenticNode(
         agent_config=agent_config,
         execution_mode="workflow",
+        authoring_scope=authoring_scope,
         is_subagent=True,
     )
     node.input = SemanticNodeInput(
         user_message=_build_batch_prompt(
             source_queries,
             subject_tree=subject_tree,
+            authoring_scope=authoring_scope,
         ),
+        authoring_scope=authoring_scope,
         catalog=catalog or None,
         database=database or None,
         db_schema=schema or None,
@@ -197,6 +211,7 @@ async def init_success_story_semantic_modeling_async(
     build_mode: str = "overwrite",
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
     batch_size: int = DEFAULT_SEMANTIC_MODELING_BATCH_SIZE,
+    authoring_scope: SemanticAuthoringScope = "full",
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """Build Dosi semantic assets in bounded batches.
 
@@ -207,6 +222,8 @@ async def init_success_story_semantic_modeling_async(
         return False, "semantic_modeling bootstrap is available only when semantic_adapter=dosi", None
     if build_mode not in {"check", "overwrite", "incremental"}:
         return False, f"Unsupported semantic_modeling build mode: {build_mode}", None
+    if authoring_scope not in {"datasets", "full"}:
+        return False, f"Unsupported semantic_modeling authoring scope: {authoring_scope}", None
     if batch_size <= 0:
         return False, f"batch_size must be > 0, got {batch_size}", None
 
@@ -220,6 +237,7 @@ async def init_success_story_semantic_modeling_async(
                 "checked": True,
                 "semantic_object_count": semantic_count,
                 "metrics_count": metric_count,
+                "authoring_scope": authoring_scope,
             },
         )
 
@@ -245,6 +263,7 @@ async def init_success_story_semantic_modeling_async(
             event_helper=event_helper,
             batch_index=batch_index,
             action_callback=action_callback,
+            authoring_scope=authoring_scope,
         )
         if not success:
             error = f"semantic_modeling batch {batch_index + 1}/{len(batches)} failed: {batch_error}"
@@ -287,6 +306,7 @@ async def init_success_story_semantic_modeling_async(
         "semantic_models": semantic_models,
         "semantic_object_count": semantic_count,
         "metrics_count": metric_count,
+        "authoring_scope": authoring_scope,
     }
     event_helper.task_completed(total_items=len(batches), completed_items=completed)
     logger.info(
@@ -307,6 +327,7 @@ def init_success_story_semantic_modeling(
     *,
     build_mode: str = "overwrite",
     batch_size: int = DEFAULT_SEMANTIC_MODELING_BATCH_SIZE,
+    authoring_scope: SemanticAuthoringScope = "full",
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """Synchronous ``bootstrap-kb`` wrapper."""
     with suppress_keyboard_input():
@@ -318,12 +339,14 @@ def init_success_story_semantic_modeling(
                 emit,
                 build_mode=build_mode,
                 batch_size=batch_size,
+                authoring_scope=authoring_scope,
             )
         )
 
 
 __all__ = [
     "DEFAULT_SEMANTIC_MODELING_BATCH_SIZE",
+    "SemanticAuthoringScope",
     "init_success_story_semantic_modeling",
     "init_success_story_semantic_modeling_async",
 ]

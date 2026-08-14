@@ -37,7 +37,7 @@ class FeedbackAgenticNode(AgenticNode):
     # Default subagents feedback delegates archival to. Users can override via
     # agent.yml (agentic_nodes.feedback.subagents = "...") — the base-class
     # _setup_sub_agent_task_tool reads node_config first and falls back here.
-    DEFAULT_SUBAGENTS = "gen_sql_summary, gen_metrics, gen_skill"
+    DEFAULT_SUBAGENTS = "gen_sql_summary, semantic_modeling, gen_skill"
     result_class = FeedbackNodeResult
 
     def __init__(
@@ -170,10 +170,13 @@ class FeedbackAgenticNode(AgenticNode):
         template_name = f"{self.configured_node_name}_system"
 
         try:
+            from datus.agent.node.semantic_authoring import is_semantic_modeling_available
+
             template_vars = {
                 "agent_config": self.agent_config,
                 "native_tools": ", ".join([tool.name for tool in self.tools]) if self.tools else "None",
                 "has_task_tool": bool(self.sub_agent_task_tool),
+                "semantic_modeling_available": is_semantic_modeling_available(self.agent_config),
                 "has_ask_user_tool": self.ask_user_tool is not None,
                 "knowledge_base_dir": str(self.agent_config.path_manager.subject_dir),
                 "current_datasource": self.agent_config.current_datasource,

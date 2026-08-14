@@ -485,7 +485,7 @@ class GenerationTools:
         """
         try:
             metric_sqls = dict(self.generation_evidence.metric_sqls)
-            # OSI gen_metrics normally owns the metrics collection. When it
+            # OSI authoring normally owns the metrics collection. When it
             # narrowly repairs a dataset for the requested metrics, publish
             # the same bound artifact as semantic input so KB profiles stay in
             # sync with the final YAML.

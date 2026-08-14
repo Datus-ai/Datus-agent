@@ -62,10 +62,14 @@ SYS_SUB_AGENTS = {
     "feedback",
 }
 
-# Subset of SYS_SUB_AGENTS that stays invokable via "/<name> ..." but is hidden
-# from user-facing listings (autocomplete, ".agent" selector). Meta/internal
-# agents that the user shouldn't see as a routing choice belong here.
-HIDDEN_SYS_SUB_AGENTS = {"feedback"}
+# Legacy semantic authoring names remain reserved so saved configurations keep
+# loading, but they are no longer discoverable or executable.
+RETIRED_SYS_SUB_AGENTS = frozenset({"gen_semantic_model", "gen_metrics"})
+
+# Subset of SYS_SUB_AGENTS hidden from user-facing listings (autocomplete and
+# the ".agent" selector). Internal agents may still be invoked by their owning
+# workflow; retired agents are rejected by the shared node factory.
+HIDDEN_SYS_SUB_AGENTS = {"feedback", *RETIRED_SYS_SUB_AGENTS}
 
 
 class SQLType(StrEnum):

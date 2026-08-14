@@ -122,6 +122,13 @@ class SemanticNodeInput(AtContextInput):
     """
 
     user_message: str = Field(..., description="User's input message")
+    authoring_scope: Literal["datasets", "full"] = Field(
+        default="full",
+        description=(
+            "Semantic-modeling write scope. `datasets` permits only datasets, fields, relationships, and model "
+            "metadata; `full` also permits metric changes."
+        ),
+    )
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")

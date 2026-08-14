@@ -42,7 +42,7 @@ Semantic model objects are stored at field level:
 
 ## Usage
 
-**Prerequisites**: This command relies on [datus-semantic-metricflow](../adapters/semantic_adapters.md), install it first with `pip install datus-semantic-metricflow`.
+With `--success_story`, this compatibility component runs the Dosi-only `semantic_modeling` workflow in datasets-only scope. It never creates, updates, or deletes metrics. Existing YAML import and profile refresh remain non-LLM compatibility operations for supported legacy files.
 
 ### Basic Command
 
@@ -77,6 +77,8 @@ datus-agent bootstrap-kb \
 | `--success_story` | ⚠️ | CSV file with historical SQLs. Required for generation from SQL history and for `refresh-profile`. | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | Semantic model YAML file. Required for YAML import and for `refresh-profile`. | `semantic_model.yaml` |
 | `--kb_update_strategy` | ❌ | Update strategy. Defaults to `check`; `refresh-profile` is semantic-model only. | `check`/`overwrite`/`incremental`/`refresh-profile` |
+
+When `semantic_model` is combined with `metrics` or `semantic_modeling`, bootstrap executes one full `semantic_modeling` run rather than separate legacy generators.
 
 `refresh-profile` updates an existing MetricFlow or OSI semantic YAML in place. It re-runs bounded, read-only data
 profiling guided by the historical SQLs in `--success_story`, replaces the generated `Observed profile:` suffixes in

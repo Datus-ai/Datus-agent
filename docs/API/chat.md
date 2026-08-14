@@ -17,7 +17,7 @@ Send a chat message and stream the response as Server-Sent Events.
 |------------------|----------|-------|
 | `message`        | string   | Required. User message |
 | `session_id`     | string?  | Reuse to continue an existing session |
-| `subagent_id`    | string?  | Built-in name (`gen_metrics`, `gen_semantic_model`, …) or custom subagent id |
+| `subagent_id`    | string?  | Built-in name (`semantic_modeling`, `gen_sql`, …) or custom subagent id. `semantic_modeling` is available only in Dosi projects; MetricFlow and OSI projects are query-only. Retired semantic agent names return an actionable error. |
 | `model`          | string?  | Per-request model override in `provider/model_id` form (e.g. `openai/gpt-4.1`, `custom/my-model`). Highest priority over server-side `target` and any session default. |
 | `plan_mode`      | bool     | Enable plan mode |
 | `catalog`/`database`/`db_schema` | string? | Database context |

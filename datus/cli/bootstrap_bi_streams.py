@@ -243,7 +243,7 @@ async def stream_bi_reference_sql(
 
 
 # ─────────────────────────────────────────────────────────────────────
-# stream_bi_semantic_model — gates metrics
+# stream_bi_semantic_model — unified semantic authoring
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -268,7 +268,7 @@ def _validate_semantic_model_sync(agent_config: AgentConfig, *, scope: str = "al
 
         tools = SemanticTools(agent_config=agent_config, adapter_type=adapter_type)
         if not tools.adapter:
-            return False, "Semantic adapter not available. Install with: pip install datus-semantic-metricflow"
+            return False, f"Semantic adapter not available. Install with: pip install datus-semantic-{adapter_type}"
         result = tools.validate_semantic(scope=scope)
         if not result.success:
             return False, result.error or "Semantic validation failed"
@@ -286,12 +286,7 @@ async def stream_bi_semantic_model(
     dashboard_name: str,
     state: BiBuildState,
 ) -> AsyncGenerator[ActionHistory, None]:
-    """Run semantic-model generation then validate the resulting layer.
-
-    On success ``state.semantic_ok`` is set so the coordinator runs the
-    metrics step; on failure (generation or validation) it stays False
-    and the coordinator yields a SKIP message instead.
-    """
+    """Author Dosi semantic models and metrics in one unified workflow."""
     if not sqls:
         yield message_action("No SQL queries for semantic model; skipping.", status=ActionStatus.FAILED)
         return
@@ -303,38 +298,65 @@ async def stream_bi_semantic_model(
         agent_config=agent_config,
     )
 
-    from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+    from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
+    from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling_async
+
+    try:
+        ensure_semantic_agent_available("semantic_modeling", agent_config)
+    except Exception as exc:
+        state.semantic_ok = False
+        yield message_action(str(exc), status=ActionStatus.FAILED)
+        return
+
+    subject_tree_hint = [
+        platform,
+        normalize_identifier(dashboard_name or "", max_words=3, fallback="dashboard"),
+    ]
+    captured: dict[str, Any] = {}
 
     async def _factory(emit: Callable[[BatchEvent], None], on_action: Callable[[ActionHistory], None]):
-        return await init_success_story_semantic_model_async(
+        ok, err, result = await init_success_story_semantic_modeling_async(
             agent_config,
             str(csv_path),
+            subject_tree_hint,
             emit,
             build_mode="incremental",
             action_callback=on_action,
         )
+        captured["ok"] = ok
+        captured["err"] = err
+        captured["result"] = result
+        return ok
 
     async def _inner(_mgr: ActionHistoryManager):
-        async for action in _run_helper_with_actions(_factory, function_name="gen_semantic_model"):
+        async for action in _run_helper_with_actions(_factory, function_name="semantic_modeling"):
             yield action
 
     async for action in as_task_subagent(
-        subagent_type="gen_semantic_model",
+        subagent_type="semantic_modeling",
         description=dashboard_name or "<dashboard>",
         inner_factory=_inner,
     ):
         yield action
 
-    ok, err = await asyncio.to_thread(_validate_semantic_model_sync, agent_config, scope="semantic_model")
+    if not captured.get("ok"):
+        state.semantic_ok = False
+        return
+
+    ok, err = await asyncio.to_thread(_validate_semantic_model_sync, agent_config)
     state.semantic_ok = ok
     if ok:
-        yield message_action("Semantic model validated.")
+        result = captured.get("result") or {}
+        semantic_files = result.get("semantic_models", []) if isinstance(result, dict) else []
+        metrics = _collect_metrics_from_semantic_models(semantic_files, agent_config)
+        state.metrics.extend(metrics)
+        yield message_action(f"Semantic layer validated; collected {len(metrics)} metric identifier(s).")
     else:
-        yield message_action(f"Semantic model validation failed: {err}", status=ActionStatus.FAILED)
+        yield message_action(f"Semantic layer validation failed: {err}", status=ActionStatus.FAILED)
 
 
 # ─────────────────────────────────────────────────────────────────────
-# stream_bi_metrics — gated by semantic_ok
+# Metric identifier collection and compatibility alias
 # ─────────────────────────────────────────────────────────────────────
 
 
@@ -342,13 +364,14 @@ def _collect_metrics_from_semantic_models(
     semantic_files: Sequence[str],
     agent_config: AgentConfig,
 ) -> List[str]:
-    """Resolve each generated semantic-model YAML and pull metric names.
+    """Resolve each generated semantic-model YAML and pull metric identifiers.
 
     Reuses :func:`generation_hooks.resolve_kb_sandbox_path` to keep metric
     paths inside the project's KB sandbox. Returns dotted ``subject.metric``
     identifiers ready for ``ScopedContext.metrics``.
     """
     from datus.cli.generation_hooks import resolve_kb_sandbox_path
+    from datus.tools.semantic_tools.osi_document import load_osi_document
 
     knowledge_base_dir = str(agent_config.path_manager.subject_dir)
     out: set[str] = set()
@@ -368,6 +391,25 @@ def _collect_metrics_from_semantic_models(
         for doc in docs:
             if not isinstance(doc, dict):
                 continue
+            semantic_models = doc.get("semantic_model") or []
+            if isinstance(semantic_models, dict):
+                semantic_models = [semantic_models]
+            for model in semantic_models:
+                if not isinstance(model, dict) or not model.get("name"):
+                    continue
+                model_name = str(model["name"])
+                try:
+                    parsed = load_osi_document(resolved, model_name)
+                except Exception as exc:
+                    logger.warning("Failed to parse OSI/Dosi semantic model %s in %s: %s", model_name, resolved, exc)
+                    continue
+                for metric in parsed.metrics:
+                    if not metric.name:
+                        continue
+                    subject_path = metric.subject_path or ["Metrics", metric.dataset or model_name]
+                    quoted_path = [quote_path_segment(part) for part in subject_path]
+                    out.add(".".join([*quoted_path, quote_path_segment(metric.name)]))
+
             meta = doc.get("metric") or {}
             name = meta.get("name")
             tags = meta.get("locked_metadata", {}).get("tags", [])
@@ -385,79 +427,9 @@ async def stream_bi_metrics(
     dashboard_name: str,
     state: BiBuildState,
 ) -> AsyncGenerator[ActionHistory, None]:
-    """Run metric extraction and collect generated metric identifiers.
-
-    Skips silently when ``sqls`` is empty (caller already gated on
-    ``state.semantic_ok``).
-    """
-    if not sqls:
-        yield message_action("No SQL queries for metrics; skipping.", status=ActionStatus.FAILED)
-        return
-
-    csv_path = write_metrics_csv(
-        sqls,
-        platform=platform,
-        dashboard_name=dashboard_name,
-        agent_config=agent_config,
-    )
-
-    subject_tree_hint = f"{platform}/{normalize_identifier(dashboard_name or '', max_words=3, fallback='dashboard')}"
-    extra_instructions = (
-        f"IMPORTANT: All metrics from this batch MUST use the SAME subject_tree classification. "
-        f'Suggested subject_tree: "{subject_tree_hint}". '
-        f"You may adjust the classification based on SQL content, but ensure consistency across all metrics."
-    )
-
-    from datus.storage.metric.metric_init import init_success_story_metrics_async
-
-    captured: dict[str, Any] = {}
-
-    async def _factory(emit: Callable[[BatchEvent], None], on_action: Callable[[ActionHistory], None]):
-        ok, err, result = await init_success_story_metrics_async(
-            agent_config=agent_config,
-            success_story=str(csv_path),
-            subject_tree=None,
-            emit=emit,
-            extra_instructions=extra_instructions,
-            build_mode="incremental",
-            action_callback=on_action,
-        )
-        captured["ok"] = ok
-        captured["err"] = err
-        captured["result"] = result
-        return ok
-
-    async def _inner(_mgr: ActionHistoryManager):
-        async for action in _run_helper_with_actions(_factory, function_name="gen_metrics"):
-            yield action
-
-    async for action in as_task_subagent(
-        subagent_type="gen_metrics",
-        description=dashboard_name or "<dashboard>",
-        inner_factory=_inner,
-    ):
-        yield action
-
-    if not captured.get("ok"):
-        # Failure already surfaced via the subagent stream's terminal action.
-        return
-
-    # Re-run validation guard (the original ``_gen_metrics`` did this too,
-    # because metric generation can mutate the semantic store).
-    ok, err = await asyncio.to_thread(_validate_semantic_model_sync, agent_config)
-    if not ok:
-        yield message_action(f"Metrics validation failed: {err}", status=ActionStatus.FAILED)
-        return
-
-    result = captured.get("result") or {}
-    semantic_files = result.get("semantic_models", []) if isinstance(result, dict) else []
-    if not semantic_files:
-        yield message_action("Metrics generated but no semantic_models reported.")
-        return
-
-    metrics = _collect_metrics_from_semantic_models(semantic_files, agent_config)
-    state.metrics.extend(metrics)
-    yield message_action(f"Collected {len(metrics)} metric identifier(s).")
+    """Compatibility alias; metrics are authored by ``semantic_modeling``."""
+    del agent_config, sqls, platform, dashboard_name, state
+    yield message_action("Metrics are authored by semantic_modeling; no separate metrics step is required.")
 
 
 __all__ = [

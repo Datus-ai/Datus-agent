@@ -510,6 +510,12 @@ agent:
     # node loads its canonical skills out of the box. Override ``skills:`` here
     # only when you want to narrow or broaden the pattern; omit the key to keep
     # the defaults. Set ``skills: ""`` to explicitly disable skill loading.
+    semantic_modeling:
+      model: anthropic
+      max_turns: 50
+
+    # Retained only so existing configuration files continue to load. These
+    # agents are hidden and direct invocation returns an actionable error.
     gen_semantic_model:
       model: anthropic
 

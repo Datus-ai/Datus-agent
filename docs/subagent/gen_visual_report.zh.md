@@ -42,7 +42,7 @@ HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上
 
 `gen_visual_report` 接受两种同样合法的起点：
 
-- **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何生成指标见 [Generate Metrics](gen_metrics.zh.md)）。
+- **从 metric 出发** —— 用 `@Metrics <subject>.<group>.<metric>` 三段式直接引用已经生成的指标（subject 树路径 + 指标名），agent 会自动从语义层加载定义、维度和时间窗。项目里已经沉淀了 metric 注册表时最适用（如何创作 Dosi 指标见 [Semantic Modeling](semantic_modeling.md)）。
   ```bash
   围绕 @Metrics revenue.daily.dau 和 @Metrics conversion.weekly.signup_rate 做一份 Q4 2025 报告，按地区拆分
   ```

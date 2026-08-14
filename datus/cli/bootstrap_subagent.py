@@ -109,8 +109,8 @@ def _terminal_action(
 def _format_final_output(subagent_type: str, description: str, output: Dict[str, Any]) -> str:
     """Render a subagent's terminal ``output`` for the main REPL output.
 
-    LLM-backed bootstrap subagents (``gen_sql_summary``, ``gen_semantic_model``,
-    ``gen_metrics``) all return a ``BaseResult``-shaped dict whose ``response``
+    LLM-backed bootstrap subagents (``gen_sql_summary`` and ``semantic_modeling``)
+    return a ``BaseResult``-shaped dict whose ``response``
     field is the human-facing Markdown summary; surface it as-is. For
     subagents that don't follow that contract, fall back to a fenced JSON
     dump so the operator still sees the raw payload.
@@ -159,7 +159,7 @@ async def as_task_subagent(
 
     Args:
         subagent_type: Identifier shown as the group header
-            (e.g. ``"gen_sql_summary"``, ``"gen_metrics"``).
+            (e.g. ``"gen_sql_summary"``, ``"semantic_modeling"``).
         description: Goal label rendered next to the header
             (e.g. ``"orders.sql"``).
         inner_factory: Callable that, given a fresh

@@ -4,10 +4,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
     DeleteSubjectInput,
+    EditSemanticModelInput,
     ReferenceSQLInput,
     RenameSubjectInput,
     SubjectListData,
@@ -294,7 +294,8 @@ class TestExplorerServiceRenameSubject:
         assert result.success is True
 
     async def test_rename_metric(self, real_agent_config):
-        """rename_subject for metric type exercises metric rename path."""
+        """Metric rename is blocked because a KB-only rename would diverge from YAML."""
+        real_agent_config.resolve_semantic_adapter = MagicMock(return_value="dosi")
         svc = ExplorerService(agent_config=real_agent_config)
         result = await svc.rename_subject(
             RenameSubjectInput(
@@ -303,9 +304,19 @@ class TestExplorerServiceRenameSubject:
                 new_subject_path=["dir", "new_metric"],
             )
         )
-        # May succeed or fail depending on metric existence, but exercises the code path
-        assert isinstance(result, Result)
-        assert isinstance(result.success, bool)
+        assert result.success is False
+        assert "use semantic_modeling instead" in result.errorMessage
+
+    async def test_edit_semantic_model_requires_yaml_first_agent(self, real_agent_config):
+        real_agent_config.resolve_semantic_adapter = MagicMock(return_value="dosi")
+        svc = ExplorerService(agent_config=real_agent_config)
+
+        result = await svc.edit_semantic_model(
+            EditSemanticModelInput(entry_id="table:orders", update_values={"description": "updated"})
+        )
+
+        assert result.success is False
+        assert "use semantic_modeling instead" in result.errorMessage
 
     async def test_rename_empty_paths_fail(self, real_agent_config):
         """rename_subject with empty paths returns error."""
@@ -449,140 +460,34 @@ class TestExplorerServiceSubjectAssets:
 
 @pytest.mark.asyncio
 class TestExplorerServiceMetricFlowAuthoring:
-    """create/edit/delete for MetricFlow now route through the unified
-    ``_author_metric`` (adapter is the source of truth), keeping MetricFlow's
-    real model validation via ``_validate_metric_yaml``."""
+    """MetricFlow remains readable but no longer exposes authoring APIs."""
 
     METRIC = "metric:\n  name: revenue\n  type: aggregate\n"
 
-    def _wire(self, svc, monkeypatch, model_dir, *, validate=(True, []), sync_ok=True):
-        from types import SimpleNamespace
-
-        from datus_semantic_metricflow.authoring import MetricFlowMetricAuthor
-
-        author = MetricFlowMetricAuthor(str(model_dir))
-        # Mirror MetricFlowAdapter's *_metric_source delegation to the author.
-        adapter = SimpleNamespace(
-            read_metric_source=lambda name, subject_path=None: author.read(name),
-            write_metric_source=lambda name, source, subject_path=None, create=False: author.write(
-                name, source, subject_path=subject_path, create=create
-            ),
-            delete_metric_source=lambda name, subject_path=None: author.delete(name),
-            validate_metric_source=lambda source, metric_name=None: author.validate(source, metric_name=metric_name),
-        )
-        monkeypatch.setattr(
-            "datus.tools.func_tool.semantic_tools.SemanticTools",
-            lambda *a, **k: SimpleNamespace(adapter=adapter),
-        )
-        monkeypatch.setattr("datus.agent.node.semantic_authoring.is_osi_authoring", lambda *a, **k: False)
-        # Real MetricFlow model validation is stubbed (needs a live model); the
-        # unified path still calls it, which is what we assert.
-        monkeypatch.setattr(svc, "_validate_metric_yaml", lambda content, path: validate)
-        monkeypatch.setattr(
-            svc,
-            "_sync_file_to_kb",
-            lambda is_osi, file_path: {"success": True} if sync_ok else {"success": False, "error": "boom"},
-        )
-
-    async def test_create_missing_name_fails(self, real_agent_config, tmp_path, monkeypatch):
+    async def test_create_is_query_only(self, real_agent_config):
         from datus.api.models.explorer_models import EditMetricInput
 
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, tmp_path)
-        result = await svc.create_metric(EditMetricInput(subject_path=["d"], yaml="metric:\n  type: aggregate\n"))
-        assert result.success is False
-        assert "name" in result.errorMessage.lower()
-
-    async def test_create_writes_file_and_validates(self, real_agent_config, tmp_path, monkeypatch):
-        import os
-
-        from datus.api.models.explorer_models import EditMetricInput
-
-        svc = ExplorerService(agent_config=real_agent_config)
-        validated = {}
-        self._wire(svc, monkeypatch, tmp_path)
-
-        def fake_validate(content, path):
-            validated["called"] = True
-            return (True, [])
-
-        monkeypatch.setattr(svc, "_validate_metric_yaml", fake_validate)
-
-        result = await svc.create_metric(EditMetricInput(subject_path=["d"], yaml=self.METRIC))
-        assert result.success is True, result.errorMessage
-        assert os.path.exists(tmp_path / "metrics" / "revenue.yml")
-        assert validated.get("called")  # MetricFlow validation ran
-
-    async def test_create_validation_failure_rolls_back(self, real_agent_config, tmp_path, monkeypatch):
-        import os
-
-        from datus.api.models.explorer_models import EditMetricInput
-
-        svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, tmp_path, validate=(False, ["bad measure"]))
-
         result = await svc.create_metric(EditMetricInput(subject_path=["d"], yaml=self.METRIC))
         assert result.success is False
-        assert "bad measure" in result.errorMessage
-        assert not os.path.exists(tmp_path / "metrics" / "revenue.yml")  # rolled back
+        assert "query-only" in result.errorMessage
+        assert "semantic_modeling" in result.errorMessage
 
-    async def test_create_kb_sync_failure_rolls_back(self, real_agent_config, tmp_path, monkeypatch):
-        import os
-
+    async def test_edit_is_query_only(self, real_agent_config):
         from datus.api.models.explorer_models import EditMetricInput
 
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, tmp_path, sync_ok=False)
-
-        result = await svc.create_metric(EditMetricInput(subject_path=["d"], yaml=self.METRIC))
+        result = await svc.edit_metric(EditMetricInput(subject_path=["revenue"], yaml=self.METRIC))
         assert result.success is False
-        assert not os.path.exists(tmp_path / "metrics" / "revenue.yml")  # rolled back
+        assert "query-only" in result.errorMessage
 
-    async def test_edit_empty_path_fails(self, real_agent_config):
-        from datus.api.models.explorer_models import EditMetricInput
-
+    async def test_delete_is_query_only(self, real_agent_config):
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.edit_metric(EditMetricInput(subject_path=[], yaml=self.METRIC))
-        assert result.success is False
-        assert "empty" in result.errorMessage.lower()
-
-    async def test_edit_updates_in_place(self, real_agent_config, tmp_path, monkeypatch):
-        import yaml
-
-        from datus.api.models.explorer_models import EditMetricInput
-
-        (tmp_path / "revenue.yml").write_text(self.METRIC)
-        svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, tmp_path)
-
-        edited = "metric:\n  name: revenue\n  type: aggregate\n  description: edited\n"
-        result = await svc.edit_metric(EditMetricInput(subject_path=["revenue"], yaml=edited))
-        assert result.success is True, result.errorMessage
-        node = yaml.safe_load((tmp_path / "revenue.yml").read_text())["metric"]
-        assert node["description"] == "edited"
-
-    async def test_edit_validation_failure_restores(self, real_agent_config, tmp_path, monkeypatch):
-        from datus.api.models.explorer_models import EditMetricInput
-
-        (tmp_path / "revenue.yml").write_text(self.METRIC)
-        svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, tmp_path, validate=(False, ["nope"]))
-
-        edited = "metric:\n  name: revenue\n  type: aggregate\n  description: edited\n"
-        result = await svc.edit_metric(EditMetricInput(subject_path=["revenue"], yaml=edited))
-        assert result.success is False
-        # Restored to the original (no 'description').
-        assert (tmp_path / "revenue.yml").read_text() == self.METRIC
-
-    async def test_edit_nonexistent_fails(self, real_agent_config, tmp_path, monkeypatch):
-        from datus.api.models.explorer_models import EditMetricInput
-
-        svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, tmp_path)
-        result = await svc.edit_metric(
-            EditMetricInput(subject_path=["ghost"], yaml="metric:\n  name: ghost\n  type: aggregate\n")
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.METRIC, subject_path=["sales", "revenue"])
         )
         assert result.success is False
+        assert "query-only" in result.errorMessage
 
 
 @pytest.mark.asyncio
@@ -1139,9 +1044,10 @@ class TestExplorerServiceOSIAuthoring:
         )
         return DatusOSIAdapter(config)
 
-    def _wire(self, svc, monkeypatch, adapter):
+    def _wire(self, svc, monkeypatch, adapter, *, adapter_type="osi"):
         from types import SimpleNamespace
 
+        svc.agent_config.resolve_semantic_adapter = MagicMock(return_value=adapter_type)
         monkeypatch.setattr(
             "datus.tools.func_tool.semantic_tools.SemanticTools",
             lambda *a, **k: SimpleNamespace(adapter=adapter),
@@ -1213,6 +1119,7 @@ class TestExplorerServiceOSIAuthoring:
         from datus.api.models.explorer_models import EditMetricInput
 
         svc = ExplorerService(agent_config=real_agent_config)
+        svc.agent_config.resolve_semantic_adapter = MagicMock(return_value="dosi")
         monkeypatch.setattr("datus.agent.node.semantic_authoring.is_osi_authoring", lambda *a, **k: True)
         monkeypatch.setattr(
             "datus.tools.func_tool.semantic_tools.SemanticTools",
@@ -1229,7 +1136,7 @@ class TestExplorerServiceOSIAuthoring:
 
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
         synced = {}
 
         def fake_sync(is_osi, file_path):
@@ -1263,7 +1170,7 @@ class TestExplorerServiceOSIAuthoring:
 
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
 
         edited = (
             "name: daily_order_count\n"
@@ -1291,7 +1198,7 @@ class TestExplorerServiceOSIAuthoring:
 
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
         before = (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text()
 
         result = await svc.create_metric(EditMetricInput(subject_path=["x"], yaml=":: not yaml ::"))
@@ -1303,7 +1210,7 @@ class TestExplorerServiceOSIAuthoring:
 
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
         monkeypatch.setattr(svc.metric_rag, "delete_metric", lambda *a, **k: {"success": True})
 
         result = await svc.delete_subject(
@@ -1320,7 +1227,7 @@ class TestExplorerServiceOSIAuthoring:
 
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
         # KB re-sync fails -> the newly created metric must be removed again.
         monkeypatch.setattr(svc, "_sync_file_to_kb", lambda is_osi, file_path: {"success": False, "error": "boom"})
 
@@ -1349,7 +1256,7 @@ class TestExplorerServiceOSIAuthoring:
 
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
         monkeypatch.setattr(svc, "_sync_file_to_kb", lambda is_osi, file_path: {"success": False, "error": "boom"})
 
         edited = (
@@ -1374,7 +1281,7 @@ class TestExplorerServiceOSIAuthoring:
     async def test_delete_metric_real_write_failure_fails(self, real_agent_config, tmp_path, monkeypatch):
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
 
         # Simulate a real write failure: delete raises but the metric is still
         # present in the file -> the request must fail (not silently drop the KB).
@@ -1396,7 +1303,7 @@ class TestExplorerServiceOSIAuthoring:
     async def test_delete_metric_absent_from_source_still_cleans_kb(self, real_agent_config, tmp_path, monkeypatch):
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
 
         # Metric already gone from the source file (file/KB drift): the not-found
         # error is benign and the stale KB row is still cleaned up.

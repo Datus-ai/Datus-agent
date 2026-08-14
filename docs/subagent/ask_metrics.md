@@ -28,7 +28,11 @@ agent:
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for full semantic adapter options.
 
-Metrics can come from existing semantic-layer assets or from the [Generate Metrics](gen_metrics.md) subagent. With OSI, `ask_metrics` uses the same adapter tools but queries OSI-authored metrics through the configured execution backend. A metric subject tree is optional, but recommended because AskMetrics uses it as a routing catalog before searching.
+Metrics can come from existing semantic-layer assets or from the Dosi-only
+[`semantic_modeling`](semantic_modeling.md) subagent. Existing MetricFlow and OSI
+projects remain queryable, but semantic authoring is unavailable until the project
+uses Dosi. A metric subject tree is optional, but recommended because AskMetrics
+uses it as a routing catalog before searching.
 
 ## Quick Start
 
@@ -143,7 +147,7 @@ Use another subagent when the task is not answerable through existing semantic m
 
 | Need | Use |
 |------|-----|
-| Generate new metric definitions from SQL | [gen_metrics](gen_metrics.md) |
+| Generate new Dosi metric definitions from SQL | [semantic_modeling](semantic_modeling.md) |
 | Generate or fix SQL over raw tables | [gen_sql](builtin_subagents.md#gen_sql) |
 | Explore schemas, samples, or reference context | [explore](builtin_subagents.md#explore) |
 | Build a visual report artifact | [gen_visual_report](gen_visual_report.md) |

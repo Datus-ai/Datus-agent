@@ -11,7 +11,9 @@ Your task is to review the conversation history in this session and identify val
 Use the `task()` tool to delegate archival to specialized sub-agents:
 
 - `task(type="gen_sql_summary", prompt="...", description="...")` - Archive SQL patterns (reusable queries, common patterns, optimization techniques)
-- `task(type="gen_metrics", prompt="...", description="...")` - Define metrics (KPIs, calculated measures, business metrics discovered in conversation)
+{% if semantic_modeling_available -%}
+- `task(type="semantic_modeling", prompt="...", description="...")` - Define Dosi semantic models and metrics discovered in conversation
+{% endif -%}
 - `task(type="gen_skill", prompt="...", description="...")` - Create reusable skills (multi-step workflows, common task patterns)
 
 When delegating, include the FULL relevant context from the conversation in the prompt - the sub-agent cannot see the conversation history.

@@ -7,14 +7,14 @@ The knowledge base endpoints manage KB bootstrap operations with real-time progr
 
 ### `POST /api/v1/kb/bootstrap`
 
-Start a knowledge base component bootstrap with SSE progress streaming. Components include metadata, semantic model,
-metrics, and reference SQL.
+Start a knowledge base component bootstrap with SSE progress streaming. Components include metadata, unified Dosi
+semantic modeling, semantic compatibility aliases, metrics, and reference SQL.
 
 **Body**:
 
 | Field                | Type     | Default        | Notes |
 |----------------------|----------|----------------|-------|
-| `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_model`, `metrics`, `reference_sql` |
+| `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_modeling`, `semantic_model`, `metrics`, `reference_sql` |
 | `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), `incremental` (append/update), or `refresh-profile` (semantic model only) |
 | `schema_linking_type`| string   | `full`         | Metadata only: `table`, `view`, `mv`, or `full` |
 | `catalog`            | string   | `""`           | Metadata catalog filter for catalog-aware engines such as StarRocks; leave empty for Snowflake |
@@ -30,6 +30,10 @@ metrics, and reference SQL.
 `semantic_yaml` and `success_story`, refreshes generated `Observed profile:` description suffixes in the existing
 MetricFlow or OSI YAML using bounded read-only data profiling, and syncs the updated YAML back to semantic model storage.
 It does not run full semantic-model generation or truncate the semantic model store.
+
+For authoring strategies, `semantic_model` maps to datasets-only `semantic_modeling`; `metrics` and
+`semantic_modeling` map to full authoring. Multiple semantic components are normalized to one execution, with full
+scope taking precedence. MetricFlow and OSI projects return the query-only migration error for authoring requests.
 
 **Example**:
 

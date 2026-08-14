@@ -68,7 +68,7 @@ LLMs draft semantic models and metrics from tables and reference SQL, while engi
 
 **Command-driven iteration**
 
-Commands like `/gen_semantic_model`, `/gen_metrics`, and `/gen_sql_summary` create and update assets. The `/catalog` and `/subject` screens support in-place edits.
+Commands like `/semantic_modeling` and `/gen_sql_summary` create and update assets. The retired `/gen_semantic_model` and `/gen_metrics` names are hidden and return guidance to use `semantic_modeling`.
 
 **Feedback drives continuous improvement**
 
@@ -184,7 +184,7 @@ Inside the REPL:
 > /bootstrap
 
 ──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   Schema   SQL   Template   Semantic   Metrics   Knowledge    (Tab or ←/→ to switch)
+   Schema   SQL   Template   Semantic Modeling   Knowledge    (Tab or ←/→ to switch)
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Schema
   Crawl the live database schema into the metadata RAG.
@@ -214,9 +214,9 @@ Press **Ctrl+R**. Expected output:
 
 Learn more about [metadata management](../knowledge_base/metadata.md).
 
-### Step 3 — Bootstrap the Semantic Model (Semantic tab)
+### Step 3 — Bootstrap Dosi Semantic Models and Metrics (Semantic Modeling tab)
 
-Switch to the **Semantic** tab and fill in:
+Switch to the **Semantic Modeling** tab and fill in:
 
 ```text
 datasource:    california_schools
@@ -224,64 +224,26 @@ success_story: ~/.datus/benchmark/california_schools/success_story.csv
 overwrite:     [x]
 ```
 
-`success_story.csv` is a CSV of `(question, sql)` pairs that Datus uses as ground truth when drafting MetricFlow semantic models. The file ships with the sample dataset, so the path above resolves directly.
+`success_story.csv` is a CSV of `(question, sql)` pairs that Datus uses as evidence when authoring Dosi datasets, relationships, and metrics. The file ships with the sample dataset, so the path above resolves directly. This authoring flow requires the project semantic adapter to be Dosi.
 
 Press **Ctrl+R**. Expected output:
 
 ```text
-⏺ 💬 Running bootstrap task: semantic_model                                                                                                                                          
-
-⏺ gen_semantic_model(~/.datus/benchmark/california_schools/success_story.csv (mode=overwrite))
-  ⎿  Done (15 tool uses · 98.1s)
-⏺ 💬 gen_semantic_model (~/.datus/benchmark/california_schools/success_story.csv (mode=overwrite)):                                                                                  
-
-
-        Semantic Models Generated for california_schools                                                                   
-
-                Analysis Summary                                                                                   
-
- • SQL Queries Analyzed: 2 queries across 2 tables                                                                                                                                   
- • Tables Identified: frpm, schools                                                                                                                                                  
- • Relationship Discovered: frpm.CDSCode → schools.CDSCode (HIGH confidence, via DDL foreign key constraint)     
+⏺ 💬 Running bootstrap task: semantic_modeling
+⏺ semantic_modeling(~/.datus/benchmark/california_schools/success_story.csv)
+  ⎿  Dosi YAML validated and reconciled to the Knowledge Base
+⏺ 💬 semantic_modeling bootstrap completed
 ```
 
-Datus infers dimensions and measures per table and writes MetricFlow YAML to the project's `subject/semantic_models/` directory.
+Datus writes validated Dosi YAML to the project's `subject/semantic_models/` directory and reconciles both semantic objects and metrics to the Knowledge Base.
 
-### Step 4 — Bootstrap Metrics (Metrics tab)
+### Step 4 — Understand the CLI compatibility scopes
 
-Switch to the **Metrics** tab and fill in:
+The interactive bootstrap has one **Semantic Modeling** tab and always runs the full Dosi workflow. For automation, the historical component names remain as compatibility aliases:
 
-```text
-datasource:    california_schools
-success_story: ~/.datus/benchmark/california_schools/success_story.csv
-pool_size:     3
-subject_tree:  california_schools/Continuation_School/Free_Rate,california_schools/Charter/Education_Location
-overwrite:     [x]
-```
-
-The `subject_tree` field is a comma-separated list of `domain/layer1/layer2` paths. Datus places every generated metric under one of these leaves so the final knowledge base is browsable by topic.
-
-Press **Ctrl+R**. Expected output (truncated):
-
-```text
-⏺ gen_metrics(~/.datus/benchmark/california_schools/success_story.csv (mode=incremental))
-  ⎿  Done (20 tool uses · 90.0s)
-⏺ 💬 gen_metrics (~/.datus/benchmark/california_schools/success_story.csv (mode=incremental)):                                                                                       
-
-
-                    SQL Analysis Summary                                                                                 
-            Query 1 — Continuation School Free Rate (Ages 5-17)                                                                 
-
-Business Question: What are the eligible free meal rates (ages 5-17) for continuation schools?                                                                                       
-
-Metric Extracted: continuation_school_free_rate_ages_5_17                                                                                                                            
-
- • Type: ratio                                                                                                                                                                       
- • Numerator measure: continuation_school_free_meal_count_ages_5_17 — SUM(CASE WHEN Educational Option Type = 'Continuation School' THEN Free Meal Count (Ages 5-17) ELSE 0 END)     
- • Denominator measure: continuation_school_enrollment_ages_5_17 — SUM(CASE WHEN Educational Option Type = 'Continuation School' THEN Enrollment (Ages 5-17) ELSE 0 END)             
- • Subject tree: california_schools/Continuation_School/Free_Rate                                                                                                                    
- • Status: ✅ Created, validated, dry-run passed, synced to Knowledge Base  
-```
+- `--components semantic_model` runs datasets-only authoring and preserves every existing metric definition.
+- `--components metrics` or `--components semantic_modeling` runs full datasets-and-metrics authoring.
+- Combining semantic components executes once; full scope wins.
 
 For more on metrics, see the [metrics documentation](../knowledge_base/metrics.md).
 

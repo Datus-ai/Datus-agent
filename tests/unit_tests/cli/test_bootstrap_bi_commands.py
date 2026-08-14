@@ -43,7 +43,7 @@ def agent_config() -> SimpleNamespace:
         current_datasource="local",
         agentic_nodes={},
         path_manager=SimpleNamespace(),
-        resolve_semantic_adapter=lambda x: x,
+        resolve_semantic_adapter=lambda _x: "dosi",
         current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="sch"),
     )
 
@@ -124,7 +124,6 @@ def test_cmd_closes_adapter_after_full_run(agent_config, console) -> None:
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_streams_no_yield),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["cat.db.sch.orders"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
@@ -142,11 +141,9 @@ def test_cmd_closes_adapter_after_full_run(agent_config, console) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_plan_skips_metrics_when_semantic_validation_fails(agent_config, console) -> None:
+async def test_run_plan_reports_unified_semantic_failure(agent_config, console) -> None:
     plan = _plan()
     cmd = BootstrapBiCommands(agent_config, console)
-
-    metric_calls: list = []
 
     async def _meta_stream(*_a, **_k):
         if False:
@@ -161,42 +158,36 @@ async def test_run_plan_skips_metrics_when_semantic_validation_fails(agent_confi
         return
         yield  # pragma: no cover
 
-    async def _metrics_stream(*_a, **_k):
-        metric_calls.append(True)
-        if False:
-            yield  # pragma: no cover
-
     actions: list[ActionHistory] = []
     with (
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_meta_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_ref_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_streams_no_yield),
+        patch(
+            "datus.cli.bootstrap_bi_commands.stream_bi_save_subagents",
+            side_effect=_streams_no_yield,
+        ) as save_subagents,
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["t"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
         patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
     ):
         await cmd._run_plan(plan, actions)
 
-    assert metric_calls == []  # metrics stream never invoked
-    assert any(a.status == ActionStatus.FAILED.value and "Skipping metrics" in a.messages for a in actions)
+    assert any(
+        a.status == ActionStatus.FAILED.value and "Unified semantic modeling failed" in a.messages for a in actions
+    )
+    save_subagents.assert_not_called()
+    assert not any("Sub-Agent build successful" in a.messages for a in actions)
 
 
 @pytest.mark.asyncio
-async def test_run_plan_runs_metrics_when_semantic_ok_set(agent_config, console) -> None:
+async def test_run_plan_uses_metrics_collected_by_semantic_modeling(agent_config, console) -> None:
     plan = _plan()
     cmd = BootstrapBiCommands(agent_config, console)
 
-    metric_calls: list = []
-
     async def _set_ok_stream(*_, state, **_k):
         state.semantic_ok = True
-        if False:
-            yield  # pragma: no cover
-
-    async def _metrics_stream(*_, state, **_k):
-        metric_calls.append(state.semantic_ok)
+        state.metrics.append("sales.orders.total_orders")
         if False:
             yield  # pragma: no cover
 
@@ -205,7 +196,6 @@ async def test_run_plan_runs_metrics_when_semantic_ok_set(agent_config, console)
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_set_ok_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stream),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=["t"]),
         patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
@@ -213,7 +203,7 @@ async def test_run_plan_runs_metrics_when_semantic_ok_set(agent_config, console)
     ):
         await cmd._run_plan(plan, actions)
 
-    assert metric_calls == [True]
+    assert not any("Unified semantic modeling failed" in a.messages for a in actions)
 
 
 @pytest.mark.asyncio
@@ -261,7 +251,6 @@ async def test_run_plan_skips_save_when_scoped_context_empty(agent_config, conso
         patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stream),
-        patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_streams_no_yield),
         patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_save_stream),
         # qualify_table_names returns empty so ScopedContext is also empty.
         patch("datus.cli.bootstrap_bi_commands.qualify_table_names", return_value=[]),

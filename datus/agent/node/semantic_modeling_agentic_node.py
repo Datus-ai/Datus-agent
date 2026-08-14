@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, List, Literal, Optional
 
+import yaml
+
 from datus.agent.node.agentic_node import AgenticNode
-from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
@@ -20,7 +23,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-class SemanticModelingAgenticNode(GenMetricsAgenticNode):
+class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     """Author Dosi datasets, metrics, or both against one selected model."""
 
     NODE_NAME = "semantic_modeling"
@@ -33,20 +36,20 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
         agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
         scope: Optional[str] = None,
+        authoring_scope: Literal["datasets", "full"] = "full",
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
-        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+        from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
         from datus.utils.exceptions import DatusException, ErrorCode
 
-        adapter = resolve_semantic_adapter_type(agent_config)
-        if adapter != "dosi":
+        ensure_semantic_agent_available(self.NODE_NAME, agent_config)
+        if authoring_scope not in {"datasets", "full"}:
             raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message_args={
-                    "config_error": f"semantic_modeling is available only when semantic_adapter=dosi; resolved {adapter!r}."
-                },
+                ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"your_value": authoring_scope, "field_name": "authoring_scope"},
             )
+        self.authoring_scope = authoring_scope
         self._existing_models_checked = False
         super().__init__(
             agent_config=agent_config,
@@ -186,7 +189,12 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
                 mutation_callback=self._record_semantic_modeling_mutation,
             )
             filesystem_tools = [
-                tool for tool in self.filesystem_func_tool.available_tools() if tool.name != "delete_file"
+                tool
+                for tool in self.filesystem_func_tool.available_tools()
+                if tool.name != "delete_file"
+                and not (
+                    self.authoring_scope == "datasets" and tool.name in {"upsert_osi_metrics", "delete_osi_metrics"}
+                )
             ]
             self.tools.extend(filesystem_tools)
         except Exception as exc:
@@ -215,6 +223,19 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
     ) -> str:
         """Keep explicit target values as hints until existing models are checked."""
         parts = list(extra_enhanced_parts or [])
+        if self.authoring_scope == "datasets":
+            parts.append(
+                "## Authoring Scope\n"
+                "This run is datasets-only. Create or update datasets, fields, relationships, and model metadata "
+                "as needed. Do not create, update, or delete metrics. Existing metric definitions must remain "
+                "semantically unchanged."
+            )
+        else:
+            parts.append(
+                "## Authoring Scope\n"
+                "This run has full scope. Create or update datasets, fields, relationships, model metadata, and "
+                "metrics as required by the request."
+            )
         semantic_model_name = str(getattr(user_input, "semantic_model_name", "") or "").strip()
         semantic_model_file = str(getattr(user_input, "semantic_model_file", "") or "").strip()
         if semantic_model_name or semantic_model_file:
@@ -226,6 +247,11 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
             hints.append("Verify the hint against the active datasource's existing models before selecting the target.")
             parts.append("\n".join(hints))
         return AgenticNode._build_enhanced_message(self, user_input, parts)
+
+    def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
+        context = super()._prepare_template_context(user_input)
+        context["authoring_scope"] = self.authoring_scope
+        return context
 
     @staticmethod
     def _parse_semantic_modeling_response(content: Any) -> tuple[Optional[str], Optional[str], Optional[str], str]:
@@ -278,6 +304,8 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
         if skip_reason is not None and status != "skipped":
             raise RuntimeError("skip_reason is only valid when status='skipped'.")
 
+        self._enforce_authoring_scope()
+
         semantic_model_files: List[str] = []
         if status == "blocked":
             if blocker_code not in {
@@ -318,6 +346,40 @@ class SemanticModelingAgenticNode(GenMetricsAgenticNode):
             or state.touched_dataset_names
             or state.planned_dataset_names
             or state.artifact_snapshot_path
+        )
+
+    @staticmethod
+    def _metric_definitions(content: bytes) -> list[Any]:
+        if not content:
+            return []
+        try:
+            document = yaml.safe_load(content.decode("utf-8"))
+        except (UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise RuntimeError(f"Cannot inspect semantic-model metrics for scope enforcement: {exc}") from exc
+        models = document.get("semantic_model") if isinstance(document, dict) else None
+        if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+            return []
+        metrics = models[0].get("metrics") or []
+        return metrics if isinstance(metrics, list) else []
+
+    def _enforce_authoring_scope(self) -> None:
+        """Reject and roll back metric mutations made during a datasets-only run."""
+        if self.authoring_scope != "datasets":
+            return
+        state = self.osi_target_state
+        if not state.artifact_snapshot_path or state.artifact_snapshot_content is None:
+            return
+        target_path = state.artifact_snapshot_path
+        try:
+            current_content = Path(target_path).read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"Cannot inspect the selected semantic model for scope enforcement: {exc}") from exc
+        if self._metric_definitions(state.artifact_snapshot_content) == self._metric_definitions(current_content):
+            return
+        rolled_back = bool(self.filesystem_func_tool and self.filesystem_func_tool.rollback_failed_authoring())
+        rollback_suffix = " The semantic-model YAML was restored." if rolled_back else ""
+        raise RuntimeError(
+            "Datasets-only semantic_modeling cannot create, update, or delete metrics." + rollback_suffix
         )
 
     def _selected_osi_artifact(self) -> tuple[str, str, str]:

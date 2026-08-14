@@ -112,6 +112,6 @@ Close by telling the user what was written: the `AGENTS.md` inventory, any `./kn
 
 - **Routing lives in `storage-classify`, not here.** Knowledge vs memory vs AGENTS.md follows its decision tree (branches 1, 5, 6).
 - **Honor the resolved scope in every step.** When Step 0 resolved scope hints, never scan, file knowledge/memory, or write AGENTS.md sections outside that scope — only default to whole-project when no hints were given.
-- **This is the lightweight pass — stay in scope.** Do NOT call `gen_semantic_model` / `gen_metrics` / `gen_sql_summary`, do NOT fan out `explore` subagents, and do NOT emit a Generation Manifest — the vector-indexed stores are out of scope for this skill.
+- **This is the lightweight pass — stay in scope.** Do NOT call `semantic_modeling` / `gen_sql_summary`, do NOT fan out `explore` subagents, and do NOT emit a Generation Manifest — the vector-indexed stores are out of scope for this skill.
 - Use placeholder comments (e.g. `<!-- Describe your architecture here -->`) when you cannot determine something rather than inventing facts.
 - **Do not ask the user anything except before wholesale-overwriting an existing `AGENTS.md`.** Goal, datasource scope, knowledge, and memory are all inferred and written directly.

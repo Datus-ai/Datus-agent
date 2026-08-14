@@ -36,9 +36,10 @@ class TestBootstrapKbInput:
         assert "compatibility aliases" in description
         assert "fully reconcile each selected semantic-model YAML" in description
 
-    def test_semantic_modeling_rejects_legacy_authoring_components(self):
-        with pytest.raises(ValidationError):
-            BootstrapKbInput(components=["semantic_modeling", "metrics"])
+    def test_semantic_modeling_accepts_compatibility_aliases_for_normalization(self):
+        inp = BootstrapKbInput(components=["semantic_modeling", "metrics"])
+
+        assert inp.components == ["semantic_modeling", "metrics"]
 
 
 class TestBootstrapDocInput:

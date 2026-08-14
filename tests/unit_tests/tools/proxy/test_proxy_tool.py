@@ -592,12 +592,12 @@ class TestProxiedToolNames:
             on_invoke_tool=original_invoke,
         )
 
-        # gen_semantic_model is in _FS_DEPENDENT_NODES — write_file must NOT be
+        # semantic_modeling is in _FS_DEPENDENT_NODES — write_file must NOT be
         # proxied or recorded, but execute_sql still is.
         node = self._make_node(
             [write_file, execute_sql],
             registry=ToolRegistry({"write_file": "filesystem_tools", "execute_sql": "db_tools"}),
-            node_name="gen_semantic_model",
+            node_name="semantic_modeling",
         )
 
         apply_proxy_tools(node, ["*"])

@@ -50,7 +50,7 @@ Once the dashboard is built, the chat panel prints the HTML file's absolute path
 
 `gen_visual_dashboard` accepts two equally valid starting points:
 
-- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer, and turn the dimensions into filters. Best when your project already has a curated metric registry (see [Generate Metrics](gen_metrics.md) for how to create them).
+- **From metrics** — reference an existing metric with `@Metrics <subject>.<group>.<metric>` (three segments — subject tree path + metric name). The agent will pull its definition, dimensions, and time windows from your semantic layer, and turn the dimensions into filters. Best when your project already has a curated metric registry (see [Semantic Modeling](semantic_modeling.md) for Dosi authoring).
   ```bash
   Build an ops overview around @Metrics revenue.daily.dau and @Metrics conversion.weekly.signup_rate, with region and date-range filters.
   ```

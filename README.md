@@ -124,7 +124,7 @@ workflow:
 | Category | Nodes |
 |----------|-------|
 | **Core** | `schema_linking`, `execute_sql`, `reasoning`, `reflect`, `output` |
-| **Agentic** | `gen_sql`, `chat`, `explore`, `gen_semantic_model`, `gen_metrics`, `gen_sql_summary`, `gen_skill`, `gen_table`, `compare` |
+| **Agentic** | `gen_sql`, `chat`, `explore`, `semantic_modeling`, `gen_sql_summary`, `gen_skill`, `gen_table`, `compare` |
 | **Control Flow** | `parallel`, `selection`, `subworkflow` |
 | **Utility** | `date_parser`, `doc_search`, `fix` |
 
@@ -212,7 +212,7 @@ datus-cli --datasource demo
 **Build Context** — Generate semantic models, import SQL history, define metrics. Each piece becomes reusable context for future queries.
 
 ```bash
-/gen_semantic_model xxx        # Generate semantic model from tables
+/semantic_modeling xxx         # Author Dosi semantic models and metrics
 /gen_sql_summary               # Index SQL history for retrieval
 ```
 

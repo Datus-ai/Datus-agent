@@ -22,6 +22,7 @@ Design principle: NO mock except LLM.
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -672,6 +673,28 @@ class TestFeedbackSystemPrompt:
         content = template_path.read_text(encoding="utf-8")
         assert "caller_node_name" not in content
         assert "caller_memory_dir" not in content
+
+    @pytest.mark.parametrize(
+        ("adapter", "semantic_modeling_visible"),
+        [("dosi", True), ("osi", False), ("metricflow", False)],
+    )
+    def test_feedback_system_prompt_gates_semantic_modeling_by_adapter(
+        self,
+        real_agent_config,
+        mock_llm_create,
+        adapter,
+        semantic_modeling_visible,
+    ):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        real_agent_config.resolve_semantic_adapter = MagicMock(return_value=adapter)
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+
+        prompt = node._get_system_prompt()
+
+        assert ('task(type="semantic_modeling"' in prompt) is semantic_modeling_visible
+        assert 'task(type="gen_sql_summary"' in prompt
+        assert 'task(type="gen_skill"' in prompt
 
     def test_feedback_system_prompt_injects_caller_memory(self, real_agent_config, mock_llm_create):
         """When feedback renders its system prompt, the caller's memory is injected

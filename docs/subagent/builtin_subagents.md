@@ -4,21 +4,20 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers thirteen core subagents:
+This document covers the core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
-2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
-3. **[gen_metrics](#gen_metrics)** — Generates MetricFlow metric definitions
-4. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
-5. **[explore](#explore)** — Read-only data exploration and context gathering
-6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
-7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
-8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
-9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
-10. **[gen_skill](#gen_skill)** — Skill creation and optimization
-11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-12. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
-13. **[scheduler](#scheduler)** — Airflow job lifecycle management
+2. **[semantic_modeling](semantic_modeling.md)** — Authors Dosi semantic models and metrics
+3. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
+4. **[explore](#explore)** — Read-only data exploration and context gathering
+5. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
+6. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
+7. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
+8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
+9. **[gen_skill](#gen_skill)** — Skill creation and optimization
+10. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
+11. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+12. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -27,11 +26,7 @@ Builtin subagents work out of the box with minimal configuration. Most settings 
 ```yaml
 agent:
   agentic_nodes:
-    gen_semantic_model:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-
-    gen_metrics:
+    semantic_modeling:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
 
@@ -88,7 +83,7 @@ agent:
 **Built-in configurations** (no setup needed):
 - **Tools**: Automatically configured based on subagent type
 - **Hooks**: Workflow-specific validation and Knowledge Base sync
-- **MCP Servers**: MetricFlow validation (for gen_semantic_model and gen_metrics)
+- **Semantic adapter tools**: Dosi validation and query tools for `semantic_modeling`
 - **System Prompts**: Built-in templates; latest versions are used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/` with subagent-specific subdirectories
 
@@ -203,6 +198,10 @@ tags: "revenue, region, aggregation"       # Comma-separated tags
 
 ## gen_semantic_model
 
+> Retired. This name is hidden and direct invocation fails with guidance to use
+> [`semantic_modeling`](semantic_modeling.md). Its configuration is retained only
+> for compatibility with existing installations.
+
 ### Overview
 
 The semantic model generation feature helps you create MetricFlow semantic models from database tables through an AI-powered assistant. The assistant analyzes your table structure and generates comprehensive YAML configuration files that define metrics, dimensions, and relationships.
@@ -307,6 +306,10 @@ The semantic model generation feature provides:
 ---
 
 ## gen_metrics
+
+> Retired. This name is hidden and direct invocation fails with guidance to use
+> [`semantic_modeling`](semantic_modeling.md). Its configuration is retained only
+> for compatibility with existing installations.
 
 ### Overview
 
@@ -1030,8 +1033,7 @@ agent:
 | Subagent | Purpose | Output | Stored In | Key Features |
 |----------|---------|--------|-----------|--------------|
 | `gen_sql_summary` | Summarize and classify SQL queries | YAML (SQL summary) | `/data/reference_sql` | Subject tree categorization, auto context retrieval |
-| `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL to MetricFlow model, built-in validation |
-| `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL to MetricFlow metric, subject tree support |
+| `semantic_modeling` | Author semantic models and metrics | Dosi YAML | `/data/semantic_models` | Unified validation and full Knowledge Base reconcile |
 | `ask_metrics` | Answer existing metric questions | Markdown report | N/A | KPI values, trends, grouped results, attribution, no raw SQL fallback |
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast turn budget, three exploration directions |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |

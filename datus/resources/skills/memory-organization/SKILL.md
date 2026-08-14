@@ -59,7 +59,7 @@ Use `ask_user` **only** when the resolution genuinely needs a human judgement th
 
 | Issue | Store(s) | Type | Proposed Action | Mechanism |
 |-------|----------|------|-----------------|-----------|
-| single metric stored as semantic_model | semantic_models → metrics | misclassification | move to metrics | `task(gen_metrics)` + remove stale model |
+| single metric stored as semantic_model | semantic_models → metrics | misclassification | move to metrics | `task(semantic_modeling)` + remove stale model |
 | duplicate status-code fact | knowledge | duplicate | merge into one atom | `edit_file` |
 | memory holds team-level fact | memory → knowledge | misclassification | re-route to knowledge | `extract-knowledge` (lite) + `edit_memory` |
 | `## Knowledge` link to deleted file | AGENTS.md | stale | drop the dead index line | `edit_file` |
@@ -76,7 +76,7 @@ Once the user confirms or corrects the plan, apply each action with the store's 
 
 **Make every re-route prompt self-contained (see storage-classify's *Context Handoff*).** A regenerating subagent runs in a fresh context and cannot see the stale entry you are replacing — so lift the content out of the old store during Step 1's inventory and inline it: the **datasource (+ dialect)**, the misplaced item's **actual content** (the SQL, the metric definition, the fact), the **business intent**, and the **rule/encoding** it must honor. Re-routing a metric with only its name produces a different metric, not a faithful move.
 
-- **Misclassified items** → re-route through the correct owner: regenerate via the matching `task` subagent (`gen_semantic_model` / `gen_metrics` / `gen_sql_summary` / `gen_skill`) or `extract-knowledge` (lite) — passing the lifted content + context above — then remove the stale copy from the wrong store.
+- **Misclassified items** → re-route through the correct owner: regenerate semantic assets with `semantic_modeling`, reference SQL with `gen_sql_summary`, skills with `gen_skill`, or knowledge with `extract-knowledge` (lite) — passing the lifted content + context above — then remove the stale copy from the wrong store.
 - **Duplicates** → consolidate via `edit_file` (knowledge / reference_sql YAML index) or `edit_memory` (memory).
 - **Conflicts** → keep the resolved entry (per the Step 2 `ask_user` decision) and remove the other.
 - **AGENTS.md index / structure** → fix with a scoped `edit_file`; never rewrite the whole file when a scoped edit suffices, and never touch `## Knowledge` entries owned by `extract-knowledge` beyond removing provably dead links.

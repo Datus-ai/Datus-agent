@@ -241,14 +241,17 @@ async def create_semantic_model_for_table(
     Returns:
         (success, error_message)
     """
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
     try:
+        ensure_semantic_agent_available("semantic_modeling", agent_config)
         current_db_config = agent_config.current_db_config()
         target = _resolved_table_target(table, agent_config, current_db_config)
         user_message = (
-            "Generate a semantic model for the following table.\n\n"
+            "Use semantic_modeling to author only the Dosi datasets, fields, relationships, and model metadata "
+            "for the following table. Do not create, update, or delete metrics.\n\n"
             "Target table coordinate:\n"
             f"{_format_table_target_for_prompt(table, agent_config, current_db_config)}\n\n"
             "When calling database tools, pass the namespace fields separately exactly as shown above; "
@@ -275,14 +278,16 @@ async def create_semantic_model_for_table(
 
     semantic_input = SemanticNodeInput(
         user_message=user_message,
+        authoring_scope="datasets",
         catalog=target["catalog_name"],
         database=target["database_name"],
         db_schema=target["schema_name"],
     )
 
-    semantic_node = GenSemanticModelAgenticNode(
+    semantic_node = SemanticModelingAgenticNode(
         agent_config=agent_config,
         execution_mode="workflow",
+        authoring_scope="datasets",
     )
     semantic_node.input = semantic_input
 

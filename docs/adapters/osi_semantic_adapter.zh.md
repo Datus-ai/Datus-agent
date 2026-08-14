@@ -1,19 +1,19 @@
 # OSI 语义适配器
 
-本文面向使用 Datus 生成和查询指标的用户，说明当前 Datus 对 OSI（Open Semantic Interchange）语义模型的支持方式。这里的 OSI 支持由两部分组成：
+本文说明 Datus 对已有 OSI（Open Semantic Interchange）语义模型和指标的查询兼容。这里的 OSI 支持由两部分组成：
 
-- `datus-agent`：负责用 LLM 生成严格 OSI core YAML，把生成结果校验、dry-run，并同步到 Knowledge Base，供 `ask_metrics` 查询。
+- `datus-agent`：加载已有 strict OSI core YAML，供 `ask_metrics` 和其他查询入口使用。
 - `datus-semantic-adapter`：提供 `datus-semantic-osi` 适配器，负责加载 OSI YAML、校验 OSI core schema、编译到 Datus Semantic IR，再降低到执行后端。目前执行后端是 MetricFlow。
 
 ## 当前定位
 
-OSI 在 Datus 里是语义模型和指标的 authoring format，也就是用户和 LLM 书写的源格式。MetricFlow 是默认 execution backend，也就是实际生成 SQL 和执行查询的后端。
+> **仅查询兼容：**已有 OSI 项目仍可查询，但 OSI 语义创作已退役。修改前请先把项目迁移为 Dosi，
+> 然后使用 `semantic_modeling`。
+
+在已有 OSI 项目中，OSI 是源格式，MetricFlow 是默认 execution backend，也就是实际生成 SQL 和执行查询的后端。
 
 ```text
-gen_semantic_model / gen_metrics
-        |
-        v
-strict OSI core YAML + DATUS custom_extensions
+已有 strict OSI core YAML + DATUS custom_extensions
         |
         v
 datus-semantic-osi: validate -> compile IR -> lower to MetricFlow
@@ -68,16 +68,14 @@ agent:
 
 `execution_backend` 默认是 `metricflow`；只有需要换 OSI 执行后端时才需要显式配置。
 
-`datus-agent` 会从全局 active semantic adapter 推导 authoring format：
-
-1. 当 `agent.services.semantic_layer.osi` 是 active adapter 时，使用 OSI authoring。
-2. 否则保持 MetricFlow authoring。
+`datus-agent` 使用全局 active semantic adapter 执行查询。active adapter 为 `osi` 时会加载 OSI 资产，
+但不会启用语义创作。
 
 旧的 node 级 `semantic_adapter` 和 `authoring_format` 字段会被忽略。
 
-## 生成语义模型
+## 已有语义模型格式
 
-在 OSI 模式下，`gen_semantic_model` 生成的是严格 OSI core document。根结构固定为：
+已有 OSI 项目使用严格 OSI core document。根结构固定为：
 
 ```yaml
 version: 0.2.0.dev0
@@ -118,13 +116,13 @@ semantic_model:
 - 时间字段用 `dimension.is_time: true` 标记，Datus 的 `time_granularity` hint 写进 `custom_extensions`。
 - 关系写在 semantic model 对象的 `relationships` 下，不要写进 dataset。
 
-### 重新生成某张表的模型
+### 修改某张表的模型
 
-对该表重跑一次 `gen_semantic_model`，然后执行 `/build-kb` 重建向量 KB，使目录中的 `is_dimension` 等事实反映当前模型。
+请先把项目迁移为 Dosi，再使用 `semantic_modeling` 修改模型，以保证 YAML 和 Knowledge Base 保持同步。
 
-## 生成指标
+## 已有指标格式
 
-在 OSI 模式下，`gen_metrics` 会把指标追加到 OSI core document 的 `semantic_model[0].metrics` 下。指标的业务表达写在 OSI core 的 `expression` 中，Datus 执行提示写在 `custom_extensions`。
+已有 OSI 指标位于 OSI core document 的 `semantic_model[0].metrics` 下。指标的业务表达写在 OSI core 的 `expression` 中，Datus 执行提示写在 `custom_extensions`。
 
 ```yaml
 version: 0.2.0.dev0
@@ -294,7 +292,7 @@ OSI adapter 返回的 metric metadata 会包含 Datus hints，例如：
 
 ## 不适合作为指标生成的 SQL
 
-以下 SQL 类型不会被 `gen_metrics` 强行生成为 OSI metric：
+旧 OSI 指标格式不会把以下 SQL 类型强行表达为 metric：
 
 - 明细列表：`SELECT col1, col2 ...`
 - 去重明细：`SELECT DISTINCT ...`
@@ -302,7 +300,7 @@ OSI adapter 返回的 metric metadata 会包含 Datus hints，例如：
 - TopN per group，例如“每个渠道排名前 N 的活动”
 - 主要产出是行级记录，而不是聚合指标的查询
 
-这些查询可以作为后续的 derived dataset、物化视图或 query layer 能力来表达，但不属于当前 `gen_metrics` 的指标生成范围。
+这些查询可以通过 derived dataset、物化视图或 query layer 表达，但不属于旧 OSI 指标格式的能力范围。
 
 ## 当前限制
 

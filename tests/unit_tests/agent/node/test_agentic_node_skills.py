@@ -885,20 +885,11 @@ class TestBuiltinNodeDefaultSkills:
 
         assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table"
 
-    def test_gen_metrics_defaults_derive_from_authoring_format(self):
-        """gen_metrics derives skills dynamically: DEFAULT_SKILLS stays unset, the
-        optional set comes from the authoring format and the spec skill is
-        host-injected via REQUIRED_SKILLS (see test_semantic_authoring.py)."""
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+    def test_semantic_modeling_defaults_derive_from_active_dosi_adapter(self):
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-        assert GenMetricsAgenticNode.DEFAULT_SKILLS is None
-        assert GenMetricsAgenticNode.REQUIRED_SKILLS is None
-
-    def test_gen_semantic_model_defaults_derive_from_authoring_format(self):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-
-        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS is None
-        assert GenSemanticModelAgenticNode.REQUIRED_SKILLS is None
+        assert SemanticModelingAgenticNode.DEFAULT_SKILLS is None
+        assert SemanticModelingAgenticNode.REQUIRED_SKILLS is None
 
     def test_gen_dashboard_leaves_defaults_unset(self):
         """gen_dashboard injects {platform}-dashboard dynamically in setup, not via DEFAULT_SKILLS."""
@@ -968,8 +959,7 @@ class TestSkillAllowedAgentsConsistency:
         [
             ("gen_job", ["gen-table", "table-validation", "data-migration"]),
             ("gen_table", ["gen-table", "table-validation"]),
-            ("gen_semantic_model", ["metricflow-semantic-authoring"]),
-            ("gen_metrics", ["gen-metrics", "metricflow-semantic-authoring"]),
+            ("semantic_modeling", ["dosi-semantic-authoring"]),
             ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
             ("gen_skill", ["create-skill", "optimize-skill"]),
             ("scheduler", ["airflow-workflow", "scheduler-validation"]),
@@ -991,20 +981,12 @@ class TestSkillAllowedAgentsConsistency:
         semantic_names = {
             skill.name
             for skill in manager.get_available_skills(
-                "gen_semantic_model",
-                patterns=["semantic-sql-history-profiler"],
-            )
-        }
-        metric_names = {
-            skill.name
-            for skill in manager.get_available_skills(
-                "gen_metrics",
+                "semantic_modeling",
                 patterns=["semantic-sql-history-profiler"],
             )
         }
 
         assert semantic_names == {"semantic-sql-history-profiler"}
-        assert metric_names == set()
 
     def test_dashboard_router_skill_is_not_exposed_to_chat(self):
         """Dashboard routing is handled by task(type="gen_dashboard"), not a chat-visible skill."""

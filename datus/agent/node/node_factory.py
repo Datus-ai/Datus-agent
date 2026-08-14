@@ -45,26 +45,16 @@ def create_interactive_node(
             ``__init__``.
     """
     if subagent_name:
-        node_class_type = _resolve_node_class_type(subagent_name, agent_config)
+        from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
 
-        if subagent_name == "semantic_modeling":
+        ensure_semantic_agent_available(subagent_name, agent_config)
+        node_class_type = _resolve_node_class_type(subagent_name, agent_config)
+        from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
+
+        if subagent_name == "semantic_modeling" or node_class_type in RETIRED_SYS_SUB_AGENTS:
             from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
             return SemanticModelingAgenticNode(
-                agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
-            )
-
-        elif subagent_name == "gen_semantic_model":
-            from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
-
-            return GenSemanticModelAgenticNode(
-                agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
-            )
-
-        elif subagent_name == "gen_metrics":
-            from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-            return GenMetricsAgenticNode(
                 agent_config=agent_config, execution_mode=execution_mode, scope=scope, session_id=session_id
             )
 
@@ -379,9 +369,7 @@ def _build_typed_node_input(
     """Construct the node-type-specific input object (no @-context wiring)."""
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
-    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
     from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
@@ -393,8 +381,6 @@ def _build_typed_node_input(
         node,
         (
             SemanticModelingAgenticNode,
-            GenSemanticModelAgenticNode,
-            GenMetricsAgenticNode,
             GenTableAgenticNode,
             GenJobAgenticNode,
         ),

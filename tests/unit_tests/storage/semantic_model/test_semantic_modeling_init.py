@@ -71,8 +71,40 @@ async def test_batches_complete_semantic_modeling_calls_in_groups_of_five(build_
     assert [len(call.args[1]) for call in run_batch.await_args_list] == [5, 5, 2]
     assert run_batch.await_args_list[0].kwargs["target_hint"] == ""
     assert run_batch.await_args_list[1].kwargs["target_hint"] == "models/domain.yml"
+    assert all(item.kwargs["authoring_scope"] == "full" for item in run_batch.await_args_list)
     assert result["batches_completed"] == 3
     assert result["sql_entries_covered"] == 12
+
+
+@pytest.mark.asyncio
+async def test_datasets_only_scope_is_forwarded_to_every_batch():
+    config = _config()
+    run_batch = AsyncMock(
+        return_value=(True, "", {"success": True, "status": "generated", "semantic_models": ["models/domain.yml"]})
+    )
+    semantic_rag = MagicMock(get_size=MagicMock(return_value=2))
+    metric_rag = MagicMock(get_metrics_size=MagicMock(return_value=4))
+
+    with (
+        patch(
+            "datus.storage.semantic_model.semantic_modeling_init._load_source_queries",
+            return_value=([_query(1)], ""),
+        ),
+        patch("datus.storage.semantic_model.semantic_modeling_init._prepare_storage"),
+        patch("datus.storage.semantic_model.semantic_modeling_init._run_semantic_modeling_batch", run_batch),
+        patch("datus.storage.semantic_model.semantic_modeling_init.SemanticModelRAG", return_value=semantic_rag),
+        patch("datus.storage.semantic_model.semantic_modeling_init.MetricRAG", return_value=metric_rag),
+    ):
+        success, error, result = await init_success_story_semantic_modeling_async(
+            config,
+            "stories.csv",
+            authoring_scope="datasets",
+        )
+
+    assert success is True
+    assert error == ""
+    assert result["authoring_scope"] == "datasets"
+    assert run_batch.await_args.kwargs["authoring_scope"] == "datasets"
 
 
 @pytest.mark.asyncio

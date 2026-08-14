@@ -21,7 +21,7 @@ from datus.tools.func_tool.sub_agent_task_tool import (
     NODE_CLASS_MAP,
     SubAgentTaskTool,
 )
-from datus.utils.constants import SYS_SUB_AGENTS
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
 
 @pytest.fixture
@@ -39,6 +39,7 @@ def mock_agent_config():
         },
     }
     config.sub_agent_config.side_effect = lambda name: config.agentic_nodes.get(name)
+    config.resolve_semantic_adapter.return_value = "dosi"
     return config
 
 
@@ -402,22 +403,14 @@ class TestResolveNodeType:
         assert node_type == NodeType.TYPE_ASK_METRICS
         assert node_name == "ask_metrics"
 
-    def test_semantic_authoring_descriptions_preserve_workspace_sql_input(self, task_tool):
-        semantic_description = BUILTIN_SUBAGENT_DESCRIPTIONS["gen_semantic_model"]
-        metrics_description = BUILTIN_SUBAGENT_DESCRIPTIONS["gen_metrics"]
-
-        assert "table names" in semantic_description
-        for description in (semantic_description, metrics_description):
-            assert "workspace" in description
-            assert "SQL file path" in description
-            assert "parent may read" in description
-            assert "agent may call read_file" in description
-            assert "outside its workspace" not in description
-        assert "CSV" not in metrics_description
-
+    def test_semantic_modeling_description_is_advertised(self, task_tool):
+        semantic_description = BUILTIN_SUBAGENT_DESCRIPTIONS["semantic_modeling"]
+        assert "Dosi" in semantic_description
+        assert "SQL file path" in semantic_description
         assembled_description = task_tool.available_tools()[0].description
         assert semantic_description in assembled_description
-        assert metrics_description in assembled_description
+        assert "gen_semantic_model" not in assembled_description
+        assert "gen_metrics" not in assembled_description
 
     def test_gen_visual_report_constructs_and_builds_input(self, task_tool, tmp_path):
         """Mirror of ``test_gen_visual_dashboard_constructs_and_builds_input``
@@ -1073,23 +1066,15 @@ class TestSubAgentTaskAcceptance:
 @pytest.mark.ci
 class TestTaskExecution:
     @pytest.mark.asyncio
-    async def test_osi_gen_metrics_starts_without_host_target_precondition(self, task_tool, tmp_path):
+    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
+    async def test_retired_semantic_agent_recommends_migration_for_osi(self, task_tool, tmp_path, retired_type):
         task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
         task_tool.agent_config.current_datasource = "test_db"
         task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
-        prompt = "Create order metrics. The semantic model is at subject/semantic_models/test_db/orders.yml."
-        expected = FuncToolResult(result={"response": "gen_metrics started"})
-
-        with patch.object(task_tool, "_execute_node", return_value=expected) as execute_node:
-            result = await task_tool.task(type="gen_metrics", prompt=prompt)
-
-        assert result is expected
-        execute_node.assert_awaited_once_with(
-            "gen_metrics",
-            prompt,
-            description="",
-            call_id=None,
-            session_id=None,
+        result = await task_tool.task(type=retired_type, prompt="Create order metrics")
+        assert result.success == 0
+        assert result.error == (
+            "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
         )
 
     @pytest.mark.asyncio
@@ -1669,13 +1654,12 @@ class TestBuildTaskDescriptionFileStorage:
 @pytest.mark.ci
 class TestGetAvailableTypesBuiltIn:
     def test_includes_all_builtin_types(self, task_tool):
-        """All built-ins appear for Dosi, except non-delegatable feedback."""
+        """Only visible built-ins appear for Dosi."""
         task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         types = task_tool._get_available_types()
-        # feedback is a top-level node and must NEVER be exposed as delegatable.
-        assert "feedback" not in types, "feedback must not be exposed as a delegatable subagent"
+        assert HIDDEN_SYS_SUB_AGENTS.isdisjoint(types)
         for name in SYS_SUB_AGENTS:
-            if name == "feedback":
+            if name in HIDDEN_SYS_SUB_AGENTS:
                 continue
             assert name in types, f"{name} not found in available types"
 
@@ -1701,7 +1685,7 @@ class TestGetAvailableTypesBuiltIn:
         task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
-        expected = sorted(name for name in SYS_SUB_AGENTS if name != "feedback")
+        expected = sorted(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
         assert builtin_in_list == expected
 
 
@@ -1710,15 +1694,16 @@ class TestGetAvailableTypesBuiltIn:
 
 @pytest.mark.ci
 class TestResolveNodeTypeBuiltIn:
-    def test_gen_semantic_model(self, task_tool):
-        node_type, node_name = task_tool._resolve_node_type("gen_semantic_model")
-        assert node_type == NodeType.TYPE_SEMANTIC
-        assert node_name == "gen_semantic_model"
+    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_types_do_not_resolve(self, task_tool, retired_type):
+        with pytest.raises(ValueError, match="Unknown subagent type"):
+            task_tool._resolve_node_type(retired_type)
 
-    def test_gen_metrics(self, task_tool):
-        node_type, node_name = task_tool._resolve_node_type("gen_metrics")
-        assert node_type == NodeType.TYPE_SEMANTIC
-        assert node_name == "gen_metrics"
+    @pytest.mark.parametrize("config_key", ["node_class", "type"])
+    @pytest.mark.parametrize("node_class", ["gen_semantic_model", "gen_metrics"])
+    def test_custom_alias_with_retired_semantic_node_class_falls_back(self, task_tool, config_key, node_class):
+        task_tool.agent_config.agentic_nodes["legacy_alias"] = {config_key: node_class}
+        assert task_tool._resolve_node_type("legacy_alias") == (NodeType.TYPE_SEMANTIC, "semantic_modeling")
 
     def test_gen_sql_summary(self, task_tool):
         node_type, node_name = task_tool._resolve_node_type("gen_sql_summary")
@@ -1741,25 +1726,13 @@ class TestResolveNodeTypeBuiltIn:
 
 @pytest.mark.ci
 class TestCreateBuiltinNode:
-    @patch("datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__", return_value=None)
-    def test_gen_semantic_model(self, mock_init, task_tool):
-        task_tool._create_builtin_node("gen_semantic_model")
-        mock_init.assert_called_once_with(
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            is_subagent=True,
-            session_id=None,
-        )
+    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
+    def test_retired_semantic_nodes_fail_before_construction(self, task_tool, retired_type):
+        from datus.utils.exceptions import DatusException
 
-    @patch("datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__", return_value=None)
-    def test_gen_metrics(self, mock_init, task_tool):
-        task_tool._create_builtin_node("gen_metrics")
-        mock_init.assert_called_once_with(
-            agent_config=task_tool.agent_config,
-            execution_mode="interactive",
-            is_subagent=True,
-            session_id=None,
-        )
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
+        with pytest.raises(DatusException, match="Use semantic_modeling instead"):
+            task_tool._create_builtin_node(retired_type)
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
     def test_gen_sql_summary(self, mock_init, task_tool):
@@ -1828,8 +1801,8 @@ class TestCreateBuiltinNode:
     def test_create_node_delegates_to_builtin(self, task_tool):
         """_create_node delegates to _create_builtin_node for SYS_SUB_AGENTS."""
         with patch.object(task_tool, "_create_builtin_node", return_value=Mock()) as mock_builtin:
-            task_tool._create_node("gen_semantic_model")
-            mock_builtin.assert_called_once_with("gen_semantic_model", session_id=None)
+            task_tool._create_node("semantic_modeling")
+            mock_builtin.assert_called_once_with("semantic_modeling", session_id=None)
 
     def test_create_node_custom_passes_is_subagent_true(self, task_tool):
         """Custom agents must receive ``is_subagent=True`` via Node.new_instance.
@@ -1887,10 +1860,9 @@ class TestBuiltinNodeInheritsExecutionMode:
         "subagent_type,init_path",
         [
             (
-                "gen_semantic_model",
-                "datus.agent.node.gen_semantic_model_agentic_node.GenSemanticModelAgenticNode.__init__",
+                "semantic_modeling",
+                "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
             ),
-            ("gen_metrics", "datus.agent.node.gen_metrics_agentic_node.GenMetricsAgenticNode.__init__"),
             ("gen_sql_summary", "datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__"),
             ("gen_table", "datus.agent.node.gen_table_agentic_node.GenTableAgenticNode.__init__"),
             ("gen_dashboard", "datus.agent.node.gen_dashboard_agentic_node.GenDashboardAgenticNode.__init__"),
@@ -1932,18 +1904,18 @@ class TestBuiltinNodeInheritsExecutionMode:
 
 @pytest.mark.ci
 class TestBuildNodeInputBuiltIn:
-    def test_semantic_model_node_input(self, task_tool):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    def test_semantic_modeling_node_input(self, task_tool):
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
-        mock_node = Mock(spec=GenSemanticModelAgenticNode)
+        mock_node = Mock(spec=SemanticModelingAgenticNode)
         result = task_tool._build_node_input(mock_node, "orders table")
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "orders table"
         assert result.database is None
 
-    def test_semantic_model_node_receives_raw_task_and_inherited_at_context(self, task_tool):
-        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    def test_semantic_modeling_node_receives_raw_task_and_inherited_at_context(self, task_tool):
+        from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
         from datus.schemas.node_models import ReferenceSql
         from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
@@ -1954,21 +1926,11 @@ class TestBuildNodeInputBuiltIn:
         )
         task_tool.set_parent_node(parent)
 
-        mock_node = Mock(spec=GenSemanticModelAgenticNode)
+        mock_node = Mock(spec=SemanticModelingAgenticNode)
         result = task_tool._build_node_input(mock_node, "Create the prerequisite model")
 
         assert result.user_message == "Create the prerequisite model"
         assert result.reference_sql == parent.input.reference_sql
-
-    def test_metrics_node_input(self, task_tool):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        mock_node = Mock(spec=GenMetricsAgenticNode)
-        result = task_tool._build_node_input(mock_node, "SELECT SUM(amount) FROM orders")
-        assert isinstance(result, SemanticNodeInput)
-        assert result.user_message == "SELECT SUM(amount) FROM orders"
-        assert result.database is None
 
     def test_sql_summary_node_input(self, task_tool):
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -2010,10 +1972,10 @@ class TestBuildTaskDescriptionBuiltIn:
     def test_contains_all_builtin_types(self, task_tool):
         task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         desc = task_tool._build_task_description()
-        # feedback is a top-level node; must NEVER be advertised to the LLM.
-        assert "feedback" not in desc, "feedback must not appear in task description"
+        for name in HIDDEN_SYS_SUB_AGENTS:
+            assert name not in desc
         for name in SYS_SUB_AGENTS:
-            if name == "feedback":
+            if name in HIDDEN_SYS_SUB_AGENTS:
                 continue
             assert name in desc, f"{name} not found in task description"
 
@@ -2023,7 +1985,7 @@ class TestBuildTaskDescriptionBuiltIn:
         for name, builtin_desc in BUILTIN_SUBAGENT_DESCRIPTIONS.items():
             assert builtin_desc in desc, f"Description for {name} not found"
 
-    def test_gen_semantic_model_description_content(self, task_tool):
+    def test_semantic_modeling_description_content(self, task_tool):
         desc = task_tool._build_task_description()
         assert "semantic model" in desc.lower()
         assert "semantic_models" in desc
@@ -2154,7 +2116,8 @@ class TestConvertToFuncResultBuiltIn:
 @pytest.mark.ci
 class TestTaskExecutionBuiltIn:
     @pytest.mark.asyncio
-    async def test_execute_gen_semantic_model(self, task_tool):
+    async def test_execute_semantic_modeling(self, task_tool):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         mock_action = Mock(spec=ActionHistory)
         mock_action.status = ActionStatus.SUCCESS
         mock_action.role = ActionRole.ASSISTANT
@@ -2173,35 +2136,19 @@ class TestTaskExecutionBuiltIn:
 
         with patch.object(task_tool, "_create_node", return_value=mock_node):
             with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                result = await task_tool.task(type="gen_semantic_model", prompt="orders table")
+                result = await task_tool.task(type="semantic_modeling", prompt="orders table")
 
         assert result.success == 1
         assert result.result["semantic_models"] == ["models/orders.yml"]
         assert result.result["tokens_used"] == 400
 
     @pytest.mark.asyncio
-    async def test_execute_gen_metrics(self, task_tool):
-        mock_action = Mock(spec=ActionHistory)
-        mock_action.status = ActionStatus.SUCCESS
-        mock_action.role = ActionRole.ASSISTANT
-        mock_action.output = {
-            "response": "Extracted 3 metrics",
-            "tokens_used": 350,
-        }
-
-        mock_node = MagicMock()
-
-        async def mock_stream(ahm):
-            yield mock_action
-
-        mock_node.execute_stream_with_interactions = mock_stream
-
-        with patch.object(task_tool, "_create_node", return_value=mock_node):
-            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
-                result = await task_tool.task(type="gen_metrics", prompt="SELECT SUM(amount) FROM orders")
-
-        assert result.success == 1
-        assert result.result["response"] == "Extracted 3 metrics"
+    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
+    async def test_execute_retired_semantic_agents_returns_actionable_error(self, task_tool, retired_type):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
+        result = await task_tool.task(type=retired_type, prompt="Create order metrics")
+        assert result.success == 0
+        assert result.error == f"{retired_type} is retired. Use semantic_modeling instead."
 
     @pytest.mark.asyncio
     async def test_execute_gen_sql_summary(self, task_tool):
@@ -2689,7 +2636,7 @@ class TestProxyToolPropagation:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "subagent_type",
-        ["gen_semantic_model", "gen_metrics", "gen_sql_summary"],
+        ["semantic_modeling", "gen_sql_summary"],
     )
     async def test_fs_dependent_types_still_call_apply_proxy(self, task_tool, subagent_type):
         """FS-dependent subagents still call apply_proxy_tools (exclusion is internal to proxy_tool)."""

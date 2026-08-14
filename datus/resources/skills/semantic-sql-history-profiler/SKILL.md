@@ -9,6 +9,7 @@ version: "1.1.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
+  - semantic_modeling
   - gen_semantic_model
 ---
 

@@ -10,9 +10,8 @@ Mirrors :class:`bootstrap_commands.BootstrapCommands`:
    produce a :class:`BootstrapBiPlan`.
 2. Build a unified streaming pipeline (one ``actions`` list, one
    :class:`InlineStreamingContext`).
-3. Drive the four ``stream_bi_*`` async generators in order, threading
-   :class:`BiBuildState` through them so the metrics stream can be
-   gated on the semantic-model validation result.
+3. Drive the ``stream_bi_*`` async generators in order, threading
+   :class:`BiBuildState` through unified semantic-modeling generation.
 4. Build the final :class:`ScopedContext` and persist the two
    sub-agent yaml files via :func:`stream_bi_save_subagents`.
 """
@@ -30,7 +29,6 @@ from datus.cli.bootstrap_bi_picker import BootstrapBiPicker, BootstrapBiPlan
 from datus.cli.bootstrap_bi_streams import (
     BiBuildState,
     stream_bi_metadata,
-    stream_bi_metrics,
     stream_bi_reference_sql,
     stream_bi_semantic_model,
 )
@@ -173,7 +171,7 @@ class BootstrapBiCommands:
             ):
                 actions.append(action)
 
-        # 3. Semantic model (gates metrics).
+        # 3. Unified semantic model and metric authoring.
         if plan.assembled.metric_sqls:
             async for action in stream_bi_semantic_model(
                 self.agent_config,
@@ -184,25 +182,16 @@ class BootstrapBiCommands:
             ):
                 actions.append(action)
 
-            # 4. Metrics — only if validation passed.
-            if state.semantic_ok:
-                async for action in stream_bi_metrics(
-                    self.agent_config,
-                    sqls=plan.assembled.metric_sqls,
-                    platform=plan.options.platform,
-                    dashboard_name=plan.dashboard.name or "",
-                    state=state,
-                ):
-                    actions.append(action)
-            else:
+            if not state.semantic_ok:
                 actions.append(
                     message_action(
-                        "Skipping metrics generation due to semantic model failure",
+                        "Unified semantic modeling failed; generated metrics are unavailable.",
                         status=ActionStatus.FAILED,
                     )
                 )
+                return
 
-        # 5. Build ScopedContext and persist the two sub-agent yamls.
+        # 4. Build ScopedContext and persist the two sub-agent yamls.
         scoped = self._build_scoped_context(state)
         if scoped is None:
             actions.append(

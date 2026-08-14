@@ -400,8 +400,7 @@ agent:
       bi_platform: superset
       max_turns: 30
 
-    semantic_metrics:
-      node_class: gen_metrics
+    semantic_modeling:
       model: claude
       max_turns: 30
 
