@@ -232,7 +232,7 @@ agent:
         password: superset
         database: examples
     semantic_layer:
-      metricflow: {}
+      dosi: {}
     bi_platforms:
       superset:
         type: superset
