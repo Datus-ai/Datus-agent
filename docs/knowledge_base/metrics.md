@@ -126,7 +126,7 @@ How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_cu
 What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
 ```
 
-### YAML Format (Metrics Only)
+### YAML Format (Metrics Import)
 
 Metric import reads the `metrics` collection of a Dosi/OSI semantic-model document — the same file the datasets live in:
 
@@ -153,7 +153,7 @@ Key differentiators:
 
 - **Executable Metrics**: Query via `query_metrics` instead of generating SQL
 - **Metrics-First Strategy**: Agent prioritizes metric queries over ad-hoc SQL
-- **Independent from Semantic Models**: Metrics operate as a separate query tool, not embedded in schema definitions
+- **Embedded Definitions, Independent Execution**: Metric definitions live in the semantic model's `metrics` collection; querying them via `query_metrics` is a separate execution path that needs no ad-hoc SQL
 - **Hierarchical Organization**: Subject tree taxonomy for discoverability
 
 This approach ensures consistent metric definitions across teams while reducing query complexity and improving performance.

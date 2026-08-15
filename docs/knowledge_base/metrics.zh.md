@@ -124,7 +124,7 @@ How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_cu
 What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
 ```
 
-### YAML 格式（仅指标）
+### YAML 格式（指标导入）
 
 指标导入读取的是 Dosi/OSI 语义模型文档中的 `metrics` 集合——与 datasets 在同一个文件里：
 
@@ -151,7 +151,7 @@ semantic_model:
 
 - **可执行指标**：通过 `query_metrics` 查询而非生成 SQL
 - **指标优先策略**：Agent 优先使用指标查询而非临时 SQL
-- **独立于语义模型**：指标作为独立的查询工具运行，而非嵌入在 schema 定义中
+- **定义内嵌、执行独立**：指标定义存放在语义模型的 `metrics` 集合中；通过 `query_metrics` 查询是独立的执行路径，无需临时生成 SQL
 - **层级组织**：主题树分类法提高可发现性
 
 这种方法确保了团队之间指标定义的一致性，同时降低了查询复杂性并提高了性能。
