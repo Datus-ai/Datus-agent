@@ -47,8 +47,16 @@ validate_test_home() {
   exit 1
 }
 
+# The CLI exits 0 even when bootstrap reports {'status': 'failed', ...}, so a
+# broken component would only surface later as an empty dataset. Scan the
+# captured output for a failed Final Result and stop at the first bad step.
 run_bootstrap_kb() {
-  uv run datus-agent "$@"
+  local output
+  output="$(uv run datus-agent "$@" 2>&1 | tee /dev/stderr)"
+  if printf '%s' "$output" | grep -q "'status': 'failed'"; then
+    echo "bootstrap-kb reported a failed status: datus-agent $*" >&2
+    exit 1
+  fi
 }
 
 # Clean old data before creating a cacheable, deterministic fixture set.

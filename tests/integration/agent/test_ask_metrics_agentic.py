@@ -42,17 +42,17 @@ def ask_metrics_agent_config(nightly_agent_config):
     frpm semantic model, so ask_metrics has a real, queryable metric catalog.
 
     Function-scoped: mutating ``semantic_layer_configs`` here cannot leak into
-    other suites (nightly_agent_config is itself function-scoped)."""
+    other suites (nightly_agent_config is itself function-scoped).
+
+    The shared tests/conf/agent.yml now defaults to the Dosi adapter (semantic
+    authoring is Dosi-only), so this suite pins MetricFlow as the sole semantic
+    layer to keep covering the still-supported MetricFlow query-only path."""
     models_dir = str(FIXTURE_SEMANTIC_MODELS_DIR.resolve())
     assert (FIXTURE_SEMANTIC_MODELS_DIR / "frpm.yml").is_file(), (
         f"Missing committed fixture semantic model: {FIXTURE_SEMANTIC_MODELS_DIR / 'frpm.yml'}"
     )
 
-    configs = dict(nightly_agent_config.semantic_layer_configs)
-    metricflow_cfg = dict(configs.get("metricflow", {}))
-    metricflow_cfg["semantic_models_path"] = models_dir
-    configs["metricflow"] = metricflow_cfg
-    nightly_agent_config.semantic_layer_configs = configs
+    nightly_agent_config.semantic_layer_configs = {"metricflow": {"semantic_models_path": models_dir}}
     return nightly_agent_config
 
 
