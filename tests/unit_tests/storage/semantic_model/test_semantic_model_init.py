@@ -147,7 +147,7 @@ def test_profile_description_refresh_preserves_yaml_and_syncs_projection(tmp_pat
         "semantic_model:\n  - name: orders\n    datasets:\n      - name: orders\n        source: public.orders\n",
         encoding="utf-8",
     )
-    config = MagicMock()
+    config = _config("dosi")
     config.path_manager.subject_dir = str(tmp_path)
 
     with (
@@ -180,7 +180,7 @@ def test_profile_description_refresh_rejects_metricflow_yaml(tmp_path):
     semantic_dir.mkdir()
     yaml_path = semantic_dir / "semantic.yml"
     yaml_path.write_text("data_source:\n  name: orders\n  description: Orders\n", encoding="utf-8")
-    config = MagicMock()
+    config = _config("dosi")
     config.path_manager.subject_dir = str(tmp_path)
 
     result = refresh_semantic_yaml_profile_descriptions(
@@ -191,3 +191,29 @@ def test_profile_description_refresh_rejects_metricflow_yaml(tmp_path):
     )
 
     assert result == (False, METRICFLOW_YAML_UNSUPPORTED_MESSAGE, 0)
+
+
+def test_profile_description_refresh_rejects_non_dosi_project(tmp_path):
+    """Contract: profile refresh is an authoring mutation — an OSI-shaped YAML
+    in a non-Dosi project must be rejected by the adapter gate, not slip
+    through document-shape inference."""
+    semantic_dir = tmp_path / "semantic_models"
+    semantic_dir.mkdir()
+    yaml_path = semantic_dir / "semantic.yml"
+    yaml_path.write_text(
+        "semantic_model:\n  - name: orders\n    datasets:\n      - name: orders\n        source: public.orders\n",
+        encoding="utf-8",
+    )
+    config = _config("metricflow")
+    config.path_manager.subject_dir = str(tmp_path)
+
+    result = refresh_semantic_yaml_profile_descriptions(
+        str(yaml_path),
+        {"tables": []},
+        authoring_format="osi",
+        agent_config=config,
+        sync_to_storage=True,
+    )
+
+    assert result[0] is False
+    assert "query-only" in result[1]

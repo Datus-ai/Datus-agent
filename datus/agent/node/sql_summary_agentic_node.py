@@ -23,7 +23,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
-from datus.storage.artifact_path import resolve_kb_sandbox_path
+from datus.storage.artifact_path import KIND_TO_SUBDIR, resolve_kb_sandbox_path
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -171,7 +171,9 @@ class SqlSummaryAgenticNode(AgenticNode):
             logger.error(f"Failed to setup specific filesystem tool: {e}")
 
     def _sql_summary_sandbox_dir(self) -> str:
-        return os.path.join(self.knowledge_base_dir, "sql_summaries")
+        # Derived from the shared kind mapping so the mutation guard and the
+        # finalizer's resolve_kb_sandbox_path always agree on the boundary.
+        return os.path.join(self.knowledge_base_dir, KIND_TO_SUBDIR["sql_summary"])
 
     def _sql_summary_mutation_guard(self, path: Path) -> None:
         """Reject filesystem mutations outside the sql_summaries sandbox and

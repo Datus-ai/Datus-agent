@@ -93,11 +93,12 @@ datus-agent bootstrap-kb \
 # 学习模式：省略 --subject_tree 参数
 ```
 
-**生成的标签格式：**
+**生成的标签格式（旧版 MetricFlow 文件）：**
 
-指标生成后，主题树分类存储在 `locked_metadata.tags` 中，格式为 `"subject_tree: {domain}/{layer1}/{layer2}"`：
+存量 MetricFlow 指标文件的主题树分类存储在 `locked_metadata.tags` 中，格式为 `"subject_tree: {domain}/{layer1}/{layer2}"`。以下形态仅作参考——这类文件仍可查询，但不再支持生成或导入：
 
 ```yaml
+# 旧版 MetricFlow 形态——仅可查询，不可导入
 metric:
   name: daily_revenue
   type: simple
@@ -125,23 +126,22 @@ What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as tota
 
 ### YAML 格式（仅指标）
 
-从 YAML 文件导入指标时，指标定义引用已存在的语义模型：
+指标导入读取的是 Dosi/OSI 语义模型文档中的 `metrics` 集合——与 datasets 在同一个文件里：
 
 ```yaml
-metric:
-  name: total_revenue
-  description: "Total revenue from all transactions"
-  type: simple
-  type_params:
-    measure: amount  # 引用语义模型中的 measure
-  filter: "amount > 0"
-  locked_metadata:
-    tags:
-      - "Finance"
-      - "subject_tree: Finance/Revenue/Total"
+semantic_model:
+  - name: transactions
+    datasets:
+      - name: transactions
+        source: analytics.transactions
+    metrics:
+      - name: total_revenue
+        description: "Total revenue from all transactions"
+        expression: SUM(transactions.amount)
+        dataset: transactions
 ```
 
-**注意**：底层的语义模型（包含 dimensions/measures 的 `data_source`）应该已经存在。参见 [semantic_model.zh.md](semantic_model.zh.md) 了解如何定义语义模型。
+独立的 MetricFlow `metric:` 文档属于旧格式，已不支持导入。参见 [semantic_model.zh.md](semantic_model.zh.md) 了解如何定义语义模型。
 
 ## 总结
 

@@ -95,11 +95,12 @@ Organizes metrics using hierarchical taxonomy: `domain/layer1/layer2` (e.g., `Sa
 # Learning mode: omit --subject_tree parameter
 ```
 
-**Generated Tag Format:**
+**Generated Tag Format (legacy MetricFlow files):**
 
-When metrics are generated, the subject_tree classification is stored in `locked_metadata.tags` with the format `"subject_tree: {domain}/{layer1}/{layer2}"`:
+Existing MetricFlow metric files store the subject_tree classification in `locked_metadata.tags` with the format `"subject_tree: {domain}/{layer1}/{layer2}"`. This shape is shown for reference only — such files remain queryable but can no longer be generated or imported:
 
 ```yaml
+# Legacy MetricFlow shape — query-only, not importable
 metric:
   name: daily_revenue
   type: simple
@@ -127,23 +128,22 @@ What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as tota
 
 ### YAML Format (Metrics Only)
 
-When importing metrics from YAML files, the metric definition references an existing semantic model:
+Metric import reads the `metrics` collection of a Dosi/OSI semantic-model document — the same file the datasets live in:
 
 ```yaml
-metric:
-  name: total_revenue
-  description: "Total revenue from all transactions"
-  type: simple
-  type_params:
-    measure: amount  # References measure from semantic model
-  filter: "amount > 0"
-  locked_metadata:
-    tags:
-      - "Finance"
-      - "subject_tree: Finance/Revenue/Total"
+semantic_model:
+  - name: transactions
+    datasets:
+      - name: transactions
+        source: analytics.transactions
+    metrics:
+      - name: total_revenue
+        description: "Total revenue from all transactions"
+        expression: SUM(transactions.amount)
+        dataset: transactions
 ```
 
-**Note**: The underlying semantic model (`data_source` with dimensions/measures) should already exist. See [semantic_model.md](semantic_model.md) for how to define semantic models.
+Standalone MetricFlow `metric:` documents are legacy and no longer importable. See [semantic_model.md](semantic_model.md) for how to define semantic models.
 
 ## Summary
 

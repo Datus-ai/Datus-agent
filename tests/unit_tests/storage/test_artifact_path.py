@@ -7,6 +7,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from datus.storage.artifact_path import normalize_kb_relative_path, resolve_kb_sandbox_path
 
 
@@ -99,5 +101,11 @@ class TestResolveKbSandboxPath:
         outside = tmp_path / "outside.yaml"
         outside.write_text("x")
         link = sandbox / "q.yaml"
-        link.symlink_to(outside)
+        try:
+            # Setup-only guard: the OSError comes from symlink creation on
+            # platforms without the privilege (e.g. Windows sans Developer
+            # Mode), never from the resolver under test.
+            link.symlink_to(outside)
+        except OSError as exc:
+            pytest.skip(f"platform cannot create symlinks: {exc}")  # audit-noqa: try_except_skip
         assert resolve_kb_sandbox_path("sql_summaries/q.yaml", "sql_summary", str(kb)) is None

@@ -152,6 +152,10 @@ def refresh_success_story_semantic_model_profile(
     if not os.path.exists(resolved_yaml_path):
         return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
 
+    rejection = reject_non_dosi_semantic_yaml(resolved_yaml_path, agent_config)
+    if rejection:
+        return False, rejection, 0
+
     entries, error = _load_success_story_profile_entries(success_story)
     if error:
         return False, error, 0
@@ -400,6 +404,15 @@ def refresh_semantic_yaml_profile_descriptions(
 
     if not os.path.exists(resolved_yaml_path):
         return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
+
+    # Rewriting descriptions is an authoring mutation: gate on the project
+    # adapter, not just the document shape, so OSI-shaped YAML in a
+    # MetricFlow project (or an explicit authoring_format override) cannot
+    # slip through to the write/sync below.
+    if agent_config is not None:
+        rejection = reject_non_dosi_semantic_yaml(resolved_yaml_path, agent_config)
+        if rejection:
+            return False, rejection, 0
 
     try:
         with open(resolved_yaml_path, "r", encoding="utf-8") as f:
