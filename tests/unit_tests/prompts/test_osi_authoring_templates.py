@@ -99,9 +99,14 @@ def test_metrics_template_osi_mode_allows_narrow_dataset_repairs():
         ("sqlite", "ANSI_SQL"),
         ("hive", "ANSI_SQL"),
         ("spark", "ANSI_SQL"),
+        # Normalization: surrounding whitespace and mixed case must not change
+        # the mapping outcome.
+        ("  duckdb  ", "DUCKDB"),
+        ("DuckDB", "DUCKDB"),
+        ("SQLite", "ANSI_SQL"),
     ],
 )
-def test_osi_mode_expression_dialect_derivation(template_name, datasource, expected_dialect):
+def test_osi_mode_expression_dialect_derivation(template_name: str, datasource: str, expected_dialect: str):
     # The OSI dialect label is the active datasource's own dialect when the
     # engine supports it, else the ANSI_SQL fallback.
     text = _render(template_name, "osi", datasource_dialect=datasource)
@@ -113,9 +118,11 @@ def test_osi_mode_expression_dialect_derivation(template_name, datasource, expec
     [
         ("duckdb", "DUCKDB"),
         ("sqlite", "ANSI_SQL"),
+        ("hive", "ANSI_SQL"),
+        ("spark", "ANSI_SQL"),
     ],
 )
-def test_semantic_modeling_template_maps_dialect_to_engine_enum(datasource_dialect, expected_dialect):
+def test_semantic_modeling_template_maps_dialect_to_engine_enum(datasource_dialect: str, expected_dialect: str):
     # The unified Dosi authoring template shares the same engine-enum mapping.
     pm = get_prompt_manager()
     text = pm.render_template(
