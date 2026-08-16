@@ -490,41 +490,6 @@ class TestExplorerServiceMetricFlowAuthoring:
         assert "query-only" in result.errorMessage
 
 
-@pytest.mark.asyncio
-class TestExplorerServiceValidateMetricYaml:
-    """Tests for _validate_metric_yaml — metric YAML validation."""
-
-    async def test_validate_valid_yaml(self, real_agent_config, tmp_path):
-        """_validate_metric_yaml passes valid metric YAML."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        metric_path = (
-            tmp_path / "subject" / "semantic_models" / real_agent_config.current_datasource / "metrics" / "test.yml"
-        )
-        metric_path.parent.mkdir(parents=True)
-        is_valid, errors = svc._validate_metric_yaml(
-            "metric:\n  name: test\n  type: simple\n",
-            str(metric_path),
-        )
-        # May pass or fail depending on metricflow availability
-        assert isinstance(is_valid, bool)
-        assert isinstance(errors, list)
-
-    async def test_validate_invalid_yaml(self, real_agent_config, tmp_path):
-        """_validate_metric_yaml rejects invalid YAML syntax."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        metric_path = (
-            tmp_path / "subject" / "semantic_models" / real_agent_config.current_datasource / "metrics" / "bad.yml"
-        )
-        metric_path.parent.mkdir(parents=True)
-        is_valid, errors = svc._validate_metric_yaml(
-            ":\n  - ][",
-            str(metric_path),
-        )
-        assert is_valid is False
-        assert len(errors) == 1
-        assert isinstance(errors[0], str)
-
-
 class TestMetricDbToYaml:
     """Tests for _metric_db_to_yaml — DB to YAML format conversion."""
 
@@ -1056,7 +1021,7 @@ class TestExplorerServiceOSIAuthoring:
             "datus.agent.node.semantic_authoring.is_osi_authoring",
             lambda *a, **k: True,
         )
-        monkeypatch.setattr(svc, "_sync_file_to_kb", lambda is_osi, file_path: {"success": True})
+        monkeypatch.setattr(svc, "_sync_file_to_kb", lambda file_path: {"success": True})
         # get_metric still gates on the KB row for scope/access control; the row
         # content is irrelevant since the adapter supplies the returned YAML.
         monkeypatch.setattr(svc.metric_rag, "get_metrics_detail", lambda parent, name, *a, **k: [{"name": name}])
@@ -1139,7 +1104,7 @@ class TestExplorerServiceOSIAuthoring:
         self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
         synced = {}
 
-        def fake_sync(is_osi, file_path):
+        def fake_sync(file_path):
             synced["path"] = file_path
             return {"success": True}
 
@@ -1229,7 +1194,7 @@ class TestExplorerServiceOSIAuthoring:
         svc = ExplorerService(agent_config=real_agent_config)
         self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
         # KB re-sync fails -> the newly created metric must be removed again.
-        monkeypatch.setattr(svc, "_sync_file_to_kb", lambda is_osi, file_path: {"success": False, "error": "boom"})
+        monkeypatch.setattr(svc, "_sync_file_to_kb", lambda file_path: {"success": False, "error": "boom"})
 
         new_metric = (
             "name: gross_revenue\n"
@@ -1257,7 +1222,7 @@ class TestExplorerServiceOSIAuthoring:
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
         self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
-        monkeypatch.setattr(svc, "_sync_file_to_kb", lambda is_osi, file_path: {"success": False, "error": "boom"})
+        monkeypatch.setattr(svc, "_sync_file_to_kb", lambda file_path: {"success": False, "error": "boom"})
 
         edited = (
             "name: daily_order_count\n"

@@ -152,7 +152,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         super()._ensure_bash_tool_in_tools()
 
     def _make_filesystem_tool(self, **kwargs):
-        from datus.agent.node.semantic_authoring import resolve_authoring_format
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
         from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
@@ -189,7 +188,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             inherited_memory_node=inherited_memory_node,
             session_data_dir=session_data_dir,
             mutation_callback=mutation_callback,
-            authoring_format=resolve_authoring_format(self.agent_config),
             semantic_adapter=resolve_semantic_adapter_type(self.agent_config),
             osi_target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,

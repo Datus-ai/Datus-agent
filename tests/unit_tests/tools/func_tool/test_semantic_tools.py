@@ -1742,7 +1742,7 @@ class TestValidateSemantic:
         tool, _ = semantic_tools_with_adapter
         artifact = tmp_path / "commerce.yml"
         artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
-        tool.adapter_type = "osi"
+        tool.adapter_type = "dosi"
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",

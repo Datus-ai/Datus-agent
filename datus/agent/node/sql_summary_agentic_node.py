@@ -6,20 +6,27 @@
 SqlSummaryAgenticNode implementation for SQL summary generation workflow.
 
 This module provides a specialized implementation of AgenticNode focused on
-SQL query summarization and classification with support for filesystem tools,
-generation tools, and hooks.
+SQL query summarization and classification with support for filesystem tools
+and generation tools. The generated YAML artifact is validated and synced to
+the Knowledge Base by a finalizer that runs on the success path of both
+interactive and workflow executions.
 """
 
+import os
 import re
+from pathlib import Path
 from typing import List, Literal, Optional
+
+import yaml
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
-from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput, SqlSummaryNodeResult
+from datus.storage.artifact_path import KIND_TO_SUBDIR, resolve_kb_sandbox_path
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -31,10 +38,10 @@ class SqlSummaryAgenticNode(AgenticNode):
 
     This node provides specialized SQL query summarization and classification with:
     - Enhanced system prompt with template variables
-    - Filesystem tools for file operations
+    - Filesystem tools for file operations, sandboxed to the sql_summaries dir
     - Generation tools for SQL summary context preparation
-    - Hooks support for custom behavior
-    - Configurable tool sets
+    - A success-path finalizer that validates the generated YAML artifact and
+      syncs it to the Knowledge Base (node fails when the sync fails)
     - Session-based conversation management
     """
 
@@ -45,7 +52,6 @@ class SqlSummaryAgenticNode(AgenticNode):
         node_name: str,
         agent_config: Optional[AgentConfig] = None,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
-        build_mode: str = "incremental",
         subject_tree: Optional[list] = None,
         storage_type: str = "reference_sql",
         scope: Optional[str] = None,
@@ -59,15 +65,20 @@ class SqlSummaryAgenticNode(AgenticNode):
             node_name: Name of the node configuration in agent.yml (should be "gen_sql_summary")
             agent_config: Agent configuration
             execution_mode: Execution mode - "interactive" (default) or "workflow"
-            build_mode: "overwrite" or "incremental" (default: "incremental")
             subject_tree: Optional predefined subject tree categories
             storage_type: Storage target - "reference_sql" (default) or "reference_template"
         """
         self.configured_node_name = node_name
         self.execution_mode = execution_mode
-        self.build_mode = build_mode
         self.subject_tree = subject_tree
         self.storage_type = storage_type
+
+        # Files mutated by the filesystem tool during the current request, plus
+        # a pre-mutation snapshot of each target so a failed request can be
+        # rolled back. Reset in ``_before_stream`` so a reused node instance
+        # never carries state from a previous request.
+        self._mutated_files: set = set()
+        self._mutation_snapshots: dict = {}
 
         # Get max_turns from agentic_nodes configuration
         self.max_turns = 50
@@ -109,8 +120,6 @@ class SqlSummaryAgenticNode(AgenticNode):
         self.hooks = None
         self.setup_tools()
 
-        logger.debug(f"Hooks after setup: {self.hooks} (type: {type(self.hooks)})")
-
     def get_node_name(self) -> str:
         """
         Get the configured node name for this SQL summary agentic node.
@@ -139,10 +148,6 @@ class SqlSummaryAgenticNode(AgenticNode):
             f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
         )
 
-        # Setup hooks (only in interactive mode)
-        if self.execution_mode == "interactive":
-            self._setup_hooks()
-
     def _setup_specific_generation_tools(self):
         """Setup specific generation tools: generate_sql_summary_id."""
         try:
@@ -156,20 +161,54 @@ class SqlSummaryAgenticNode(AgenticNode):
     def _setup_specific_filesystem_tool(self):
         """Setup specific filesystem tools"""
         try:
-            self.filesystem_func_tool = self._make_filesystem_tool()
+            self.filesystem_func_tool = self._make_filesystem_tool(
+                mutation_guard=self._sql_summary_mutation_guard,
+                mutation_callback=self._record_sql_summary_mutation,
+            )
 
             self.tools.extend(self.filesystem_func_tool.available_tools())
         except Exception as e:
             logger.error(f"Failed to setup specific filesystem tool: {e}")
 
-    def _setup_hooks(self):
-        """Setup hooks (hardcoded to generation_hooks)."""
+    def _sql_summary_sandbox_dir(self) -> str:
+        # Derived from the shared kind mapping so the mutation guard and the
+        # finalizer's resolve_kb_sandbox_path always agree on the boundary.
+        return os.path.join(self.knowledge_base_dir, KIND_TO_SUBDIR["sql_summary"])
+
+    def _sql_summary_mutation_guard(self, path: Path) -> None:
+        """Reject filesystem mutations outside the sql_summaries sandbox and
+        snapshot the pre-mutation state of each target before its first change
+        so a failed request can be rolled back."""
+        sandbox = os.path.realpath(self._sql_summary_sandbox_dir())
+        target = os.path.realpath(str(path))
         try:
-            broker = self._get_or_create_broker()
-            self.hooks = GenerationHooks(broker=broker, agent_config=self.agent_config)
-            logger.info("Setup hooks: generation_hooks")
-        except Exception as e:
-            logger.error(f"Failed to setup generation_hooks: {e}")
+            inside = os.path.commonpath([sandbox, target]) == sandbox
+        except ValueError:
+            inside = False
+        if not inside:
+            raise ValueError(
+                f"File mutations are restricted to subject/sql_summaries/ for this node; got {str(path)!r}"
+            )
+        if target not in self._mutation_snapshots:
+            if os.path.isfile(target):
+                with open(target, "rb") as fh:
+                    content = fh.read()
+                self._mutation_snapshots[target] = (content, os.stat(target).st_mode)
+            else:
+                self._mutation_snapshots[target] = None
+
+    def _record_sql_summary_mutation(self, path: Optional[Path] = None) -> None:
+        if path is None:
+            return
+        self._mutated_files.add(os.path.realpath(str(path)))
+
+    def _reset_mutation_tracking(self) -> None:
+        self._mutated_files.clear()
+        self._mutation_snapshots.clear()
+
+    async def _before_stream(self, ctx: StreamRunContext) -> None:
+        self._reset_mutation_tracking()
+        await super()._before_stream(ctx)
 
     def _get_existing_subject_trees(self) -> list:
         """
@@ -370,13 +409,12 @@ class SqlSummaryAgenticNode(AgenticNode):
         if self.execution_mode == "interactive":
             tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
-        # Workflow mode auto-saves discovered sql_summary files to the DB.
-        # Persistence is the only durability path in workflow mode, so let
-        # the exception propagate to the template's error handler instead
-        # of silently returning success when the DB write failed.
-        if self.execution_mode == "workflow" and sql_summary_file:
-            self._save_to_db(sql_summary_file)
-            logger.info(f"Auto-saved to database: {sql_summary_file}")
+        # Interactive and workflow share the same durability path: the node
+        # only succeeds after the generated artifact is validated and synced
+        # to the Knowledge Base. The raised exception propagates to
+        # ``execute_stream``'s error handler, which triggers the rollback in
+        # ``_build_error_result``.
+        self._finalize_sql_summary_artifact(sql_summary_file)
 
         return SqlSummaryNodeResult(
             success=True,
@@ -504,42 +542,79 @@ class SqlSummaryAgenticNode(AgenticNode):
             logger.error(f"Unexpected error extracting sql_summary_file: {e}", exc_info=True)
             return None, None
 
-    def _save_to_db(self, sql_summary_file: str):
+    def _finalize_sql_summary_artifact(self, sql_summary_file: Optional[str]) -> None:
         """
-        Save generated SQL summary to database (synchronous).
+        Validate the generated YAML artifact and sync it to the Knowledge Base.
+
+        Shared by interactive and workflow success paths. Every failure —
+        missing path, sandbox escape, missing file, file not written during
+        this request, invalid YAML, or a failed KB sync — raises so the node
+        fails instead of returning a half-successful result where the YAML
+        exists on disk but the KB was never updated.
 
         Args:
-            sql_summary_file: Path of the SQL summary file as reported by the LLM.
-                Absolute, KB-root-relative (e.g. ``sql_summaries/<db>/q_001.yaml``)
-                and bare-filename forms are all accepted — the same normalizer
-                used on the write side resolves them to the actual on-disk path.
+            sql_summary_file: Path of the SQL summary file as reported by the
+                LLM's final structured response. Absolute, KB-root-relative
+                (e.g. ``sql_summaries/<db>/q_001.yaml``) and bare-filename
+                forms are all accepted.
         """
+
+        def _fail(reason: str) -> None:
+            raise DatusException(
+                ErrorCode.NODE_EXECUTION_FAILED,
+                message=f"SQL summary artifact finalization failed: {reason}",
+            )
+
+        if not sql_summary_file:
+            _fail("final response did not include a sql_summary_file path")
+
+        full_path = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", self.knowledge_base_dir)
+        if not full_path:
+            _fail(f"path {sql_summary_file!r} escapes the subject/sql_summaries sandbox")
+        if not os.path.isfile(full_path):
+            _fail(f"file does not exist: {full_path}")
+        if os.path.realpath(full_path) not in self._mutated_files:
+            _fail(f"file was not written during this request: {full_path}")
+
         try:
-            import os
+            with open(full_path, "r", encoding="utf-8") as fh:
+                doc = yaml.safe_load(fh)
+        except Exception as exc:
+            _fail(f"invalid YAML in {full_path}: {exc}")
 
-            from datus.cli.generation_hooks import resolve_kb_sandbox_path
+        if not isinstance(doc, dict) or not str(doc.get("sql") or "").strip():
+            _fail(f"artifact {full_path} must be a YAML mapping with a non-empty 'sql' field")
 
-            full_path = resolve_kb_sandbox_path(sql_summary_file, "sql_summary", self.knowledge_base_dir)
-            if not full_path:
-                logger.warning(f"SQL summary file rejected by sandbox check: {sql_summary_file!r}")
-                return
+        if self.storage_type == "reference_template":
+            from datus.storage.reference_template.artifact_sync import sync_reference_template_artifact_to_kb
 
-            if not os.path.exists(full_path):
-                logger.warning(f"SQL summary file not found: {full_path}")
-                return
+            result = sync_reference_template_artifact_to_kb(full_path, self.agent_config)
+        else:
+            from datus.storage.reference_sql.artifact_sync import sync_reference_sql_artifact_to_kb
 
-            # Call static method to save to database with build_mode
-            if self.storage_type == "reference_template":
-                result = GenerationHooks._sync_reference_template_to_db(full_path, self.agent_config, self.build_mode)
-            else:
-                result = GenerationHooks._sync_reference_sql_to_db(full_path, self.agent_config, self.build_mode)
+            result = sync_reference_sql_artifact_to_kb(full_path, self.agent_config)
 
-            if result.get("success"):
-                logger.info(f"Successfully saved to database: {result.get('message')}")
-            else:
-                error = result.get("error", "Unknown error")
-                logger.error(f"Failed to save to database: {error}")
+        if not result.get("success"):
+            _fail(f"Knowledge Base sync failed: {result.get('error', 'Unknown error')}")
 
-        except Exception as e:
-            logger.error(f"Error saving to database: {e}", exc_info=True)
-            raise
+        logger.info(f"Finalized SQL summary artifact {full_path}: {result.get('message')}")
+
+    def _rollback_sql_summary_mutations(self) -> None:
+        """Undo this request's file mutations: delete files it created and
+        restore the original content and permissions of files it overwrote."""
+        for target, snapshot in self._mutation_snapshots.items():
+            try:
+                if snapshot is None:
+                    if os.path.exists(target):
+                        os.remove(target)
+                else:
+                    content, mode = snapshot
+                    with open(target, "wb") as fh:
+                        fh.write(content)
+                    os.chmod(target, mode)
+            except Exception as exc:
+                logger.error(f"Failed to roll back SQL summary artifact {target}: {exc}")
+
+    def _build_error_result(self, exc: BaseException, ctx: StreamRunContext):
+        self._rollback_sql_summary_mutations()
+        return super()._build_error_result(exc, ctx)

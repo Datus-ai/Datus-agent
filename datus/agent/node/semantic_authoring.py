@@ -24,7 +24,10 @@ import yaml
 
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
-OSI_AUTHORING_ADAPTERS: frozenset[str] = frozenset({"osi", "dosi"})
+# Semantic authoring (generation) is Dosi-only. Plain-OSI and MetricFlow
+# projects remain queryable but every authoring entry point returns
+# ``QUERY_ONLY_MIGRATION_MESSAGE``.
+OSI_AUTHORING_ADAPTERS: frozenset[str] = frozenset({"dosi"})
 QUERY_ONLY_MIGRATION_MESSAGE = (
     "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
 )

@@ -95,11 +95,12 @@ Organizes metrics using hierarchical taxonomy: `domain/layer1/layer2` (e.g., `Sa
 # Learning mode: omit --subject_tree parameter
 ```
 
-**Generated Tag Format:**
+**Generated Tag Format (legacy MetricFlow files):**
 
-When metrics are generated, the subject_tree classification is stored in `locked_metadata.tags` with the format `"subject_tree: {domain}/{layer1}/{layer2}"`:
+Existing MetricFlow metric files store the subject_tree classification in `locked_metadata.tags` with the format `"subject_tree: {domain}/{layer1}/{layer2}"`. This shape is shown for reference only — such files remain queryable but can no longer be generated or imported:
 
 ```yaml
+# Legacy MetricFlow shape — query-only, not importable
 metric:
   name: daily_revenue
   type: simple
@@ -113,17 +114,7 @@ metric:
 
 **Important for YAML Import:**
 
-When using `--semantic_yaml` to sync metrics from YAML files to lancedb, you must manually add the `locked_metadata.tags` with subject_tree format in your YAML file for successful categorization. The system will not automatically classify metrics imported from YAML - you need to include the tags yourself:
-
-```yaml
-metric:
-  name: your_metric
-  # ... other fields
-  locked_metadata:
-    tags:
-      - "YourDomain"
-      - "subject_tree: Domain/Layer1/Layer2"
-```
+`--semantic_yaml` accepts Dosi/OSI semantic YAML only, and only in Dosi projects. MetricFlow YAML (`data_source:` / `metric:` documents) is rejected with an explicit error; migrate the project to Dosi and re-author the model with `semantic_modeling`.
 
 ## Data Source Formats
 
@@ -135,25 +126,24 @@ How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_cu
 What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
 ```
 
-### YAML Format (Metrics Only)
+### YAML Format (Metrics Import)
 
-When importing metrics from YAML files, the metric definition references an existing semantic model:
+Metric import reads the `metrics` collection of a Dosi/OSI semantic-model document — the same file the datasets live in:
 
 ```yaml
-metric:
-  name: total_revenue
-  description: "Total revenue from all transactions"
-  type: simple
-  type_params:
-    measure: amount  # References measure from semantic model
-  filter: "amount > 0"
-  locked_metadata:
-    tags:
-      - "Finance"
-      - "subject_tree: Finance/Revenue/Total"
+semantic_model:
+  - name: transactions
+    datasets:
+      - name: transactions
+        source: analytics.transactions
+    metrics:
+      - name: total_revenue
+        description: "Total revenue from all transactions"
+        expression: SUM(transactions.amount)
+        dataset: transactions
 ```
 
-**Note**: The underlying semantic model (`data_source` with dimensions/measures) should already exist. See [semantic_model.md](semantic_model.md) for how to define semantic models.
+Standalone MetricFlow `metric:` documents are legacy and no longer importable. See [semantic_model.md](semantic_model.md) for how to define semantic models.
 
 ## Summary
 
@@ -163,7 +153,7 @@ Key differentiators:
 
 - **Executable Metrics**: Query via `query_metrics` instead of generating SQL
 - **Metrics-First Strategy**: Agent prioritizes metric queries over ad-hoc SQL
-- **Independent from Semantic Models**: Metrics operate as a separate query tool, not embedded in schema definitions
+- **Embedded Definitions, Independent Execution**: Metric definitions live in the semantic model's `metrics` collection; querying them via `query_metrics` is a separate execution path that needs no ad-hoc SQL
 - **Hierarchical Organization**: Subject tree taxonomy for discoverability
 
 This approach ensures consistent metric definitions across teams while reducing query complexity and improving performance.

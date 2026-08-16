@@ -11,7 +11,6 @@ from typing import Any, Callable, Optional
 import pandas as pd
 import yaml
 
-from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory
 from datus.schemas.batch_events import BatchEvent, BatchStage
@@ -19,6 +18,36 @@ from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
+
+METRICFLOW_YAML_UNSUPPORTED_MESSAGE = (
+    "MetricFlow semantic YAML (`data_source:` / `metric:` documents) can no longer be imported. "
+    "Semantic authoring is Dosi-only: migrate the project to Dosi and re-author the model with semantic_modeling."
+)
+
+
+def reject_non_dosi_semantic_yaml(yaml_file_path: str, agent_config: Optional[AgentConfig]) -> Optional[str]:
+    """Return the actionable error when semantic YAML import is unavailable.
+
+    Import is Dosi-only: non-Dosi projects get the query-only migration
+    message, and MetricFlow-format documents are rejected explicitly before
+    any sync is attempted. Returns ``None`` when the import may proceed.
+    """
+    from datus.agent.node.semantic_authoring import (
+        AUTHORING_FORMAT_OSI,
+        QUERY_ONLY_MIGRATION_MESSAGE,
+        resolve_authoring_format,
+    )
+
+    if resolve_authoring_format(agent_config) != AUTHORING_FORMAT_OSI:
+        return QUERY_ONLY_MIGRATION_MESSAGE
+    try:
+        with open(yaml_file_path, "r", encoding="utf-8") as f:
+            docs = list(yaml.safe_load_all(f))
+    except Exception as exc:
+        return f"Failed to read semantic YAML file '{yaml_file_path}': {exc}"
+    if any(isinstance(doc, dict) and ("data_source" in doc or "metric" in doc) for doc in docs):
+        return METRICFLOW_YAML_UNSUPPORTED_MESSAGE
+    return None
 
 
 def _resolve_semantic_yaml_refresh_path(yaml_file_path: str, agent_config: Optional[AgentConfig]) -> Optional[str]:
@@ -29,7 +58,7 @@ def _resolve_semantic_yaml_refresh_path(yaml_file_path: str, agent_config: Optio
     path_manager = getattr(agent_config, "path_manager", None) if agent_config is not None else None
     subject_dir = getattr(path_manager, "subject_dir", None) if path_manager is not None else None
     if isinstance(subject_dir, (str, os.PathLike)):
-        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+        from datus.storage.artifact_path import resolve_kb_sandbox_path
 
         return resolve_kb_sandbox_path(raw_path, "semantic", os.fspath(subject_dir))
     return os.path.realpath(raw_path)
@@ -123,6 +152,10 @@ def refresh_success_story_semantic_model_profile(
     if not os.path.exists(resolved_yaml_path):
         return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
 
+    rejection = reject_non_dosi_semantic_yaml(resolved_yaml_path, agent_config)
+    if rejection:
+        return False, rejection, 0
+
     entries, error = _load_success_story_profile_entries(success_story)
     if error:
         return False, error, 0
@@ -134,8 +167,8 @@ def refresh_success_story_semantic_model_profile(
         return False, f"Failed to read semantic YAML file '{resolved_yaml_path}': {exc}", 0
 
     fmt = _infer_semantic_yaml_authoring_format(docs, authoring_format)
-    if fmt not in {"metricflow", "osi"}:
-        return False, f"Unsupported semantic YAML authoring format: {authoring_format}", 0
+    if fmt != "osi":
+        return False, METRICFLOW_YAML_UNSUPPORTED_MESSAGE, 0
     tables = _semantic_yaml_profile_tables(docs, fmt)
     if not tables:
         return False, f"No table targets found in semantic YAML file: {resolved_yaml_path}", 0
@@ -265,19 +298,10 @@ def _infer_semantic_yaml_authoring_format(docs: list[dict], authoring_format: st
 
 
 def _semantic_yaml_profile_tables(docs: list[dict], authoring_format: str) -> list[str]:
-    if authoring_format == "metricflow":
-        return _dedupe_semantic_yaml_values(
-            _metricflow_data_source_table(doc.get("data_source")) for doc in docs if isinstance(doc, dict)
-        )
+    del authoring_format
     return _dedupe_semantic_yaml_values(
         _osi_dataset_table(dataset) for doc in docs for dataset in _iter_osi_yaml_datasets(doc)
     )
-
-
-def _metricflow_data_source_table(data_source: Any) -> str:
-    if not isinstance(data_source, dict):
-        return ""
-    return str(data_source.get("sql_table") or data_source.get("name") or "").strip()
 
 
 def _iter_osi_yaml_datasets(doc: Any) -> list[dict]:
@@ -322,7 +346,8 @@ def init_semantic_yaml_semantic_model(
     agent_config: AgentConfig,
 ) -> tuple[bool, str]:
     """
-    Initialize ONLY semantic model (table/column/entity) from YAML, skip metrics.
+    Initialize ONLY semantic model (dataset/relationship) projections from a
+    Dosi/OSI YAML file, skip metrics.
 
     Args:
         yaml_file_path: Path to semantic YAML file
@@ -332,46 +357,17 @@ def init_semantic_yaml_semantic_model(
         logger.error(f"Semantic YAML file {yaml_file_path} not found")
         return False, f"Semantic YAML file {yaml_file_path} not found"
 
-    return process_semantic_yaml_file(yaml_file_path, agent_config, include_metrics=False)
+    error = reject_non_dosi_semantic_yaml(yaml_file_path, agent_config)
+    if error:
+        return False, error
 
+    from datus.tools.func_tool.generation_tools import GenerationTools
 
-def process_semantic_yaml_file(
-    yaml_file_path: str,
-    agent_config: AgentConfig,
-    include_semantic_objects: bool = True,
-    include_metrics: bool = True,
-) -> tuple[bool, str]:
-    """
-    Process semantic YAML file by directly syncing to vector store using GenerationHooks.
-
-    Args:
-        yaml_file_path: Path to semantic YAML file
-        agent_config: Agent configuration
-        include_semantic_objects: Whether to sync tables/columns/entities
-        include_metrics: Whether to sync metrics
-    Returns:
-        - Whether the execution was successful
-        - Failed reason
-
-    """
-    logger.info(
-        f"Processing semantic YAML file: {yaml_file_path} "
-        f"(semantic_objects={include_semantic_objects}, metrics={include_metrics})"
-    )
-
-    # Validate file exists
-    if not os.path.exists(yaml_file_path):
-        error_msg = f"Semantic YAML file not found: {yaml_file_path}"
-        logger.error(error_msg)
-        return False, error_msg
-
-    # Use GenerationHooks static method to sync to DB
     try:
-        result = GenerationHooks._sync_semantic_to_db(
+        result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_to_db(
             yaml_file_path,
-            agent_config,
-            include_semantic_objects=include_semantic_objects,
-            include_metrics=include_metrics,
+            include_semantic_objects=True,
+            include_metrics=False,
         )
     except Exception as e:
         error_msg = f"Failed to sync semantic YAML file '{yaml_file_path}' to vector store: {e}"
@@ -381,11 +377,7 @@ def process_semantic_yaml_file(
     if result.get("success"):
         logger.info(f"Successfully synced to vector store: {result.get('message')}")
         return True, ""
-    else:
-        error = result.get("error", "Unknown error")
-        error_msg = f"Failed to sync '{yaml_file_path}' to vector store: {error}"
-        logger.error(error_msg)
-        return False, error
+    return False, result.get("error", "Unknown error")
 
 
 def refresh_semantic_yaml_profile_descriptions(
@@ -413,6 +405,15 @@ def refresh_semantic_yaml_profile_descriptions(
     if not os.path.exists(resolved_yaml_path):
         return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
 
+    # Rewriting descriptions is an authoring mutation: gate on the project
+    # adapter, not just the document shape, so OSI-shaped YAML in a
+    # MetricFlow project (or an explicit authoring_format override) cannot
+    # slip through to the write/sync below.
+    if agent_config is not None:
+        rejection = reject_non_dosi_semantic_yaml(resolved_yaml_path, agent_config)
+        if rejection:
+            return False, rejection, 0
+
     try:
         with open(resolved_yaml_path, "r", encoding="utf-8") as f:
             docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
@@ -420,20 +421,12 @@ def refresh_semantic_yaml_profile_descriptions(
         return False, f"Failed to read semantic YAML file '{resolved_yaml_path}': {exc}", 0
 
     try:
-        from datus.storage.semantic_model.profile_description import (
-            refresh_metricflow_yaml_descriptions,
-            refresh_osi_yaml_descriptions,
-        )
+        from datus.storage.semantic_model.profile_description import refresh_osi_yaml_descriptions
 
-        fmt = (authoring_format or "").strip().lower()
-        if not fmt:
-            fmt = "metricflow" if any(isinstance(doc, dict) and doc.get("data_source") for doc in docs) else "osi"
-        if fmt == "metricflow":
-            changed = refresh_metricflow_yaml_descriptions(docs, profile_evidence)
-        elif fmt == "osi":
-            changed = refresh_osi_yaml_descriptions(docs, profile_evidence)
-        else:
-            return False, f"Unsupported semantic YAML authoring format: {authoring_format}", 0
+        fmt = _infer_semantic_yaml_authoring_format(docs, authoring_format)
+        if fmt != "osi":
+            return False, METRICFLOW_YAML_UNSUPPORTED_MESSAGE, 0
+        changed = refresh_osi_yaml_descriptions(docs, profile_evidence)
     except Exception as exc:
         return False, f"Failed to refresh semantic YAML descriptions: {exc}", 0
 
@@ -447,29 +440,19 @@ def refresh_semantic_yaml_profile_descriptions(
             return False, f"Failed to write semantic YAML file '{resolved_yaml_path}': {exc}", 0
 
     if sync_to_storage:
-        if fmt == "metricflow":
-            sync_success, sync_error = process_semantic_yaml_file(
-                resolved_yaml_path,
-                agent_config,
-                include_semantic_objects=True,
-                include_metrics=True,
-            )
-        else:
-            try:
-                from datus.tools.func_tool.generation_tools import GenerationTools
+        try:
+            from datus.tools.func_tool.generation_tools import GenerationTools
 
-                result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_to_db(
-                    resolved_yaml_path,
-                    include_semantic_objects=True,
-                    include_metrics=False,
-                )
-            except Exception as exc:
-                sync_error = f"Failed to sync OSI semantic YAML file '{resolved_yaml_path}' to vector store: {exc}"
-                logger.exception(sync_error)
-                return False, sync_error, changed
-            sync_success = bool(result.get("success"))
-            sync_error = result.get("error", "")
-        if not sync_success:
+            result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_to_db(
+                resolved_yaml_path,
+                include_semantic_objects=True,
+                include_metrics=False,
+            )
+        except Exception as exc:
+            sync_error = f"Failed to sync OSI semantic YAML file '{resolved_yaml_path}' to vector store: {exc}"
+            logger.exception(sync_error)
             return False, sync_error, changed
+        if not result.get("success"):
+            return False, result.get("error", ""), changed
 
     return True, "", changed

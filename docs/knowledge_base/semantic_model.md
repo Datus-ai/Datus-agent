@@ -42,7 +42,7 @@ Semantic model objects are stored at field level:
 
 ## Usage
 
-With `--success_story`, this compatibility component runs the Dosi-only `semantic_modeling` workflow in datasets-only scope. It never creates, updates, or deletes metrics. Existing YAML import and profile refresh remain non-LLM compatibility operations for supported legacy files.
+With `--success_story`, this compatibility component runs the Dosi-only `semantic_modeling` workflow in datasets-only scope. It never creates, updates, or deletes metrics. Existing YAML import and profile refresh remain non-LLM compatibility operations for Dosi/OSI YAML in Dosi projects; MetricFlow YAML is rejected.
 
 ### Basic Command
 
@@ -80,7 +80,7 @@ datus-agent bootstrap-kb \
 
 When `semantic_model` is combined with `metrics` or `semantic_modeling`, bootstrap executes one full `semantic_modeling` run rather than separate legacy generators.
 
-`refresh-profile` updates an existing MetricFlow or OSI semantic YAML in place. It re-runs bounded, read-only data
+`refresh-profile` updates an existing Dosi/OSI semantic YAML in place (MetricFlow YAML is rejected). It re-runs bounded, read-only data
 profiling guided by the historical SQLs in `--success_story`, replaces the generated `Observed profile:` suffixes in
 table and column descriptions, and syncs the updated YAML back to the semantic model vector store. It does not run full
 LLM semantic-model generation and does not truncate the semantic model store.
@@ -104,7 +104,7 @@ The agent analyzes these SQLs to:
 
 ### YAML Format
 
-MetricFlow-compatible semantic model YAML:
+YAML import accepts Dosi/OSI documents only. The legacy MetricFlow format below is shown for reference and is no longer importable:
 
 ```yaml
 data_source:

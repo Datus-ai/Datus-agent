@@ -332,10 +332,9 @@ class FilesystemFuncTool(BaseTool):
                 root. Absolute paths require user confirmation via the
                 permission hook.
             content: The content to write to the file.
-            file_type: Optional tag consumed by ``GenerationHooks`` for
-                post-write sync-to-DB routing; has no effect on where the
-                file lands. The prompt is responsible for supplying the
-                correct directory in ``path``.
+            file_type: Deprecated and ignored. Retained only so older
+                prompts and persisted sessions that still pass it keep
+                working; scheduled for removal.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:

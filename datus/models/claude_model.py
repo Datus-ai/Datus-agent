@@ -1166,8 +1166,9 @@ class ClaudeModel(OpenAICompatibleModel):
                             await self._invoke_hook(hooks, "on_tool_start", tool_ctx, hook_agent, tool_obj)
 
                             tool_executed = False
-                            # Raw structured result handed to ``on_tool_end``; GenerationHooks
-                            # inspects the FuncToolResult dict / result text to sync the KB.
+                            # Result handed to ``on_tool_end``: function tools pass their
+                            # FuncToolResult (or raw return value) unchanged; MCP tools pass
+                            # the first content block's text.
                             hook_result: Any = None
 
                             # Try function tools first

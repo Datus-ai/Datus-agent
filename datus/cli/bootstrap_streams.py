@@ -385,7 +385,6 @@ async def stream_reference_sql(
                     node_name="gen_sql_summary",
                     agent_config=agent_config,
                     execution_mode="workflow",
-                    build_mode=build_mode,
                     subject_tree=subject_tree,
                 )
                 user_message = "Analyze and summarize this SQL query"

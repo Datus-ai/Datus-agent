@@ -114,17 +114,19 @@ def test_legacy_node_config_fields_are_ignored():
         resolve_authoring_format(_agent_config("metricflow"), {"authoring_format": "osi"})
         == AUTHORING_FORMAT_METRICFLOW
     )
-    assert resolve_authoring_format(_agent_config("osi"), {"authoring_format": "metricflow"}) == AUTHORING_FORMAT_OSI
+    assert resolve_authoring_format(_agent_config("dosi"), {"authoring_format": "metricflow"}) == AUTHORING_FORMAT_OSI
 
 
 def test_derives_from_active_semantic_adapter():
-    assert resolve_authoring_format(_agent_config("osi"), None) == AUTHORING_FORMAT_OSI
+    # Plain-OSI projects are query-only: only Dosi resolves to the OSI
+    # authoring format.
+    assert resolve_authoring_format(_agent_config("osi"), None) == AUTHORING_FORMAT_METRICFLOW
     assert resolve_authoring_format(_agent_config("dosi"), None) == AUTHORING_FORMAT_OSI
     assert resolve_authoring_format(_agent_config("metricflow"), None) == AUTHORING_FORMAT_METRICFLOW
 
 
 def test_osi_authoring_adapter_classification():
-    assert is_osi_semantic_adapter("osi") is True
+    assert is_osi_semantic_adapter("osi") is False
     assert is_osi_semantic_adapter(" DOSI ") is True
     assert is_osi_semantic_adapter("metricflow") is False
 

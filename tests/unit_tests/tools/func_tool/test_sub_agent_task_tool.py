@@ -1375,7 +1375,7 @@ class TestInteractionBrokerPassthrough:
         assert node.interaction_broker is parent_broker
 
     def test_inject_broker_updates_hooks(self, task_tool):
-        """_inject_broker updates broker on GenerationHooks / PermissionHooks."""
+        """_inject_broker updates broker on hooks (e.g. PermissionHooks)."""
         from datus.cli.execution_state import InteractionBroker
 
         parent_broker = InteractionBroker()

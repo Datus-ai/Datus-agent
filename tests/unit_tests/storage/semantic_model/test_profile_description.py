@@ -7,7 +7,6 @@ from datus.storage.semantic_model.profile_description import (
     build_column_observed_profile,
     build_table_observed_profile,
     merge_observed_profile,
-    refresh_metricflow_yaml_descriptions,
     refresh_osi_yaml_descriptions,
 )
 
@@ -142,106 +141,6 @@ def test_profile_description_edge_cases_for_usage_and_helpers():
     assert _profile_scalar(1.23456789) == "1.23457"
     assert _clip_text("abcdef", 0) == ""
     assert _clip_text("abcdef", 2) == ".."
-
-
-def test_refresh_metricflow_yaml_descriptions_patches_table_and_column():
-    docs = [
-        yaml.safe_load(
-            """
-data_source:
-  name: orders
-  description: Orders table.
-  sql_table: marts.orders
-  dimensions:
-    - name: status
-      expr: status
-      type: CATEGORICAL
-      description: Order status.
-"""
-        )
-    ]
-    evidence = {
-        "tables": {
-            "orders": {
-                "query_count": 2,
-                "field_usage_statistics": {
-                    "status": {"filter_count": 2, "operators": ["="]},
-                },
-                "data_distribution_profile": {
-                    "row_count": 10,
-                    "columns": {
-                        "status": {
-                            "kind": "categorical",
-                            "stats": {"distinct_count": 3},
-                            "top_values": [{"value": "paid"}, {"value": "refund"}],
-                        }
-                    },
-                },
-            }
-        }
-    }
-
-    changed = refresh_metricflow_yaml_descriptions(docs, evidence)
-
-    assert changed == 2
-    data_source = docs[0]["data_source"]
-    assert "observed row count 10" in data_source["description"]
-    assert "common values include paid, refund" in data_source["dimensions"][0]["description"]
-
-
-def test_refresh_metricflow_yaml_descriptions_skips_invalid_docs_and_missing_profiles():
-    docs = [
-        None,
-        {"data_source": "not-a-dict"},
-        {"data_source": {"name": "orders", "description": "Orders table."}},
-    ]
-
-    changed = refresh_metricflow_yaml_descriptions(docs, {"tables": {"customers": {}}})
-
-    assert changed == 0
-    assert docs[-1]["data_source"]["description"] == "Orders table."
-
-
-def test_refresh_metricflow_yaml_descriptions_matches_join_profiles_by_column():
-    docs = [
-        yaml.safe_load(
-            """
-data_source:
-  name: orders
-  dimensions:
-    - name: customer_id
-      expr: customer_id
-      description: Customer identifier.
-"""
-        )
-    ]
-    evidence = {
-        "tables": {
-            "orders": {
-                "data_distribution_profile": {
-                    "columns": {
-                        "customer_id": {
-                            "kind": "categorical",
-                            "stats": {"distinct_count": 2},
-                        }
-                    },
-                    "join_relationship_profiles": [
-                        "invalid",
-                        {
-                            "source_column": "orders.customer_id",
-                            "target_column": "customers.id",
-                            "referential_coverage": 1.0,
-                        },
-                    ],
-                }
-            }
-        }
-    }
-
-    changed = refresh_metricflow_yaml_descriptions(docs, evidence)
-
-    assert changed == 1
-    assert "referential coverage 100.0%" in docs[0]["data_source"]["dimensions"][0]["description"]
 
 
 def test_refresh_osi_yaml_descriptions_patches_dataset_and_dimension():

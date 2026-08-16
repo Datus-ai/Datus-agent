@@ -126,8 +126,8 @@ class TestSkillCreatorAgenticNodeTools:
 
     def test_has_unified_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Node exposes a single unified filesystem tool — write scope is
-        enforced by GenerationHooks (``.datus/skills/**``), not by a separate
-        prefixed instance.
+        enforced by the permission layer (``.datus/skills/**``), not by a
+        separate prefixed instance.
         """
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 

@@ -710,7 +710,7 @@ class SubAgentTaskTool:
             hooks_obj = getattr(node, attr, None)
             if hooks_obj is None:
                 continue
-            # Direct hook (GenerationHooks, PermissionHooks)
+            # Direct hook (e.g. PermissionHooks)
             if hasattr(hooks_obj, "broker"):
                 hooks_obj.broker = broker
             # CompositeHooks wrapping multiple hooks

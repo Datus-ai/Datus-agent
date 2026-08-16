@@ -3389,10 +3389,8 @@ class AgenticNode(Node):
     def _compose_run_hooks(self, ctx: "StreamRunContext") -> Any:
         """Hook: compose the final ``hooks`` argument passed to the model.
 
-        Default: include ``self.hooks`` (typically a ``GenerationHooks``
-        instance for todo/plan workflow nodes) only in interactive mode;
-        otherwise return permission hooks alone. This covers SqlSummary,
-        Feedback, GenSemanticModel, and GenMetrics out of the box.
+        Default: include ``self.hooks`` only in interactive mode;
+        otherwise return permission hooks alone.
 
         Subclasses with non-``self.hooks`` extras (Deliverable's
         ``_validation_hook``) override to call ``self._compose_hooks(extra)``

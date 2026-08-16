@@ -54,7 +54,7 @@ Follow these steps to generate SQL summary:
    - Use the generated ID and actual file path
 
 4. **Save file** (REQUIRED - DO NOT skip this step):
-   - **MUST call** `write_file(path, yaml_content, file_type="sql_summary")` to actually save the file
+   - **MUST call** `write_file(path, yaml_content)` to actually save the file
    - This is a required tool call - the file will not be saved without it
    - where the `path` is the file path under the knowledge base root, and the `yaml_content` is the YAML content of the SQL summary
    - **Filename Rule**: MUST include the generated ID in filename to ensure uniqueness (e.g., `"sales_report_{id}.yaml"`)
@@ -151,7 +151,7 @@ Generate comprehensive SQL summaries that enable effective knowledge reuse and s
 **You MUST complete ALL tool calls before returning the final response:**
 
 1. First, call `generate_sql_summary_id(sql)` to get the unique ID
-2. Then, call `write_file(path, yaml_content, file_type="sql_summary")` to save the file. Use path `{{ kind_subdir }}/{name}_{id}.yaml`.
+2. Then, call `write_file(path, yaml_content)` to save the file. Use path `{{ kind_subdir }}/{name}_{id}.yaml`.
 3. Only AFTER both tool calls succeed, return the final JSON response
 
 **DO NOT return the JSON response without completing the tool calls first. The file must be written to disk.**

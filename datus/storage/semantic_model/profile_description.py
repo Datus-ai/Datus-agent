@@ -123,30 +123,6 @@ def build_column_observed_profile(
     return "; ".join(_dedupe(parts)[:4])
 
 
-def refresh_metricflow_yaml_descriptions(docs: List[dict], profile_evidence: Dict[str, Any]) -> int:
-    """Patch MetricFlow data_source descriptions from profiler evidence."""
-    tables = _tables_from_evidence(profile_evidence)
-    changed = 0
-    for doc in docs:
-        data_source = doc.get("data_source") if isinstance(doc, dict) else None
-        if not isinstance(data_source, dict):
-            continue
-        table_key = _match_table_key(data_source.get("sql_table") or data_source.get("name"), tables)
-        table_evidence = tables.get(table_key or "")
-        if not table_evidence:
-            continue
-        table_observed = build_table_observed_profile(table_evidence)
-        if table_observed:
-            changed += _merge_description(data_source, table_observed)
-        changed += _refresh_named_items(
-            items=list(data_source.get("identifiers") or [])
-            + list(data_source.get("dimensions") or [])
-            + list(data_source.get("measures") or []),
-            table_evidence=table_evidence,
-        )
-    return changed
-
-
 def refresh_osi_yaml_descriptions(docs: List[dict], profile_evidence: Dict[str, Any]) -> int:
     """Patch OSI dataset/field descriptions from profiler evidence."""
     tables = _tables_from_evidence(profile_evidence)

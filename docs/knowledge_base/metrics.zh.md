@@ -47,7 +47,7 @@ query_metrics(
 
 ## 使用方法
 
-**前置条件**：此命令依赖 [datus-semantic-metricflow](../adapters/semantic_adapters.md)，请先运行 `pip install datus-semantic-metricflow` 安装。
+使用 `--success_story` 时，该兼容组件会运行完整的 Dosi-only `semantic_modeling` 工作流，包括生成指标所需的 datasets 与 relationships。YAML 导入是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。
 
 ### 基本命令
 
@@ -93,11 +93,12 @@ datus-agent bootstrap-kb \
 # 学习模式：省略 --subject_tree 参数
 ```
 
-**生成的标签格式：**
+**生成的标签格式（旧版 MetricFlow 文件）：**
 
-指标生成后，主题树分类存储在 `locked_metadata.tags` 中，格式为 `"subject_tree: {domain}/{layer1}/{layer2}"`：
+存量 MetricFlow 指标文件的主题树分类存储在 `locked_metadata.tags` 中，格式为 `"subject_tree: {domain}/{layer1}/{layer2}"`。以下形态仅作参考——这类文件仍可查询，但不再支持生成或导入：
 
 ```yaml
+# 旧版 MetricFlow 形态——仅可查询，不可导入
 metric:
   name: daily_revenue
   type: simple
@@ -111,17 +112,7 @@ metric:
 
 **YAML 导入注意事项：**
 
-使用 `--semantic_yaml` 从 YAML 文件同步指标到 lancedb 时，必须在 YAML 文件中手动添加包含 subject_tree 格式的 `locked_metadata.tags` 才能成功分类。系统不会自动对从 YAML 导入的指标进行分类，需要自行添加标签：
-
-```yaml
-metric:
-  name: your_metric
-  # ... 其他字段
-  locked_metadata:
-    tags:
-      - "YourDomain"
-      - "subject_tree: Domain/Layer1/Layer2"
-```
+`--semantic_yaml` 仅接受 Dosi/OSI 语义 YAML，且仅在 Dosi 项目中可用。MetricFlow YAML（`data_source:` / `metric:` 文档）会被明确拒绝；请先把项目迁移到 Dosi，再用 `semantic_modeling` 重新生成模型。
 
 ## 数据源格式
 
@@ -133,25 +124,24 @@ How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_cu
 What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
 ```
 
-### YAML 格式（仅指标）
+### YAML 格式（指标导入）
 
-从 YAML 文件导入指标时，指标定义引用已存在的语义模型：
+指标导入读取的是 Dosi/OSI 语义模型文档中的 `metrics` 集合——与 datasets 在同一个文件里：
 
 ```yaml
-metric:
-  name: total_revenue
-  description: "Total revenue from all transactions"
-  type: simple
-  type_params:
-    measure: amount  # 引用语义模型中的 measure
-  filter: "amount > 0"
-  locked_metadata:
-    tags:
-      - "Finance"
-      - "subject_tree: Finance/Revenue/Total"
+semantic_model:
+  - name: transactions
+    datasets:
+      - name: transactions
+        source: analytics.transactions
+    metrics:
+      - name: total_revenue
+        description: "Total revenue from all transactions"
+        expression: SUM(transactions.amount)
+        dataset: transactions
 ```
 
-**注意**：底层的语义模型（包含 dimensions/measures 的 `data_source`）应该已经存在。参见 [semantic_model.zh.md](semantic_model.zh.md) 了解如何定义语义模型。
+独立的 MetricFlow `metric:` 文档属于旧格式，已不支持导入。参见 [semantic_model.zh.md](semantic_model.zh.md) 了解如何定义语义模型。
 
 ## 总结
 
@@ -161,7 +151,7 @@ metric:
 
 - **可执行指标**：通过 `query_metrics` 查询而非生成 SQL
 - **指标优先策略**：Agent 优先使用指标查询而非临时 SQL
-- **独立于语义模型**：指标作为独立的查询工具运行，而非嵌入在 schema 定义中
+- **定义内嵌、执行独立**：指标定义存放在语义模型的 `metrics` 集合中；通过 `query_metrics` 查询是独立的执行路径，无需临时生成 SQL
 - **层级组织**：主题树分类法提高可发现性
 
 这种方法确保了团队之间指标定义的一致性，同时降低了查询复杂性并提高了性能。

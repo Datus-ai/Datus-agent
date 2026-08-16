@@ -71,17 +71,17 @@ def test_dosi_yaml_import_reconciles_metric_projection(tmp_path):
     )
 
 
-def test_metricflow_yaml_import_keeps_non_llm_projection_path(tmp_path):
+def test_metricflow_yaml_import_is_rejected(tmp_path):
+    """Contract: MetricFlow projects are query-only — metric YAML import must
+    fail with the migration message instead of syncing anything."""
     yaml_path = tmp_path / "metrics.yml"
     yaml_path.write_text("metric: []\n", encoding="utf-8")
     config = MagicMock()
     config.resolve_semantic_adapter.return_value = "metricflow"
 
-    with patch(
-        "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
-        return_value=(True, ""),
-    ) as process:
-        result = init_semantic_yaml_metrics(str(yaml_path), config)
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+        success, error = init_semantic_yaml_metrics(str(yaml_path), config)
 
-    assert result == (True, "")
-    process.assert_called_once_with(str(yaml_path), config, include_semantic_objects=False)
+    assert success is False
+    assert "query-only" in error
+    tools_cls.return_value.sync_osi_to_db.assert_not_called()

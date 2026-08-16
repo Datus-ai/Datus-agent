@@ -4,8 +4,6 @@
 
 # -*- coding: utf-8 -*-
 import json
-import os
-import tempfile
 from collections.abc import Iterable
 from copy import copy
 from datetime import datetime
@@ -375,19 +373,15 @@ class GenerationTools:
             dict: Result containing completion message and semantic_model_files
         """
         try:
-            if not self._is_osi_authoring() and not semantic_model_files:
-                return FuncToolResult(
-                    success=0,
-                    error="semantic_model_files must contain at least one generated semantic model YAML path.",
-                )
-            osi_target: Optional[tuple[str, str]] = None
-            if self._is_osi_authoring():
-                semantic_model_file, resolved, model_name = self.resolve_planned_osi_semantic_target()
-                semantic_model_files = [semantic_model_file]
-                osi_target = (resolved, model_name)
-                validation_passed = self.generation_evidence.semantic_artifact_validation_passed(model_name, resolved)
-            else:
-                validation_passed = self.generation_evidence.validation_passed
+            if not self._is_osi_authoring():
+                from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
+
+                return FuncToolResult(success=0, error=QUERY_ONLY_MIGRATION_MESSAGE)
+
+            semantic_model_file, resolved, model_name = self.resolve_planned_osi_semantic_target()
+            semantic_model_files = [semantic_model_file]
+            osi_target: tuple[str, str] = (resolved, model_name)
+            validation_passed = self.generation_evidence.semantic_artifact_validation_passed(model_name, resolved)
 
             if not validation_passed:
                 return FuncToolResult(
@@ -403,64 +397,25 @@ class GenerationTools:
             self._semantic_object_exists_cache.clear()
             self._semantic_table_object_index = None
 
-            if self._is_osi_authoring():
-                assert osi_target is not None
-                resolved, _model_name = osi_target
-                sync_result = self.sync_osi_to_db(
-                    resolved,
-                    include_semantic_objects=True,
-                    include_metrics=False,
-                )
-                sync_results = [sync_result]
-                if not sync_result.get("success"):
-                    return FuncToolResult(
-                        success=0,
-                        error=f"OSI semantic model KB sync failed: {sync_result.get('error', 'unknown')}",
-                        result={"semantic_model_files": semantic_model_files, "sync": sync_results},
-                    )
-                self.generation_evidence.mark_kb_sync("semantic")
-                if self.osi_target_state is not None:
-                    self.osi_target_state.clear_artifact_snapshot()
+            resolved, _model_name = osi_target
+            sync_result = self.sync_osi_to_db(
+                resolved,
+                include_semantic_objects=True,
+                include_metrics=False,
+            )
+            sync_results = [sync_result]
+            if not sync_result.get("success"):
                 return FuncToolResult(
-                    result={
-                        "message": f"Semantic model generation completed and synced {len(sync_results)} OSI file(s)",
-                        "semantic_model_files": semantic_model_files,
-                        "sync": sync_results,
-                    }
+                    success=0,
+                    error=f"OSI semantic model KB sync failed: {sync_result.get('error', 'unknown')}",
+                    result={"semantic_model_files": semantic_model_files, "sync": sync_results},
                 )
-
-            from datus.cli.generation_hooks import GenerationHooks, resolve_kb_sandbox_path
-
-            subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
-            resolved_semantic_files = []
-            for semantic_model_file in semantic_model_files:
-                resolved = resolve_kb_sandbox_path(semantic_model_file, "semantic", subject_root)
-                if not resolved:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}",
-                        result={"semantic_model_files": semantic_model_files},
-                    )
-                resolved_semantic_files.append(resolved)
-            sync_results = []
-            for resolved in resolved_semantic_files:
-                sync_result = GenerationHooks._sync_semantic_to_db(
-                    resolved,
-                    self.agent_config,
-                    include_semantic_objects=True,
-                    include_metrics=False,
-                )
-                sync_results.append(sync_result)
-                if not sync_result.get("success"):
-                    return FuncToolResult(
-                        success=0,
-                        error=f"Semantic model KB sync failed: {sync_result.get('error', 'unknown')}",
-                        result={"semantic_model_files": semantic_model_files, "sync": sync_results},
-                    )
             self.generation_evidence.mark_kb_sync("semantic")
+            if self.osi_target_state is not None:
+                self.osi_target_state.clear_artifact_snapshot()
             return FuncToolResult(
                 result={
-                    "message": f"Published {len(semantic_model_files)} semantic model file(s)",
+                    "message": f"Semantic model generation completed and synced {len(sync_results)} OSI file(s)",
                     "semantic_model_files": semantic_model_files,
                     "sync": sync_results,
                 }
@@ -484,16 +439,19 @@ class GenerationTools:
             dict: Result containing completion message, file paths, metric SQLs, and sync status
         """
         try:
+            if not self._is_osi_authoring():
+                from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
+
+                return FuncToolResult(success=0, error=QUERY_ONLY_MIGRATION_MESSAGE)
+
             metric_sqls = dict(self.generation_evidence.metric_sqls)
             # OSI authoring normally owns the metrics collection. When it
             # narrowly repairs a dataset for the requested metrics, publish
             # the same bound artifact as semantic input so KB profiles stay in
             # sync with the final YAML.
-            semantic_model_files = (
-                [] if self._is_osi_authoring() else self.generation_evidence.semantic_model_mutations(metric_file)
-            )
+            semantic_model_files: List[str] = []
 
-            exact_osi_target_required = self._is_osi_authoring() and self.require_bound_osi_target
+            exact_osi_target_required = self.require_bound_osi_target
             osi_metric_names_to_sync: Optional[set[str]] = None
             osi_touched_metric_names: Optional[set[str]] = None
             osi_absent_metric_names: set[str] = set()
@@ -575,7 +533,7 @@ class GenerationTools:
             # Resolve LLM-reported paths against the project's subject/ tree.
             # Reject anything that escapes the per-kind semantic-model sandbox
             # before opening or syncing files.
-            from datus.cli.generation_hooks import resolve_kb_sandbox_path
+            from datus.storage.artifact_path import resolve_kb_sandbox_path
 
             subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
 
@@ -622,92 +580,21 @@ class GenerationTools:
                         "metric_sqls": metric_sqls,
                     },
                 )
-            if self._is_osi_authoring():
-                if osi_metric_names_to_sync is None:
-                    osi_metric_names_to_sync = set(self.extract_osi_metric_names(abs_metric))
-                sync_kwargs: Dict[str, Any] = {"metric_names_to_sync": osi_metric_names_to_sync}
-                if osi_touched_metric_names is not None:
-                    sync_kwargs["metric_names_to_reconcile"] = osi_touched_metric_names
-                sync_result = self._sync_osi_metric_to_db(
-                    abs_metric,
-                    abs_semantic_files,
-                    metric_sqls,
-                    **sync_kwargs,
-                )
-                if not sync_result.get("success"):
-                    return FuncToolResult(
-                        success=0,
-                        error=f"OSI metric file written but KB sync failed: {sync_result.get('error', 'unknown')}",
-                        result={
-                            "metric_file": metric_file,
-                            "semantic_model_files": semantic_model_files,
-                            "metric_sqls": metric_sqls,
-                            "sync": sync_result,
-                        },
-                    )
-                kb_sync_metric_names = (
-                    set(osi_touched_metric_names)
-                    if osi_touched_metric_names is not None
-                    else set(osi_metric_names_to_sync)
-                )
-                self.generation_evidence.mark_kb_sync("metric", kb_sync_metric_names)
-                if sync_result.get("semantic_synced"):
-                    self.generation_evidence.mark_kb_sync("semantic")
-                if self.osi_target_state is not None:
-                    self.osi_target_state.clear_artifact_snapshot()
-                return FuncToolResult(
-                    result={
-                        "message": "OSI metric generation completed and synced to Knowledge Base",
-                        "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
-                        "metric_sqls": metric_sqls,
-                        "deleted_metric_names": sorted(osi_absent_metric_names),
-                        "sync": sync_result,
-                    }
-                )
-
-            # Pre-flight: refuse to sync a metric file that has no `metric:`
-            # YAML blocks. The LLM occasionally fills the file with markdown
-            # documentation and relies on `create_metric: true` measures
-            # (which never reach the KB vector DB). Catching it here gives a
-            # crisp, actionable error the LLM can act on without a roundtrip
-            # through the deeper sync path.
-            preflight_error = self._validate_metric_file_has_blocks(abs_metric)
-            if preflight_error:
-                return FuncToolResult(
-                    success=0,
-                    error=preflight_error,
-                    result={
-                        "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
-                        "metric_sqls": metric_sqls,
-                    },
-                )
-            metric_names = self._extract_metric_names_from_file(abs_metric)
-            metric_definitions = self._extract_metric_definitions_from_file(abs_metric)
-            conflict_error = self._validate_metric_name_conflicts(metric_definitions)
-            if conflict_error:
-                return FuncToolResult(
-                    success=0,
-                    error=conflict_error,
-                    result={
-                        "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
-                        "metric_sqls": metric_sqls,
-                    },
-                )
-            # Auto-sync to Knowledge Base
-            sync_result = self._sync_metric_to_db(
+            if osi_metric_names_to_sync is None:
+                osi_metric_names_to_sync = set(self.extract_osi_metric_names(abs_metric))
+            sync_kwargs: Dict[str, Any] = {"metric_names_to_sync": osi_metric_names_to_sync}
+            if osi_touched_metric_names is not None:
+                sync_kwargs["metric_names_to_reconcile"] = osi_touched_metric_names
+            sync_result = self._sync_osi_metric_to_db(
                 abs_metric,
                 abs_semantic_files,
                 metric_sqls,
-                metric_names_to_sync=None,
+                **sync_kwargs,
             )
-
             if not sync_result.get("success"):
                 return FuncToolResult(
                     success=0,
-                    error=f"Metric file written but KB sync failed: {sync_result.get('error', 'unknown')}",
+                    error=f"OSI metric file written but KB sync failed: {sync_result.get('error', 'unknown')}",
                     result={
                         "metric_file": metric_file,
                         "semantic_model_files": semantic_model_files,
@@ -715,19 +602,21 @@ class GenerationTools:
                         "sync": sync_result,
                     },
                 )
-
-            self.generation_evidence.mark_kb_sync("metric", metric_names)
+            kb_sync_metric_names = (
+                set(osi_touched_metric_names) if osi_touched_metric_names is not None else set(osi_metric_names_to_sync)
+            )
+            self.generation_evidence.mark_kb_sync("metric", kb_sync_metric_names)
             if sync_result.get("semantic_synced"):
                 self.generation_evidence.mark_kb_sync("semantic")
-            self._semantic_object_exists_cache.clear()
-            self._semantic_table_object_index = None
-
+            if self.osi_target_state is not None:
+                self.osi_target_state.clear_artifact_snapshot()
             return FuncToolResult(
                 result={
-                    "message": "Metric generation completed and synced to Knowledge Base",
+                    "message": "OSI metric generation completed and synced to Knowledge Base",
                     "metric_file": metric_file,
                     "semantic_model_files": semantic_model_files,
                     "metric_sqls": metric_sqls,
+                    "deleted_metric_names": sorted(osi_absent_metric_names),
                     "sync": sync_result,
                 }
             )
@@ -736,213 +625,10 @@ class GenerationTools:
             logger.error(f"Error completing metric generation: {e}")
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
-    @staticmethod
-    def _validate_metric_file_has_blocks(metric_file: str) -> Optional[str]:
-        """Return an actionable error string when ``metric_file`` lacks any
-        named ``metric:`` YAML document; return ``None`` when at least one is found.
-
-        The check is intentionally narrow: it verifies the file parses as YAML
-        and at least one document carries a top-level ``metric:`` mapping with
-        a non-empty ``name``. The downstream sync path still owns full metric
-        schema handling.
-        """
-        if not metric_file or not os.path.exists(metric_file):
-            return f"Metric file not found: {metric_file!r}"
-        try:
-            with open(metric_file, "r", encoding="utf-8") as f:
-                docs = list(yaml.safe_load_all(f))
-        except yaml.YAMLError as e:
-            return (
-                f"Metric file {metric_file!r} is not valid YAML ({e}). "
-                "Rewrite the file with explicit `metric:` YAML blocks "
-                "(separated by `---`)."
-            )
-        saw_metric_block = False
-        seen_names: Dict[str, str] = {}
-        saw_named_metric = False
-        for doc in docs:
-            if isinstance(doc, dict) and "metric" in doc:
-                saw_metric_block = True
-                metric = doc.get("metric")
-                if isinstance(metric, dict):
-                    name = metric.get("name")
-                    if isinstance(name, str) and name.strip():
-                        saw_named_metric = True
-                        metric_name = name.strip()
-                        normalized = normalize_metric_name(metric_name)
-                        if normalized in seen_names:
-                            return (
-                                f"Metric file {metric_file!r} declares duplicate metric.name '{metric_name}'. "
-                                "Metric names must be unique within a datasource; merge identical definitions "
-                                "or choose a more specific business name."
-                            )
-                        seen_names[normalized] = metric_name
-        if saw_named_metric:
-            return None
-        if saw_metric_block:
-            return (
-                f"Metric file {metric_file!r} contains `metric:` YAML blocks, "
-                "but none has a non-empty `metric.name`. Rewrite the file with "
-                "one explicit named metric per YAML document, for example: "
-                "`metric: {name: revenue_total, type: measure_proxy, type_params: {measure: revenue_total}}`."
-            )
-        return (
-            f"Metric file {metric_file!r} contains no `metric:` YAML blocks. "
-            "Documentation/markdown is not a metric definition. Rewrite the file "
-            "with explicit `metric:` entries (separated by `---`); do not rely on "
-            "`create_metric: true` on semantic-model measures — those only emit "
-            "metrics at MetricFlow runtime and are NOT synced to the Knowledge Base."
-        )
-
-    @staticmethod
-    def _extract_metric_names_from_file(metric_file: str) -> List[str]:
-        """Return metric names declared in top-level ``metric:`` YAML blocks."""
-        try:
-            with open(metric_file, "r", encoding="utf-8") as f:
-                docs = list(yaml.safe_load_all(f))
-        except (OSError, yaml.YAMLError):
-            return []
-
-        names: List[str] = []
-        for doc in docs:
-            if not isinstance(doc, dict):
-                continue
-            metric = doc.get("metric")
-            if not isinstance(metric, dict):
-                continue
-            name = metric.get("name")
-            if isinstance(name, str) and name:
-                names.append(name)
-        return names
-
-    @staticmethod
-    def _extract_metric_definitions_from_file(metric_file: str) -> List[Dict[str, object]]:
-        """Return lightweight metric definitions for pre-sync conflict checks."""
-        try:
-            with open(metric_file, "r", encoding="utf-8") as f:
-                docs = list(yaml.safe_load_all(f))
-        except (OSError, yaml.YAMLError):
-            return []
-
-        definitions: List[Dict[str, object]] = []
-        for doc in docs:
-            if not isinstance(doc, dict):
-                continue
-            metric = doc.get("metric")
-            if not isinstance(metric, dict):
-                continue
-            name = metric.get("name")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            metric_type = str(metric.get("type") or "").strip()
-            type_params = metric.get("type_params") if isinstance(metric.get("type_params"), dict) else {}
-            measure_expr = ""
-            base_measures: List[str] = []
-
-            if metric_type == "measure_proxy":
-                measure = type_params.get("measure")
-                if isinstance(measure, str):
-                    measure_expr = measure
-                    base_measures.append(measure)
-                elif isinstance(measure, dict):
-                    measure_name = measure.get("name")
-                    if isinstance(measure_name, str) and measure_name.strip():
-                        measure_expr = measure_name
-                        base_measures.append(measure_name)
-            elif metric_type == "ratio":
-                for key in ("numerator", "denominator"):
-                    ref = type_params.get(key)
-                    if isinstance(ref, str) and ref.strip():
-                        base_measures.append(ref)
-                    elif isinstance(ref, dict):
-                        ref_name = ref.get("name")
-                        if isinstance(ref_name, str) and ref_name.strip():
-                            base_measures.append(ref_name)
-            elif metric_type in {"expr", "cumulative"}:
-                for ref in type_params.get("measures") or []:
-                    if isinstance(ref, str) and ref.strip():
-                        base_measures.append(ref)
-                    elif isinstance(ref, dict):
-                        ref_name = ref.get("name")
-                        if isinstance(ref_name, str) and ref_name.strip():
-                            base_measures.append(ref_name)
-                if metric_type == "expr" and type_params.get("expr"):
-                    measure_expr = str(type_params["expr"])
-            elif metric_type == "derived":
-                for ref in type_params.get("metrics") or []:
-                    if isinstance(ref, str) and ref.strip():
-                        base_measures.append(ref)
-                    elif isinstance(ref, dict):
-                        ref_name = ref.get("name")
-                        if isinstance(ref_name, str) and ref_name.strip():
-                            base_measures.append(ref_name)
-                if type_params.get("expr"):
-                    measure_expr = str(type_params["expr"])
-
-            definitions.append(
-                {
-                    "name": name.strip(),
-                    "metric_type": metric_type,
-                    "measure_expr": measure_expr,
-                    "base_measures": base_measures,
-                }
-            )
-        return definitions
-
-    def _existing_metric_names(self) -> Optional[set[str]]:
-        try:
-            rows = self.metric_rag.search_all_metrics(select_fields=["name"])
-        except Exception as exc:
-            logger.warning("Failed to load existing metric names before publish dry-run gating: %s", exc)
-            return None
-        if not _is_supported_row_container(rows):
-            return None
-        names = set()
-        for row in _rows_to_dicts(rows):
-            normalized = normalize_metric_name(row.get("name"))
-            if normalized:
-                names.add(normalized)
-        return names
-
-    def _validate_metric_name_conflicts(self, metric_definitions: List[Dict[str, object]]) -> Optional[str]:
-        if not metric_definitions:
-            return None
-
-        existing_by_name: Dict[str, List[Dict[str, object]]] = {}
-        try:
-            rows = self.metric_rag.search_all_metrics(
-                select_fields=["id", "name", "semantic_model_name", "metric_type", "measure_expr", "base_measures"]
-            )
-        except Exception as exc:
-            logger.warning("Failed to check existing metric name conflicts before sync: %s", exc)
-            return None
-        if not _is_supported_row_container(rows):
-            return None
-
-        for row in _rows_to_dicts(rows):
-            normalized = normalize_metric_name(row.get("name"))
-            if normalized:
-                existing_by_name.setdefault(normalized, []).append(row)
-
-        for incoming in metric_definitions:
-            normalized = normalize_metric_name(incoming.get("name"))
-            if not normalized:
-                continue
-            for existing in existing_by_name.get(normalized, []):
-                conflict_field = metric_definition_conflict(existing, incoming)
-                if conflict_field:
-                    return (
-                        f"Metric name conflict within this datasource for '{incoming.get('name')}': "
-                        f"existing metric id '{existing.get('id')}' has a different '{conflict_field}'. "
-                        "Metric names must be unique within a datasource; choose a more specific name "
-                        "or update the existing metric explicitly."
-                    )
-        return None
-
     def _resolve_generation_path(self, path: str, kind: str) -> str:
         if not path:
             return ""
-        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+        from datus.storage.artifact_path import resolve_kb_sandbox_path
 
         subject_root = str(get_path_manager(agent_config=self.agent_config).subject_dir)
         return resolve_kb_sandbox_path(path, kind, subject_root) or ""
@@ -2106,127 +1792,6 @@ class GenerationTools:
         except Exception as e:
             logger.error(f"Error syncing OSI document to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e), "synced": 0}
-
-    def _sync_metric_to_db(
-        self,
-        metric_file: str,
-        semantic_model_files: Optional[List[str]] = None,
-        metric_sqls: Optional[Dict[str, str]] = None,
-        metric_names_to_sync: Optional[set[str]] = None,
-    ) -> dict:
-        """
-        Sync metric and any updated semantic models to Knowledge Base.
-
-        Reuses GenerationHooks._sync_semantic_to_db() static method.
-
-        Args:
-            metric_file: Absolute path to metric YAML file
-            semantic_model_files: Optional absolute paths to semantic model YAML files
-            metric_sqls: Optional dict mapping metric names to generated SQL
-
-        Returns:
-            dict with sync result (success, message, or error)
-        """
-        from datus.cli.generation_hooks import GenerationHooks
-
-        try:
-            if not os.path.exists(metric_file):
-                return {"success": False, "error": f"Metric file not found: {metric_file}"}
-
-            synced_semantic_files: List[str] = []
-            for semantic_model_file in semantic_model_files or []:
-                if not os.path.exists(semantic_model_file):
-                    return {
-                        "success": False,
-                        "error": f"Semantic model file not found: {semantic_model_file}",
-                    }
-                sem_result = GenerationHooks._sync_semantic_to_db(
-                    semantic_model_file,
-                    self.agent_config,
-                    include_semantic_objects=True,
-                    include_metrics=False,
-                )
-                if not sem_result.get("success"):
-                    return sem_result
-                synced_semantic_files.append(semantic_model_file)
-
-            sync_metric_file = metric_file
-            temp_metric_file = ""
-            sync_metric_sqls = metric_sqls
-            if metric_names_to_sync is not None:
-                sync_metric_file = self._write_filtered_metric_file(metric_file, metric_names_to_sync)
-                temp_metric_file = sync_metric_file if sync_metric_file != metric_file else ""
-                sync_metric_sqls = self._filter_metric_sqls(metric_sqls, metric_names_to_sync)
-
-            try:
-                result = GenerationHooks._sync_semantic_to_db(
-                    sync_metric_file,
-                    self.agent_config,
-                    include_semantic_objects=False,
-                    include_metrics=True,
-                    metric_sqls=sync_metric_sqls,
-                    original_yaml_path=metric_file,
-                    replace_metric_artifact=False,
-                )
-            finally:
-                if temp_metric_file and os.path.exists(temp_metric_file):
-                    os.remove(temp_metric_file)
-            if result.get("success"):
-                result["semantic_synced"] = bool(synced_semantic_files)
-                result["semantic_model_files_synced"] = synced_semantic_files
-                if metric_names_to_sync is not None:
-                    result["metric_names_synced"] = sorted(metric_names_to_sync)
-
-            if result.get("success"):
-                logger.info(f"Successfully synced metric to KB: {result.get('message')}")
-            else:
-                logger.error(f"Failed to sync metric to KB: {result.get('error')}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Error syncing metric to KB: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
-
-    @staticmethod
-    def _filter_metric_sqls(
-        metric_sqls: Optional[Dict[str, str]], metric_names_to_sync: set[str]
-    ) -> Optional[Dict[str, str]]:
-        if metric_sqls is None:
-            return None
-        filtered: Dict[str, str] = {}
-        for name, sql in metric_sqls.items():
-            normalized = normalize_metric_name(name)
-            if normalized in metric_names_to_sync:
-                filtered[name] = sql
-        return filtered
-
-    @staticmethod
-    def _write_filtered_metric_file(metric_file: str, metric_names_to_sync: set[str]) -> str:
-        with open(metric_file, "r", encoding="utf-8") as f:
-            docs = list(yaml.safe_load_all(f))
-
-        filtered_docs = []
-        for doc in docs:
-            if not isinstance(doc, dict):
-                continue
-            metric = doc.get("metric")
-            if not isinstance(metric, dict):
-                continue
-            if normalize_metric_name(metric.get("name")) in metric_names_to_sync:
-                filtered_docs.append(doc)
-
-        if not filtered_docs:
-            raise ValueError("No matching metric definitions found for current publish scope")
-
-        fd, temp_path = tempfile.mkstemp(
-            prefix=".metric_publish_",
-            suffix=".yml",
-            dir=os.path.dirname(metric_file),
-        )
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            yaml.safe_dump_all(filtered_docs, f, allow_unicode=True, sort_keys=False)
-        return temp_path
 
     def generate_sql_summary_id(self, sql_query: str, comment: str = "") -> FuncToolResult:
         """

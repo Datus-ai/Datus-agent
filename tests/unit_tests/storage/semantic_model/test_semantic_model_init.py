@@ -8,12 +8,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from datus.storage.semantic_model.semantic_model_init import (
+    METRICFLOW_YAML_UNSUPPORTED_MESSAGE,
     _load_success_story_profile_entries,
     init_semantic_yaml_semantic_model,
     init_success_story_semantic_model_async,
-    process_semantic_yaml_file,
     refresh_semantic_yaml_profile_descriptions,
+    reject_non_dosi_semantic_yaml,
 )
+
+
+def _config(adapter: str = "dosi") -> MagicMock:
+    config = MagicMock()
+    config.resolve_semantic_adapter = MagicMock(return_value=adapter)
+    return config
 
 
 @pytest.mark.asyncio
@@ -43,44 +50,74 @@ async def test_success_story_semantic_model_routes_to_datasets_only_semantic_mod
 
 
 def test_semantic_yaml_import_reports_missing_file(tmp_path):
-    success, error = init_semantic_yaml_semantic_model(str(tmp_path / "missing.yml"), MagicMock())
+    success, error = init_semantic_yaml_semantic_model(str(tmp_path / "missing.yml"), _config())
 
     assert success is False
     assert "not found" in error
 
 
-def test_semantic_yaml_import_uses_non_llm_projection_path(tmp_path):
+def test_semantic_yaml_import_syncs_osi_documents(tmp_path):
     yaml_path = tmp_path / "semantic.yml"
-    yaml_path.write_text("semantic_models: []\n", encoding="utf-8")
-    config = MagicMock()
+    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
+    config = _config("dosi")
 
-    with patch(
-        "datus.storage.semantic_model.semantic_model_init.GenerationHooks._sync_semantic_to_db",
-        return_value={"success": True, "message": "imported"},
-    ) as sync:
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+        tools_cls.return_value.sync_osi_to_db.return_value = {"success": True, "message": "imported"}
         result = init_semantic_yaml_semantic_model(str(yaml_path), config)
 
     assert result == (True, "")
-    sync.assert_called_once_with(
+    tools_cls.return_value.sync_osi_to_db.assert_called_once_with(
         str(yaml_path),
-        config,
         include_semantic_objects=True,
         include_metrics=False,
     )
 
 
-def test_process_semantic_yaml_surfaces_projection_failure(tmp_path):
+def test_semantic_yaml_import_surfaces_sync_failure(tmp_path):
     yaml_path = tmp_path / "semantic.yml"
-    yaml_path.write_text("semantic_models: []\n", encoding="utf-8")
+    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
 
-    with patch(
-        "datus.storage.semantic_model.semantic_model_init.GenerationHooks._sync_semantic_to_db",
-        return_value={"success": False, "error": "invalid YAML"},
-    ):
-        success, error = process_semantic_yaml_file(str(yaml_path), MagicMock())
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+        tools_cls.return_value.sync_osi_to_db.return_value = {"success": False, "error": "invalid YAML"}
+        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config("dosi"))
 
     assert success is False
     assert "invalid YAML" in error
+
+
+def test_semantic_yaml_import_rejected_for_non_dosi_project(tmp_path):
+    """Contract: non-Dosi projects are query-only — the YAML import entry
+    must fail before any KB sync is attempted."""
+    yaml_path = tmp_path / "semantic.yml"
+    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
+
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config("metricflow"))
+
+    assert success is False
+    assert "query-only" in error
+    tools_cls.return_value.sync_osi_to_db.assert_not_called()
+
+
+def test_semantic_yaml_import_rejects_metricflow_documents(tmp_path):
+    """Contract: MetricFlow ``data_source:``/``metric:`` YAML can no longer be
+    imported, even in a Dosi project — the error must be explicit."""
+    yaml_path = tmp_path / "semantic.yml"
+    yaml_path.write_text("data_source:\n  name: orders\n  sql_table: public.orders\n", encoding="utf-8")
+
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config("dosi"))
+
+    assert success is False
+    assert error == METRICFLOW_YAML_UNSUPPORTED_MESSAGE
+    tools_cls.return_value.sync_osi_to_db.assert_not_called()
+
+
+def test_reject_helper_accepts_osi_documents_in_dosi_project(tmp_path):
+    yaml_path = tmp_path / "semantic.yml"
+    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
+
+    assert reject_non_dosi_semantic_yaml(str(yaml_path), _config("dosi")) is None
 
 
 def test_profile_parser_keeps_question_and_sql_rows(tmp_path):
@@ -107,34 +144,76 @@ def test_profile_description_refresh_preserves_yaml_and_syncs_projection(tmp_pat
     semantic_dir.mkdir()
     yaml_path = semantic_dir / "semantic.yml"
     yaml_path.write_text(
-        "data_source:\n  name: orders\n  description: Orders\n",
+        "semantic_model:\n  - name: orders\n    datasets:\n      - name: orders\n        source: public.orders\n",
         encoding="utf-8",
     )
-    config = MagicMock()
+    config = _config("dosi")
     config.path_manager.subject_dir = str(tmp_path)
 
     with (
         patch(
-            "datus.storage.semantic_model.profile_description.refresh_metricflow_yaml_descriptions",
+            "datus.storage.semantic_model.profile_description.refresh_osi_yaml_descriptions",
             return_value=1,
         ),
-        patch(
-            "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
-            return_value=(True, ""),
-        ) as sync,
+        patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls,
     ):
+        tools_cls.return_value.sync_osi_to_db.return_value = {"success": True}
         result = refresh_semantic_yaml_profile_descriptions(
             str(yaml_path),
             {"tables": []},
-            authoring_format="metricflow",
+            authoring_format="osi",
             agent_config=config,
             sync_to_storage=True,
         )
 
     assert result == (True, "", 1)
-    sync.assert_called_once_with(
+    tools_cls.return_value.sync_osi_to_db.assert_called_once_with(
         str(yaml_path),
-        config,
         include_semantic_objects=True,
-        include_metrics=True,
+        include_metrics=False,
     )
+
+
+def test_profile_description_refresh_rejects_metricflow_yaml(tmp_path):
+    """Contract: profile refresh no longer patches MetricFlow YAML."""
+    semantic_dir = tmp_path / "semantic_models"
+    semantic_dir.mkdir()
+    yaml_path = semantic_dir / "semantic.yml"
+    yaml_path.write_text("data_source:\n  name: orders\n  description: Orders\n", encoding="utf-8")
+    config = _config("dosi")
+    config.path_manager.subject_dir = str(tmp_path)
+
+    result = refresh_semantic_yaml_profile_descriptions(
+        str(yaml_path),
+        {"tables": []},
+        agent_config=config,
+        sync_to_storage=True,
+    )
+
+    assert result == (False, METRICFLOW_YAML_UNSUPPORTED_MESSAGE, 0)
+
+
+def test_profile_description_refresh_rejects_non_dosi_project(tmp_path):
+    """Contract: profile refresh is an authoring mutation — an OSI-shaped YAML
+    in a non-Dosi project must be rejected by the adapter gate, not slip
+    through document-shape inference."""
+    semantic_dir = tmp_path / "semantic_models"
+    semantic_dir.mkdir()
+    yaml_path = semantic_dir / "semantic.yml"
+    yaml_path.write_text(
+        "semantic_model:\n  - name: orders\n    datasets:\n      - name: orders\n        source: public.orders\n",
+        encoding="utf-8",
+    )
+    config = _config("metricflow")
+    config.path_manager.subject_dir = str(tmp_path)
+
+    result = refresh_semantic_yaml_profile_descriptions(
+        str(yaml_path),
+        {"tables": []},
+        authoring_format="osi",
+        agent_config=config,
+        sync_to_storage=True,
+    )
+
+    assert result[0] is False
+    assert "query-only" in result[1]
