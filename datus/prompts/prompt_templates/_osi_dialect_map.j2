@@ -1,3 +1,16 @@
+{#- Map a Datus datasource type to a dialect the Dosi engine accepts.
+    The OSI Dialect enum admits one variant per warehouse the engine can
+    render (dosi-model spec.rs is the source of truth for this list); any
+    other type — sqlite, hive, spark, unknown — must be authored as ANSI_SQL
+    or the engine rejects the document with `unknown variant` at upsert time.
+    An enum addition missing here fails soft: ANSI_SQL always parses. -#}
 {% macro expression_dialect(datasource_type) -%}
-{{- (datasource_type | default('', true) | trim | upper) or 'ANSI_SQL' -}}
+{%- set engine_dialects = [
+  'ANSI_SQL', 'SNOWFLAKE', 'DATABRICKS',
+  'POSTGRESQL', 'GREENPLUM', 'HOLOGRES', 'GAUSSDB', 'ORACLE', 'MYSQL',
+  'DUCKDB', 'STARROCKS', 'DORIS', 'TIDB', 'TRINO', 'CLICKHOUSE',
+  'BIGQUERY', 'REDSHIFT',
+] -%}
+{%- set candidate = (datasource_type | default('', true) | trim | upper) -%}
+{{- candidate if candidate in engine_dialects else 'ANSI_SQL' -}}
 {%- endmacro %}
