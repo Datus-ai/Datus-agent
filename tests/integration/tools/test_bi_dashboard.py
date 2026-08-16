@@ -474,7 +474,10 @@ class TestPartialIntegration:
                     if False:
                         yield  # pragma: no cover
 
-                async def _save_stub(_cfg, **_kwargs):
+                save_calls: list = []
+
+                async def _save_stub(_cfg, _sink=save_calls, **kwargs):
+                    _sink.append(kwargs)
                     if False:
                         yield  # pragma: no cover
 
@@ -495,6 +498,12 @@ class TestPartialIntegration:
                 assert any("Sub-Agent build successful" in (a.messages or "") for a in actions), (
                     f"Sub-agent build did not complete; got actions: {[a.messages for a in actions]}"
                 )
+                # The identifiers recorded by the unified semantic stage must
+                # reach the saved sub-agent's scoped context.
+                assert len(save_calls) == 1, f"expected one sub-agent save, got {len(save_calls)}"
+                scoped = save_calls[0]["scoped_context"]
+                assert scoped is not None and scoped.metrics, f"scoped context lost the metrics: {scoped}"
+                assert f"{platform}/test/layer0.metric_0" in scoped.metrics
 
                 logger.info(
                     "Partial integration test passed for %s — real Superset extraction: %d charts, "

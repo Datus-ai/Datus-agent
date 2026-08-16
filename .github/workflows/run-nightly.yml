@@ -97,7 +97,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: external/datus-db-adapters/datus-gaussdb/datus_gaussdb/_vendor/x86_64
-          key: gaussdb-vendor-${{ hashFiles('external/datus-db-adapters/datus-gaussdb/scripts/fetch_vendor_libpq.py') }}
+          key: gaussdb-vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('external/datus-db-adapters/datus-gaussdb/scripts/fetch_vendor_libpq.py') }}
 
       - name: Clean up stale temp files
         run: |
@@ -260,10 +260,18 @@ jobs:
       # openGauss image), so this runs after the Docker runtime check; the
       # adapter was already installed without the libraries, so reinstall it.
       - name: Vendor GaussDB client libpq
+        id: gaussdb-vendor
         run: |
           set -euo pipefail
           vendor_dir="external/datus-db-adapters/datus-gaussdb/datus_gaussdb/_vendor/x86_64"
-          if [ ! -f "${vendor_dir}/libpq.so.5" ]; then
+          # Re-fetch when ANY required library is missing, not just libpq —
+          # a partial directory (e.g. an interrupted earlier run) must repair
+          # itself rather than fail the verification below.
+          need_fetch=0
+          for artifact in libpq.so.5 libssl.so.1.1 libcrypto.so.1.1; do
+            [ -f "${vendor_dir}/${artifact}" ] || need_fetch=1
+          done
+          if [ "$need_fetch" = "1" ]; then
             python3 external/datus-db-adapters/datus-gaussdb/scripts/fetch_vendor_libpq.py --arch x86_64
             uv pip install --no-cache-dir --reinstall-package datus-gaussdb \
               ./external/datus-db-adapters/datus-gaussdb
@@ -274,13 +282,16 @@ jobs:
               exit 1
             }
           done
+          echo "fetched=${need_fetch}" >> "$GITHUB_OUTPUT"
 
+      # Only a freshly fetched, fully verified set is saved; the verification
+      # step above already failed the job for anything incomplete.
       - name: Save GaussDB vendored libpq cache
-        if: steps.gaussdb-vendor-cache.outputs.cache-hit != 'true'
+        if: steps.gaussdb-vendor.outputs.fetched == '1' && steps.gaussdb-vendor-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: external/datus-db-adapters/datus-gaussdb/datus_gaussdb/_vendor/x86_64
-          key: gaussdb-vendor-${{ hashFiles('external/datus-db-adapters/datus-gaussdb/scripts/fetch_vendor_libpq.py') }}
+          key: gaussdb-vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('external/datus-db-adapters/datus-gaussdb/scripts/fetch_vendor_libpq.py') }}
 
       - name: Setup config file
         run: |
