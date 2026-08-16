@@ -4518,7 +4518,7 @@
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="o">-</span> <span class="n">is_entity_key</span><span class="p">:</span> <span class="n">Column</span> <span class="n">used</span> <span class="k">for</span> <span class="n">table</span> <span class="n">joins</span>
 </span></code></pre></div>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<p>With <code>--success_story</code>, this compatibility component runs the Dosi-only <code>semantic_modeling</code> workflow in datasets-only scope. It never creates, updates, or deletes metrics. Existing YAML import and profile refresh remain non-LLM compatibility operations for supported legacy files.</p>
+<p>With <code>--success_story</code>, this compatibility component runs the Dosi-only <code>semantic_modeling</code> workflow in datasets-only scope. It never creates, updates, or deletes metrics. Existing YAML import and profile refresh remain non-LLM compatibility operations for Dosi/OSI YAML in Dosi projects; MetricFlow YAML is rejected.</p>
 <h3 id="basic-command">Basic Command<a class="headerlink" href="#basic-command" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># From CSV (historical SQLs)</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
@@ -4584,7 +4584,7 @@
 </tbody>
 </table>
 <p>When <code>semantic_model</code> is combined with <code>metrics</code> or <code>semantic_modeling</code>, bootstrap executes one full <code>semantic_modeling</code> run rather than separate legacy generators.</p>
-<p><code>refresh-profile</code> updates an existing MetricFlow or OSI semantic YAML in place. It re-runs bounded, read-only data
+<p><code>refresh-profile</code> updates an existing Dosi/OSI semantic YAML in place (MetricFlow YAML is rejected). It re-runs bounded, read-only data
 profiling guided by the historical SQLs in <code>--success_story</code>, replaces the generated <code>Observed profile:</code> suffixes in
 table and column descriptions, and syncs the updated YAML back to the semantic model vector store. It does not run full
 LLM semantic-model generation and does not truncate the semantic model store.</p>
@@ -4602,7 +4602,7 @@ LLM semantic-model generation and does not truncate the semantic model store.</p
 <li>Infer entity relationships (JOIN patterns)</li>
 </ul>
 <h3 id="yaml-format">YAML Format<a class="headerlink" href="#yaml-format" title="Permanent link">&para;</a></h3>
-<p>MetricFlow-compatible semantic model YAML:</p>
+<p>YAML import accepts Dosi/OSI documents only. The legacy MetricFlow format below is shown for reference and is no longer importable:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">data_source</span><span class="p">:</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Order</span><span class="nv"> </span><span class="s">transactions</span><span class="nv"> </span><span class="s">table&quot;</span>
