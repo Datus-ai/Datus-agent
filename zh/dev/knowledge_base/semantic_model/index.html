@@ -4520,7 +4520,7 @@
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="o">-</span> <span class="n">is_entity_key</span><span class="p">:</span> <span class="n">用于表连接的列</span>
 </span></code></pre></div>
 <h2 id="_5">使用方法<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<p><strong>前置条件</strong>：此命令依赖 <a href="../../adapters/semantic_adapters/">datus-semantic-metricflow</a>，请先运行 <code>pip install datus-semantic-metricflow</code> 安装。</p>
+<p>使用 <code>--success_story</code> 时，该兼容组件会运行 Dosi-only 的 <code>semantic_modeling</code> 工作流（datasets-only 范围），不会创建、更新或删除指标。YAML 导入与 profile 刷新是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。</p>
 <h3 id="_6">基本命令<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># 从 CSV（历史 SQLs）</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
@@ -4585,7 +4585,7 @@
 </tr>
 </tbody>
 </table>
-<p><code>refresh-profile</code> 会原地更新已有 MetricFlow 或 OSI 语义模型 YAML。它会根据 <code>--success_story</code> 中的历史 SQL
+<p><code>refresh-profile</code> 会原地更新已有 Dosi/OSI 语义模型 YAML（MetricFlow YAML 会被拒绝）。它会根据 <code>--success_story</code> 中的历史 SQL
 重新做有界、只读的数据 profile，替换表和字段 description 中生成的 <code>Observed profile:</code> 片段，并把更新后的 YAML
 同步回语义模型向量库。它不会重新运行完整 LLM 语义模型生成，也不会清空 semantic model store。</p>
 <h2 id="_8">数据源格式<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
@@ -4602,7 +4602,7 @@
 <li>推断实体关系（JOIN 模式）</li>
 </ul>
 <h3 id="yaml">YAML 格式<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h3>
-<p>兼容 MetricFlow 的语义模型 YAML：</p>
+<p>YAML 导入仅接受 Dosi/OSI 文档。下面的旧版 MetricFlow 格式仅作参考，已不再支持导入：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">data_source</span><span class="p">:</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;订单交易表&quot;</span>

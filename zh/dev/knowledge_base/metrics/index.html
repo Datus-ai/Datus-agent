@@ -2451,7 +2451,7 @@
   <a href="#yaml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        YAML 格式（仅指标）
+        YAML 格式（指标导入）
       
     </span>
   </a>
@@ -4412,7 +4412,7 @@
   <a href="#yaml" class="md-nav__link">
     <span class="md-ellipsis">
       
-        YAML 格式（仅指标）
+        YAML 格式（指标导入）
       
     </span>
   </a>
@@ -4497,7 +4497,7 @@
 3. 仅当不存在指标时才回退到临时 SQL 生成</p>
 <p>这确保了组织内指标定义的一致性。</p>
 <h2 id="_5">使用方法<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<p><strong>前置条件</strong>：此命令依赖 <a href="../../adapters/semantic_adapters/">datus-semantic-metricflow</a>，请先运行 <code>pip install datus-semantic-metricflow</code> 安装。</p>
+<p>使用 <code>--success_story</code> 时，该兼容组件会运行完整的 Dosi-only <code>semantic_modeling</code> 工作流，包括生成指标所需的 datasets 与 relationships。YAML 导入是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。</p>
 <h3 id="_6">基本命令<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># 从 CSV（历史 SQLs）</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
@@ -4578,56 +4578,48 @@
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># 学习模式：省略 --subject_tree 参数</span>
 </span></code></pre></div>
-<p><strong>生成的标签格式：</strong></p>
-<p>指标生成后，主题树分类存储在 <code>locked_metadata.tags</code> 中，格式为 <code>"subject_tree: {domain}/{layer1}/{layer2}"</code>：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">metric</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily_revenue</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">simple</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">type_params</span><span class="p">:</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">measure</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">revenue</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">locked_metadata</span><span class="p">:</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">tags</span><span class="p">:</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;Finance&quot;</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;subject_tree:</span><span class="nv"> </span><span class="s">Sales/Reporting/Daily&quot;</span>
+<p><strong>生成的标签格式（旧版 MetricFlow 文件）：</strong></p>
+<p>存量 MetricFlow 指标文件的主题树分类存储在 <code>locked_metadata.tags</code> 中，格式为 <code>"subject_tree: {domain}/{layer1}/{layer2}"</code>。以下形态仅作参考——这类文件仍可查询，但不再支持生成或导入：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># 旧版 MetricFlow 形态——仅可查询，不可导入</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">metric</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily_revenue</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">simple</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">type_params</span><span class="p">:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">measure</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">revenue</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">locked_metadata</span><span class="p">:</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">tags</span><span class="p">:</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;Finance&quot;</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;subject_tree:</span><span class="nv"> </span><span class="s">Sales/Reporting/Daily&quot;</span>
 </span></code></pre></div>
 <p><strong>YAML 导入注意事项：</strong></p>
-<p>使用 <code>--semantic_yaml</code> 从 YAML 文件同步指标到 lancedb 时，必须在 YAML 文件中手动添加包含 subject_tree 格式的 <code>locked_metadata.tags</code> 才能成功分类。系统不会自动对从 YAML 导入的指标进行分类，需要自行添加标签：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">metric</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your_metric</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="c1"># ... 其他字段</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">locked_metadata</span><span class="p">:</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="nt">tags</span><span class="p">:</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;YourDomain&quot;</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;subject_tree:</span><span class="nv"> </span><span class="s">Domain/Layer1/Layer2&quot;</span>
-</span></code></pre></div>
+<p><code>--semantic_yaml</code> 仅接受 Dosi/OSI 语义 YAML，且仅在 Dosi 项目中可用。MetricFlow YAML（<code>data_source:</code> / <code>metric:</code> 文档）会被明确拒绝；请先把项目迁移到 Dosi，再用 <code>semantic_modeling</code> 重新生成模型。</p>
 <h2 id="_9">数据源格式<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
 <h3 id="csv">CSV 格式<a class="headerlink" href="#csv" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>question,sql
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>How many customers have been added per day?,&quot;SELECT ds AS date, SUM(1) AS new_customers FROM customers GROUP BY ds ORDER BY ds;&quot;
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>question,sql
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>How many customers have been added per day?,&quot;SELECT ds AS date, SUM(1) AS new_customers FROM customers GROUP BY ds ORDER BY ds;&quot;
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
 </span></code></pre></div>
-<h3 id="yaml">YAML 格式（仅指标）<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h3>
-<p>从 YAML 文件导入指标时，指标定义引用已存在的语义模型：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">metric</span><span class="p">:</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">total_revenue</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Total</span><span class="nv"> </span><span class="s">revenue</span><span class="nv"> </span><span class="s">from</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">transactions&quot;</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">simple</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span><span class="nt">type_params</span><span class="p">:</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="nt">measure</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">amount</span><span class="w">  </span><span class="c1"># 引用语义模型中的 measure</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span><span class="nt">filter</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;amount</span><span class="nv"> </span><span class="s">&gt;</span><span class="nv"> </span><span class="s">0&quot;</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">  </span><span class="nt">locked_metadata</span><span class="p">:</span>
-</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="nt">tags</span><span class="p">:</span>
-</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;Finance&quot;</span>
-</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;subject_tree:</span><span class="nv"> </span><span class="s">Finance/Revenue/Total&quot;</span>
+<h3 id="yaml">YAML 格式（指标导入）<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h3>
+<p>指标导入读取的是 Dosi/OSI 语义模型文档中的 <code>metrics</code> 集合——与 datasets 在同一个文件里：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">semantic_model</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">transactions</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">datasets</span><span class="p">:</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">transactions</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">        </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics.transactions</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">metrics</span><span class="p">:</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">total_revenue</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Total</span><span class="nv"> </span><span class="s">revenue</span><span class="nv"> </span><span class="s">from</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">transactions&quot;</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SUM(transactions.amount)</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">        </span><span class="nt">dataset</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">transactions</span>
 </span></code></pre></div>
-<p><strong>注意</strong>：底层的语义模型（包含 dimensions/measures 的 <code>data_source</code>）应该已经存在。参见 <a href="../semantic_model/">semantic_model.zh.md</a> 了解如何定义语义模型。</p>
+<p>独立的 MetricFlow <code>metric:</code> 文档属于旧格式，已不支持导入。参见 <a href="../semantic_model/">semantic_model.zh.md</a> 了解如何定义语义模型。</p>
 <h2 id="_10">总结<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
 <p>指标组件建立了一个<strong>语义查询层</strong>，将历史 SQLs 转换为标准化、可执行的指标定义。与传统的仅作为 LLM 参考的语义层不同，Datus 指标可通过 MetricFlow 直接查询，无需为常见 KPI 生成临时 SQL。</p>
 <p>主要特点：</p>
 <ul>
 <li><strong>可执行指标</strong>：通过 <code>query_metrics</code> 查询而非生成 SQL</li>
 <li><strong>指标优先策略</strong>：Agent 优先使用指标查询而非临时 SQL</li>
-<li><strong>独立于语义模型</strong>：指标作为独立的查询工具运行，而非嵌入在 schema 定义中</li>
+<li><strong>定义内嵌、执行独立</strong>：指标定义存放在语义模型的 <code>metrics</code> 集合中；通过 <code>query_metrics</code> 查询是独立的执行路径，无需临时生成 SQL</li>
 <li><strong>层级组织</strong>：主题树分类法提高可发现性</li>
 </ul>
 <p>这种方法确保了团队之间指标定义的一致性，同时降低了查询复杂性并提高了性能。</p>
