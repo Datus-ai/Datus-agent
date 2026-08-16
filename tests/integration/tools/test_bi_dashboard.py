@@ -466,16 +466,18 @@ class TestPartialIntegration:
                         yield  # pragma: no cover
 
                 async def _sem_stub(_cfg, *, sqls, platform, dashboard_name, state):
+                    # The unified semantic-modeling stage owns metric authoring
+                    # (stream_bi_metrics was folded into it), so the stub also
+                    # records the generated metric identifiers.
                     state.semantic_ok = True
-                    if False:
-                        yield  # pragma: no cover
-
-                async def _metrics_stub(_cfg, *, sqls, platform, dashboard_name, state):
                     state.metrics.extend(f"{platform}/test/layer{i}.metric_{i}" for i in range(len(sqls)))
                     if False:
                         yield  # pragma: no cover
 
-                async def _save_stub(_cfg, **_kwargs):
+                save_calls: list = []
+
+                async def _save_stub(_cfg, _sink=save_calls, **kwargs):
+                    _sink.append(kwargs)
                     if False:
                         yield  # pragma: no cover
 
@@ -484,7 +486,6 @@ class TestPartialIntegration:
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_meta_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_ref_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stub),
-                    patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_save_stub),
                     patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
                     patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
@@ -497,6 +498,12 @@ class TestPartialIntegration:
                 assert any("Sub-Agent build successful" in (a.messages or "") for a in actions), (
                     f"Sub-agent build did not complete; got actions: {[a.messages for a in actions]}"
                 )
+                # The identifiers recorded by the unified semantic stage must
+                # reach the saved sub-agent's scoped context.
+                assert len(save_calls) == 1, f"expected one sub-agent save, got {len(save_calls)}"
+                scoped = save_calls[0]["scoped_context"]
+                assert scoped is not None and scoped.metrics, f"scoped context lost the metrics: {scoped}"
+                assert f"{platform}/test/layer0.metric_0" in scoped.metrics
 
                 logger.info(
                     "Partial integration test passed for %s — real Superset extraction: %d charts, "

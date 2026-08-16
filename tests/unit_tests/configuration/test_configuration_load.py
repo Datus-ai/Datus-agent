@@ -43,7 +43,7 @@ def test_service_config_structure(agent_config: AgentConfig):
     assert "bird_school" in agent_config.services.datasources
     assert "snowflake" in agent_config.services.datasources
     assert "local_duckdb" in agent_config.services.datasources
-    assert "metricflow" in agent_config.services.semantic_layer
+    assert "dosi" in agent_config.services.semantic_layer
     assert "superset" in agent_config.services.bi_platforms
     assert "airflow_local" in agent_config.services.schedulers
 
