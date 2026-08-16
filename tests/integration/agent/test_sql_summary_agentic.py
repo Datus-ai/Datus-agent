@@ -50,15 +50,18 @@ class TestSqlSummaryAgentic:
 
         logger.info(f"Node initialized with {len(node.tools)} tools: {tool_names}")
 
-    def test_interactive_mode_has_hooks(self, nightly_agent_config):
-        """N9-02: Interactive mode initializes hooks."""
+    def test_interactive_mode_initializes(self, nightly_agent_config):
+        """N9-02: Interactive mode builds the same tool surface as workflow mode."""
         node = SqlSummaryAgenticNode(
             node_name="gen_sql_summary",
             agent_config=nightly_agent_config,
             execution_mode="interactive",
         )
 
-        assert node.hooks is not None, "Interactive mode should have hooks"
+        assert node.execution_mode == "interactive"
+        tool_names = [tool.name for tool in node.tools]
+        assert "generate_sql_summary_id" in tool_names, f"Missing generate_sql_summary_id, got: {tool_names}"
+        assert "write_file" in tool_names, f"Missing write_file, got: {tool_names}"
 
     def test_template_context_preparation(self, nightly_agent_config):
         """N9-03: Template context includes tools and subject tree info."""

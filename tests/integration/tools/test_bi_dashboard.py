@@ -466,11 +466,10 @@ class TestPartialIntegration:
                         yield  # pragma: no cover
 
                 async def _sem_stub(_cfg, *, sqls, platform, dashboard_name, state):
+                    # The unified semantic-modeling stage owns metric authoring
+                    # (stream_bi_metrics was folded into it), so the stub also
+                    # records the generated metric identifiers.
                     state.semantic_ok = True
-                    if False:
-                        yield  # pragma: no cover
-
-                async def _metrics_stub(_cfg, *, sqls, platform, dashboard_name, state):
                     state.metrics.extend(f"{platform}/test/layer{i}.metric_{i}" for i in range(len(sqls)))
                     if False:
                         yield  # pragma: no cover
@@ -484,7 +483,6 @@ class TestPartialIntegration:
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_metadata", side_effect=_meta_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_reference_sql", side_effect=_ref_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_semantic_model", side_effect=_sem_stub),
-                    patch("datus.cli.bootstrap_bi_commands.stream_bi_metrics", side_effect=_metrics_stub),
                     patch("datus.cli.bootstrap_bi_commands.stream_bi_save_subagents", side_effect=_save_stub),
                     patch("datus.cli.bootstrap_bi_commands.SubAgentManager"),
                     patch("datus.cli.bootstrap_bi_commands.configuration_manager"),
