@@ -5,6 +5,13 @@ agent:
   target: deepseek
   project_root: .datus_test_data/workspace
 
+  # Nightly agentic flows run non-interactively (execution_mode=workflow); an
+  # EXTERNAL filesystem path would otherwise raise PermissionDeniedException
+  # and abort the whole run. Strict mode turns those hits into a readable
+  # tool-failure payload so the agent can retarget inside the project root.
+  filesystem:
+    strict: true
+
   models:
     deepseek:
       type: deepseek

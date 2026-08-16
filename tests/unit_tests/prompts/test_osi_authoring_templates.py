@@ -92,12 +92,47 @@ def test_metrics_template_osi_mode_allows_narrow_dataset_repairs():
         ("postgresql", "POSTGRESQL"),
         ("snowflake", "SNOWFLAKE"),
         ("databricks", "DATABRICKS"),
+        ("duckdb", "DUCKDB"),
+        # Types outside the Dosi engine's Dialect enum must map to ANSI_SQL:
+        # a blindly uppercased `SQLITE` is rejected by the engine parser with
+        # `unknown variant` at upsert time.
+        ("sqlite", "ANSI_SQL"),
+        ("hive", "ANSI_SQL"),
+        ("spark", "ANSI_SQL"),
+        # Normalization: surrounding whitespace and mixed case must not change
+        # the mapping outcome.
+        ("  duckdb  ", "DUCKDB"),
+        ("DuckDB", "DUCKDB"),
+        ("SQLite", "ANSI_SQL"),
     ],
 )
-def test_osi_mode_expression_dialect_derivation(template_name, datasource, expected_dialect):
-    # The OSI dialect label is the active datasource's own dialect (uppercased).
+def test_osi_mode_expression_dialect_derivation(template_name: str, datasource: str, expected_dialect: str):
+    # The OSI dialect label is the active datasource's own dialect when the
+    # engine supports it, else the ANSI_SQL fallback.
     text = _render(template_name, "osi", datasource_dialect=datasource)
     assert f"OSI expression dialect for this run: `{expected_dialect}`" in text
+
+
+@pytest.mark.parametrize(
+    "datasource_dialect, expected_dialect",
+    [
+        ("duckdb", "DUCKDB"),
+        ("sqlite", "ANSI_SQL"),
+        ("hive", "ANSI_SQL"),
+        ("spark", "ANSI_SQL"),
+    ],
+)
+def test_semantic_modeling_template_maps_dialect_to_engine_enum(datasource_dialect: str, expected_dialect: str):
+    # The unified Dosi authoring template shares the same engine-enum mapping.
+    pm = get_prompt_manager()
+    text = pm.render_template(
+        template_name="semantic_modeling_system",
+        authoring_scope="full",
+        current_datasource="bird_school",
+        current_datasource_dialect=datasource_dialect,
+        **COMMON_VARS,
+    )
+    assert f"Dosi expression dialect: `{expected_dialect}`" in text
 
 
 @pytest.mark.parametrize("template_name", ["gen_semantic_model_system", "gen_metrics_system"])
