@@ -1518,6 +1518,22 @@ class DBFuncTool:
                 # independent of PermissionHooks (which may be bypassed, e.g.
                 # validators run with hooks=None, and the MCP server's tool
                 # instances never see them at all).
+                #
+                # Logged because a refusal is the event an operator actually
+                # wants to see: on a deployment running third-party-authored
+                # content it means that content just tried to write. Successful
+                # reads are already logged in read_query, so staying silent here
+                # would record the benign path and drop the notable one.
+                # ``source`` separates a deployment-wide refusal from a read-only
+                # agent doing its job -- the difference between "investigate
+                # this" and "working as intended".
+                logger.warning(
+                    "execute_sql rejected by read-only policy",
+                    sql_type=sql_type.value,
+                    datasource=self._resolve_effective_datasource(datasource),
+                    sub_agent=self.sub_agent_name or "",
+                    source="agent" if self.read_only else "deployment",
+                )
                 return FuncToolResult(
                     success=0,
                     error=(

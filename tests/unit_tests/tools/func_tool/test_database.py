@@ -1938,6 +1938,37 @@ class TestDBFuncToolExecuteSql:
         assert tool.effective_read_only is True
         assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 0
 
+    def test_refusal_is_logged_with_its_source(self, caplog):
+        """A refusal is the event an operator wants to see -- on a deployment
+        running third-party content it means that content just tried to write.
+        Successful reads are already logged in read_query, so a silent refusal
+        would record the benign path and drop the notable one.
+        """
+        import logging
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("INSERT INTO users VALUES (1)")
+
+        assert "rejected by read-only policy" in caplog.text
+        # `source` separates a hardened deployment from a read-only agent doing
+        # its job -- "investigate this" vs "working as intended".
+        assert "deployment" in caplog.text
+
+    def test_refusal_log_attributes_agent_read_only_separately(self, caplog):
+        import logging
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False), read_only=True)
+
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("INSERT INTO users VALUES (1)")
+
+        assert "rejected by read-only policy" in caplog.text
+        assert "agent" in caplog.text
+
     def test_shallow_copy_can_still_force_read_only(self):
         """Pins the contract datus.validation.llm_runner depends on: it copies a
         write-capable tool and flips ``.read_only`` to True on the copy.

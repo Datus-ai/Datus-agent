@@ -55,6 +55,7 @@ from uuid import uuid4
 import yaml
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 MISSING = "datus_readonly_probe_missing"
 
@@ -152,22 +153,45 @@ def _server_params(cfg: Path, datasource: str) -> StdioServerParameters:
 
 
 class McpSession:
-    """One `datus-mcp --transport stdio` subprocess, with an execute_sql helper."""
+    """An MCP session with an execute_sql helper.
 
-    def __init__(self, cfg: Path, datasource: str, *, dry_run: bool = False):
+    Either spawns its own `datus-mcp --transport stdio` subprocess from a staged
+    config, or attaches over streamable HTTP to a server someone else started
+    (`endpoint`).
+    """
+
+    def __init__(
+        self,
+        cfg: Path | None,
+        datasource: str,
+        *,
+        dry_run: bool = False,
+        endpoint: str | None = None,
+    ):
         self._cfg, self._datasource, self._dry_run = cfg, datasource, dry_run
+        self._endpoint = endpoint
         self._stack = None
         self._session = None
+        self.tools: list[str] = []
 
     async def __aenter__(self):
         from contextlib import AsyncExitStack
 
         self._stack = AsyncExitStack()
-        read, write = await self._stack.enter_async_context(stdio_client(_server_params(self._cfg, self._datasource)))
+        if self._endpoint:
+            # Attaching to a server we did not launch: its config, including
+            # whether sql_read_only is on, is fixed at its startup. That is why
+            # --endpoint reports what it observes rather than asserting a
+            # flag-on/flag-off contrast it has no way to arrange.
+            read, write, _ = await self._stack.enter_async_context(streamablehttp_client(self._endpoint))
+        else:
+            read, write = await self._stack.enter_async_context(
+                stdio_client(_server_params(self._cfg, self._datasource))
+            )
         self._session = await self._stack.enter_async_context(ClientSession(read, write))
         await self._session.initialize()
-        names = {t.name for t in (await self._session.list_tools()).tools}
-        assert "execute_sql" in names, f"execute_sql not exposed; saw {sorted(names)[:10]}"
+        self.tools = sorted(t.name for t in (await self._session.list_tools()).tools)
+        assert "execute_sql" in self.tools, f"execute_sql not exposed; saw {self.tools[:10]}"
         return self
 
     async def __aexit__(self, *exc):
@@ -253,6 +277,87 @@ async def run_matrix(cfg: Path, datasource: str) -> dict[str, tuple[bool, str]]:
                     ok, err = not res.isError, raw
                 results[label] = (ok, (err or "").strip())
     return results
+
+
+async def run_endpoint(endpoint: str) -> int:
+    """Probe a server someone else already started.
+
+    Unlike the other modes this cannot arrange a flag-on/flag-off contrast --
+    the server's config is fixed at launch -- so it reports what it observes
+    rather than asserting a comparison. What it can still establish is where a
+    statement was stopped: a refusal carrying the read-only message never
+    reached the connector, while any other error means it did.
+
+    Every non-read probe targets a table that does not exist, so this is safe to
+    point at a server whose read-only posture you have not confirmed.
+    """
+    reads = [
+        ("SELECT 1", "SELECT 1"),
+        ("SHOW DATABASES", "SHOW DATABASES"),
+    ]
+    writes = [
+        ("INSERT", f"INSERT INTO {MISSING} (v) VALUES ('x')"),
+        ("UPDATE", f"UPDATE {MISSING} SET v = 'x'"),
+        ("DELETE", f"DELETE FROM {MISSING}"),
+        ("CREATE TABLE (CTAS)", f"CREATE TABLE {MISSING}_2 AS SELECT * FROM {MISSING}"),
+        ("ALTER TABLE", f"ALTER TABLE {MISSING} ADD COLUMN c INT"),
+        ("DROP TABLE", f"DROP TABLE {MISSING}"),
+        ("TRUNCATE", f"TRUNCATE TABLE {MISSING}"),
+        ("INSERT OVERWRITE", f"INSERT OVERWRITE {MISSING} SELECT 1"),
+        ("SUBMIT TASK", f"SUBMIT TASK t AS INSERT INTO {MISSING} SELECT 1"),
+        ("SET", "SET is_report_audit_info = true"),
+        ("USE", "USE information_schema"),
+        ("multi-statement", f"SELECT 1; DROP TABLE {MISSING}"),
+    ]
+
+    async with McpSession(None, "", endpoint=endpoint) as sess:
+        print(f"tools exposed : {len(sess.tools)}")
+        print(f"probes        : non-read statements target `{MISSING}`, which must not exist\n")
+
+        print(f"{'READ probe':<26} outcome")
+        print("-" * 74)
+        reachable = False
+        read_blocked = []
+        for label, sql in reads:
+            ok, err, _ = await sess.sql(sql)
+            gated = GATE_MARKER in err.lower()
+            reachable |= ok
+            if gated:
+                read_blocked.append(label)
+            print(f"{label:<26} {'ok' if ok else ('REFUSED BY GATE' if gated else f'db error: {err[:36]}')}")
+
+        print(f"\n{'WRITE / DDL probe':<26} {'refused':<9} stopped by")
+        print("-" * 74)
+        leaked = []
+        gated_count = 0
+        for label, sql in writes:
+            ok, err, _ = await sess.sql(sql)
+            gated = GATE_MARKER in err.lower()
+            gated_count += gated
+            if ok:
+                who = "NOTHING -- IT EXECUTED"
+                leaked.append(label)
+            elif gated:
+                who = "the read-only gate (never reached the connector)"
+            else:
+                who = f"something else: {err[:40]}"
+            print(f"{label:<26} {'no' if ok else 'yes':<9} {'!! ' if ok else ''}{who}")
+
+    print()
+    if not reachable:
+        print("NOTE: no read succeeded, so the datasource is unreachable from this server.")
+        print("      Refusals below the gate are still meaningful (they never got that far),")
+        print("      but this run does not show reads working.")
+    if leaked:
+        print(f"FAIL - reached the warehouse: {', '.join(leaked)}")
+        return 1
+    if read_blocked:
+        print(f"FAIL - the gate wrongly blocked reads: {', '.join(read_blocked)}")
+        return 1
+    print(f"PASS - {gated_count}/{len(writes)} write probes stopped by the read-only gate")
+    if gated_count < len(writes):
+        print("       (the remainder were refused by other rules; see above)")
+    return 0
 
 
 async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, dry_run: bool) -> int:
@@ -412,7 +517,15 @@ async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, d
 
 async def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project", required=True, type=Path)
+    ap.add_argument(
+        "--endpoint",
+        default=None,
+        help="probe a server that is ALREADY running, over streamable HTTP "
+        "(e.g. http://127.0.0.1:8000/mcp) instead of launching one. Reports what "
+        "it observes; it cannot arrange the flag-on/flag-off contrast the other "
+        "modes rely on. Makes --project optional.",
+    )
+    ap.add_argument("--project", required=False, type=Path)
     ap.add_argument(
         "--live-writes",
         action="store_true",
@@ -441,6 +554,16 @@ async def main() -> int:
     )
     args = ap.parse_args()
 
+    if args.endpoint:
+        if args.live_writes or args.sqlite_standin:
+            print("--endpoint cannot be combined with the modes that launch a server", file=sys.stderr)
+            return 1
+        print(f"endpoint      : {args.endpoint} (already running; its config is whatever it was started with)")
+        return await run_endpoint(args.endpoint)
+
+    if not args.project:
+        print("--project is required unless --endpoint is given", file=sys.stderr)
+        return 1
     project: Path = args.project.expanduser().resolve()
     agent = yaml.safe_load((project / "conf" / "agent.yml").read_text(encoding="utf-8"))["agent"]
     datasources = agent.get("services", {}).get("datasources", {})
