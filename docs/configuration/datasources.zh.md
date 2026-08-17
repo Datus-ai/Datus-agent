@@ -178,6 +178,28 @@ my_hologres:
   sslmode: prefer               # 可选
 ```
 
+### GaussDB / openGauss
+
+```yaml
+my_gaussdb:
+  type: gaussdb
+  host: ${GAUSSDB_HOST}
+  port: 5432
+  username: ${GAUSSDB_USER}
+  password: ${GAUSSDB_PASSWORD}
+  database: postgres
+  schema: public
+  # driver: pg8000              # 可选；省略时使用平台默认值
+  sslmode: verify-ca             # 生产环境推荐
+  sslrootcert: /etc/datus/certs/gaussdb-ca.pem
+```
+
+支持的驱动为 `gaussdb`（Linux；sha256/md5/sm3 认证）、`pg8000`（Linux/macOS；sha256/md5）和
+仅支持 md5 的 `psycopg2` 兜底方案。TLS 模式支持 `disable`、`allow`、`prefer`（默认）、`require`、
+`verify-ca` 和 `verify-full`。生产环境推荐 `verify-ca` 并通过 `sslrootcert` 提供服务端 CA；若配置的
+hostname 也与证书匹配，可使用 `verify-full`。当前仅支持单向 TLS，不支持客户端证书双向认证。
+模式、平台、认证方式及 A/B/PG 兼容模式详情见[数据库适配器](../adapters/db_adapters.md#gaussdb)。
+
 ### 路径模式（批量发现多个文件）
 
 使用 glob 模式自动发现数据库文件：
@@ -213,6 +235,7 @@ bird_benchmark:
 - **MySQL/PostgreSQL**：`host`、`port`、`username`、`password`、`database`
 - **Apache Doris**：`catalog`（默认为 `internal`）
 - **Hologres**：`schema`、`sslmode`；`access_key_id`/`access_key_secret` 可作为 `username`/`password` 的别名
+- **GaussDB/openGauss**：`schema`、`driver`、`sslmode`、`sslrootcert`
 
 ## 管理数据库
 

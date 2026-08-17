@@ -29,7 +29,7 @@ This design keeps the core package lightweight while allowing you to add support
 | Apache Doris | datus-doris | `pip install datus-doris` | Ready |
 | Hologres | datus-hologres | `pip install datus-hologres` | Ready |
 | Oracle | datus-oracle | `pip install datus-oracle` | Ready |
-| GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | Ready (Linux only) |
+| GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | Ready (Linux and macOS) |
 
 ## Installation
 
@@ -78,7 +78,7 @@ pip install datus-hologres
 # Oracle
 pip install datus-oracle
 
-# GaussDB / openGauss (Linux only)
+# GaussDB / openGauss
 pip install datus-gaussdb
 ```
 
@@ -306,13 +306,33 @@ gaussdb_data:
   password: ${GAUSSDB_PASSWORD}
   database: postgres
   schema: public   # optional, default is public
-  driver: gaussdb  # optional, default is gaussdb; set to psycopg2 as an escape hatch
+  # driver: pg8000  # optional; omit to use gaussdb on Linux or pg8000 on macOS
+  sslmode: verify-ca
+  sslrootcert: /etc/datus/certs/gaussdb-ca.pem
 ```
 
-GaussDB and openGauss speak the PostgreSQL wire protocol. The default `gaussdb` driver is the official
-client and supports sha256, md5, and sm3 authentication; the `psycopg2` escape hatch only works against
-servers configured for md5. Both centralized and distributed deployments are supported, and the connector
-auto-detects the database's A / B / PG compatibility mode so generated SQL follows the right semantics.
+GaussDB and openGauss speak the PostgreSQL wire protocol. Choose the driver to match the platform and the
+server account's password authentication:
+
+| Driver | Platform | Authentication |
+|--------|----------|----------------|
+| `gaussdb` (Linux default) | Linux | sha256, md5, sm3 |
+| `pg8000` (macOS default) | Linux and macOS | sha256, md5 |
+| `psycopg2` | Linux and macOS | md5 only; escape hatch |
+
+All drivers support `disable`, `allow`, `prefer` (default), `require`, `verify-ca`, and `verify-full`.
+For production, use `verify-ca` with `sslrootcert`: the connection is encrypted and the server certificate
+must chain to that CA. `verify-full` additionally verifies that the configured `host` matches the server
+certificate. `require` encrypts but does not authenticate the server; `prefer` permits an unencrypted
+fallback. If the server merely enables TLS, the client does not need a certificate. If it requires TLS,
+`prefer` normally negotiates TLS, but explicitly use `require` or either `verify-*` mode to prevent a
+plaintext fallback against a differently configured endpoint. Only `verify-ca` and `verify-full` need
+the server CA configured on the client. The `pg8000` path treats `allow` like `prefer` (TLS first), because
+its API cannot express libpq's plaintext-first retry order. The adapter currently supports one-way TLS,
+not mutual TLS (`sslcert`/`sslkey`).
+
+Both centralized and distributed deployments are supported. The connector auto-detects the database's
+A (Oracle), B (MySQL), or PG compatibility mode so generated SQL follows the server semantics.
 
 ### Multiple Database Entries
 
@@ -423,6 +443,8 @@ All adapters support:
 #### GaussDB
 - PostgreSQL wire protocol (PostgreSQL-compatible SQL dialect)
 - sha256, md5, and sm3 authentication through the official `gaussdb` driver
+- Pure-Python `pg8000` path with sha256/md5 authentication on Linux and macOS
+- TLS modes through `verify-full`, with `verify-ca` recommended for production
 - A / B / PG compatibility-mode auto-detection, so SQL generation follows the server's semantics
 - Centralized and distributed deployments, with distribution-aware table DDL
 - Multi-schema datasource support
@@ -460,9 +482,9 @@ Some adapters require additional system dependencies:
 - **Apache Doris**: Requires `datus-mysql` and `pymysql` (installed automatically)
 - **Hologres**: Requires `datus-postgresql` and `psycopg2-binary` (installed automatically)
 - **Oracle**: Requires `oracledb` (installed automatically; Thin mode needs no Oracle Client)
-- **GaussDB**: Requires `datus-postgresql` and the official `gaussdb` driver (installed automatically).
-  That driver binds a GaussDB-family libpq, which release wheels bundle for Linux; no build is published
-  for macOS, so run the adapter inside a Linux environment
+- **GaussDB**: Requires `datus-postgresql`; dependencies are installed automatically. Linux defaults to
+  the official `gaussdb` driver and the package wheel bundles its GaussDB-family libpq. macOS defaults to
+  the pure-Python `pg8000` driver because no compatible native libpq is published for Darwin.
 
 ## Architecture
 

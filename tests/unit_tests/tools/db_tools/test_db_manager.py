@@ -551,6 +551,32 @@ class TestDbConfigToConnectionConfigAdapterBranch:
         assert result["private_key_file"] == "/tmp/rsa_key.p8"
         assert result["private_key_file_pwd"] == "1234"
 
+    def test_adapter_preserves_gaussdb_driver_and_tls_fields(self):
+        """GaussDB adapter options survive agent.yml parsing and manager conversion."""
+        from datus.configuration.agent_config import DbConfig
+
+        cfg = DbConfig.filter_kwargs(
+            DbConfig,
+            {
+                "type": "gaussdb",
+                "host": "gaussdb.example.com",
+                "port": "5432",
+                "username": "datus",
+                "password": "secret",
+                "database": "postgres",
+                "schema": "public",
+                "driver": "pg8000",
+                "sslmode": "verify-ca",
+                "sslrootcert": "/etc/datus/certs/gaussdb-ca.pem",
+            },
+        )
+
+        result = self._make_manager()._db_config_to_connection_config(cfg)
+
+        assert result["driver"] == "pg8000"
+        assert result["sslmode"] == "verify-ca"
+        assert result["sslrootcert"] == "/etc/datus/certs/gaussdb-ca.pem"
+
     def test_adapter_none_values_removed(self):
         """None-valued fields are excluded from the result dict."""
         mgr = self._make_manager()

@@ -173,6 +173,30 @@ my_hologres:
   sslmode: prefer               # Optional
 ```
 
+### GaussDB / openGauss
+
+```yaml
+my_gaussdb:
+  type: gaussdb
+  host: ${GAUSSDB_HOST}
+  port: 5432
+  username: ${GAUSSDB_USER}
+  password: ${GAUSSDB_PASSWORD}
+  database: postgres
+  schema: public
+  # driver: pg8000              # Optional; omit to use the platform default
+  sslmode: verify-ca             # Recommended for production
+  sslrootcert: /etc/datus/certs/gaussdb-ca.pem
+```
+
+Supported drivers are `gaussdb` (Linux; sha256/md5/sm3 authentication), `pg8000`
+(Linux/macOS; sha256/md5), and the md5-only `psycopg2` escape hatch. Supported TLS modes are
+`disable`, `allow`, `prefer` (default), `require`, `verify-ca`, and `verify-full`. Use
+`verify-ca` with the server CA in `sslrootcert` for production; use `verify-full` when the
+configured hostname also matches the certificate. The adapter supports one-way TLS, not client
+certificates for mutual TLS. See [Database Adapters](../adapters/db_adapters.md#gaussdb) for mode,
+platform, authentication, and A/B/PG compatibility details.
+
 ### Path Pattern (Multiple Files)
 
 Use glob patterns to auto-discover database files:
@@ -208,6 +232,7 @@ Supported patterns: `*.sqlite`, `**/*.sqlite`, `data/2024/*.db`
 - **MySQL/PostgreSQL**: `host`, `port`, `username`, `password`, `database`
 - **Apache Doris**: `catalog` (default `internal`)
 - **Hologres**: `schema`, `sslmode`; `access_key_id`/`access_key_secret` are accepted as aliases for `username`/`password`
+- **GaussDB/openGauss**: `schema`, `driver`, `sslmode`, `sslrootcert`
 
 ## Managing Databases
 

@@ -29,7 +29,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | Apache Doris | datus-doris | `pip install datus-doris` | 可用 |
 | Hologres | datus-hologres | `pip install datus-hologres` | 可用 |
 | Oracle | datus-oracle | `pip install datus-oracle` | 可用 |
-| GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | 可用（仅 Linux） |
+| GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | 可用（Linux 和 macOS） |
 
 ## 安装
 
@@ -75,7 +75,7 @@ pip install datus-hologres
 # Oracle
 pip install datus-oracle
 
-# GaussDB / openGauss（仅 Linux）
+# GaussDB / openGauss
 pip install datus-gaussdb
 ```
 
@@ -298,12 +298,30 @@ gaussdb_data:
   password: ${GAUSSDB_PASSWORD}
   database: postgres
   schema: public   # 可选，默认为 public
-  driver: gaussdb  # 可选，默认为 gaussdb；可设为 psycopg2 作为兜底方案
+  # driver: pg8000  # 可选；省略时 Linux 默认 gaussdb，macOS 默认 pg8000
+  sslmode: verify-ca
+  sslrootcert: /etc/datus/certs/gaussdb-ca.pem
 ```
 
-GaussDB 与 openGauss 使用 PostgreSQL wire 协议。默认的 `gaussdb` 驱动为官方客户端，支持 sha256、md5
-和 sm3 认证；`psycopg2` 兜底方案仅适用于服务端配置为 md5 认证的场景。集中式与分布式部署均受支持，
-连接器会自动探测数据库的 A / B / PG 兼容模式，使生成的 SQL 遵循对应语义。
+GaussDB 与 openGauss 使用 PostgreSQL wire 协议。驱动应按运行平台和服务端账号的密码认证方式选择：
+
+| 驱动 | 平台 | 认证方式 |
+|------|------|----------|
+| `gaussdb`（Linux 默认） | Linux | sha256、md5、sm3 |
+| `pg8000`（macOS 默认） | Linux 和 macOS | sha256、md5 |
+| `psycopg2` | Linux 和 macOS | 仅 md5；作为兜底方案 |
+
+所有驱动都支持 `disable`、`allow`、`prefer`（默认）、`require`、`verify-ca` 和 `verify-full`。
+生产环境推荐同时配置 `verify-ca` 与 `sslrootcert`：连接会加密，并验证服务端证书是否由该 CA 签发。
+`verify-full` 还会验证配置的 `host` 是否与服务端证书匹配。`require` 只加密、不验证服务端身份；
+`prefer` 允许回退到非加密连接。服务端只是启用 TLS 时，客户端不需要自身证书；服务端强制 TLS 时，
+`prefer` 通常也会协商出 TLS，但应显式使用 `require` 或任一 `verify-*` 模式，避免客户端连接到配置不同的
+endpoint 时回退到明文。其中只有 `verify-ca` 和 `verify-full` 需要在客户端配置服务端 CA。`pg8000`
+会把 `allow` 按 `prefer` 处理（先尝试 TLS），因为其 API 无法表达 libpq 的明文优先重试顺序。当前适配器
+仅支持单向 TLS，不支持通过 `sslcert`/`sslkey` 配置双向 TLS。
+
+集中式与分布式部署均受支持。连接器会自动探测数据库的 A（Oracle）、B（MySQL）或 PG 兼容模式，
+使生成的 SQL 遵循对应语义。
 
 ## 多数据库连接
 
@@ -409,6 +427,8 @@ agent:
 #### GaussDB
 - PostgreSQL wire 协议（PostgreSQL 兼容 SQL 方言）
 - 通过官方 `gaussdb` 驱动支持 sha256、md5 和 sm3 认证
+- 通过纯 Python `pg8000` 驱动在 Linux 和 macOS 支持 sha256/md5 认证
+- 支持到 `verify-full` 的 TLS 模式，生产环境推荐 `verify-ca`
 - 自动探测 A / B / PG 兼容模式，使 SQL 生成遵循服务端语义
 - 同时支持集中式与分布式部署，并生成分布键感知的建表 DDL
 - 多 schema 数据源支持
@@ -445,8 +465,8 @@ pip install datus-mysql
 - **Apache Doris**：需要 `datus-mysql` 和 `pymysql`（自动安装）
 - **Hologres**：需要 `datus-postgresql` 和 `psycopg2-binary`（自动安装）
 - **Oracle**：需要 `oracledb`（自动安装；Thin 模式不需要 Oracle Client）
-- **GaussDB**：需要 `datus-postgresql` 和官方 `gaussdb` 驱动（自动安装）。该驱动依赖 GaussDB 系的
-  libpq，发布 wheel 中已内置 Linux 版本；官方未提供 macOS 版本，因此请在 Linux 环境中运行该适配器
+- **GaussDB**：需要 `datus-postgresql`，相关依赖会自动安装。Linux 默认使用官方 `gaussdb` 驱动，
+  发布 wheel 已内置其 GaussDB 系 libpq；macOS 没有兼容的原生 libpq，因此默认使用纯 Python `pg8000` 驱动。
 
 ## 架构
 

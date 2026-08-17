@@ -186,15 +186,19 @@ Per-node model assignment lets you use different providers for different workflo
 |----------|------|---------|
 | SQLite | `sqlite` | Built-in |
 | DuckDB | `duckdb` | Built-in |
-| PostgreSQL | `postgresql` | [`datus-postgresql`](https://github.com/Datus-ai/Datus-adapters) |
-| MySQL | `mysql` | [`datus-mysql`](https://github.com/Datus-ai/Datus-adapters) |
-| Snowflake | `snowflake` | [`datus-snowflake`](https://github.com/Datus-ai/Datus-adapters) |
-| StarRocks | `starrocks` | [`datus-starrocks`](https://github.com/Datus-ai/Datus-adapters) |
-| ClickHouse | `clickhouse` | [`datus-clickhouse`](https://github.com/Datus-ai/Datus-adapters) |
-| ClickZetta | `clickzetta` | [`datus-clickzetta`](https://github.com/Datus-ai/Datus-adapters) |
-| Hive | `hive` | [`datus-hive`](https://github.com/Datus-ai/Datus-adapters) |
-| Spark | `spark` | [`datus-spark`](https://github.com/Datus-ai/Datus-adapters) |
-| Trino | `trino` | [`datus-trino`](https://github.com/Datus-ai/Datus-adapters) |
+| PostgreSQL | `postgresql` | [`datus-postgresql`](https://github.com/Datus-ai/datus-db-adapters) |
+| MySQL | `mysql` | [`datus-mysql`](https://github.com/Datus-ai/datus-db-adapters) |
+| Snowflake | `snowflake` | [`datus-snowflake`](https://github.com/Datus-ai/datus-db-adapters) |
+| StarRocks | `starrocks` | [`datus-starrocks`](https://github.com/Datus-ai/datus-db-adapters) |
+| ClickHouse | `clickhouse` | [`datus-clickhouse`](https://github.com/Datus-ai/datus-db-adapters) |
+| ClickZetta | `clickzetta` | [`datus-clickzetta`](https://github.com/Datus-ai/datus-db-adapters) |
+| Hive | `hive` | [`datus-hive`](https://github.com/Datus-ai/datus-db-adapters) |
+| Spark | `spark` | [`datus-spark`](https://github.com/Datus-ai/datus-db-adapters) |
+| Trino | `trino` | [`datus-trino`](https://github.com/Datus-ai/datus-db-adapters) |
+| Apache Doris | `doris` | [`datus-doris`](https://github.com/Datus-ai/datus-db-adapters) |
+| Hologres | `hologres` | [`datus-hologres`](https://github.com/Datus-ai/datus-db-adapters) |
+| Oracle | `oracle` | [`datus-oracle`](https://github.com/Datus-ai/datus-db-adapters) |
+| GaussDB / openGauss | `gaussdb` | [`datus-gaussdb`](https://github.com/Datus-ai/datus-db-adapters) |
 
 See [Database Adapters documentation](https://docs.datus.ai/adapters/db_adapters/) for details.
 

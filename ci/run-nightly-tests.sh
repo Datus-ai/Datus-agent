@@ -25,6 +25,7 @@ NIGHTLY_TRACE_DIAGNOSTICS_FINALIZED=0
 test_exit_code=0
 last_command_exit_code=0
 NIGHTLY_GROUP_FILTER="${NIGHTLY_GROUP_FILTER:-}"
+GAUSSDB_TLS_HOST_DIR=""
 AGENT_TEST_CONFIG="${AGENT_TEST_CONFIG:-tests/conf/agent.yml}"
 DATUS_TEST_PROJECT_NAME="${DATUS_TEST_PROJECT_NAME:-datus_agent_nightly}"
 export DATUS_TEST_PROJECT_NAME
@@ -795,6 +796,14 @@ ensure_nightly_kb_data() {
   return 0
 }
 
+cleanup_gaussdb_tls_host_artifacts() {
+  if [ -n "$GAUSSDB_TLS_HOST_DIR" ] && [ -d "$GAUSSDB_TLS_HOST_DIR" ]; then
+    rm -f -- "$GAUSSDB_TLS_HOST_DIR/ca.crt"
+    rmdir "$GAUSSDB_TLS_HOST_DIR" 2>/dev/null || true
+  fi
+  GAUSSDB_TLS_HOST_DIR=""
+}
+
 cleanup_all() {
   set +e
   if [ "${NIGHTLY_SKIP_MANIFEST_FINALIZE:-0}" != "1" ]; then
@@ -805,6 +814,7 @@ cleanup_all() {
   fi
   restore_agent_test_config
   rm -f "$AGENT_TEST_CONFIG_BACKUP"
+  cleanup_gaussdb_tls_host_artifacts
   if validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP"; then
     rm -rf "$NIGHTLY_PYTEST_BASETEMP"
   fi
@@ -1474,6 +1484,33 @@ wait_for_compose_client_readiness() {
   esac
 }
 
+run_gaussdb_adapter_tests() {
+  local project_name
+  local tls_rootcert
+  local suite_status
+
+  project_name="$(compose_project_name "GaussDB Adapter Tests")"
+  cleanup_gaussdb_tls_host_artifacts
+  GAUSSDB_TLS_HOST_DIR="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-gaussdb-tls.XXXXXX")" || return 1
+  tls_rootcert="$GAUSSDB_TLS_HOST_DIR/ca.crt"
+
+  if ! compose_cmd "$project_name" "$GAUSSDB_COMPOSE" cp gaussdb:/gaussdb-tls/ca.crt "$tls_rootcert"; then
+    cleanup_gaussdb_tls_host_artifacts
+    return 1
+  fi
+
+  run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env \
+    DATUS_TEST_LAYER=nightly \
+    GAUSSDB_SSLMODE=verify-ca \
+    GAUSSDB_SSLROOTCERT="$tls_rootcert" \
+    uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py \
+    --tb=short --verbose --timeout=300 --timeout-method=thread
+  suite_status=$?
+
+  cleanup_gaussdb_tls_host_artifacts
+  return "$suite_status"
+}
+
 run_compose_suite() {
   local group_name="$1"
   local compose_file="$2"
@@ -1677,7 +1714,7 @@ run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
-run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_gaussdb.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests
 run_logged "MetricFlow DuckDB Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_semantic_metricflow_duckdb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 
 run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
