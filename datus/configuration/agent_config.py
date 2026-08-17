@@ -916,6 +916,13 @@ class AgentConfig:
         # CLI, or direct assignment from API/gateway bootstraps.
         filesystem_raw = kwargs.get("filesystem") or {}
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
+        # ``compile_visual_html`` gates the visual nodes' standalone-HTML
+        # compile: CLI runs produce a local file the user opens, while API and
+        # gateway surfaces render dynamically server-side and set this False in
+        # their bootstraps. Deliberately NOT a YAML key — only entry-point code
+        # knows which surface is running, and a config-file toggle would let a
+        # stray setting silently drop the CLI's dashboard/report artifacts.
+        self.compile_visual_html = True
         # ``filesystem.allow_read`` / ``allow_write`` widen the fs tools beyond
         # the project root with explicitly configured absolute directories (the
         # filesystem counterpart of ``bash.sandbox.allow_*``). Needed whenever a

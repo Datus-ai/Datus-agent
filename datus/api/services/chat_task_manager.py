@@ -367,6 +367,9 @@ class ChatTaskManager:
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().
         agent_config.filesystem_strict = True
+        # API responses render dashboards/reports dynamically server-side
+        # (e.g. /dashboard/detail); never compile the CLI's standalone HTML.
+        agent_config.compile_visual_html = False
         # Multi-tenant API surface: the AgentConfig may be supplied by an
         # AuthProvider and the agent must never modify configuration. Hides
         # ``requires_mutable_config`` setup skills and switches the plugin

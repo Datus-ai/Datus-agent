@@ -204,19 +204,13 @@ class GenVisualReportAgenticNode(BaseVisualArtifactAgenticNode[GenVisualReportNo
 
     # ----------------------------------------------------------- CLI compile
 
-    def _is_cli_mode(self) -> bool:
-        """CLI deployments compile a standalone HTML; API/SaaS deployments don't."""
-        if self.agent_config is None:
-            return True
-        deployment = getattr(self.agent_config, "deployment_mode", None) or getattr(self.agent_config, "run_mode", None)
-        if isinstance(deployment, str):
-            return deployment.lower() in {"", "cli", "interactive", "local"}
-        # If filesystem_strict is True the node is being driven by the API gateway;
-        # treat that as SaaS mode and skip the HTML compile.
-        return not bool(getattr(self.agent_config, "filesystem_strict", False))
-
     def _maybe_compile_html(self, report_slug: str) -> Optional[str]:
-        if not self._is_cli_mode():
+        # ``compile_visual_html`` is set False by the API/gateway bootstraps,
+        # which render visual artifacts dynamically server-side. It is a
+        # behavior switch, not a deployment probe: safety flags such as
+        # ``filesystem_strict`` must never be read as a deployment signal
+        # (CLI and test configurations legitimately enable them too).
+        if self.agent_config is not None and not getattr(self.agent_config, "compile_visual_html", True):
             return None
         try:
             from datus.agent.node.visual_artifact.report_html_renderer import render_report_html

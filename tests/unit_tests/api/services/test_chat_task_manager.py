@@ -1176,8 +1176,12 @@ class TestStartChat:
 
         assert captured["config"].config_mutable is False
         assert captured["config"].filesystem_strict is True
+        # API responses render visual artifacts dynamically server-side, so
+        # the per-request clone must switch off the CLI's standalone compile.
+        assert captured["config"].compile_visual_html is False
         # The shared config must not be mutated by the request.
         assert real_agent_config.config_mutable is True
+        assert real_agent_config.compile_visual_html is True
 
     async def test_start_chat_duplicate_session_raises(self, real_agent_config, mock_llm_create):
         """start_chat raises ValueError for duplicate session_id."""

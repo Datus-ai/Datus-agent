@@ -468,10 +468,10 @@ class TestDashboardHtmlPathStreamMessage:
     def test_post_validate_hook_returns_none_in_non_cli_mode(self, real_agent_config, mock_llm_create):
         from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeResult
 
-        # filesystem_strict flips the node into SaaS/API mode — dashboards
+        # The API/gateway bootstraps disable the compile switch — dashboards
         # then render dynamically through the backend's /dashboard/detail
         # endpoint and never compile a standalone HTML.
-        real_agent_config.filesystem_strict = True
+        real_agent_config.compile_visual_html = False
         node = _make_node(real_agent_config)
         dashboard_slug = "path_msg_saas"
         self._seed_full_dashboard(Path(real_agent_config.project_root), dashboard_slug)
@@ -483,6 +483,25 @@ class TestDashboardHtmlPathStreamMessage:
         assert action is None
         assert result.html_path is None
         assert not (Path(real_agent_config.project_root) / "dashboards" / dashboard_slug / "index.html").exists()
+
+    def test_filesystem_strict_does_not_skip_cli_compile(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeResult
+
+        # Regression: nightly enables agent.filesystem.strict as a safety
+        # switch; that must not be read as an API deployment and silently
+        # skip the compile (the dashboard_html_path action disappeared).
+        real_agent_config.filesystem_strict = True
+        node = _make_node(real_agent_config)
+        dashboard_slug = "path_msg_strict_cli"
+        dash_dir = self._seed_full_dashboard(Path(real_agent_config.project_root), dashboard_slug)
+        node._active_artifact_slug = dashboard_slug
+
+        result = GenVisualDashboardNodeResult(success=True)
+        action = node._post_validate_hook(dashboard_slug, result)
+
+        assert isinstance(action, ActionHistory)
+        assert action.action_type == "dashboard_html_path"
+        assert (dash_dir / "index.html").exists()
 
     def test_post_validate_hook_uses_node_config_overrides(self, real_agent_config, mock_llm_create):
         """``agentic_nodes.gen_visual_dashboard.{web_host,web_port,query_endpoint}``
