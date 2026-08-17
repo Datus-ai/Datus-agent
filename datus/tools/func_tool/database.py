@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Unio
 from agents import Tool
 from datus_db_core import BaseSqlConnector
 
-from datus.configuration.agent_config import AgentConfig, _coerce_bool
+from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.storage.kb_retrieval import metadata_fts_enabled
@@ -32,6 +32,7 @@ from datus.tools.db_tools.capabilities import (
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -137,14 +138,19 @@ class DBFuncTool:
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
-            read_only: When True, ``execute_sql`` hard-rejects any non-read
-                       statement (INSERT/UPDATE/DELETE/DDL/MERGE/...) at the tool
-                       layer, independent of ``PermissionHooks``. Use for agents
-                       whose contract is read-only (Explore, ask_report/dashboard,
-                       LLM validators) so the unified write-capable entry point
-                       cannot mutate the datasource even when hooks are bypassed
-                       (e.g. validators run with ``hooks=None``) or under a
-                       permissive profile.
+            read_only: When True, the write paths (``execute_sql``,
+                       ``execute_write``, ``execute_ddl``,
+                       ``transfer_query_result``) hard-reject any non-read
+                       statement at the tool layer, independent of
+                       ``PermissionHooks``. Use for agents whose contract is
+                       read-only (Explore, ask_report/dashboard, LLM validators)
+                       so the unified write-capable entry point cannot mutate the
+                       datasource even when hooks are bypassed (e.g. validators
+                       run with ``hooks=None``) or under a permissive profile.
+                       This is the per-instance floor only; the ``read_only``
+                       property ORs it with ``AgentConfig.sql_read_only``, so
+                       passing False does not make the tool writable on a
+                       hardened deployment.
         """
         if connector_or_manager is None:
             if not agent_config:
@@ -171,7 +177,9 @@ class DBFuncTool:
         self.compressor = DataCompressor(model_name=model_name)
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
-        self.read_only = read_only
+        # Backing field for the ``read_only`` property: this instance's own
+        # posture, before the deployment-wide switch is ORed in.
+        self._read_only = read_only
         if agent_config and metadata_fts_enabled(agent_config):
             self.schema_rag = create_metadata_rag(agent_config, sub_agent_name)
         else:
@@ -204,29 +212,93 @@ class DBFuncTool:
         return dict(policy_context) if isinstance(policy_context, dict) else {}
 
     @property
-    def effective_read_only(self) -> bool:
-        """Read-only posture for ``execute_sql``, resolved on every access.
+    def read_only(self) -> bool:
+        """Whether this tool refuses non-read SQL. Resolved on every access.
 
-        ORs the per-instance ``read_only`` — set by read-only agents (Explore,
+        ORs the per-instance flag — set by read-only agents (Explore,
         ask_report/dashboard) and by the validator's shallow copy in
         ``datus.validation.llm_runner`` — with the deployment-wide
         ``AgentConfig.sql_read_only``. Tighten-only in both directions: neither
         source can relax the other.
 
+        This is the effective posture, not the constructor argument, so that
+        anything asking "is this tool read-only?" gets the answer the write
+        paths will actually enforce. The MCP server's
+        ``create_dynamic``/``create_static`` factories pass a config but no
+        ``read_only`` flag, so on a hardened deployment their instances read
+        ``True`` here despite nothing having passed it.
+
         Resolved per access rather than snapshotted in ``__init__`` for the same
         reason as ``principal`` above: the API hands nodes a per-request config
         clone, and a tool built before that clone was hardened must still honour
-        it. Reading through ``agent_config`` is also what covers the MCP server,
-        whose ``create_dynamic``/``create_static`` factories pass a config but no
-        ``read_only`` flag.
+        it.
 
-        ``_coerce_bool`` rather than ``bool``: the ``getattr`` guard exists for
+        ``coerce_bool`` rather than ``bool``: the ``getattr`` guard exists for
         duck-typed / host-supplied config objects, which are exactly the ones
         likely to carry a raw YAML value — and ``bool("false")`` is ``True``.
         """
-        if self.read_only:
+        if self._read_only:
             return True
-        return _coerce_bool(getattr(self.agent_config, "sql_read_only", False), False)
+        return coerce_bool(getattr(self.agent_config, "sql_read_only", False), False)
+
+    @read_only.setter
+    def read_only(self, value: bool) -> None:
+        # Tighten-only, matching ``AgentConfig.sql_read_only``: a caller may
+        # harden an instance (``llm_runner`` does this to a shallow copy before
+        # binding it to a hooks-free validator) but may not hand a write-capable
+        # view of a read-only deployment to anything downstream.
+        self._read_only = self._read_only or coerce_bool(value, False)
+
+    def _refuse_write_if_read_only(
+        self,
+        operation: str,
+        *,
+        datasource: Optional[str] = "",
+        sql_type: Optional[SQLType] = None,
+        statement_kind: str = "",
+        error: str = "",
+    ) -> Optional[FuncToolResult]:
+        """Gate every write entry point on the effective read-only posture.
+
+        Returns ``None`` when the caller may proceed, or the ``FuncToolResult``
+        to hand straight back when it may not. Defense-in-depth for read-only
+        agents and read-only deployments alike: it is independent of
+        ``PermissionHooks``, which several callers bypass entirely (validators
+        run with ``hooks=None``, and the MCP server's tool instances never see
+        hooks at all).
+
+        Shared by all four write paths so a new one cannot be added with a
+        subtly different rule, and so ``AgentConfig.sql_read_only`` means the
+        same thing at each of them.
+
+        Refusals are logged because a refusal is the event an operator actually
+        wants to see: on a deployment running third-party-authored content it
+        means that content just tried to write. Successful reads are already
+        logged in ``read_query``, so staying silent here would record the benign
+        path and drop the notable one. ``source`` separates a deployment-wide
+        refusal from a read-only agent doing its job — the difference between
+        "investigate this" and "working as intended".
+
+        ``statement_kind`` is the finer-grained classification from
+        ``parse_sql_statement_kind`` (``create`` / ``drop`` / ``alter`` /
+        ``truncate``) when the caller has the SQL to derive it. It is preferred
+        over ``sql_type`` in the log because ``ddl`` alone cannot tell an
+        operator whether third-party content tried to create a table or drop
+        one, and those warrant very different responses.
+        """
+        if not self.read_only:
+            return None
+        logger.warning(
+            f"{operation} rejected by read-only policy",
+            sql_type=statement_kind or (sql_type.value if sql_type else ""),
+            datasource=self._resolve_effective_datasource(datasource),
+            sub_agent=self.sub_agent_name or "",
+            source="agent" if self._read_only else "deployment",
+        )
+        return FuncToolResult(
+            success=0,
+            error=error or f"This agent is read-only: {operation} is not available.",
+        )
 
     def _has_schema_storage(self) -> bool:
         if not self.schema_rag:
@@ -1491,6 +1563,7 @@ class DBFuncTool:
         """
         from datus.utils.sql_utils import (
             looks_like_sql_file_ref,
+            parse_sql_statement_kind,
             parse_sql_type,
             write_statement_reads_data,
         )
@@ -1512,35 +1585,21 @@ class DBFuncTool:
 
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
                 return self.read_query(sql, datasource=datasource, database=database)
-            if self.effective_read_only:
-                # Defense-in-depth for read-only agents and read-only
-                # deployments: reject any non-read statement at the tool layer,
-                # independent of PermissionHooks (which may be bypassed, e.g.
-                # validators run with hooks=None, and the MCP server's tool
-                # instances never see them at all).
-                #
-                # Logged because a refusal is the event an operator actually
-                # wants to see: on a deployment running third-party-authored
-                # content it means that content just tried to write. Successful
-                # reads are already logged in read_query, so staying silent here
-                # would record the benign path and drop the notable one.
-                # ``source`` separates a deployment-wide refusal from a read-only
-                # agent doing its job -- the difference between "investigate
-                # this" and "working as intended".
-                logger.warning(
-                    "execute_sql rejected by read-only policy",
-                    sql_type=sql_type.value,
-                    datasource=self._resolve_effective_datasource(datasource),
-                    sub_agent=self.sub_agent_name or "",
-                    source="agent" if self.read_only else "deployment",
-                )
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        "This agent is read-only: only SELECT/SHOW/DESCRIBE/EXPLAIN "
-                        "statements are allowed through execute_sql."
-                    ),
-                )
+            refusal = self._refuse_write_if_read_only(
+                "execute_sql",
+                datasource=datasource,
+                sql_type=sql_type,
+                # The permission layer's finer classification, so the audit line
+                # says `drop` rather than a `ddl` that also covers CREATE.
+                statement_kind=parse_sql_statement_kind(sql, connector.dialect),
+                error=(
+                    "This agent is read-only: only SELECT/SHOW/DESCRIBE/EXPLAIN "
+                    "statements are allowed through execute_sql."
+                ),
+            )
+            if refusal:
+                return refusal
+
             # A write can carry a read. `CREATE TABLE mine AS SELECT * FROM
             # orders` is approved as a write, runs on the raw connector, and
             # lands every row the policy just withheld in a table no policy
@@ -1552,6 +1611,10 @@ class DBFuncTool:
             # The permission prompt is not this check. It asks whether the
             # *user* consents to a write; consenting to a write they are
             # allowed to make is not consent to read rows they are not.
+            #
+            # Ordered after the read-only gate above: a hardened deployment
+            # refuses every write outright, so it never needs to reason about
+            # what the write reads.
             if self.policy_context and write_statement_reads_data(sql, connector.dialect):
                 return FuncToolResult(
                     success=0,
@@ -1614,7 +1677,15 @@ class DBFuncTool:
             if validation_error:
                 return validation_error
 
-            logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
+            # Resolved rather than the raw argument: the refusal logs resolve it
+            # too, and an operator correlating a session on ``datasource`` cannot
+            # do it if the same source appears as "default" on one line and by
+            # name on the next.
+            logger.info(
+                "read_query",
+                sql_type=sql_type.value,
+                datasource=self._resolve_effective_datasource(datasource),
+            )
             result_format = "arrow" if connector.dialect == "snowflake" else "list"
             result = self.execute_read_enforced(
                 sql,
@@ -1773,33 +1844,35 @@ class DBFuncTool:
         )
 
         violation, sql_type = validate_read_only_sql(sql, connector.dialect)
-        if violation == READ_ONLY_MULTI_STATEMENT:
-            return (
-                FuncToolResult(
-                    success=0,
-                    error="Multi-statement SQL is not allowed. Please submit one query at a time.",
+        if violation:
+            error = {
+                READ_ONLY_MULTI_STATEMENT: "Multi-statement SQL is not allowed. Please submit one query at a time.",
+                READ_ONLY_NON_READ: (
+                    f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
+                    f"Detected SQL type: {sql_type.value}"
                 ),
-                SQLType.UNKNOWN,
+                READ_ONLY_WRITABLE_PRAGMA: "Writable PRAGMA statements are not allowed in read-only mode.",
+            }[violation]
+            # Logged for the same reason as the write-path refusals, and this
+            # branch matters more than it looks: ``parse_sql_type`` classifies
+            # only the FIRST statement, so ``SELECT 1; DROP TABLE t`` reaches
+            # here as a SELECT and is refused by the multi-statement rule rather
+            # than by the read-only gate. Without this line the sneakiest input
+            # in the set would be the one that left no audit trail, while a
+            # plain DROP TABLE was recorded.
+            #
+            # ``rule`` rather than ``source``: these refusals hold regardless of
+            # ``sql_read_only``, so labelling them "deployment" would overstate
+            # what the switch is doing. The violation code is the value, so an
+            # operator can aggregate on it without parsing prose.
+            logger.warning(
+                "read_query rejected by statement-shape rules",
+                sql_type=sql_type.value,
+                datasource=self._resolve_effective_datasource(None),
+                sub_agent=self.sub_agent_name or "",
+                rule=violation,
             )
-
-        if violation == READ_ONLY_NON_READ:
-            return (
-                FuncToolResult(
-                    success=0,
-                    error=f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
-                    f"Detected SQL type: {sql_type.value}",
-                ),
-                sql_type,
-            )
-
-        if violation == READ_ONLY_WRITABLE_PRAGMA:
-            return (
-                FuncToolResult(
-                    success=0,
-                    error="Writable PRAGMA statements are not allowed in read-only mode.",
-                ),
-                sql_type,
-            )
+            return FuncToolResult(success=0, error=error), sql_type
 
         out_of_scope = self._check_sql_table_scope(sql, connector)
         if out_of_scope:
@@ -1897,6 +1970,14 @@ class DBFuncTool:
             Execution result with success status
         """
         from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+
+        # Reachable directly, not only via the ``execute_sql`` dispatch that
+        # already gated: gen_job-style callers and host code hold the tool
+        # itself. Gate before parsing so a hardened deployment refuses on
+        # posture, never on statement shape.
+        refusal = self._refuse_write_if_read_only("execute_ddl", datasource=datasource)
+        if refusal:
+            return refusal
 
         # Validate: strip comments, reject multi-statement SQL
         cleaned = strip_sql_comments(sql).strip().rstrip(";").strip()
@@ -2009,6 +2090,12 @@ class DBFuncTool:
                 success=0,
                 error="dry_run is not supported yet for execute_write. Use dry_run=False.",
             )
+
+        # Same reasoning as ``execute_ddl``: ``execute_sql`` has already gated by
+        # the time it dispatches here, but this method is also callable directly.
+        refusal = self._refuse_write_if_read_only("execute_write", datasource=datasource)
+        if refusal:
+            return refusal
 
         try:
             sql_stripped = sql.strip()
@@ -2277,6 +2364,15 @@ class DBFuncTool:
         Returns:
             FuncToolResult with transfer metadata on success.
         """
+        # ``source_sql`` is validated as read-only below, but the transfer WRITES
+        # to ``target_datasource`` — CREATE TABLE / TRUNCATE / INSERT — without
+        # ever going through ``execute_sql``. gen_job mounts this method as a
+        # tool directly, so without this gate a hardened deployment would still
+        # expose a cross-datasource write.
+        refusal = self._refuse_write_if_read_only("transfer_query_result", datasource=target_datasource)
+        if refusal:
+            return refusal
+
         # Validate batch_size
         if batch_size <= 0:
             return FuncToolResult(success=0, error="batch_size must be a positive integer.")

@@ -1885,7 +1885,7 @@ class TestDBFuncToolExecuteSql:
         connector = self._connector()
         tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False), read_only=True)
 
-        assert tool.effective_read_only is True
+        assert tool.read_only is True
         assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 0
         connector.execute_insert.assert_not_called()
 
@@ -1894,13 +1894,13 @@ class TestDBFuncToolExecuteSql:
         connector = self._connector()
         tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True), read_only=False)
 
-        assert tool.effective_read_only is True
+        assert tool.read_only is True
 
     def test_no_agent_config_is_not_read_only(self):
         connector = self._connector()
         tool = self._build(connector)
 
-        assert tool.effective_read_only is False
+        assert tool.read_only is False
         assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 1
 
     def test_config_without_the_attribute_is_not_read_only(self):
@@ -1913,7 +1913,7 @@ class TestDBFuncToolExecuteSql:
         connector = self._connector()
         tool = self._build(connector, agent_config=LegacyConfig())
 
-        assert tool.effective_read_only is False
+        assert tool.read_only is False
 
     def test_string_false_is_not_read_only(self):
         """Proves ``_coerce_bool``, not ``bool()``: ``bool("false")`` is True and
@@ -1922,7 +1922,7 @@ class TestDBFuncToolExecuteSql:
         connector = self._connector()
         tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only="false"))
 
-        assert tool.effective_read_only is False
+        assert tool.read_only is False
 
     def test_config_hardened_after_construction_is_honoured(self):
         """The API hands nodes a per-request config clone, so the flag is
@@ -1931,11 +1931,11 @@ class TestDBFuncToolExecuteSql:
         connector = self._connector()
         config = _mock_agent_config(sql_read_only=False)
         tool = self._build(connector, agent_config=config)
-        assert tool.effective_read_only is False
+        assert tool.read_only is False
 
         config.sql_read_only = True
 
-        assert tool.effective_read_only is True
+        assert tool.read_only is True
         assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 0
 
     def test_refusal_is_logged_with_its_source(self, caplog):
@@ -1969,6 +1969,44 @@ class TestDBFuncToolExecuteSql:
         assert "rejected by read-only policy" in caplog.text
         assert "agent" in caplog.text
 
+    def test_ddl_refusal_logs_the_specific_keyword(self, caplog):
+        """`ddl` alone cannot tell an operator whether third-party content tried
+        to CREATE a table or DROP one, and those warrant different responses.
+        """
+        import logging
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("DROP TABLE users")
+        assert "sql_type=drop" in caplog.text or "'sql_type': 'drop'" in caplog.text
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("CREATE TABLE t (id INT)")
+        assert "sql_type=create" in caplog.text or "'sql_type': 'create'" in caplog.text
+
+    def test_multi_statement_refusal_is_logged(self, caplog):
+        """The sneakiest input in the set must not be the one with no audit
+        trail. ``parse_sql_type`` reads only the first statement, so this
+        arrives as a SELECT and is refused by the multi-statement rule rather
+        than by the read-only gate -- a different code path, which is exactly
+        how it went unlogged.
+        """
+        import logging
+
+        connector = self._connector()
+        connector.execute_query.return_value = Mock(success=True, sql_return=[])
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        with caplog.at_level(logging.WARNING):
+            result = tool.execute_sql("SELECT 1; DROP TABLE users")
+
+        assert result.success == 0
+        assert "statement-shape rules" in caplog.text
+        assert "Multi-statement" in caplog.text
+
     def test_shallow_copy_can_still_force_read_only(self):
         """Pins the contract datus.validation.llm_runner depends on: it copies a
         write-capable tool and flips ``.read_only`` to True on the copy.
@@ -1980,8 +2018,31 @@ class TestDBFuncToolExecuteSql:
         read_only_tool = _copy.copy(tool)
         read_only_tool.read_only = True
 
-        assert read_only_tool.effective_read_only is True
-        assert tool.effective_read_only is False
+        assert read_only_tool.read_only is True
+        assert tool.read_only is False
+
+    def test_assignment_can_tighten_but_not_relax(self):
+        """The setter mirrors ``AgentConfig.harden_sql_read_only``: a caller may
+        harden an instance, but may not hand a write-capable view of a read-only
+        deployment to anything downstream.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False))
+
+        tool.read_only = True
+        assert tool.read_only is True
+
+        tool.read_only = False
+        assert tool.read_only is True
+
+    def test_deployment_read_only_cannot_be_relaxed_by_assignment(self):
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        tool.read_only = False
+
+        assert tool.read_only is True
+        assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 0
 
     def test_min_max_rows_forwarded_to_write(self):
         mock_connector = Mock()
@@ -2065,6 +2126,91 @@ class TestDBFuncToolExecuteSql:
         assert "read_query" not in tool_names
         assert "execute_ddl" not in tool_names
         assert "execute_write" not in tool_names
+
+
+class TestDBFuncToolWritePathsHonorReadOnly:
+    """Every write entry point, not just ``execute_sql``.
+
+    ``execute_sql`` dispatches to ``execute_write``/``execute_ddl`` and gates
+    before it does, but all three are callable directly, and gen_job mounts
+    ``transfer_query_result`` as a tool of its own. A deployment-wide read-only
+    posture that only covered the dispatcher would leave those reachable.
+    """
+
+    @staticmethod
+    def _build(connector, **kwargs):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector, **kwargs)
+
+    @staticmethod
+    def _connector():
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = []
+        connector.execute_insert.return_value = Mock(success=True, row_count=1)
+        connector.execute_ddl.return_value = Mock(success=True)
+        return connector
+
+    def test_execute_ddl_is_refused(self):
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        result = tool.execute_ddl("CREATE TABLE t (a int)")
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        connector.execute_ddl.assert_not_called()
+
+    def test_execute_write_is_refused(self):
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        result = tool.execute_write("INSERT INTO users VALUES (1)")
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        connector.execute_insert.assert_not_called()
+
+    def test_transfer_query_result_is_refused(self):
+        """``source_sql`` is read-only, but the transfer WRITES to the target
+        datasource — CREATE TABLE / TRUNCATE / INSERT — without ever going
+        through ``execute_sql``.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+        tool._get_connector = Mock(side_effect=AssertionError("must refuse before touching a connector"))
+
+        result = tool.transfer_query_result(
+            source_sql="SELECT * FROM users",
+            target_table="copy_of_users",
+            target_datasource="warehouse",
+        )
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+
+    def test_read_only_agent_is_refused_too(self):
+        """The gate is the effective posture, so a read-only agent on a writable
+        deployment is covered by the same check.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False), read_only=True)
+
+        assert tool.execute_ddl("CREATE TABLE t (a int)").success == 0
+        assert tool.execute_write("INSERT INTO users VALUES (1)").success == 0
+
+    def test_write_paths_still_work_by_default(self):
+        """The gate is opt-in — the default posture is unchanged."""
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False))
+
+        assert tool.execute_ddl("CREATE TABLE t (a int)").success == 1
+        connector.execute_ddl.assert_called_once()
 
 
 class TestDBFuncToolExecuteReadEnforced:
@@ -2360,15 +2506,19 @@ class TestMcpFactoriesHonorDeploymentReadOnly:
             return factory(config)
 
     def test_create_dynamic_inherits_deployment_read_only(self):
+        """``.read_only`` reports the posture the write paths will enforce, not
+        the constructor argument — the factory passes no ``read_only`` at all,
+        so anything reading the attribute would otherwise be told this MCP tool
+        is writable on a hardened deployment."""
         tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=True))
 
-        assert tool.read_only is False  # the factory still cannot pass it...
-        assert tool.effective_read_only is True  # ...but the config reaches execute_sql
+        assert tool.read_only is True
+        assert tool._read_only is False  # nothing passed it; the config supplied it
 
     def test_create_static_inherits_deployment_read_only(self):
         tool = self._build(DBFuncTool.create_static, self._config(sql_read_only=True))
 
-        assert tool.effective_read_only is True
+        assert tool.read_only is True
 
     def test_create_dynamic_rejects_writes_end_to_end(self):
         """The property is only meaningful if execute_sql actually refuses."""
@@ -2386,4 +2536,4 @@ class TestMcpFactoriesHonorDeploymentReadOnly:
     def test_create_dynamic_stays_writable_by_default(self):
         tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=False))
 
-        assert tool.effective_read_only is False
+        assert tool.read_only is False
