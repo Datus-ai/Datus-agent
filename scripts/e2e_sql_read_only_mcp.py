@@ -23,6 +23,10 @@ against an existing project's conf/agent.yml instead of a synthetic one.
 
 Usage:  <repo>/.venv/bin/python scripts/e2e_sql_read_only_mcp.py
 Exit:   0 = switch behaves correctly, 1 = it does not
+
+This is an operator tool, not library code: its verdict table on stdout IS the
+deliverable, so it uses `print` rather than the `get_logger` the package
+requires. Nothing under `datus/` imports it.
 """
 
 import argparse

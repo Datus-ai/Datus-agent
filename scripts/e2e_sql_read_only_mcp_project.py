@@ -39,6 +39,10 @@ Usage:
     <repo>/.venv/bin/python scripts/e2e_sql_read_only_mcp_project.py \
         --project /path/to/project [--datasource NAME] [--sqlite-standin]
 Exit: 0 = gate behaves correctly, 1 = it does not
+
+This is an operator tool, not library code: its verdict table on stdout IS the
+deliverable, so it uses `print` rather than the `get_logger` the package
+requires. Nothing under `datus/` imports it.
 """
 
 import argparse
@@ -254,28 +258,18 @@ async def table_exists(sess: McpSession, table: str) -> bool:
 
 
 async def run_matrix(cfg: Path, datasource: str) -> dict[str, tuple[bool, str]]:
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "datus.mcp_server", "--datasource", datasource, "--transport", "stdio", "--config", str(cfg)],
-        # cwd is the staging dir, never the project: `home: .` is relative, and
-        # a project cwd would also pull in its .datus/config.yml override.
-        cwd=str(cfg.parent),
-    )
+    """Run every CASES probe against a server staged from ``cfg``.
+
+    Goes through ``McpSession`` rather than driving ``stdio_client`` directly:
+    the session already owns how the subprocess is spawned (``_server_params``)
+    and how an ``execute_sql`` payload is unwrapped, and a second copy of either
+    is a copy that can disagree with the one --live-writes uses.
+    """
     results: dict[str, tuple[bool, str]] = {}
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            names = {t.name for t in (await session.list_tools()).tools}
-            assert "execute_sql" in names, f"execute_sql not exposed; saw {sorted(names)[:10]}"
-            for label, sql, _ in CASES:
-                res = await session.call_tool("execute_sql", {"sql": sql})
-                raw = "".join(getattr(c, "text", "") for c in res.content)
-                try:
-                    payload = json.loads(raw)
-                    ok, err = payload.get("success") == 1, payload.get("error") or ""
-                except (json.JSONDecodeError, AttributeError):
-                    ok, err = not res.isError, raw
-                results[label] = (ok, (err or "").strip())
+    async with McpSession(cfg, datasource) as sess:
+        for label, sql, _ in CASES:
+            ok, err, _ = await sess.sql(sql)
+            results[label] = (ok, err)
     return results
 
 
