@@ -45,10 +45,12 @@ import argparse
 import asyncio
 import copy
 import json
+import re
 import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 import yaml
 from mcp import ClientSession, StdioServerParameters
@@ -127,6 +129,106 @@ def stage_config(project: Path, dest: Path, *, sql_read_only: bool, standin: str
     return cfg
 
 
+PROBE_PREFIX = "datus_ro_probe"
+
+
+def _server_params(cfg: Path, datasource: str) -> StdioServerParameters:
+    return StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-m",
+            "datus.mcp_server",
+            "--datasource",
+            datasource,
+            "--transport",
+            "stdio",
+            "--config",
+            str(cfg),
+        ],
+        # cwd is the staging dir, never the project: `home: .` is relative, and
+        # a project cwd would also pull in its .datus/config.yml override.
+        cwd=str(cfg.parent),
+    )
+
+
+class McpSession:
+    """One `datus-mcp --transport stdio` subprocess, with an execute_sql helper."""
+
+    def __init__(self, cfg: Path, datasource: str, *, dry_run: bool = False):
+        self._cfg, self._datasource, self._dry_run = cfg, datasource, dry_run
+        self._stack = None
+        self._session = None
+
+    async def __aenter__(self):
+        from contextlib import AsyncExitStack
+
+        self._stack = AsyncExitStack()
+        read, write = await self._stack.enter_async_context(stdio_client(_server_params(self._cfg, self._datasource)))
+        self._session = await self._stack.enter_async_context(ClientSession(read, write))
+        await self._session.initialize()
+        names = {t.name for t in (await self._session.list_tools()).tools}
+        assert "execute_sql" in names, f"execute_sql not exposed; saw {sorted(names)[:10]}"
+        return self
+
+    async def __aexit__(self, *exc):
+        await self._stack.__aexit__(*exc)
+
+    async def sql(self, statement: str) -> tuple[bool, str, object]:
+        """Return (succeeded, error_text, result)."""
+        if self._dry_run:
+            print(f"      [dry-run] {statement}")
+            return True, "", None
+        res = await self._session.call_tool("execute_sql", {"sql": statement})
+        raw = "".join(getattr(c, "text", "") for c in res.content)
+        try:
+            payload = json.loads(raw)
+            return payload.get("success") == 1, (payload.get("error") or "").strip(), payload.get("result")
+        except (json.JSONDecodeError, AttributeError):
+            return not res.isError, raw.strip(), raw
+
+
+def create_probe_ddl(dialect: str, table: str) -> str:
+    """CREATE for a scratch probe table, in the flavour the datasource needs."""
+    if (dialect or "").lower() in {"starrocks", "doris"}:
+        # PRIMARY KEY so UPDATE/DELETE are permitted; replication_num 1 so a
+        # single-BE cluster can satisfy it.
+        return (
+            f"CREATE TABLE {table} (id INT, v VARCHAR(64)) "
+            f"PRIMARY KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 "
+            f'PROPERTIES ("replication_num" = "1")'
+        )
+    return f"CREATE TABLE {table} (id INT, v VARCHAR(64))"
+
+
+def live_cases(dml: str, drop_me: str, ctas: str) -> list[tuple[str, str, bool]]:
+    """Probes for --live-writes, all scoped to this run's own scratch tables."""
+    return [
+        ("SELECT", f"SELECT COUNT(*) FROM {dml}", True),
+        ("EXPLAIN", f"EXPLAIN SELECT * FROM {dml}", True),
+        ("INSERT", f"INSERT INTO {dml} (id, v) VALUES (99, 'written')", False),
+        ("UPDATE", f"UPDATE {dml} SET v = 'mutated' WHERE id = 1", False),
+        ("DELETE", f"DELETE FROM {dml} WHERE id = 2", False),
+        ("CREATE TABLE (CTAS)", f"CREATE TABLE {ctas} AS SELECT * FROM {dml}", False),
+        ("TRUNCATE", f"TRUNCATE TABLE {dml}", False),
+        ("DROP TABLE", f"DROP TABLE {drop_me}", False),
+        ("multi-statement", f"SELECT 1; DROP TABLE {dml}", False),
+    ]
+
+
+async def row_count(sess: McpSession, table: str) -> int | None:
+    ok, _, result = await sess.sql(f"SELECT COUNT(*) AS n FROM {table}")
+    if not ok:
+        return None
+    text = json.dumps(result, default=str)
+    nums = re.findall(r"\d+", text)
+    return int(nums[-1]) if nums else None
+
+
+async def table_exists(sess: McpSession, table: str) -> bool:
+    ok, _, _ = await sess.sql(f"SELECT COUNT(*) FROM {table}")
+    return ok
+
+
 async def run_matrix(cfg: Path, datasource: str) -> dict[str, tuple[bool, str]]:
     params = StdioServerParameters(
         command=sys.executable,
@@ -153,9 +255,170 @@ async def run_matrix(cfg: Path, datasource: str) -> dict[str, tuple[bool, str]]:
     return results
 
 
+async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, dry_run: bool) -> int:
+    """Full write round-trip against the project's REAL datasource.
+
+    Only for a datasource you are willing to write to. Everything it touches is
+    a table it creates itself, named `datus_ro_probe_<run id>_*`, and teardown
+    runs in a finally block. If teardown cannot complete, the exact DROP
+    statements are printed so nothing is left silently orphaned.
+
+    The decisive assertion is step 5: after the flag-on matrix, the scratch
+    tables are byte-for-byte as the flag-off matrix left them. The flag-off run
+    has already proven every one of those statements really mutates this
+    datasource, so "unchanged" can only mean the gate stopped them.
+    """
+    run_id = uuid4().hex[:8]
+    dml = f"{PROBE_PREFIX}_{run_id}_dml"
+    drop_me = f"{PROBE_PREFIX}_{run_id}_drop"
+    ctas = f"{PROBE_PREFIX}_{run_id}_ctas"
+    scratch = [dml, drop_me, ctas]
+
+    print(f"scratch tables : {', '.join(scratch)}")
+    print("               (created by this run, dropped in a finally block)\n")
+
+    async def seed(sess: McpSession) -> None:
+        for table in (dml, drop_me):
+            ok, err, _ = await sess.sql(create_probe_ddl(dialect, table))
+            if not ok and "exist" not in err.lower():
+                raise RuntimeError(f"could not create {table}: {err}")
+        for i in (1, 2, 3):
+            await sess.sql(f"INSERT INTO {dml} (id, v) VALUES ({i}, 'seed{i}')")
+
+    async def drop_all(sess: McpSession) -> list[str]:
+        survivors = []
+        for table in scratch:
+            await sess.sql(f"DROP TABLE {table}")
+            if not dry_run and await table_exists(sess, table):
+                survivors.append(table)
+        return survivors
+
+    cases = live_cases(dml, drop_me, ctas)
+    failures: list[str] = []
+
+    try:
+        # 1. preflight + setup, flag off
+        async with McpSession(cfg_off, datasource, dry_run=dry_run) as sess:
+            for table in scratch:
+                if not dry_run and await table_exists(sess, table):
+                    print(f"ABORT: {table} already exists; refusing to touch it")
+                    return 1
+            print("1. creating scratch tables (flag off) ...")
+            await seed(sess)
+
+            # 2. flag-off matrix -- the negative control: these really execute
+            print("2. running probes with sql_read_only: false (writes execute) ...")
+            off: dict[str, tuple[bool, str]] = {}
+            for label, statement, _ in cases:
+                ok, err, _ = await sess.sql(statement)
+                off[label] = (ok, err)
+
+            # 3. restore what the flag-off run destroyed, so both runs start level
+            print("3. restoring scratch tables ...")
+            await sess.sql(f"DROP TABLE {ctas}")
+            await sess.sql(f"DROP TABLE {dml}")
+            await sess.sql(f"DROP TABLE {drop_me}")
+            await seed(sess)
+            baseline = await row_count(sess, dml)
+
+        # 4. flag-on matrix
+        print("4. running probes with sql_read_only: true  (must all be refused) ...")
+        async with McpSession(cfg_on, datasource, dry_run=dry_run) as sess:
+            on: dict[str, tuple[bool, str]] = {}
+            for label, statement, _ in cases:
+                ok, err, _ = await sess.sql(statement)
+                on[label] = (ok, err)
+
+            # 5. the decisive check -- reads still work under the flag, so this
+            #    integrity verification runs inside the hardened session.
+            print("5. verifying the datasource is untouched ...\n")
+            after = await row_count(sess, dml)
+            drop_survived = await table_exists(sess, drop_me)
+            ctas_absent = not await table_exists(sess, ctas)
+
+        hdr = f"{'statement':<22} {'flag off':<14} {'flag on':<14} verdict"
+        print(hdr)
+        print("-" * len(hdr))
+        for label, _, is_read in cases:
+            off_ok, off_err = off[label]
+            on_ok, on_err = on[label]
+            gated = GATE_MARKER in on_err.lower()
+
+            if is_read:
+                good = not gated
+                verdict = "read not blocked" if good else "READ WRONGLY BLOCKED"
+            elif off_err and off_err == on_err:
+                good = True
+                verdict = "blocked either way (not the switch)"
+            elif not off_ok:
+                good = not on_ok
+                verdict = f"inconclusive - failed with flag off too ({off_err[:40]})"
+            else:
+                good = (not on_ok) and gated
+                verdict = "executed off, refused on" if good else "EXECUTED WITH FLAG ON"
+
+            if not good:
+                failures.append(label)
+            print(
+                f"{label:<22} {'executed' if off_ok else 'failed':<14} "
+                f"{'executed' if on_ok else 'refused':<14} {'' if good else '!! '}{verdict}"
+            )
+
+        print()
+        checks = [
+            (f"{dml} row count unchanged ({baseline} -> {after})", baseline == after),
+            (f"{drop_me} survived the DROP probe", drop_survived),
+            (f"{ctas} was never created", ctas_absent),
+        ]
+        for text, good in checks:
+            print(f"  {'ok  ' if good else 'FAIL'} {text}")
+            if not good:
+                failures.append(text)
+
+    finally:
+        print("\n6. dropping scratch tables ...")
+        try:
+            async with McpSession(cfg_off, datasource, dry_run=dry_run) as sess:
+                survivors = await drop_all(sess)
+            if survivors:
+                print(f"  !! COULD NOT DROP: {', '.join(survivors)}")
+                print("  Run these by hand:")
+                for table in survivors:
+                    print(f"    DROP TABLE {table};")
+                failures.append("teardown")
+            else:
+                print("  ok   all scratch tables removed")
+        except Exception as exc:  # noqa: BLE001 - teardown must report, never mask
+            print(f"  !! teardown failed: {exc}")
+            print("  Run these by hand:")
+            for table in scratch:
+                print(f"    DROP TABLE {table};")
+            failures.append("teardown")
+
+    print()
+    if failures:
+        print(f"FAIL: {', '.join(failures)}")
+        return 1
+    print("PASS - agent.sql_read_only blocks real writes against the live datasource")
+    return 0
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", required=True, type=Path)
+    ap.add_argument(
+        "--live-writes",
+        action="store_true",
+        help="WRITES TO THE PROJECT'S REAL DATASOURCE. Creates its own scratch tables, "
+        "runs the probes against them for real, verifies the flag-on run changed "
+        "nothing, then drops them in a finally block. Only for a datasource you are "
+        "willing to write to.",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with --live-writes, print every statement instead of executing it",
+    )
     ap.add_argument(
         "--sqlite-standin",
         action="store_true",
@@ -188,6 +451,11 @@ async def main() -> int:
 
     print(f"project    : {project}")
     print(f"datasource : {datasource} (type={datasources.get(datasource, {}).get('type')})")
+    if args.live_writes and args.sqlite_standin:
+        print("--live-writes and --sqlite-standin are mutually exclusive", file=sys.stderr)
+        return 1
+    if args.live_writes:
+        print(f"MODE       : LIVE WRITES against the real datasource{' (dry run)' if args.dry_run else ''}\n")
     if args.sqlite_standin:
         print(
             "datasource : SUBSTITUTED with a throwaway sqlite (--sqlite-standin); "
@@ -197,7 +465,7 @@ async def main() -> int:
             f"probes     : non-read statements target `{MISSING}`, which EXISTS in "
             f"the stand-in, so writes really execute when the flag is off\n"
         )
-    else:
+    elif not args.live_writes:
         print(f"probes     : non-read statements target `{MISSING}`, which must not exist\n")
 
     with tempfile.TemporaryDirectory() as td:
@@ -206,10 +474,17 @@ async def main() -> int:
         on_dir.mkdir()
         off_dir.mkdir()
         standin = datasource if args.sqlite_standin else None
+        cfg_on = stage_config(project, on_dir, sql_read_only=True, standin=standin)
+        cfg_off = stage_config(project, off_dir, sql_read_only=False, standin=standin)
+
+        if args.live_writes:
+            dialect = datasources.get(datasource, {}).get("type", "")
+            return await run_live(cfg_on, cfg_off, datasource, dialect, args.dry_run)
+
         print("running matrix with sql_read_only: true  ...")
-        on = await run_matrix(stage_config(project, on_dir, sql_read_only=True, standin=standin), datasource)
+        on = await run_matrix(cfg_on, datasource)
         print("running matrix with sql_read_only: false ...\n")
-        off = await run_matrix(stage_config(project, off_dir, sql_read_only=False, standin=standin), datasource)
+        off = await run_matrix(cfg_off, datasource)
 
     hdr = f"{'statement':<22} {'flag off':<14} {'flag on':<14} verdict"
     print(hdr)
