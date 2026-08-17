@@ -48,8 +48,9 @@ requires. Nothing under `datus/` imports it.
 import argparse
 import asyncio
 import copy
+import csv
+import io
 import json
-import re
 import sqlite3
 import sys
 import tempfile
@@ -243,13 +244,50 @@ def live_cases(dml: str, drop_me: str, ctas: str) -> list[tuple[str, str, bool]]
     ]
 
 
+def scalar_from_result(result: object, column: str) -> int | None:
+    """The one integer cell from an `execute_sql` read payload, or None.
+
+    `execute_sql` hands back rows already compressed, so the value is not a
+    plain scalar anywhere in the structure -- it is a cell in a CSV string under
+    `compressed_data`, with an index column prepended, sitting next to metadata
+    keys:
+
+        {"original_rows": 1, "original_columns": ["n"],
+         "compressed_data": "index,n\\n0,300", ...}
+
+    Two tempting shortcuts are both wrong on that shape. A regex for the last
+    digit run over the serialized payload can pick up digits from a table name
+    (the scratch tables embed a hex run id) or from a metadata field if the key
+    order changes. Walking the structure for the first int returns
+    `original_rows` -- 1 -- and never sees 300 at all. So parse the named column
+    out of the CSV, and return None rather than a guess.
+    """
+    if not isinstance(result, dict):
+        return None
+    csv_text = result.get("compressed_data")
+    if not isinstance(csv_text, str) or not csv_text.strip():
+        return None
+    try:
+        rows = list(csv.DictReader(io.StringIO(csv_text)))
+    except csv.Error:
+        return None
+    if len(rows) != 1:
+        return None
+    value = (rows[0].get(column) or "").strip()
+    return int(value) if value.lstrip("-").isdigit() else None
+
+
 async def row_count(sess: McpSession, table: str) -> int | None:
+    """Rows in `table`, or None if the count could not be read.
+
+    A None must never be treated as "unchanged" -- see the step-5 checks in
+    `run_live`, where comparing two unknowns would report success on a
+    datasource that was actually mutated.
+    """
     ok, _, result = await sess.sql(f"SELECT COUNT(*) AS n FROM {table}")
     if not ok:
         return None
-    text = json.dumps(result, default=str)
-    nums = re.findall(r"\d+", text)
-    return int(nums[-1]) if nums else None
+    return scalar_from_result(result, "n")
 
 
 async def table_exists(sess: McpSession, table: str) -> bool:
@@ -282,8 +320,11 @@ async def run_endpoint(endpoint: str) -> int:
     statement was stopped: a refusal carrying the read-only message never
     reached the connector, while any other error means it did.
 
-    Every non-read probe targets a table that does not exist, so this is safe to
-    point at a server whose read-only posture you have not confirmed.
+    Safe to point at a server whose read-only posture you have not confirmed:
+    every table-scoped probe targets a table that does not exist, and the DDL
+    probe is CTAS from it. The two exceptions are `SET` and `USE`, which name no
+    table -- they can only change the server's own session context, which this
+    script does not depend on afterwards.
     """
     reads = [
         ("SELECT 1", "SELECT 1"),
@@ -347,6 +388,16 @@ async def run_endpoint(endpoint: str) -> int:
         return 1
     if read_blocked:
         print(f"FAIL - the gate wrongly blocked reads: {', '.join(read_blocked)}")
+        return 1
+    if gated_count == 0:
+        # Nothing leaked and no read was wrongly blocked, but no probe was
+        # stopped BY THE GATE either -- which is what an unreachable datasource
+        # looks like: every write fails downstream for its own reasons. Reporting
+        # PASS here would hand a CI job a zero exit status backed by no evidence
+        # that the gate is even on.
+        print("INCONCLUSIVE - no write probe was stopped by the read-only gate.")
+        print("               Either the flag is off on that server, or every probe")
+        print("               was refused earlier by other rules; see above.")
         return 1
     print(f"PASS - {gated_count}/{len(writes)} write probes stopped by the read-only gate")
     if gated_count < len(writes):
@@ -471,8 +522,17 @@ async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, d
             )
 
         print()
+        # An unreadable count is a failure, not a match: if both reads failed,
+        # `baseline == after` would compare None with None and report success on
+        # a datasource that may well have been mutated.
+        counted = baseline is not None and after is not None
+        count_text = (
+            f"{dml} row count unchanged ({baseline} -> {after})"
+            if counted
+            else f"{dml} row count could not be read ({baseline} -> {after})"
+        )
         checks = [
-            (f"{dml} row count unchanged ({baseline} -> {after})", baseline == after),
+            (count_text, counted and baseline == after),
             (f"{drop_me} survived the DROP probe", drop_survived),
             (f"{ctas} was never created", ctas_absent),
         ]
@@ -578,6 +638,12 @@ async def main() -> int:
     if args.live_writes and args.sqlite_standin:
         print("--live-writes and --sqlite-standin are mutually exclusive", file=sys.stderr)
         return 1
+    if args.dry_run and not args.live_writes:
+        # Only run_live consults dry_run. Accepting it on the matrix path would
+        # execute every probe while the operator believed nothing ran -- and the
+        # matrix probes are the ones aimed at a real datasource.
+        print("--dry-run only applies to --live-writes; the matrix path always executes", file=sys.stderr)
+        return 1
     if args.live_writes:
         print(f"MODE       : LIVE WRITES against the real datasource{' (dry run)' if args.dry_run else ''}\n")
     if args.sqlite_standin:
@@ -617,7 +683,7 @@ async def main() -> int:
     failures = []
     for label, _, is_read in CASES:
 
-        def where(entry):
+        def where(entry: tuple[bool, str]) -> str:
             ok, err = entry
             if ok:
                 return "executed"
