@@ -320,16 +320,17 @@ server account's password authentication:
 | `pg8000` (macOS default) | Linux and macOS | sha256, md5 |
 | `psycopg2` | Linux and macOS | md5 only; escape hatch |
 
-All drivers support `disable`, `allow`, `prefer` (default), `require`, `verify-ca`, and `verify-full`.
-For production, use `verify-ca` with `sslrootcert`: the connection is encrypted and the server certificate
-must chain to that CA. `verify-full` additionally verifies that the configured `host` matches the server
-certificate. `require` encrypts but does not authenticate the server; `prefer` permits an unencrypted
-fallback. If the server merely enables TLS, the client does not need a certificate. If it requires TLS,
-`prefer` normally negotiates TLS, but explicitly use `require` or either `verify-*` mode to prevent a
-plaintext fallback against a differently configured endpoint. Only `verify-ca` and `verify-full` need
-the server CA configured on the client. The `pg8000` path treats `allow` like `prefer` (TLS first), because
-its API cannot express libpq's plaintext-first retry order. The adapter currently supports one-way TLS,
-not mutual TLS (`sslcert`/`sslkey`).
+All drivers accept `disable`, `allow`, `prefer` (default), `require`, `verify-ca`, and `verify-full`, but
+their retry behavior is not identical. For production, use `verify-ca` with `sslrootcert` as the baseline:
+the connection is encrypted and the server certificate must chain to that CA. When the configured `host`
+is guaranteed to match the server certificate, use `verify-full` for stricter hostname validation;
+otherwise keep `verify-ca`. `require` encrypts but does not authenticate the server; `prefer` permits an
+unencrypted fallback. If the server merely enables TLS, the client does not need a certificate. If it
+requires TLS, `prefer` normally negotiates TLS, but explicitly use `require` or either `verify-*` mode to
+prevent a plaintext fallback against a differently configured endpoint. Only `verify-ca` and `verify-full`
+need the server CA configured on the client. The `pg8000` path treats `allow` like `prefer` (TLS first),
+because its API cannot express libpq's plaintext-first retry order. The adapter currently supports one-way
+TLS, not mutual TLS (`sslcert`/`sslkey`).
 
 Both centralized and distributed deployments are supported. The connector auto-detects the database's
 A (Oracle), B (MySQL), or PG compatibility mode so generated SQL follows the server semantics.
@@ -444,7 +445,7 @@ All adapters support:
 - PostgreSQL wire protocol (PostgreSQL-compatible SQL dialect)
 - sha256, md5, and sm3 authentication through the official `gaussdb` driver
 - Pure-Python `pg8000` path with sha256/md5 authentication on Linux and macOS
-- TLS modes through `verify-full`, with `verify-ca` recommended for production
+- TLS modes through `verify-full`; `verify-ca` is the production baseline, and `verify-full` adds hostname validation
 - A / B / PG compatibility-mode auto-detection, so SQL generation follows the server's semantics
 - Centralized and distributed deployments, with distribution-aware table DDL
 - Multi-schema datasource support

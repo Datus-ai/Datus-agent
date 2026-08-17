@@ -185,17 +185,18 @@ my_gaussdb:
   database: postgres
   schema: public
   # driver: pg8000              # Optional; omit to use the platform default
-  sslmode: verify-ca             # Recommended for production
+  sslmode: verify-ca             # Recommended production baseline
   sslrootcert: /etc/datus/certs/gaussdb-ca.pem
 ```
 
 Supported drivers are `gaussdb` (Linux; sha256/md5/sm3 authentication), `pg8000`
 (Linux/macOS; sha256/md5), and the md5-only `psycopg2` escape hatch. Supported TLS modes are
 `disable`, `allow`, `prefer` (default), `require`, `verify-ca`, and `verify-full`. Use
-`verify-ca` with the server CA in `sslrootcert` for production; use `verify-full` when the
-configured hostname also matches the certificate. The adapter supports one-way TLS, not client
-certificates for mutual TLS. See [Database Adapters](../adapters/db_adapters.md#gaussdb) for mode,
-platform, authentication, and A/B/PG compatibility details.
+`verify-ca` with the server CA in `sslrootcert` as the production baseline. When the configured
+hostname is guaranteed to match the certificate, use `verify-full` for stricter hostname
+validation; otherwise keep `verify-ca`. The adapter supports one-way TLS, not client certificates
+for mutual TLS. See [Database Adapters](../adapters/db_adapters.md#gaussdb) for mode, platform,
+authentication, and A/B/PG compatibility details.
 
 ### Path Pattern (Multiple Files)
 

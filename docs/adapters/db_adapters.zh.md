@@ -311,14 +311,15 @@ GaussDB 与 openGauss 使用 PostgreSQL wire 协议。驱动应按运行平台�
 | `pg8000`（macOS 默认） | Linux 和 macOS | sha256、md5 |
 | `psycopg2` | Linux 和 macOS | 仅 md5；作为兜底方案 |
 
-所有驱动都支持 `disable`、`allow`、`prefer`（默认）、`require`、`verify-ca` 和 `verify-full`。
-生产环境推荐同时配置 `verify-ca` 与 `sslrootcert`：连接会加密，并验证服务端证书是否由该 CA 签发。
-`verify-full` 还会验证配置的 `host` 是否与服务端证书匹配。`require` 只加密、不验证服务端身份；
-`prefer` 允许回退到非加密连接。服务端只是启用 TLS 时，客户端不需要自身证书；服务端强制 TLS 时，
-`prefer` 通常也会协商出 TLS，但应显式使用 `require` 或任一 `verify-*` 模式，避免客户端连接到配置不同的
-endpoint 时回退到明文。其中只有 `verify-ca` 和 `verify-full` 需要在客户端配置服务端 CA。`pg8000`
-会把 `allow` 按 `prefer` 处理（先尝试 TLS），因为其 API 无法表达 libpq 的明文优先重试顺序。当前适配器
-仅支持单向 TLS，不支持通过 `sslcert`/`sslkey` 配置双向 TLS。
+所有驱动都接受 `disable`、`allow`、`prefer`（默认）、`require`、`verify-ca` 和 `verify-full`，但重试行为
+并不完全相同。生产环境应以同时配置 `verify-ca` 与 `sslrootcert` 为基线：连接会加密，并验证服务端证书
+是否由该 CA 签发。当配置的 `host` 能保证与服务端证书匹配时，使用 `verify-full` 可进一步验证 hostname；
+否则继续使用 `verify-ca`。`require` 只加密、不验证服务端身份；`prefer` 允许回退到非加密连接。服务端
+只是启用 TLS 时，客户端不需要自身证书；服务端强制 TLS 时，`prefer` 通常也会协商出 TLS，但应显式使用
+`require` 或任一 `verify-*` 模式，避免客户端连接到配置不同的 endpoint 时回退到明文。其中只有
+`verify-ca` 和 `verify-full` 需要在客户端配置服务端 CA。`pg8000` 会把 `allow` 按 `prefer` 处理（先尝试
+TLS），因为其 API 无法表达 libpq 的明文优先重试顺序。当前适配器仅支持单向 TLS，不支持通过
+`sslcert`/`sslkey` 配置双向 TLS。
 
 集中式与分布式部署均受支持。连接器会自动探测数据库的 A（Oracle）、B（MySQL）或 PG 兼容模式，
 使生成的 SQL 遵循对应语义。
@@ -428,7 +429,7 @@ agent:
 - PostgreSQL wire 协议（PostgreSQL 兼容 SQL 方言）
 - 通过官方 `gaussdb` 驱动支持 sha256、md5 和 sm3 认证
 - 通过纯 Python `pg8000` 驱动在 Linux 和 macOS 支持 sha256/md5 认证
-- 支持到 `verify-full` 的 TLS 模式，生产环境推荐 `verify-ca`
+- 支持到 `verify-full` 的 TLS 模式；生产环境以 `verify-ca` 为基线，`verify-full` 可增加 hostname 验证
 - 自动探测 A / B / PG 兼容模式，使 SQL 生成遵循服务端语义
 - 同时支持集中式与分布式部署，并生成分布键感知的建表 DDL
 - 多 schema 数据源支持
