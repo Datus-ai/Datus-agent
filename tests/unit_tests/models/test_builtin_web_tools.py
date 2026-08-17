@@ -417,6 +417,64 @@ async def test_persist_failed_turn_preserves_completed_tool_rounds():
 
 
 @pytest.mark.asyncio
+async def test_persist_failed_turn_after_checkpoint_only_appends_seal():
+    """Completed tool rounds already checkpointed mid-run must not be inserted
+    again when a later model call fails; only the missing assistant seal is new."""
+    from unittest.mock import AsyncMock
+
+    user = _user_msg()
+    messages = [user, _tool_use_msg("t1"), _tool_result_msg("t1")]
+    session = AsyncMock()
+    frame_locals = {
+        "session": session,
+        "turn_persisted": False,
+        "user_turn_message": user,
+        "final_content": "",
+        "messages": messages,
+        "turn_start_index": 0,
+        "persisted_message_index": len(messages),
+    }
+    fake_self = Mock()
+    fake_self._replay_safe_turn_items = ClaudeModel._replay_safe_turn_items
+    await ClaudeModel._persist_failed_turn(fake_self, frame_locals, RuntimeError("boom"))
+
+    session.add_items.assert_awaited_once()
+    items = session.add_items.await_args.args[0]
+    assert len(items) == 1
+    assert items[0]["role"] == "assistant"
+    assert "RuntimeError" in items[0]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_persist_failed_turn_after_checkpoint_drops_dangling_tool_use():
+    """A model failure after emitting the next tool_use must not poison the DB
+    with a call that has no tool_result; persist only a replay-safe seal."""
+    from unittest.mock import AsyncMock
+
+    user = _user_msg()
+    completed = [user, _tool_use_msg("t1"), _tool_result_msg("t1")]
+    messages = [*completed, _tool_use_msg("t2")]
+    session = AsyncMock()
+    frame_locals = {
+        "session": session,
+        "turn_persisted": False,
+        "user_turn_message": user,
+        "final_content": "",
+        "messages": messages,
+        "turn_start_index": 0,
+        "persisted_message_index": len(completed),
+    }
+    fake_self = Mock()
+    fake_self._replay_safe_turn_items = ClaudeModel._replay_safe_turn_items
+    await ClaudeModel._persist_failed_turn(fake_self, frame_locals, RuntimeError("boom"))
+
+    items = session.add_items.await_args.args[0]
+    assert len(items) == 1
+    assert items[0]["role"] == "assistant"
+    assert all(block.get("type") != "tool_use" for block in items[0]["content"])
+
+
+@pytest.mark.asyncio
 async def test_persist_failed_turn_skips_when_already_persisted():
     """The success path already committed the turn; the failure path must not
     double-write."""
@@ -534,3 +592,63 @@ def test_replay_safe_turn_items_tolerates_non_list_assistant_content():
     final = {"role": "assistant", "content": "plain string reply"}
     items = ClaudeModel._replay_safe_turn_items([user, final], user, "fb")
     assert items == [user, final]
+
+
+@pytest.mark.asyncio
+async def test_persist_native_message_delta_advances_only_after_success():
+    """A failed checkpoint retains its boundary so the full missing suffix is
+    retried, while a successful retry advances to the end without duplicates."""
+    from unittest.mock import AsyncMock
+
+    messages = [_user_msg(), _tool_use_msg(), _tool_result_msg()]
+    session = AsyncMock()
+    session.add_items.side_effect = [RuntimeError("locked"), None]
+
+    boundary = await ClaudeModel._persist_native_message_delta(session, messages, 0)
+    assert boundary == 0
+    boundary = await ClaudeModel._persist_native_message_delta(session, messages, boundary)
+    assert boundary == len(messages)
+    assert session.add_items.await_args_list[0].args[0] == messages
+    assert session.add_items.await_args_list[1].args[0] == messages
+
+
+@pytest.mark.asyncio
+async def test_seal_interrupted_native_history_repairs_tool_result_tail():
+    """A hard-stop DB ending in tool_result receives one assistant marker before
+    a new user turn is appended, preserving Anthropic role alternation."""
+    from unittest.mock import AsyncMock
+
+    messages = [_user_msg(), _tool_use_msg(), _tool_result_msg()]
+    session = AsyncMock()
+    await ClaudeModel._seal_interrupted_native_history(session, messages)
+
+    session.add_items.assert_awaited_once()
+    marker = session.add_items.await_args.args[0][0]
+    assert marker["role"] == "assistant"
+    assert marker["content"][0]["text"].strip()
+    assert messages[-1] == marker
+
+
+@pytest.mark.asyncio
+async def test_native_checkpoint_and_recovery_seal_round_trip_real_sqlite(tmp_path):
+    """The checkpoint/recovery protocol must survive the real session schema,
+    not just the AsyncMock add_items contract used by the focused unit tests."""
+    from agents.extensions.memory import AdvancedSQLiteSession
+
+    session = AdvancedSQLiteSession(
+        session_id="chat_session_native_checkpoint",
+        db_path=str(tmp_path / "native_checkpoint.db"),
+        create_tables=True,
+    )
+    messages = [_user_msg(), _tool_use_msg("t1"), _tool_result_msg("t1")]
+
+    boundary = await ClaudeModel._persist_native_message_delta(session, messages, 0)
+    assert boundary == len(messages)
+    persisted = await session.get_items()
+    assert persisted == messages
+
+    await ClaudeModel._seal_interrupted_native_history(session, persisted)
+    recovered = await session.get_items()
+    assert recovered[:-1] == messages
+    assert recovered[-1]["role"] == "assistant"
+    assert recovered[-1]["content"][0]["text"].strip()

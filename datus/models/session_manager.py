@@ -1528,6 +1528,21 @@ class SessionManager:
                         if role == "assistant":
                             # Assistant message - aggregate consecutive ones
                             content_array = message_json.get("content", [])
+                            had_prior_assistant_text = any(
+                                action.role == ActionRole.ASSISTANT for action in current_actions
+                            )
+                            assistant_message_text = "\n".join(
+                                str(item.get("text", ""))
+                                for item in content_array
+                                if isinstance(item, dict)
+                                and item.get("type") in ("output_text", "text")
+                                and item.get("text")
+                                and not (
+                                    had_prior_assistant_text
+                                    and str(item.get("text", "")).startswith("[Agent stopped after reaching max_turns=")
+                                )
+                            )
+                            assistant_text_recorded = False
 
                             for item in content_array:
                                 if not isinstance(item, dict):
@@ -1556,8 +1571,17 @@ class SessionManager:
                                             "created_at": created_at_iso,
                                         }
 
+                                    # This is an internal replay-safety marker,
+                                    # not model output. If the exhausted final
+                                    # turn also emitted text before tool_use, do
+                                    # not let the marker become the last assistant
+                                    # action and overwrite that real text on resume.
+                                    if not assistant_message_text or assistant_text_recorded:
+                                        continue
+                                    assistant_text_recorded = True
+
                                     # Add to progress
-                                    assistant_progress.append(f"💭Thinking: {text}")
+                                    assistant_progress.append(f"💭Thinking: {assistant_message_text}")
 
                                     # Create ActionHistory for thinking (use response_id from provider)
                                     response_id = message_json.get("provider_data", {}).get(
@@ -1566,10 +1590,10 @@ class SessionManager:
                                     thinking_action = ActionHistory(
                                         action_id=response_id,
                                         role=ActionRole.ASSISTANT,
-                                        messages=text,
+                                        messages=assistant_message_text,
                                         action_type="thinking",
                                         input=None,
-                                        output={"raw_output": text},
+                                        output={"raw_output": assistant_message_text},
                                         status=ActionStatus.SUCCESS,
                                         start_time=(
                                             datetime.fromisoformat(created_at) if created_at else datetime.now()

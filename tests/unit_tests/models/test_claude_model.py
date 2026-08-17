@@ -1373,11 +1373,11 @@ class TestGenerateWithMcpStream:
         assert session.add_items.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_session_skip_persist_when_final_content_empty(self):
+    async def test_session_checkpoints_and_seals_when_final_content_empty(self):
         """When ``max_turns`` is exhausted while still tool-calling, ``final_content``
-        stays empty. Persisting an empty assistant text block would be rejected by
-        Anthropic on replay (``text content blocks must be non-empty``), so the
-        guard must skip ``add_items`` entirely.
+        stays empty. Every completed tool round must already be durable, and the
+        run must append a non-empty assistant seal so the next user turn replays
+        with valid role alternation.
         """
         from datus.schemas.action_history import ActionHistoryManager
 
@@ -1418,9 +1418,107 @@ class TestGenerateWithMcpStream:
 
         # final_response still yielded so the caller gets a response.
         final = next(a for a in actions if a.action_type == "final_response")
+        assert "max_turns=2" in final.output["raw_output"]
+        # Two complete tool rounds checkpointed, followed by one assistant seal.
+        assert session.add_items.await_count == 3
+        persisted = [item for call in session.add_items.await_args_list for item in call.args[0]]
+        assert persisted[0]["role"] == "user"
+        assert (
+            sum(
+                block.get("type") == "tool_use"
+                for item in persisted
+                for block in item.get("content", [])
+                if isinstance(block, dict)
+            )
+            == 2
+        )
+        assert (
+            sum(
+                block.get("type") == "tool_result"
+                for item in persisted
+                for block in item.get("content", [])
+                if isinstance(block, dict)
+            )
+            == 2
+        )
+        assert persisted[-1]["role"] == "assistant"
+        assert "max_turns=2" in persisted[-1]["content"][0]["text"]
+        assert all(
+            block.get("text", "x") != ""
+            for item in persisted
+            for block in item.get("content", [])
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+
+    @pytest.mark.asyncio
+    async def test_max_turns_keeps_delta_fragments_out_of_final_response(self):
+        """A final response containing text plus tool_use is incomplete as an
+        agent run. Its model-authored text is streamed and persisted, while the
+        incomplete final_response stays empty. Each delta is one fragment."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        text_start = MagicMock()
+        text_start.type = "text"
+        delta1 = MagicMock(type="text_delta", text="First fragment. ")
+        delta2 = MagicMock(type="text_delta", text="Second fragment.")
+        full_text = "First fragment. Second fragment."
+        final_msg = _make_response([_make_text_block(full_text), _make_tool_use_block()])
+        stream_manager = _FakeAsyncStreamManager(
+            [
+                _FakeStreamEvent("content_block_start", content_block=text_start),
+                _FakeStreamEvent("content_block_delta", delta=delta1),
+                _FakeStreamEvent("content_block_delta", delta=delta2),
+                _FakeStreamEvent("content_block_stop"),
+            ],
+            final_msg,
+        )
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        func_tool = MagicMock()
+        func_tool.name = "read_query"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="probe",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                max_turns=1,
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                session=session,
+            ):
+                actions.append(action)
+
+        deltas = [action for action in actions if action.action_type == "thinking_delta"]
+        assert [action.output["delta"] for action in deltas] == ["First fragment. ", "Second fragment."]
+        final = next(action for action in actions if action.action_type == "final_response")
         assert final.output["raw_output"] == ""
-        # Critically: we must NOT have persisted an empty assistant text block.
-        session.add_items.assert_not_awaited()
+
+        persisted = [item for call in session.add_items.await_args_list for item in call.args[0]]
+        text_blocks = [
+            block["text"]
+            for item in persisted
+            if item.get("role") == "assistant"
+            for block in item.get("content", [])
+            if block.get("type") == "text"
+        ]
+        assert full_text in text_blocks
+        assert any("max_turns=1" in text for text in text_blocks)
 
     @pytest.mark.asyncio
     async def test_prompt_list_variant_is_normalized_to_string(self):
@@ -1627,10 +1725,10 @@ class TestNativeTokenUsageStreaming:
         assert usage.input_tokens_details.cached_tokens == 200
 
     @pytest.mark.asyncio
-    async def test_native_loop_skips_durable_usage_when_no_final_text(self):
+    async def test_native_loop_persists_durable_usage_after_max_turn_seal(self):
         """When the loop exhausts max_turns mid-tool-call (no final text), the
-        session is not persisted — and neither should the usage row be, to
-        avoid a turn_usage row with no matching message."""
+        checkpointed messages are sealed into a valid turn, so cumulative usage
+        should be committed against that durable user turn."""
         from datus.schemas.action_history import ActionHistoryManager
 
         cfg = _make_model_config(use_native_api=True)
@@ -1673,8 +1771,8 @@ class TestNativeTokenUsageStreaming:
             ):
                 pass
 
-        assert stored == [], "no durable usage row when the turn produced no final text"
-        session.add_items.assert_not_awaited()
+        assert len(stored) == 1
+        assert session.add_items.await_count == 3
 
 
 def _make_recorder_hooks():
