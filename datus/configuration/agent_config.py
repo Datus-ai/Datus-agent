@@ -949,6 +949,25 @@ class AgentConfig:
         # are hidden/refused and the plugin prompt preamble stops naming the
         # config file.
         self._config_mutable = _coerce_bool(kwargs.get("config_mutable"), True)
+        # ``sql_read_only`` is the deployment-wide SQL posture. When ``True`` no
+        # entry point served by this config may run a non-read statement: both
+        # ``DBFuncTool.execute_sql`` (agent nodes plus the MCP server's
+        # ``create_dynamic``/``create_static`` instances) and the raw
+        # ``POST /sql/execute`` REST route consult it. Default ``False``
+        # preserves the CLI's write-capable behaviour.
+        #
+        # This is a hard switch, not a policy. Unlike ``agent.sql_policy`` — a
+        # pluggable rewrite/deny framework that needs a provider class — it
+        # requires no extension and cannot be satisfied by rewriting the
+        # statement. Intended for hosts that run third-party-authored agent
+        # content against platform-owned datasources.
+        #
+        # Deliberately write-once-true: the setter can only tighten. A
+        # per-request config clone may harden itself (as the chat API does with
+        # ``config_mutable``), but nothing downstream — a plugin, a tool
+        # transformer, third-party code sharing the process — can undo a
+        # yaml-level ``true``.
+        self._sql_read_only = _coerce_bool(kwargs.get("sql_read_only"), False)
         # ``bash.enabled`` toggles whether agentic nodes instantiate the
         # general-purpose ``BashTool``. Default ``True`` preserves the
         # current behaviour where every node exposes ``bash``
@@ -1268,6 +1287,25 @@ class AgentConfig:
     @config_mutable.setter
     def config_mutable(self, value: bool) -> None:
         self._config_mutable = bool(value)
+
+    @property
+    def sql_read_only(self) -> bool:
+        """Whether every SQL entry point served by this config is read-only.
+
+        ``False`` (default): unchanged behaviour — writes and DDL are gated by
+        the permission profile and per-tool ``read_only`` flags only.
+
+        ``True``: :meth:`DBFuncTool.execute_sql` hard-rejects every non-read
+        statement regardless of profile or hooks, and ``POST /sql/execute``
+        refuses anything that is not a single SELECT/SHOW/DESCRIBE/EXPLAIN.
+        """
+        return self._sql_read_only
+
+    @sql_read_only.setter
+    def sql_read_only(self, value: bool) -> None:
+        # Tighten-only. Assigning a falsy value to a config that is already
+        # read-only is a no-op, not a downgrade — see __init__ for why.
+        self._sql_read_only = self._sql_read_only or _coerce_bool(value, False)
 
     @property
     def bash_tool_enabled(self) -> bool:

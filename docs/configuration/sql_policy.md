@@ -77,3 +77,31 @@ For manual checks, pass the same object explicitly:
 datus sql-policy check --sql "SELECT * FROM orders" \
   --policy-context '{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'
 ```
+
+## Hard Read-Only Switch (`agent.sql_read_only`)
+
+`agent.sql_read_only` is a separate, simpler mechanism. Do not confuse it with the policy plugins above.
+
+```yaml
+agent:
+  sql_read_only: true   # default: false
+```
+
+When `true`, no SQL entry point served by this configuration may run a non-read statement:
+
+- `DBFuncTool.execute_sql` — the tool exposed to agentic nodes and to the MCP server — hard-rejects anything that is not SELECT / SHOW / DESCRIBE / EXPLAIN. This holds regardless of the permission profile, and applies even where `PermissionHooks` are bypassed entirely (LLM validators run with `hooks=None`, and the MCP server's tool instances never see hooks at all).
+- `POST /sql/execute` refuses anything that is not a *single* read statement. Multi-statement input (`SELECT 1; DROP TABLE t`), writable `PRAGMA`s, `USE` / `SET`, and statements the parser cannot classify are all rejected — the check is fail-closed. Use the request's `database_name` field instead of `USE` to target a database.
+
+How it differs from the policy plugins:
+
+| | `agent.sql_read_only` | policy plugins |
+|---|---|---|
+| Needs a plugin | No | Yes |
+| Needs request context | No | Yes — `policy_context` per request |
+| What it does | Refuses the statement outright | Rewrites or denies per request context |
+| Granularity | All-or-nothing, deployment-wide | Row / table / column, per caller |
+| Covers `POST /sql/execute` | Yes | No (read tools only) |
+
+The switch can only tighten. A per-request configuration clone may harden itself, but nothing downstream can turn a `true` back off — and it never relaxes a component that already runs read-only (Explore, `ask_report`, the LLM validators).
+
+Use it when the process runs third-party-authored agent content — skills, subagents, reference templates — against datasources it owns. The two mechanisms compose: `sql_read_only` bounds what kind of statement may run at all; a policy plugin bounds what a given caller may read.

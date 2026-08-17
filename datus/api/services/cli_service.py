@@ -143,6 +143,33 @@ class CLIService:
                     errorMessage="No database connection available",
                 )
 
+            # Deployment-wide read-only posture. This route reaches the connector
+            # directly (see ``.execute`` below) and never touches DBFuncTool, so
+            # the ``execute_sql`` tool gate does not cover it — without this check
+            # a hardened deployment would still expose arbitrary SQL here. The
+            # rules come from the same helper the tool path uses so the two
+            # entry points cannot disagree.
+            #
+            # Read per request rather than snapshotted: CLIService is built from
+            # the shared service-level config, so a host hardening it at runtime
+            # takes effect without rebuilding the service. Placed before
+            # ``switch_context`` so a request about to be refused does not mutate
+            # connector state.
+            if getattr(self.agent_config, "sql_read_only", False):
+                from datus.utils.sql_utils import classify_read_only_violation
+
+                reason, _ = classify_read_only_violation(
+                    request.sql_query,
+                    getattr(self.current_db_connector, "dialect", "") or "",
+                )
+                if reason:
+                    logger.warning(f"Read-only deployment refused SQL: {reason}")
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_READ_ONLY,
+                        errorMessage=(f"This deployment is read-only (agent.sql_read_only). {reason}"),
+                    )
+
             # Switch to the requested database/catalog context before executing.
             if request.database_name:
                 catalog = getattr(self.current_db_connector, "catalog_name", "") or ""

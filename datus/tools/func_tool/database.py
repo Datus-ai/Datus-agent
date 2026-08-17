@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Unio
 from agents import Tool
 from datus_db_core import BaseSqlConnector
 
-from datus.configuration.agent_config import AgentConfig
+from datus.configuration.agent_config import AgentConfig, _coerce_bool
 from datus.schemas.agent_models import SubAgentConfig
 from datus.schemas.node_models import ExecuteSQLResult
 from datus.storage.kb_retrieval import metadata_fts_enabled
@@ -202,6 +202,31 @@ class DBFuncTool:
         """Request-scoped policy inputs, read fresh from the config."""
         policy_context = getattr(self.agent_config, "policy_context", None)
         return dict(policy_context) if isinstance(policy_context, dict) else {}
+
+    @property
+    def effective_read_only(self) -> bool:
+        """Read-only posture for ``execute_sql``, resolved on every access.
+
+        ORs the per-instance ``read_only`` — set by read-only agents (Explore,
+        ask_report/dashboard) and by the validator's shallow copy in
+        ``datus.validation.llm_runner`` — with the deployment-wide
+        ``AgentConfig.sql_read_only``. Tighten-only in both directions: neither
+        source can relax the other.
+
+        Resolved per access rather than snapshotted in ``__init__`` for the same
+        reason as ``principal`` above: the API hands nodes a per-request config
+        clone, and a tool built before that clone was hardened must still honour
+        it. Reading through ``agent_config`` is also what covers the MCP server,
+        whose ``create_dynamic``/``create_static`` factories pass a config but no
+        ``read_only`` flag.
+
+        ``_coerce_bool`` rather than ``bool``: the ``getattr`` guard exists for
+        duck-typed / host-supplied config objects, which are exactly the ones
+        likely to carry a raw YAML value — and ``bool("false")`` is ``True``.
+        """
+        if self.read_only:
+            return True
+        return _coerce_bool(getattr(self.agent_config, "sql_read_only", False), False)
 
     def _has_schema_storage(self) -> bool:
         if not self.schema_rag:
@@ -1487,10 +1512,12 @@ class DBFuncTool:
 
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
                 return self.read_query(sql, datasource=datasource, database=database)
-            if self.read_only:
-                # Defense-in-depth for read-only agents: reject any non-read
-                # statement at the tool layer, independent of PermissionHooks
-                # (which may be bypassed, e.g. validators run with hooks=None).
+            if self.effective_read_only:
+                # Defense-in-depth for read-only agents and read-only
+                # deployments: reject any non-read statement at the tool layer,
+                # independent of PermissionHooks (which may be bypassed, e.g.
+                # validators run with hooks=None, and the MCP server's tool
+                # instances never see them at all).
                 return FuncToolResult(
                     success=0,
                     error=(
