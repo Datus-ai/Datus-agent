@@ -4470,7 +4470,7 @@
 <h2 id="qa">QA 环境准备<a class="headerlink" href="#qa" title="Permanent link">&para;</a></h2>
 <h3 id="_3">必要配置<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
 <p>确认 <code>conf/agent.yml</code> 中有可用的 StarRocks datasource，并且 <code>gen_metrics</code> 使用 <code>deepseek</code>：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>rg<span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;gen_metrics|model: deepseek|starrocks&quot;</span><span class="w"> </span>conf/agent.yml<span class="w"> </span>conf/providers.yml
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>rg<span class="w"> </span>-n<span class="w"> </span><span class="s2">"gen_metrics|model: deepseek|starrocks"</span><span class="w"> </span>conf/agent.yml<span class="w"> </span>conf/providers.yml
 </span></code></pre></div>
 <p>确认 StarRocks 中测试库和测试表已准备好。本地验证使用：</p>
 <ul>
@@ -4502,7 +4502,7 @@
 </span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>-y
 </span></code></pre></div>
 <p>预期结果：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Final Result: {&#39;status&#39;: &#39;success&#39;, &#39;message&#39;: &#39;metrics bootstrap completed, metrics_count=12&#39;, &#39;error&#39;: &#39;&#39;}
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Final Result: {'status': 'success', 'message': 'metrics bootstrap completed, metrics_count=12', 'error': ''}
 </span></code></pre></div>
 <p>预期日志特征：</p>
 <ul>
@@ -4516,25 +4516,25 @@
 </ul>
 <h3 id="2-yaml">测试 2：最终 YAML 内容<a class="headerlink" href="#2-yaml" title="Permanent link">&para;</a></h3>
 <p>执行：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;'PY'</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="s">import glob, yaml</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="s">total = 0</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="s">for path in sorted(glob.glob(&quot;subject/semantic_models/starrocks/**/*.yml&quot;, recursive=True)):</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="s">for path in sorted(glob.glob("subject/semantic_models/starrocks/**/*.yml", recursive=True)):</span>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="s">    docs = list(yaml.safe_load_all(open(path)))</span>
 </span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="s">    metrics = []</span>
 </span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="s">    measures = []</span>
 </span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="s">    for doc in docs:</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="s">        if isinstance(doc, dict) and isinstance(doc.get(&quot;metric&quot;), dict):</span>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="s">            metrics.append(doc[&quot;metric&quot;].get(&quot;name&quot;))</span>
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="s">        if isinstance(doc, dict) and isinstance(doc.get(&quot;data_source&quot;), dict):</span>
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="s">            measures.extend([m.get(&quot;name&quot;) for m in doc[&quot;data_source&quot;].get(&quot;measures&quot;) or []])</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="s">        if isinstance(doc, dict) and isinstance(doc.get("metric"), dict):</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="s">            metrics.append(doc["metric"].get("name"))</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="s">        if isinstance(doc, dict) and isinstance(doc.get("data_source"), dict):</span>
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="s">            measures.extend([m.get("name") for m in doc["data_source"].get("measures") or []])</span>
 </span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="s">    if metrics or measures:</span>
 </span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="s">        print(path)</span>
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="s">        print(&quot;metrics_count:&quot;, len(metrics), metrics)</span>
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="s">        print(&quot;measures_count:&quot;, len(measures), measures)</span>
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="s">        print("metrics_count:", len(metrics), metrics)</span>
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="s">        print("measures_count:", len(measures), measures)</span>
 </span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="s">        total += len(metrics)</span>
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="s">print(&quot;TOTAL_METRICS&quot;, total)</span>
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="s">print("TOTAL_METRICS", total)</span>
 </span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="s">PY</span>
 </span></code></pre></div>
 <p>预期最终 metric 共 12 个：</p>
@@ -4575,7 +4575,7 @@
 <li>批次 6 不应因为 glob 为空或重新 <code>write_file</code> 覆盖 <code>v_udata_ac_info.yml</code> / <code>v_udata_ac_info_metrics.yml</code>。</li>
 </ul>
 <p>可用命令：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>rg<span class="w"> </span>-n<span class="w"> </span><span class="s2">&quot;Metric file merged successfully|Semantic model merged successfully|File written successfully&quot;</span><span class="w"> </span>~/.datus/logs/agent.<span class="k">$(</span>date<span class="w"> </span>+%F<span class="k">)</span>.log
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>rg<span class="w"> </span>-n<span class="w"> </span><span class="s2">"Metric file merged successfully|Semantic model merged successfully|File written successfully"</span><span class="w"> </span>~/.datus/logs/agent.<span class="k">$(</span>date<span class="w"> </span>+%F<span class="k">)</span>.log
 </span></code></pre></div>
 <p>预期：</p>
 <ul>
@@ -4615,7 +4615,7 @@
 <li>模型可能尝试用 MetricFlow <code>derived</code> + <code>offset_window</code> 表达。</li>
 <li>在 StarRocks 下，MetricFlow 生成的 offset SQL 可能出现重复列别名或无法解析别名，例如：</li>
 </ul>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Column &#39;activity_count&#39; is ambiguous
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Column 'activity_count' is ambiguous
 </span></code></pre></div>
 <p>验收标准：</p>
 <ul>

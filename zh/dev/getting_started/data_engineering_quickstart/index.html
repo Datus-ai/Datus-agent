@@ -4462,13 +4462,13 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>unzip<span class="w"> </span>-o<span class="w"> </span>datus-de-lever-quickstart-v1.zip
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>unzip<span class="w"> </span>-o<span class="w"> </span>datus-data-engineering-quickstart-stack-v1.zip
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DACOMP_HOME</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/datus-de-lever-quickstart&quot;</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_QUICKSTART_STACK</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/datus-data-engineering-quickstart-stack&quot;</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>cp<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DACOMP_HOME</span><span class="s2">/lever_start.duckdb&quot;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DACOMP_HOME</span><span class="s2">/lever_workbench.duckdb&quot;</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DACOMP_HOME</span><span class="s2">&quot;</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DACOMP_HOME</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/datus-de-lever-quickstart"</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_QUICKSTART_STACK</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/datus-data-engineering-quickstart-stack"</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>cp<span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">/lever_start.duckdb"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">/lever_workbench.duckdb"</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">"</span>
 </span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;export DACOMP_HOME=</span><span class="nv">$DACOMP_HOME</span><span class="s2">&quot;</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;export DATUS_QUICKSTART_STACK=</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">&quot;</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">"export DACOMP_HOME=</span><span class="nv">$DACOMP_HOME</span><span class="s2">"</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">"export DATUS_QUICKSTART_STACK=</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">"</span>
 </span></code></pre></div>
 <p>后续步骤默认这个目录下至少有这些文件：</p>
 <ul>
@@ -4514,11 +4514,11 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 <h2 id="2-quickstart">步骤 2：启动本地 quickstart 环境<a class="headerlink" href="#2-quickstart" title="Permanent link">&para;</a></h2>
 <p>下载的 stack 中已经包含本文会用到的本地 demo 服务。</p>
 <p>启动 Superset：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/superset&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/superset"</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
 </span></code></pre></div>
 <p>启动 Airflow：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/airflow&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/airflow"</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
 </span></code></pre></div>
 <p>本地默认访问方式：</p>
@@ -4539,7 +4539,7 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">lever_duckdb</span><span class="p">:</span>
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;duckdb:///${DACOMP_HOME}/lever_workbench.duckdb&quot;</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="s">"duckdb:///${DACOMP_HOME}/lever_workbench.duckdb"</span>
 </span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">superset_serving</span><span class="p">:</span>
 </span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
@@ -4566,7 +4566,7 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 </span><span id="__span-4-30"><a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8080/api/v1</span>
 </span><span id="__span-4-31"><a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
 </span><span id="__span-4-32"><a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
-</span><span id="__span-4-33"><a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">        </span><span class="nt">dags_folder</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${DATUS_QUICKSTART_STACK}/airflow/dags&quot;</span>
+</span><span id="__span-4-33"><a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">        </span><span class="nt">dags_folder</span><span class="p">:</span><span class="w"> </span><span class="s">"${DATUS_QUICKSTART_STACK}/airflow/dags"</span>
 </span><span id="__span-4-34"><a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">        </span><span class="nt">connections</span><span class="p">:</span>
 </span><span id="__span-4-35"><a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="w">          </span><span class="nt">duckdb_dacomp_lever</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DAComp Lever DuckDB</span>
 </span><span id="__span-4-36"><a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>
@@ -4582,7 +4582,7 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 </span></code></pre></div>
 <p>然后使用 <code>lever_duckdb</code> datasource 启动 Datus。这个 datasource 指向可写的
 workbench 文件：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$DACOMP_HOME</span><span class="s2">&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">"</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>lever_duckdb
 </span></code></pre></div>
 <p>如果 CLI 提示还没有配置模型，继续之前先在 CLI 内运行：</p>
@@ -4612,7 +4612,7 @@ staging 表。agent 会把任务分发到建表流程：</p>
 <p>先生成 intermediate 表。它应该按照 <code>docs/data_contract.yaml</code> 中
 <code>int_lever__requisition_users</code> 的定义，把 requisition 字段和 user 字段关联起来。</p>
 <p>创建 intermediate 表：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract&#39;s field design, joins, and source-to-target mapping.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
 </span></code></pre></div>
 <p>再生成面向分析的 marts 表。契约中定义 <code>marts.lever__requisition_enhanced</code>
 是一张按 <code>requisition_id</code> 一行的表，依赖：</p>
@@ -4622,7 +4622,7 @@ staging 表。agent 会把任务分发到建表流程：</p>
 <li><code>staging.stg_lever__requisition_offer</code></li>
 </ul>
 <p>创建 marts 表：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract&#39;s business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
 </span></code></pre></div>
 <p>这条链路的基本顺序始终是：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>staging -&gt; intermediate -&gt; marts

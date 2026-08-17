@@ -5308,7 +5308,7 @@
 <td>GaussDB / openGauss</td>
 <td>datus-gaussdb</td>
 <td><code>pip install datus-gaussdb</code></td>
-<td>可用（仅 Linux）</td>
+<td>可用（Linux 和 macOS）</td>
 </tr>
 </tbody>
 </table>
@@ -5350,7 +5350,7 @@
 </span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="c1"># Oracle</span>
 </span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-oracle
 </span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="c1"># GaussDB / openGauss（仅 Linux）</span>
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="c1"># GaussDB / openGauss</span>
 </span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-gaussdb
 </span></code></pre></div>
 <p>安装后，Datus Agent 会自动检测并加载适配器。</p>
@@ -5486,7 +5486,7 @@ catalog（例如 Hive Metastore catalog）可通过同一个 <code>catalog</code
 <h3 id="hologres">Hologres<a class="headerlink" href="#hologres" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">hologres_data</span><span class="p">:</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hologres</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-instance-cn-hangzhou.hologres.aliyuncs.com</span><span class="w">  </span><span class="c1"># 控制台 endpoint，可内嵌 &quot;:80&quot;</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-instance-cn-hangzhou.hologres.aliyuncs.com</span><span class="w">  </span><span class="c1"># 控制台 endpoint，可内嵌 ":80"</span>
 </span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
 </span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_ID}</span>
 </span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_SECRET}</span>
@@ -5518,11 +5518,48 @@ endpoint；显式配置的 <code>port</code> 必须与 endpoint 中内嵌的端�
 </span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_PASSWORD}</span>
 </span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres</span>
 </span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span><span class="w">   </span><span class="c1"># 可选，默认为 public</span>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">  </span><span class="nt">driver</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gaussdb</span><span class="w">  </span><span class="c1"># 可选，默认为 gaussdb；可设为 psycopg2 作为兜底方案</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">  </span><span class="c1"># driver: pg8000  # 可选；省略时 Linux 默认 gaussdb，macOS 默认 pg8000</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-ca</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="w">  </span><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/datus/certs/gaussdb-ca.pem</span>
 </span></code></pre></div>
-<p>GaussDB 与 openGauss 使用 PostgreSQL wire 协议。默认的 <code>gaussdb</code> 驱动为官方客户端，支持 sha256、md5
-和 sm3 认证；<code>psycopg2</code> 兜底方案仅适用于服务端配置为 md5 认证的场景。集中式与分布式部署均受支持，
-连接器会自动探测数据库的 A / B / PG 兼容模式，使生成的 SQL 遵循对应语义。</p>
+<p>GaussDB 与 openGauss 使用 PostgreSQL wire 协议。驱动应按运行平台和服务端账号的密码认证方式选择：</p>
+<table>
+<thead>
+<tr>
+<th>驱动</th>
+<th>平台</th>
+<th>认证方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gaussdb</code>（Linux 默认）</td>
+<td>Linux</td>
+<td>sha256、md5、sm3</td>
+</tr>
+<tr>
+<td><code>pg8000</code>（macOS 默认）</td>
+<td>Linux 和 macOS</td>
+<td>sha256、md5</td>
+</tr>
+<tr>
+<td><code>psycopg2</code></td>
+<td>Linux 和 macOS</td>
+<td>仅 md5；作为兜底方案</td>
+</tr>
+</tbody>
+</table>
+<p>所有驱动都接受 <code>disable</code>、<code>allow</code>、<code>prefer</code>（默认）、<code>require</code>、<code>verify-ca</code> 和 <code>verify-full</code>，但重试行为
+并不完全相同。生产环境应以同时配置 <code>verify-ca</code> 与 <code>sslrootcert</code> 为基线：连接会加密，并验证服务端证书
+是否由该 CA 签发。当配置的 <code>host</code> 能保证与服务端证书匹配时，使用 <code>verify-full</code> 可进一步验证 hostname；
+否则继续使用 <code>verify-ca</code>。<code>require</code> 只加密、不验证服务端身份；<code>prefer</code> 允许回退到非加密连接。服务端
+只是启用 TLS 时，客户端不需要自身证书；服务端强制 TLS 时，<code>prefer</code> 通常也会协商出 TLS，但应显式使用
+<code>require</code> 或任一 <code>verify-*</code> 模式，避免客户端连接到配置不同的 endpoint 时回退到明文。其中只有
+<code>verify-ca</code> 和 <code>verify-full</code> 需要在客户端配置服务端 CA。<code>pg8000</code> 会把 <code>allow</code> 按 <code>prefer</code> 处理（先尝试
+TLS），因为其 API 无法表达 libpq 的明文优先重试顺序。当前适配器仅支持单向 TLS，不支持通过
+<code>sslcert</code>/<code>sslkey</code> 配置双向 TLS。</p>
+<p>集中式与分布式部署均受支持。连接器会自动探测数据库的 A（Oracle）、B（MySQL）或 PG 兼容模式，
+使生成的 SQL 遵循对应语义。</p>
 <h2 id="_8">多数据库连接<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <p>可以在 <code>agent.services.datasources</code> 下配置多个独立数据源连接：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">agent</span><span class="p">:</span>
@@ -5632,6 +5669,8 @@ endpoint；显式配置的 <code>port</code> 必须与 endpoint 中内嵌的端�
 <ul>
 <li>PostgreSQL wire 协议（PostgreSQL 兼容 SQL 方言）</li>
 <li>通过官方 <code>gaussdb</code> 驱动支持 sha256、md5 和 sm3 认证</li>
+<li>通过纯 Python <code>pg8000</code> 驱动在 Linux 和 macOS 支持 sha256/md5 认证</li>
+<li>支持到 <code>verify-full</code> 的 TLS 模式；生产环境以 <code>verify-ca</code> 为基线，<code>verify-full</code> 可增加 hostname 验证</li>
 <li>自动探测 A / B / PG 兼容模式，使 SQL 生成遵循服务端语义</li>
 <li>同时支持集中式与分布式部署，并生成分布键感知的建表 DDL</li>
 <li>多 schema 数据源支持</li>
@@ -5661,8 +5700,8 @@ endpoint；显式配置的 <code>port</code> 必须与 endpoint 中内嵌的端�
 <li><strong>Apache Doris</strong>：需要 <code>datus-mysql</code> 和 <code>pymysql</code>（自动安装）</li>
 <li><strong>Hologres</strong>：需要 <code>datus-postgresql</code> 和 <code>psycopg2-binary</code>（自动安装）</li>
 <li><strong>Oracle</strong>：需要 <code>oracledb</code>（自动安装；Thin 模式不需要 Oracle Client）</li>
-<li><strong>GaussDB</strong>：需要 <code>datus-postgresql</code> 和官方 <code>gaussdb</code> 驱动（自动安装）。该驱动依赖 GaussDB 系的
-  libpq，发布 wheel 中已内置 Linux 版本；官方未提供 macOS 版本，因此请在 Linux 环境中运行该适配器</li>
+<li><strong>GaussDB</strong>：需要 <code>datus-postgresql</code>，相关依赖会自动安装。Linux 默认使用官方 <code>gaussdb</code> 驱动，
+  发布 wheel 已内置其 GaussDB 系 libpq；macOS 没有兼容的原生 libpq，因此默认使用纯 Python <code>pg8000</code> 驱动。</li>
 </ul>
 <h2 id="_16">架构<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>datus-agent (核心)

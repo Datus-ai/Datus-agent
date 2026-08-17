@@ -4472,8 +4472,8 @@
 </ul>
 <h2 id="_7">实现自定义适配器<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>可以通过继承 <code>BaseSemanticAdapter</code> 并注册 entry point 来实现自定义语义层适配器：</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[project.entry-points.</span><span class="s2">&quot;datus.semantic_adapters&quot;</span><span class="k">]</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">myservice</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datus_semantic_myservice:register&quot;</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[project.entry-points.</span><span class="s2">"datus.semantic_adapters"</span><span class="k">]</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">myservice</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"datus_semantic_myservice:register"</span>
 </span></code></pre></div>
 <p>必须实现的方法：</p>
 <table>
