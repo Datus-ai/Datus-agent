@@ -85,7 +85,7 @@ Metric documents and summaries carrying no subject tag are packaged anyway, with
 <project_name>.zip
 ├── README.md                    # generated: quickstart + required env vars
 ├── requirements.txt             # generated: pinned datus packages
-├── package_manifest.json        # generated: format, selections, per-file sha256
+├── package_manifest.json        # generated: format, selections, env vars + where used, per-file sha256
 ├── conf/
 │   ├── agent.yml                # generated: home: ., ${VAR} placeholders
 │   └── .mcp.json                # generated (only when MCP servers are configured)
@@ -105,6 +105,20 @@ Metric documents and summaries carrying no subject tag are packaged anyway, with
 ```
 
 `package_manifest.json` records the package format version, the exact selections, the required environment variables, and a `sha256` plus a `generated` / `project` provenance flag for every file.
+
+`env_vars` (format version 2) carries one entry per variable rather than a bare list of names, so a receiver can see what each placeholder feeds:
+
+```json
+"env_vars": [
+  {
+    "var": "OPENAI_API_KEY",
+    "config_paths": ["models.gpt4.api_key", "providers.openai.api_key"],
+    "preexisting": false
+  }
+]
+```
+
+`config_paths` lists every field in `conf/agent.yml` (or `conf/.mcp.json`) that references the variable. `preexisting` is `true` when the source configuration already used a `${VAR}` at every one of those sites, and `false` when at least one of them held a literal value the packer replaced — that is, the variable stands in for something that used to be a plaintext credential.
 
 ### Never packaged
 

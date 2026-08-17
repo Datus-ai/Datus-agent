@@ -897,6 +897,108 @@ class TestEndToEnd:
         agent = yaml.safe_load((extract / "conf" / "agent.yml").read_text(encoding="utf-8"))["agent"]
         assert agent["home"] == "." and agent["project_name"] == "fixture_proj"
 
+    def test_manifest_env_vars_carry_config_paths(self, project):
+        """Each ``${VAR}`` the receiver must export names the config fields that
+        reference it — without them they can only guess what a variable is for.
+        """
+        manifest = json.loads(_member(_build(project), "package_manifest.json"))
+
+        assert manifest["format_version"] == 2
+        records = manifest["env_vars"]
+        assert records, "fixture project has credential-bearing config"
+        assert all(set(r) == {"var", "config_paths", "preexisting"} for r in records)
+        # Deterministic ordering, outer and inner.
+        assert [r["var"] for r in records] == sorted(r["var"] for r in records)
+        assert all(r["config_paths"] == sorted(set(r["config_paths"])) for r in records)
+
+        by_var = {r["var"]: r for r in records}
+        assert "providers.openai.api_key" in by_var["OPENAI_API_KEY"]["config_paths"]
+        # ANTHROPIC_API_KEY was already a ${VAR} in the source config; OPENAI's
+        # was a literal the packer rewrote.
+        assert by_var["ANTHROPIC_API_KEY"]["preexisting"] is True
+        assert by_var["OPENAI_API_KEY"]["preexisting"] is False
+
+    def test_manifest_env_vars_match_result_bindings(self, project):
+        """The manifest view and the in-process view cannot drift apart."""
+        result = _build(project)
+        manifest = json.loads(_member(result, "package_manifest.json"))
+
+        assert {r["var"] for r in manifest["env_vars"]} == {b.var for b in result.env_vars}
+
+    def test_manifest_config_paths_match_readme_table(self, project):
+        """README table and manifest are generated from the same helper."""
+        result = _build(project)
+        manifest = json.loads(_member(result, "package_manifest.json"))
+        readme = _member(result, "README.md").decode("utf-8")
+
+        for record in manifest["env_vars"]:
+            for config_path in record["config_paths"]:
+                assert config_path in readme
+
+    def test_manifest_carries_no_secret_material(self, project):
+        """The manifest is appended AFTER scan_for_secrets runs, so it never goes
+        through the scanner — assert directly that config paths, not values,
+        are what ships.
+        """
+        raw = _member(_build(project), "package_manifest.json").decode("utf-8")
+
+        for secret in (_PLAINTEXT_KEY, "hunter2", "p4ss", "t0k", "tvly-plain", "abc123token"):
+            assert secret not in raw
+
+
+class TestGroupEnvVars:
+    """``group_env_vars`` — the shared README/manifest view of the bindings."""
+
+    def test_preexisting_uses_all_not_any(self):
+        """A var counts as preexisting only if EVERY site already held a ${VAR}.
+        Using ``any`` would let one harmless harvested occurrence hide the fact
+        that a real credential was stripped somewhere else.
+        """
+        records = pb.group_env_vars(
+            [
+                pb.EnvVarBinding(var="V", config_path="a.key", preexisting=True),
+                pb.EnvVarBinding(var="V", config_path="b.key", preexisting=False),
+            ]
+        )
+
+        assert len(records) == 1
+        assert records[0]["preexisting"] is False
+        assert records[0]["config_paths"] == ["a.key", "b.key"]
+
+    def test_all_preexisting_stays_true(self):
+        records = pb.group_env_vars(
+            [
+                pb.EnvVarBinding(var="V", config_path="a.key", preexisting=True),
+                pb.EnvVarBinding(var="V", config_path="b.key", preexisting=True),
+            ]
+        )
+
+        assert records[0]["preexisting"] is True
+
+    def test_dedupes_and_sorts_config_paths(self):
+        records = pb.group_env_vars(
+            [
+                pb.EnvVarBinding(var="V", config_path="z.key", preexisting=False),
+                pb.EnvVarBinding(var="V", config_path="a.key", preexisting=False),
+                pb.EnvVarBinding(var="V", config_path="z.key", preexisting=False),
+            ]
+        )
+
+        assert records[0]["config_paths"] == ["a.key", "z.key"]
+
+    def test_sorts_vars(self):
+        records = pb.group_env_vars(
+            [
+                pb.EnvVarBinding(var="Z_VAR", config_path="a.key", preexisting=False),
+                pb.EnvVarBinding(var="A_VAR", config_path="b.key", preexisting=False),
+            ]
+        )
+
+        assert [r["var"] for r in records] == ["A_VAR", "Z_VAR"]
+
+    def test_empty_input(self):
+        assert pb.group_env_vars([]) == []
+
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])
