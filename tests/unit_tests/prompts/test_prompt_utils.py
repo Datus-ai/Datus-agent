@@ -286,12 +286,13 @@ class TestGenMetricsV12Template:
 
     def test_v12_template_renders_without_error(self):
         """v1.2 template renders with minimal context and produces non-empty output."""
-        from datus.prompts.prompt_manager import PromptManager
-
-        pm = PromptManager()
-        # Use only the default_templates_dir (no user templates needed)
         from jinja2 import FileSystemLoader
         from jinja2.sandbox import SandboxedEnvironment
+
+        from datus.prompts.prompt_manager import PromptManager
+
+        # Use only the default_templates_dir (no user templates needed)
+        pm = PromptManager()
 
         # Mirrors PromptManager._get_env: production renders these templates in a
         # sandbox, so a bare Environment here would stop being representative.
@@ -361,11 +362,12 @@ class TestGenMetricsV12Template:
 
     def test_v12_template_mentions_skill(self):
         """v1.2 template should reference skills and gen-metrics."""
+        from jinja2 import FileSystemLoader
+        from jinja2.sandbox import SandboxedEnvironment
+
         from datus.prompts.prompt_manager import PromptManager
 
         pm = PromptManager()
-        from jinja2 import FileSystemLoader
-        from jinja2.sandbox import SandboxedEnvironment
 
         # Mirrors PromptManager._get_env: production renders these templates in a
         # sandbox, so a bare Environment here would stop being representative.
