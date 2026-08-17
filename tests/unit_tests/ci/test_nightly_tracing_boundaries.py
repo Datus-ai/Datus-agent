@@ -16,6 +16,24 @@ def _nightly_script_text() -> str:
     return NIGHTLY_SCRIPT.read_text(encoding="utf-8")
 
 
+def _nightly_shell_commands() -> list[str]:
+    commands: list[str] = []
+    fragments: list[str] = []
+
+    for raw_line in _nightly_script_text().splitlines():
+        line = raw_line.strip()
+        continued = line.endswith("\\")
+        fragments.append(line[:-1].rstrip() if continued else line)
+        if continued:
+            continue
+
+        commands.append(" ".join(fragment for fragment in fragments if fragment))
+        fragments = []
+
+    assert not fragments
+    return commands
+
+
 def _pytest_script_line_containing(label: str) -> str:
     matches = [line for line in _nightly_script_text().splitlines() if label in line and " uv run pytest " in line]
     assert len(matches) == 1
@@ -38,17 +56,19 @@ def test_nightly_broad_suites_do_not_collect_unit_tests():
 
 
 def test_nightly_pytest_commands_set_explicit_test_layer():
-    pytest_command_lines = [
-        line
-        for line in _nightly_script_text().splitlines()
-        if " uv run pytest " in line and ("run_logged" in line or "run_compose_suite" in line)
+    pytest_commands = [
+        command
+        for command in _nightly_shell_commands()
+        if " uv run pytest " in command
+        and any(wrapper in command for wrapper in ("run_logged", "run_compose_suite", "run_with_agent_home"))
     ]
 
-    assert len(pytest_command_lines) == 22
-    assert any("tests/integration/adapters/test_doris.py" in line for line in pytest_command_lines)
-    for line in pytest_command_lines:
-        expected_layer = "unit" if "Full Unit Tests" in line else "nightly"
-        assert f"env DATUS_TEST_LAYER={expected_layer} uv run pytest" in line
+    assert len(pytest_commands) == 22
+    assert any("tests/integration/adapters/test_doris.py" in command for command in pytest_commands)
+    assert any("tests/integration/adapters/test_gaussdb.py" in command for command in pytest_commands)
+    for command in pytest_commands:
+        expected_layer = "unit" if "Full Unit Tests" in command else "nightly"
+        assert f"env DATUS_TEST_LAYER={expected_layer}" in command
 
 
 @pytest.mark.parametrize(

@@ -15,14 +15,18 @@ Env overrides (defaults match the adapter's docker-compose.yml):
   GAUSSDB_HOST=127.0.0.1  GAUSSDB_PORT=25434
   GAUSSDB_USER=datus      GAUSSDB_PASSWORD=Datus@123
   GAUSSDB_DATABASE=postgres  GAUSSDB_SCHEMA=public
+  GAUSSDB_DRIVER=pg8000      GAUSSDB_SSLMODE=verify-ca
+  GAUSSDB_SSLROOTCERT=/path/to/gaussdb-ca.pem
 
 The official `gaussdb` driver binds a GaussDB-family libpq that is published for
-Linux only, so this suite runs on Linux (release wheels bundle that libpq).
+Linux only (release wheels bundle that libpq). macOS uses the pure-Python
+`pg8000` path by default.
 
 See `tests/integration/adapters/README.md`.
 """
 
 import os
+import sys
 from typing import Generator
 
 import pytest
@@ -92,6 +96,9 @@ def gaussdb_config() -> GaussDBConfig:
         password=os.getenv("GAUSSDB_PASSWORD", "Datus@123"),
         database=os.getenv("GAUSSDB_DATABASE", "postgres"),
         schema_name=SCHEMA,
+        driver=os.getenv("GAUSSDB_DRIVER") or ("pg8000" if sys.platform == "darwin" else "gaussdb"),
+        sslmode=os.getenv("GAUSSDB_SSLMODE", "prefer"),
+        sslrootcert=os.getenv("GAUSSDB_SSLROOTCERT") or None,
     )
 
 
