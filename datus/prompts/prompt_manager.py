@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, Template
+from jinja2.sandbox import SandboxedEnvironment
 
 from datus.utils.loggings import get_logger
 
@@ -73,7 +74,21 @@ class PromptManager:
             self._env_cache.move_to_end(cache_key)
             return env
         search_paths = [cache_key, str(self.default_templates_dir)]
-        env = Environment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
+        # SandboxedEnvironment, not Environment: ``search_paths[0]`` is the user
+        # template dir (``{agent.home}/template``), which is user-writable AND
+        # takes precedence over the built-in templates. A template dropped there
+        # is untrusted input, and a bare Environment would let it walk into
+        # Python internals (``{{ x.__class__.__mro__[1].__subclasses__() }}``)
+        # from inside the agent process. The sandbox blocks unsafe attribute
+        # traversal; nothing else about rendering changes.
+        #
+        # Deliberately keeps the default lenient ``Undefined``: callers of
+        # ``render_template`` pass ad-hoc kwargs and the shipped templates rely
+        # on missing variables rendering empty. ``trim_blocks``/``lstrip_blocks``
+        # shape the emitted prompt text, and the loader is what makes
+        # ``{% import %}`` / ``{% include %}`` resolve — none of the three may
+        # change here.
+        env = SandboxedEnvironment(loader=FileSystemLoader(search_paths), trim_blocks=True, lstrip_blocks=True)
         self._env_cache[cache_key] = env
         if len(self._env_cache) > self._MAX_ENV_CACHE_SIZE:
             self._env_cache.popitem(last=False)
