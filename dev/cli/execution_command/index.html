@@ -4320,7 +4320,7 @@
 <h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
 <p>The <code>!</code> prefix is a power-user escape hatch that runs, directly from the chat REPL, either one of the agent's own <strong>tools</strong> or an installed <strong>plugin's</strong> CLI — without asking the model to do it for you. It is available in <strong>chat mode</strong> only (in SQL/bash mode a leading <code>!</code> is part of the statement, e.g. shell history expansion).</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>!&lt;tool&gt;<span class="w"> </span><span class="o">[</span>args...<span class="o">]</span><span class="w">        </span><span class="c1"># run an agent tool directly</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>!&lt;plugin&gt;<span class="w"> </span>&lt;args...&gt;<span class="w">      </span><span class="c1"># run an installed plugin&#39;s CLI (datus &lt;plugin&gt; ...)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>!&lt;plugin&gt;<span class="w"> </span>&lt;args...&gt;<span class="w">      </span><span class="c1"># run an installed plugin's CLI (datus &lt;plugin&gt; ...)</span>
 </span></code></pre></div>
 <p><strong>Tools are matched first.</strong> If the first token names a live tool it runs as a tool; otherwise, if it names an installed + activated plugin, it dispatches to that plugin's CLI; otherwise the input is rejected with a usage hint.</p>
 <p>Type <code>!</code> on its own to list the available tools and plugins.</p>

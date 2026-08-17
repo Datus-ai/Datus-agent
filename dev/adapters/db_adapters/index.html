@@ -5330,7 +5330,7 @@
 <td>GaussDB / openGauss</td>
 <td>datus-gaussdb</td>
 <td><code>pip install datus-gaussdb</code></td>
-<td>Ready (Linux only)</td>
+<td>Ready (Linux and macOS)</td>
 </tr>
 </tbody>
 </table>
@@ -5375,7 +5375,7 @@
 </span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="c1"># Oracle</span>
 </span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-oracle
 </span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="c1"># GaussDB / openGauss (Linux only)</span>
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="c1"># GaussDB / openGauss</span>
 </span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-gaussdb
 </span></code></pre></div>
 <p>Once installed, Datus Agent will automatically detect and load the adapter.</p>
@@ -5515,7 +5515,7 @@
 <h3 id="hologres">Hologres<a class="headerlink" href="#hologres" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">hologres_data</span><span class="p">:</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hologres</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-instance-cn-hangzhou.hologres.aliyuncs.com</span><span class="w">  </span><span class="c1"># console endpoint, may embed &quot;:80&quot;</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">your-instance-cn-hangzhou.hologres.aliyuncs.com</span><span class="w">  </span><span class="c1"># console endpoint, may embed ":80"</span>
 </span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
 </span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_ID}</span>
 </span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_SECRET}</span>
@@ -5548,12 +5548,51 @@ selects the connection target but is not part of an SQL object name; qualify obj
 </span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_PASSWORD}</span>
 </span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres</span>
 </span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span><span class="w">   </span><span class="c1"># optional, default is public</span>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">  </span><span class="nt">driver</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gaussdb</span><span class="w">  </span><span class="c1"># optional, default is gaussdb; set to psycopg2 as an escape hatch</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">  </span><span class="c1"># driver: pg8000  # optional; omit to use gaussdb on Linux or pg8000 on macOS</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-ca</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="w">  </span><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/datus/certs/gaussdb-ca.pem</span>
 </span></code></pre></div>
-<p>GaussDB and openGauss speak the PostgreSQL wire protocol. The default <code>gaussdb</code> driver is the official
-client and supports sha256, md5, and sm3 authentication; the <code>psycopg2</code> escape hatch only works against
-servers configured for md5. Both centralized and distributed deployments are supported, and the connector
-auto-detects the database's A / B / PG compatibility mode so generated SQL follows the right semantics.</p>
+<p>GaussDB and openGauss speak the PostgreSQL wire protocol. Choose the driver to match the platform and the
+server account's password authentication:</p>
+<table>
+<thead>
+<tr>
+<th>Driver</th>
+<th>Platform</th>
+<th>Authentication</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gaussdb</code> (Linux default)</td>
+<td>Linux</td>
+<td>sha256, md5, sm3</td>
+</tr>
+<tr>
+<td><code>pg8000</code> (macOS default)</td>
+<td>Linux and macOS</td>
+<td>sha256, md5</td>
+</tr>
+<tr>
+<td><code>psycopg2</code></td>
+<td>Linux and macOS</td>
+<td>md5 only; escape hatch</td>
+</tr>
+</tbody>
+</table>
+<p>All drivers accept <code>disable</code>, <code>allow</code>, <code>prefer</code> (default), <code>require</code>, <code>verify-ca</code>, and <code>verify-full</code>, but
+their retry behavior is not identical. For production, use <code>verify-ca</code> with <code>sslrootcert</code> as the baseline:
+the connection is encrypted and the server certificate must chain to that CA. When the configured <code>host</code>
+is guaranteed to match the server certificate, use <code>verify-full</code> for stricter hostname validation;
+otherwise keep <code>verify-ca</code>. <code>require</code> encrypts but does not authenticate the server; <code>prefer</code> permits an
+unencrypted fallback. If the server merely enables TLS, the client does not need a certificate. If it
+requires TLS, <code>prefer</code> normally negotiates TLS, but explicitly use <code>require</code> or either <code>verify-*</code> mode to
+prevent a plaintext fallback against a differently configured endpoint. Only <code>verify-ca</code> and <code>verify-full</code>
+need the server CA configured on the client. The <code>pg8000</code> path treats <code>allow</code> like <code>prefer</code> (TLS first),
+because its API cannot express libpq's plaintext-first retry order. The adapter currently supports one-way
+TLS, not mutual TLS (<code>sslcert</code>/<code>sslkey</code>).</p>
+<p>Both centralized and distributed deployments are supported. The connector auto-detects the database's
+A (Oracle), B (MySQL), or PG compatibility mode so generated SQL follows the server semantics.</p>
 <h3 id="multiple-database-entries">Multiple Database Entries<a class="headerlink" href="#multiple-database-entries" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -5670,6 +5709,8 @@ auto-detects the database's A / B / PG compatibility mode so generated SQL follo
 <ul>
 <li>PostgreSQL wire protocol (PostgreSQL-compatible SQL dialect)</li>
 <li>sha256, md5, and sm3 authentication through the official <code>gaussdb</code> driver</li>
+<li>Pure-Python <code>pg8000</code> path with sha256/md5 authentication on Linux and macOS</li>
+<li>TLS modes through <code>verify-full</code>; <code>verify-ca</code> is the production baseline, and <code>verify-full</code> adds hostname validation</li>
 <li>A / B / PG compatibility-mode auto-detection, so SQL generation follows the server's semantics</li>
 <li>Centralized and distributed deployments, with distribution-aware table DDL</li>
 <li>Multi-schema datasource support</li>
@@ -5700,9 +5741,9 @@ auto-detects the database's A / B / PG compatibility mode so generated SQL follo
 <li><strong>Apache Doris</strong>: Requires <code>datus-mysql</code> and <code>pymysql</code> (installed automatically)</li>
 <li><strong>Hologres</strong>: Requires <code>datus-postgresql</code> and <code>psycopg2-binary</code> (installed automatically)</li>
 <li><strong>Oracle</strong>: Requires <code>oracledb</code> (installed automatically; Thin mode needs no Oracle Client)</li>
-<li><strong>GaussDB</strong>: Requires <code>datus-postgresql</code> and the official <code>gaussdb</code> driver (installed automatically).
-  That driver binds a GaussDB-family libpq, which release wheels bundle for Linux; no build is published
-  for macOS, so run the adapter inside a Linux environment</li>
+<li><strong>GaussDB</strong>: Requires <code>datus-postgresql</code>; dependencies are installed automatically. Linux defaults to
+  the official <code>gaussdb</code> driver and the package wheel bundles its GaussDB-family libpq. macOS defaults to
+  the pure-Python <code>pg8000</code> driver because no compatible native libpq is published for Darwin.</li>
 </ul>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>datus-agent (Core)

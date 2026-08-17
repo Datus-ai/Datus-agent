@@ -4727,8 +4727,8 @@
 <li>Queries requiring domain knowledge</li>
 </ul>
 <p><strong>Real-world Example:</strong></p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>User: &quot;Show me quarterly revenue trends by product category,
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>       excluding returns and considering seasonal adjustments&quot;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>User: "Show me quarterly revenue trends by product category,
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>       excluding returns and considering seasonal adjustments"
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>Process:
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>1. Schema Linking: Finds orders, products, categories tables
@@ -4758,11 +4758,11 @@
 <li>Performance-critical applications</li>
 </ul>
 <p><strong>Real-world Example:</strong></p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>User: &quot;List all customers from California&quot;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>User: "List all customers from California"
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>Process:
 </span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>1. Schema Linking: Finds customers table with state column
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>2. Generate SQL: Creates &quot;SELECT * FROM customers WHERE state = &#39;CA&#39;&quot;
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>2. Generate SQL: Creates "SELECT * FROM customers WHERE state = 'CA'"
 </span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>3. Execute SQL: Returns California customers
 </span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>4. Output: Displays results
 </span></code></pre></div>
@@ -4786,12 +4786,12 @@
 <li>Dashboards and regular reports</li>
 </ul>
 <p><strong>Real-world Example:</strong></p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>User: &quot;Show monthly active users for the last quarter&quot;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>User: "Show monthly active users for the last quarter"
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>Process:
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>1. Schema Linking: Finds user_activity table
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>2. Search Metrics: Finds &quot;monthly_active_users&quot; metric definition
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>3. Date Parser: Determines &quot;last quarter&quot; date range
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>2. Search Metrics: Finds "monthly_active_users" metric definition
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>3. Date Parser: Determines "last quarter" date range
 </span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>4. Generate SQL: Creates query using the metric definition
 </span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>5. Execute SQL: Runs the metric calculation
 </span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>6. Output: Displays monthly active users by month
@@ -4887,10 +4887,10 @@
 <h3 id="workflow-parameters">Workflow Parameters<a class="headerlink" href="#workflow-parameters" title="Permanent link">&para;</a></h3>
 <p>Workflows can be configured with parameters:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Use specific workflow</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">&quot;your query&quot;</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;<span class="w"> </span>--workflow<span class="w"> </span>reflection
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">"your query"</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;<span class="w"> </span>--workflow<span class="w"> </span>reflection
 </span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
 </span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Use custom workflow</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">&quot;your query&quot;</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;<span class="w"> </span>--workflow<span class="w"> </span>custom_analytics
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">"your query"</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;<span class="w"> </span>--workflow<span class="w"> </span>custom_analytics
 </span></code></pre></div>
 <h3 id="available-parameters">Available Parameters<a class="headerlink" href="#available-parameters" title="Permanent link">&para;</a></h3>
 <table>
@@ -4957,10 +4957,10 @@
 </ul>
 <h3 id="debugging-and-monitoring">Debugging and Monitoring<a class="headerlink" href="#debugging-and-monitoring" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Enable debug mode for detailed logging</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>datus-agent<span class="w"> </span>--debug<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">&quot;your query&quot;</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>datus-agent<span class="w"> </span>--debug<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">"your query"</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;
 </span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
 </span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># Save LLM input/output traces for inspection</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>datus-agent<span class="w"> </span>--save_llm_trace<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">&quot;your query&quot;</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>datus-agent<span class="w"> </span>--save_llm_trace<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--task<span class="w"> </span><span class="s2">"your query"</span><span class="w"> </span>--task_db_name<span class="w"> </span>&lt;database&gt;
 </span></code></pre></div>
 <h2 id="conclusion">Conclusion<a class="headerlink" href="#conclusion" title="Permanent link">&para;</a></h2>
 <p>Workflow orchestration is the backbone of Datus Agent's intelligent SQL generation capabilities. By understanding the different workflow types and their appropriate use cases, you can leverage the full power of the system to solve complex data analysis problems efficiently and reliably.</p>

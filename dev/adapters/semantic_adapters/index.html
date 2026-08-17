@@ -4472,8 +4472,8 @@ The selected semantic adapter is global. Legacy node-level <code>semantic_adapte
 </ul>
 <h2 id="implementing-a-custom-adapter">Implementing a Custom Adapter<a class="headerlink" href="#implementing-a-custom-adapter" title="Permanent link">&para;</a></h2>
 <p>Implement a semantic adapter by extending <code>BaseSemanticAdapter</code> and registering it through an entry point:</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[project.entry-points.</span><span class="s2">&quot;datus.semantic_adapters&quot;</span><span class="k">]</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">myservice</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datus_semantic_myservice:register&quot;</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[project.entry-points.</span><span class="s2">"datus.semantic_adapters"</span><span class="k">]</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">myservice</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"datus_semantic_myservice:register"</span>
 </span></code></pre></div>
 <p>Required methods:</p>
 <table>
