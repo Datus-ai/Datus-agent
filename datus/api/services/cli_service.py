@@ -156,14 +156,25 @@ class CLIService:
             # ``switch_context`` so a request about to be refused does not mutate
             # connector state.
             if getattr(self.agent_config, "sql_read_only", False):
-                from datus.utils.sql_utils import classify_read_only_violation
+                from datus.utils.sql_utils import classify_read_only_violation, parse_sql_statement_kind
 
-                reason, _ = classify_read_only_violation(
-                    request.sql_query,
-                    getattr(self.current_db_connector, "dialect", "") or "",
-                )
+                dialect = getattr(self.current_db_connector, "dialect", "") or ""
+                reason, sql_type = classify_read_only_violation(request.sql_query, dialect)
                 if reason:
-                    logger.warning(f"Read-only deployment refused SQL: {reason}")
+                    # Same structured shape as the DBFuncTool refusal in
+                    # ``database._refuse_write_if_read_only`` so an operator can
+                    # filter both entry points on one field set — including the
+                    # finer statement kind, since ``ddl`` alone cannot tell them
+                    # whether a caller tried to CREATE or to DROP. ``source`` is
+                    # always "deployment" here: this route has no per-agent
+                    # read-only posture to distinguish it from.
+                    logger.warning(
+                        "POST /sql/execute rejected by read-only policy",
+                        sql_type=parse_sql_statement_kind(request.sql_query, dialect) or sql_type.value,
+                        database=request.database_name or "",
+                        source="deployment",
+                        rule=reason,
+                    )
                     return Result(
                         success=False,
                         errorCode=ErrorCode.SQL_READ_ONLY,

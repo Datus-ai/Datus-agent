@@ -2,6 +2,7 @@
 Test cases for DBFuncTool compressor model_name initialization and execute_ddl.
 """
 
+import re
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -9,6 +10,22 @@ import pytest
 
 from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.exceptions import DatusException
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def logged_fields(text: str) -> dict:
+    """Structured field/value pairs from captured log output.
+
+    Normalizes away the two things that vary with how structlog happens to be
+    rendering — ANSI colour codes, and ``key=value`` vs ``'key': 'value'`` — so
+    a test can assert the field it cares about exactly, instead of hedging with
+    ``assert a in text or b in text``.
+    """
+    plain = _ANSI.sub("", text)
+    fields = dict(re.findall(r"(\w+)=(\S+)", plain))
+    fields.update(re.findall(r"'(\w+)': '([^']*)'", plain))
+    return fields
 
 
 def _mock_agent_config(**attrs) -> Mock:
@@ -1980,12 +1997,12 @@ class TestDBFuncToolExecuteSql:
 
         with caplog.at_level(logging.WARNING):
             tool.execute_sql("DROP TABLE users")
-        assert "sql_type=drop" in caplog.text or "'sql_type': 'drop'" in caplog.text
+        assert logged_fields(caplog.text)["sql_type"] == "drop"
 
         caplog.clear()
         with caplog.at_level(logging.WARNING):
             tool.execute_sql("CREATE TABLE t (id INT)")
-        assert "sql_type=create" in caplog.text or "'sql_type': 'create'" in caplog.text
+        assert logged_fields(caplog.text)["sql_type"] == "create"
 
     def test_multi_statement_refusal_is_logged(self, caplog):
         """The sneakiest input in the set must not be the one with no audit

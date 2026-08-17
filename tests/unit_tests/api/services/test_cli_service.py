@@ -506,7 +506,7 @@ class TestCLIServiceReadOnlyDeployment:
 
     @pytest.mark.asyncio
     async def test_select_is_allowed(self, writable_cli_svc, mutable_real_agent_config):
-        mutable_real_agent_config.sql_read_only = True
+        mutable_real_agent_config.harden_sql_read_only()
 
         result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
 
@@ -527,7 +527,7 @@ class TestCLIServiceReadOnlyDeployment:
     async def test_writes_and_ddl_are_refused(self, writable_cli_svc, mutable_real_agent_config, sql):
         from datus.api.models.config_models import ErrorCode
 
-        mutable_real_agent_config.sql_read_only = True
+        mutable_real_agent_config.harden_sql_read_only()
 
         result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query=sql))
 
@@ -542,7 +542,7 @@ class TestCLIServiceReadOnlyDeployment:
         """
         from datus.api.models.config_models import ErrorCode
 
-        mutable_real_agent_config.sql_read_only = True
+        mutable_real_agent_config.harden_sql_read_only()
 
         result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1; DROP TABLE schools"))
 
@@ -559,7 +559,7 @@ class TestCLIServiceReadOnlyDeployment:
         """``PRAGMA journal_mode=WAL`` classifies as METADATA_SHOW but writes."""
         from datus.api.models.config_models import ErrorCode
 
-        mutable_real_agent_config.sql_read_only = True
+        mutable_real_agent_config.harden_sql_read_only()
 
         result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="PRAGMA journal_mode=WAL"))
 
@@ -572,7 +572,7 @@ class TestCLIServiceReadOnlyDeployment:
         """Fail-closed: anything not positively classified as a read is refused."""
         from datus.api.models.config_models import ErrorCode
 
-        mutable_real_agent_config.sql_read_only = True
+        mutable_real_agent_config.harden_sql_read_only()
 
         result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query=sql))
 
@@ -598,7 +598,7 @@ class TestCLIServiceReadOnlyDeployment:
         before = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="CREATE TABLE t_before (id INT)"))
         assert before.success is True
 
-        mutable_real_agent_config.sql_read_only = True
+        mutable_real_agent_config.harden_sql_read_only()
 
         after = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="CREATE TABLE t_after (id INT)"))
         assert after.success is False

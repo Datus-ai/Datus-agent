@@ -3064,19 +3064,28 @@ class TestSqlReadOnly:
         """
         assert self._make(tmp_path, sql_read_only=value).sql_read_only is False
 
-    def test_setter_can_tighten(self, tmp_path):
+    def test_harden_turns_it_on(self, tmp_path):
         cfg = self._make(tmp_path)
-        cfg.sql_read_only = True
+        cfg.harden_sql_read_only()
         assert cfg.sql_read_only is True
 
-    def test_setter_cannot_relax(self, tmp_path):
-        """Write-once-true: nothing sharing the process may undo a yaml-level
-        ``true``. This asymmetry is deliberate, not an oversight.
+    def test_hardening_twice_is_idempotent(self, tmp_path):
+        cfg = self._make(tmp_path, sql_read_only=True)
+        cfg.harden_sql_read_only()
+        assert cfg.sql_read_only is True
+
+    def test_there_is_no_way_to_relax_it(self, tmp_path):
+        """One-way by construction: the posture is exposed as a read-only
+        property, so nothing sharing the process — a plugin, a tool transformer,
+        third-party code — can undo a yaml-level ``true``. Assignment raises
+        rather than silently doing nothing, which is why this is a method and
+        not a tighten-only setter.
         """
         cfg = self._make(tmp_path, sql_read_only=True)
-        cfg.sql_read_only = False
-        assert cfg.sql_read_only is True
-        cfg.sql_read_only = "no"
+
+        with pytest.raises(AttributeError):
+            cfg.sql_read_only = False
+
         assert cfg.sql_read_only is True
 
     def test_deepcopy_isolates_the_clone(self, tmp_path):
@@ -3084,7 +3093,7 @@ class TestSqlReadOnly:
 
         cfg = self._make(tmp_path)
         clone = copy.deepcopy(cfg)
-        clone.sql_read_only = True
+        clone.harden_sql_read_only()
         assert clone.sql_read_only is True
         assert cfg.sql_read_only is False
 
