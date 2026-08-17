@@ -336,6 +336,13 @@ async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, d
             drop_survived = await table_exists(sess, drop_me)
             ctas_absent = not await table_exists(sess, ctas)
 
+        if dry_run:
+            # Nothing ran, so every probe reports the stub's success and the
+            # verdict table would be uniformly, misleadingly red. The statement
+            # listing above is the whole point of a dry run.
+            print("dry run: statements listed above were NOT executed; no verdicts to report")
+            return 0
+
         hdr = f"{'statement':<22} {'flag off':<14} {'flag on':<14} verdict"
         print(hdr)
         print("-" * len(hdr))
