@@ -903,7 +903,9 @@ class TestEndToEnd:
         """
         manifest = json.loads(_member(_build(project), "package_manifest.json"))
 
-        assert manifest["format_version"] == 2
+        # Still 1: the shape change is breaking, but the format is unreleased and
+        # has no readers, so there is nothing for a bump to signal to.
+        assert manifest["format_version"] == 1
         records = manifest["env_vars"]
         assert records, "fixture project has credential-bearing config"
         assert all(set(r) == {"var", "config_paths", "preexisting"} for r in records)

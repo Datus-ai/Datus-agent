@@ -60,12 +60,14 @@ from datus.utils.path_manager import DatusPathManager
 logger = get_logger(__name__)
 
 PACKAGE_FORMAT = "datus-project-package"
-# 2: ``env_vars`` carries one object per variable (``var`` / ``config_paths`` /
-#    ``preexisting``) instead of a flat list of names, so a receiver can see
-#    which config field each ``${VAR}`` feeds. Breaking for anything that did
-#    ``sorted(manifest["env_vars"])`` or membership-tested it against a string.
-# 1: initial format.
-PACKAGE_FORMAT_VERSION = 2
+# Deliberately still 1 while the format is unreleased. ``env_vars`` changed
+# shape here -- one object per variable (``var`` / ``config_paths`` /
+# ``preexisting``) instead of a flat list of names -- which would be breaking
+# for anything doing ``sorted(manifest["env_vars"])``. Nothing reads it: no
+# reader exists in this repo, and no package has been published for the format
+# to be compatible with. Bump on the first change made after a package exists in
+# the wild.
+PACKAGE_FORMAT_VERSION = 1
 PACKAGE_MANIFEST_NAME = "package_manifest.json"
 
 # Names whose top-level directories are runtime state under ``home: .`` on the
