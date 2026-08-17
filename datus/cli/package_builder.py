@@ -216,6 +216,24 @@ class EnvVarBinding:
     preexisting: bool
 
 
+@dataclass(frozen=True)
+class EnvVarRequirement:
+    """One env var the receiver must bind, with every config field that uses it.
+
+    The per-variable view of :class:`EnvVarBinding`, which is recorded once per
+    ``(var, config_path)`` pair. Both the README table and the package manifest
+    consume this shape; see :func:`group_env_vars`.
+    """
+
+    var: str
+    config_paths: List[str]
+    preexisting: bool
+
+    def as_manifest_record(self) -> Dict[str, Any]:
+        """Serialize for ``package_manifest.json`` (``env_vars`` entries)."""
+        return {"var": self.var, "config_paths": list(self.config_paths), "preexisting": self.preexisting}
+
+
 @dataclass
 class SecretFinding:
     arcname: str
@@ -1720,7 +1738,7 @@ def generate_readme(
     if env_vars:
         lines += ["| Variable | Used by |", "|---|---|"]
         for record in group_env_vars(env_vars):
-            lines.append(f"| `{record['var']}` | {', '.join(record['config_paths'])} |")
+            lines.append(f"| `{record.var}` | {', '.join(record.config_paths)} |")
     else:
         lines.append("None — this package carries no credential-bearing config.")
     lines += [
@@ -1749,7 +1767,7 @@ def generate_readme(
     return "\n".join(lines).encode("utf-8")
 
 
-def group_env_vars(env_vars: Sequence[EnvVarBinding]) -> List[Dict[str, Any]]:
+def group_env_vars(env_vars: Sequence[EnvVarBinding]) -> List[EnvVarRequirement]:
     """Collapse the ``(var, config_path)`` binding list into one record per var.
 
     ``_PlaceholderAllocator`` records a binding per ``(var, config_path)`` pair,
@@ -1768,11 +1786,11 @@ def group_env_vars(env_vars: Sequence[EnvVarBinding]) -> List[Dict[str, Any]]:
     for binding in env_vars:
         grouped.setdefault(binding.var, []).append(binding)
     return [
-        {
-            "var": var,
-            "config_paths": sorted({binding.config_path for binding in grouped[var]}),
-            "preexisting": all(binding.preexisting for binding in grouped[var]),
-        }
+        EnvVarRequirement(
+            var=var,
+            config_paths=sorted({binding.config_path for binding in grouped[var]}),
+            preexisting=all(binding.preexisting for binding in grouped[var]),
+        )
         for var in sorted(grouped)
     ]
 
@@ -1815,7 +1833,7 @@ def build_package_manifest(
         # One record per variable, each naming the config paths that reference
         # it. The receiver has to bind every ``${VAR}`` to something; without the
         # paths they can only guess what a given variable is for.
-        "env_vars": group_env_vars(env_vars),
+        "env_vars": [record.as_manifest_record() for record in group_env_vars(env_vars)],
         "editable_source_packages": sorted(editable_packages),
         "files": files,
     }
@@ -2084,6 +2102,7 @@ __all__ = [
     "PackageOptions",
     "PackageResult",
     "SecretFinding",
+    "EnvVarRequirement",
     "StagedEntry",
     "build_package",
     "default_output_path",

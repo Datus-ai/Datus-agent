@@ -962,8 +962,8 @@ class TestGroupEnvVars:
         )
 
         assert len(records) == 1
-        assert records[0]["preexisting"] is False
-        assert records[0]["config_paths"] == ["a.key", "b.key"]
+        assert records[0].preexisting is False
+        assert records[0].config_paths == ["a.key", "b.key"]
 
     def test_all_preexisting_stays_true(self):
         records = pb.group_env_vars(
@@ -973,7 +973,7 @@ class TestGroupEnvVars:
             ]
         )
 
-        assert records[0]["preexisting"] is True
+        assert records[0].preexisting is True
 
     def test_dedupes_and_sorts_config_paths(self):
         records = pb.group_env_vars(
@@ -984,7 +984,7 @@ class TestGroupEnvVars:
             ]
         )
 
-        assert records[0]["config_paths"] == ["a.key", "z.key"]
+        assert records[0].config_paths == ["a.key", "z.key"]
 
     def test_sorts_vars(self):
         records = pb.group_env_vars(
@@ -994,7 +994,7 @@ class TestGroupEnvVars:
             ]
         )
 
-        assert [r["var"] for r in records] == ["A_VAR", "Z_VAR"]
+        assert [r.var for r in records] == ["A_VAR", "Z_VAR"]
 
     def test_empty_input(self):
         assert pb.group_env_vars([]) == []
