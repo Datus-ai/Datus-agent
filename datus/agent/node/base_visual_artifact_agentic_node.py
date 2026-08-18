@@ -444,12 +444,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         finalize prompt explicitly. Reuses the same rendered template rather
         than a second copy of the wording.
 
-        ``_inject_response_language`` swallows a template-render failure and
-        returns the prompt untouched, which here would read as "no language
-        pinned" and hand finalize the infer-from-the-user's-prompts branch —
-        wrong whenever the operator pinned a language the user does not write
-        in. Fall back to a minimal directive built from the same code/name pair
-        so a pinned language always survives.
+        ``_inject_response_language`` now falls back to a minimal directive of
+        its own on a render failure, so the branch below is belt-and-braces: an
+        empty return here would read as "no language pinned" and hand finalize
+        the infer-from-the-user's-prompts branch — wrong whenever the operator
+        pinned a language the user does not write in.
         """
         language_raw = getattr(self.agent_config, "language", None)
         if not language_raw or not str(language_raw).strip():

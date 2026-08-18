@@ -33,6 +33,7 @@ from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.language_utils import build_fallback_directive as _build_fallback_directive
 from datus.utils.language_utils import ensure_native_directive as _ensure_native_directive
 from datus.utils.language_utils import resolve_language_name as _resolve_language_name
 from datus.utils.language_utils import resolve_native_directive as _resolve_native_directive
@@ -1372,8 +1373,12 @@ class AgenticNode(Node):
                 native_directive=_resolve_native_directive(language_code),
             )
         except Exception as e:
+            # Returning the prompt untouched would read as "no language pinned"
+            # and hand the turn back to the model's own choice — the very drift
+            # this directive exists to stop. Fall back like the other two call
+            # sites do.
             logger.warning(f"Failed to render response_language template: {e}")
-            return base_prompt
+            return base_prompt + "\n\n" + _build_fallback_directive(language_code)
         language_section = _ensure_native_directive(language_section, language_code)
         if language_section and language_section.strip():
             base_prompt = base_prompt + "\n\n" + language_section
