@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import NoReturn
+from typing import Iterator, NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -913,3 +913,122 @@ class TestGetTablesColumns:
         result = svc.get_tables_columns(["schools", "frpm"])
         assert result.success is False
         assert result.errorCode == "INVALID_PARAMETERS"
+
+
+class TestSchemaOnlyDialectCatalog:
+    """A dialect whose only namespace is the schema (Oracle) must still list.
+
+    Such a connector reports no database and an empty ``get_databases()`` by
+    design, which used to leave ``databases: []`` — the datasource vanished from
+    the catalog while its tables were perfectly listable.
+    """
+
+    @staticmethod
+    def _connector(
+        schemas: list[str],
+        tables: dict[str, list[str]],
+        *,
+        default_schema: str = "APP",
+        fail_on: str | None = None,
+    ) -> MagicMock:
+        connector = MagicMock()
+        connector.dialect = "oracle"
+        connector.connection_string = "oracle+oracledb://user:pw@host:1521/?service_name=FREEPDB1"
+        connector.database_name = ""
+        connector.schema_name = default_schema
+        connector.catalog_name = None
+        connector.test_connection.return_value = True
+        connector.get_databases.return_value = []
+        connector.get_schemas.return_value = schemas
+
+        def _tables(catalog_name: str = "", database_name: str = "", schema_name: str = "") -> list[str]:
+            if fail_on and schema_name == fail_on:
+                raise RuntimeError("ORA-00942: table or view does not exist")
+            return list(tables.get(schema_name, []))
+
+        connector.get_tables.side_effect = _tables
+        return connector
+
+    @staticmethod
+    @contextmanager
+    def _namespaces(*supported: str) -> Iterator[None]:
+        with patch(
+            "datus.api.services.database_service.supports_namespace",
+            side_effect=lambda namespace, **_: namespace in supported,
+        ):
+            yield
+
+    def test_schemas_become_the_catalog_roots(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "REPORTING"], {"APP": ["ORDERS", "CUSTOMERS"], "REPORTING": ["KPI"]})
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["APP", "REPORTING"]
+        # Already the root — nesting it under itself would print the name twice.
+        assert all(i.schema_name is None for i in infos)
+        assert infos[0].tables == ["CUSTOMERS", "ORDERS"]
+        assert infos[0].tables_count == 2
+        assert [i.current for i in infos] == [True, False]
+        assert all(i.connection_status == "connected" for i in infos)
+
+    def test_one_unreadable_schema_does_not_hide_the_others(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "LOCKED"], {"APP": ["ORDERS"]}, fail_on="LOCKED")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["APP", "LOCKED"]
+        assert infos[0].tables == ["ORDERS"]
+        # Reachable but unlistable: reported with its reason, not as disconnected.
+        assert infos[1].connection_status == "connected"
+        assert "ORA-00942" in infos[1].error
+        assert infos[1].tables_count is None
+
+    def test_a_failing_default_schema_still_reads_as_current(self, real_agent_config):
+        """The root is a schema here, so `current` cannot come from database_name."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "REPORTING"], {"REPORTING": ["KPI"]}, fail_on="APP")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        failed = next(i for i in infos if i.name == "APP")
+        assert failed.error
+        assert failed.current is True
+        assert next(i for i in infos if i.name == "REPORTING").current is False
+
+    def test_unlistable_schemas_report_the_connector_schema_as_current(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector([], {})
+        connector.get_schemas.side_effect = RuntimeError("ORA-01031: insufficient privileges")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        assert [(i.name, i.current) for i in infos] == [("APP", True)]
+        assert "ORA-01031" in infos[0].error
+
+    def test_requested_schema_narrows_the_listing(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "REPORTING"], {"REPORTING": ["KPI"]})
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput(schema_name="REPORTING"))
+
+        assert [i.name for i in infos] == ["REPORTING"]
+        connector.get_schemas.assert_not_called()
+
+    def test_dialect_with_a_database_level_keeps_the_nested_shape(self, real_agent_config):
+        """Regression: the fallback must not flatten PostgreSQL-shaped catalogs."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["public"], {"public": ["orders"]}, default_schema="public")
+        connector.dialect = "postgresql"
+        connector.database_name = "shop"
+
+        with self._namespaces("database", "schema"):
+            infos = svc._get_connection_info(connector, "pg_ds", ListDatabasesInput())
+
+        assert [(i.name, i.schema_name) for i in infos] == [("shop", "public")]
