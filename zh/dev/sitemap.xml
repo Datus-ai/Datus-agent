@@ -391,6 +391,12 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/skills/build_kb/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/zh/dev/dev/skills/dashboard_bootstrap/</loc>
+        <lastmod>2026-08-18</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/skills/dashboard_bootstrap/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/zh/dev/dev/skills/extract_knowledge/</loc>
         <lastmod>2026-08-18</lastmod>
         <changefreq>daily</changefreq>
