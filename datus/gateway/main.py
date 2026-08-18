@@ -105,6 +105,9 @@ def _run_gateway(args: argparse.Namespace) -> None:
     # file access. Force filesystem strict mode so nodes reject EXTERNAL
     # paths instead of hanging on a prompt.
     agent_config.filesystem_strict = True
+    # IM channels have no way to serve a local HTML artifact; visual nodes
+    # must not compile one.
+    agent_config.compile_visual_html = False
     # IM users must never be guided to edit the server's config file:
     # hide/refuse setup skills and use the read-only plugin prompt preamble.
     # (ChatTaskManager.start_chat re-asserts this on its per-request clone.)

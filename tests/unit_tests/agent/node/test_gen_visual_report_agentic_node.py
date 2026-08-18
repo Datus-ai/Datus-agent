@@ -370,9 +370,9 @@ class TestHtmlPathStreamMessage:
     def test_post_validate_hook_returns_none_in_non_cli_mode(self, real_agent_config, mock_llm_create):
         from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
 
-        # filesystem_strict flips the node into SaaS/API mode, which renders
+        # The API/gateway bootstraps disable the compile switch: SaaS renders
         # reports dynamically server-side and never compiles a standalone HTML.
-        real_agent_config.filesystem_strict = True
+        real_agent_config.compile_visual_html = False
         node = _make_node(real_agent_config)
         report_slug = "path_msg_saas"
         _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
@@ -384,6 +384,25 @@ class TestHtmlPathStreamMessage:
         assert action is None
         assert result.html_path is None
         assert not (Path(real_agent_config.project_root) / "reports" / report_slug / "index.html").exists()
+
+    def test_filesystem_strict_does_not_skip_cli_compile(self, real_agent_config, mock_llm_create):
+        from datus.schemas.gen_visual_report_models import GenVisualReportNodeResult
+
+        # Regression: nightly enables agent.filesystem.strict as a safety
+        # switch; that must not be read as an API deployment and silently
+        # skip the compile (the report_html_path action disappeared).
+        real_agent_config.filesystem_strict = True
+        node = _make_node(real_agent_config)
+        report_slug = "path_msg_strict_cli"
+        _seed_render_on_disk(Path(real_agent_config.project_root), report_slug)
+        node._active_artifact_slug = report_slug
+
+        result = GenVisualReportNodeResult(success=True)
+        action = node._post_validate_hook(report_slug, result)
+
+        assert action is not None
+        assert action.action_type == "report_html_path"
+        assert (Path(real_agent_config.project_root) / "reports" / report_slug / "index.html").exists()
 
 
 class _InlineThread:
