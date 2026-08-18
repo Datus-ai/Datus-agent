@@ -6,6 +6,7 @@
 
 import json
 from types import SimpleNamespace
+from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -13,7 +14,13 @@ from openai.types.responses import ResponseFunctionToolCall
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import (
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    ActionHistory,
+    ActionHistoryManager,
+    ActionRole,
+    ActionStatus,
+)
 from datus.schemas.agent_models import ScopedContext
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.sub_agent_task_tool import (
@@ -1304,7 +1311,9 @@ class TestActionBusIntegration:
         mock_node = MagicMock()
         mock_node.session_id = None
 
-        async def mock_stream(action_history_manager):
+        async def mock_stream(
+            action_history_manager: ActionHistoryManager,
+        ) -> AsyncGenerator[ActionHistory, None]:
             user_action = ActionHistory.create_action(
                 role=ActionRole.USER,
                 action_type="gen_sql_request",
