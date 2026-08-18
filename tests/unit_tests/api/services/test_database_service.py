@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import NoReturn
+from typing import Iterator, NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -924,7 +924,13 @@ class TestSchemaOnlyDialectCatalog:
     """
 
     @staticmethod
-    def _connector(schemas, tables, *, default_schema="APP", fail_on=None):
+    def _connector(
+        schemas: list[str],
+        tables: dict[str, list[str]],
+        *,
+        default_schema: str = "APP",
+        fail_on: str | None = None,
+    ) -> MagicMock:
         connector = MagicMock()
         connector.dialect = "oracle"
         connector.connection_string = "oracle+oracledb://user:pw@host:1521/?service_name=FREEPDB1"
@@ -935,7 +941,7 @@ class TestSchemaOnlyDialectCatalog:
         connector.get_databases.return_value = []
         connector.get_schemas.return_value = schemas
 
-        def _tables(catalog_name="", database_name="", schema_name=""):
+        def _tables(catalog_name: str = "", database_name: str = "", schema_name: str = "") -> list[str]:
             if fail_on and schema_name == fail_on:
                 raise RuntimeError("ORA-00942: table or view does not exist")
             return list(tables.get(schema_name, []))
@@ -945,7 +951,7 @@ class TestSchemaOnlyDialectCatalog:
 
     @staticmethod
     @contextmanager
-    def _namespaces(*supported):
+    def _namespaces(*supported: str) -> Iterator[None]:
         with patch(
             "datus.api.services.database_service.supports_namespace",
             side_effect=lambda namespace, **_: namespace in supported,
@@ -980,6 +986,30 @@ class TestSchemaOnlyDialectCatalog:
         assert infos[1].connection_status == "connected"
         assert "ORA-00942" in infos[1].error
         assert infos[1].tables_count is None
+
+    def test_a_failing_default_schema_still_reads_as_current(self, real_agent_config):
+        """The root is a schema here, so `current` cannot come from database_name."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector(["APP", "REPORTING"], {"REPORTING": ["KPI"]}, fail_on="APP")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        failed = next(i for i in infos if i.name == "APP")
+        assert failed.error
+        assert failed.current is True
+        assert next(i for i in infos if i.name == "REPORTING").current is False
+
+    def test_unlistable_schemas_report_the_connector_schema_as_current(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = self._connector([], {})
+        connector.get_schemas.side_effect = RuntimeError("ORA-01031: insufficient privileges")
+
+        with self._namespaces("schema"):
+            infos = svc._get_connection_info(connector, "oracle_ds", ListDatabasesInput())
+
+        assert [(i.name, i.current) for i in infos] == [("APP", True)]
+        assert "ORA-01031" in infos[0].error
 
     def test_requested_schema_narrows_the_listing(self, real_agent_config):
         svc = DatasourceService(agent_config=real_agent_config)

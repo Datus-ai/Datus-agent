@@ -175,17 +175,24 @@ class DatasourceService:
                 last_accessed=now,
             )
 
-        def _listing_failed(db_name: str, error: str, schema: Optional[str] = None) -> DatabaseInfo:
+        def _listing_failed(
+            db_name: str, error: str, schema: Optional[str] = None, *, current: Optional[bool] = None
+        ) -> DatabaseInfo:
             """The connection works but its objects could not be enumerated.
 
             Reporting this as ``disconnected`` used to hide the real cause and contradict
             the agent, which keeps querying the same database successfully.
+
+            ``current`` overrides the database comparison for a root that is not a
+            database: a schema-only dialect reports no ``database_name``, so the
+            default comparison would call its own default schema "not current" on
+            failure while the success path above calls it current.
             """
             return DatabaseInfo(
                 name=db_name,
                 uri=_get_uri(connector),
                 type=dialect,
-                current=(db_name == connector.database_name),
+                current=(db_name == connector.database_name) if current is None else current,
                 catalog_name=catalog_name,
                 schema_name=schema,
                 connection_status="connected",
@@ -247,7 +254,8 @@ class DatasourceService:
                 )
             except Exception as e:
                 logger.warning("Failed to get schemas for schema-only dialect=%s: %s", dialect, e)
-                return [_listing_failed(connector.schema_name, str(e))]
+                # The only root we can name here is the connector's own schema.
+                return [_listing_failed(connector.schema_name, str(e), current=True)]
 
             for schema in schemas:
                 try:
@@ -255,7 +263,7 @@ class DatasourceService:
                     tables.sort()
                 except Exception as e:
                     logger.warning("Failed to get tables for schema=%s dialect=%s: %s", schema, dialect, e)
-                    db_infos.append(_listing_failed(schema, str(e)))
+                    db_infos.append(_listing_failed(schema, str(e), current=(schema == connector.schema_name)))
                     continue
 
                 db_infos.append(
