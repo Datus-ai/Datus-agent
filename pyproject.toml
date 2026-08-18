@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.3.9"
+version = "0.4.0rc1"
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "datus-db-core>=0.1.5",
+    "datus-db-core>=0.1.6",
     "datus-storage-base>=0.1.5,<0.2.0",
     "python-dotenv==1.0.0",
     "pandas==2.1.4",
@@ -200,8 +200,8 @@ dev = [
 ]
 ci = [
     "datus-storage-postgresql>=0.1.5",
-    "datus-metricflow>=0.2.7",
-    "datus-semantic-metricflow>=0.2.12",
+    "datus-metricflow>=0.2.8",
+    "datus-semantic-metricflow>=0.2.14",
     # Required so the OSI authoring tests run in CI (rather than skipping).
     "datus-semantic-osi>=0.1.4",
     # The current PyPI release predates the authoring-spec API used here.

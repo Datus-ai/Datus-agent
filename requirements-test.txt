@@ -382,22 +382,25 @@ cryptography==46.0.7 \
     #   pyopenssl
     #   secretstorage
     #   snowflake-connector-python
-datus-metricflow==0.2.7 \
-    --hash=sha256:79326bc901b1a4e2ce9a92347536c302eb0ea80891bffccd67077f3eb2490787 \
-    --hash=sha256:a85727556c2f1fb667b9e2059de095f1422ecc0eac4f05c8ced25d29acf80a95
+datus-metricflow==0.2.8 \
+    --hash=sha256:3dbbfe49a2110c8aa04a27ce7b2a93e88127f1e6e04664f8dfa2420244e72867 \
+    --hash=sha256:6e14627e4e41bd0a7076cbcdb5327f654bd2c146483d594ea545e42e7e319dcb
     # via datus-semantic-metricflow
 datus-semantic-core==0.2.3 \
     --hash=sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d \
     --hash=sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42
     # via
+    #   datus-semantic-dosi
     #   datus-semantic-metricflow
     #   datus-semantic-osi
-datus-semantic-metricflow==0.2.12 \
-    --hash=sha256:02c9977e5260e175c2a42bfbaf1aa99b8115906c639f87748fc03de512a43395 \
-    --hash=sha256:8253df9353e95c1dd7d60bbdbb5bc3a5b3295ee75d39a80f5003f820f03c8cc4
-datus-semantic-osi==0.1.4 \
-    --hash=sha256:35ee658090cbfd65fc2c82d1ba94665d8bf82bf13cd8b48d9ba7bf50ad397e6c \
-    --hash=sha256:568724d70afb599ba3cd638ab3f038b6ff6b321ae76dd01c8026ca35c0911460
+datus-semantic-dosi @ https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz#subdirectory=datus-semantic-dosi ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:15b44b45de856cdb0d35fb201308a55207bef37e298502b1a7515fcd37762f3d
+datus-semantic-metricflow==0.2.14 \
+    --hash=sha256:0a405a47b5f373c89107add4c4267564719dec8b6cbf8392d2a7b1b132fc9cd7 \
+    --hash=sha256:cce6487fdb8dcf2059471c106baa43c09629703c073e0f526c41de72ed6560db
+datus-semantic-osi==0.1.7 \
+    --hash=sha256:589cf79a66d958395f37497498d283a7759b4d7e526aaff7a5f35212539373c4 \
+    --hash=sha256:679a666aa91413f313eef636b2ee3020634365c75afbbf7cc8ab60db7fb65f89
 datus-storage-base==0.1.5 \
     --hash=sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c \
     --hash=sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3
@@ -416,6 +419,9 @@ docutils==0.22.2 \
     --hash=sha256:9fdb771707c8784c8f2728b67cb2c691305933d68137ef95a75db5f4dfbc213d \
     --hash=sha256:b0e98d679283fc3bb0ead8a5da7f501baa632654e7056e9c5846842213d674d8
     # via readme-renderer
+dosi-engine==0.1.5 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:641dd42ec9c8c811f6b562542d68efac4c1152221fc3315ef5bb855417c29d01
+    # via datus-semantic-dosi
 duckdb==1.5.2 \
     --hash=sha256:0b291786014df1133f8f18b9df4d004484613146e858d71a21791e0fcca16cf4 \
     --hash=sha256:2a1de4f4d454b8c97aec546c82003fc834d3422ce4bc6a19902f3462ef293bed \
@@ -1033,6 +1039,7 @@ pydantic==2.12.3 \
     # via
     #   datus-metricflow
     #   datus-semantic-core
+    #   datus-semantic-dosi
     #   datus-semantic-metricflow
     #   datus-semantic-osi
     #   fastapi
@@ -1206,6 +1213,7 @@ pyyaml==6.0.1 \
     # via
     #   datus-metricflow
     #   datus-semantic-core
+    #   datus-semantic-dosi
     #   datus-semantic-osi
     #   langsmith-fetch
     #   pre-commit
