@@ -101,6 +101,6 @@
   <rect x="665" y="300" width="290" height="92" rx="10" class="box"/>
   <text x="681" y="324" class="num">6</text>
   <text x="810" y="328" text-anchor="middle" class="title">Measure</text>
-  <text x="810" y="350" text-anchor="middle" class="sub">BIRD · Spider 2.0-Snow</text>
-  <text x="810" y="366" text-anchor="middle" class="sub">accuracy over time</text>
+  <text x="810" y="350" text-anchor="middle" class="sub">benchmark SQL accuracy</text>
+  <text x="810" y="366" text-anchor="middle" class="sub">BIRD · Spider 2.0-Snow datasets</text>
 </svg>
