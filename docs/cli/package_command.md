@@ -106,7 +106,7 @@ Metric documents and summaries carrying no subject tag are packaged anyway, with
 
 `package_manifest.json` records the package format version, the exact selections, the required environment variables, and a `sha256` plus a `generated` / `project` provenance flag for every file.
 
-`env_vars` (format version 2) carries one entry per variable rather than a bare list of names, so a receiver can see what each placeholder feeds:
+`env_vars` carries one entry per variable rather than a bare list of names, so a receiver can see what each placeholder feeds:
 
 ```json
 "env_vars": [

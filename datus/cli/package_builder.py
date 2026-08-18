@@ -225,6 +225,14 @@ class EnvVarRequirement:
     The per-variable view of :class:`EnvVarBinding`, which is recorded once per
     ``(var, config_path)`` pair. Both the README table and the package manifest
     consume this shape; see :func:`group_env_vars`.
+
+    A dataclass rather than a Pydantic model, deliberately. It is built only by
+    ``group_env_vars`` from bindings this module produced itself, so there is no
+    untrusted input for validation to guard, and the manifest needs plain JSON
+    which ``as_manifest_record`` already gives. Against that, it is the paired
+    view of ``EnvVarBinding`` directly above -- a dataclass, as are the other
+    five structures in this module, none of which import pydantic. Splitting one
+    half of a pair onto a different framework costs more than it buys.
     """
 
     var: str
