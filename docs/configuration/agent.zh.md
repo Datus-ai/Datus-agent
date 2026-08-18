@@ -25,6 +25,8 @@ agent:
 
 内置语言码映射：`en` → English、`zh` / `zh-cn` → Chinese、`zh-tw` → Traditional Chinese、`ja` → Japanese、`ko` → Korean、`es` → Spanish、`fr` → French、`de` → German、`pt` → Portuguese、`ru` → Russian、`it` → Italian。未知代码将原样注入 system prompt，方便扩展。
 
+对映射表内的语言码，除英文的名称行外还会用**该语言本身**再写一遍指令：单独一行英文元指令要和几十轮英文表结构 / SQL 工具输出竞争注意力，小模型容易漂移。未知代码仅保留英文行。
+
 Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默认值（详见 [Chat API](../API/chat.zh.md)）。CLI 无覆盖参数，直接沿用 yaml 中的默认。
 
 ### 模型提供方（models） {#models-configuration}

@@ -9,7 +9,8 @@ Covers:
   node instances, rebuild on a meta change (model switch), no caching without a
   session id.
 - ``_system_prompt_snapshot_meta``: identity keys exclude per-turn live values
-  (datasource, profile, date, language).
+  (datasource, profile, date) but DO include the response language, which the
+  Chat API sets per request.
 - ``_build_datasource_reminder``: live per-turn datasource + dialect line for
   the user-message ``<system_reminder>`` envelope; never mentions the
   permission profile.
@@ -55,9 +56,10 @@ DELIVERABLE_TEMPLATES = [
 ]
 
 
-def _agent_config(*, current_datasource=None, services=None, model="gpt-4.1"):
+def _agent_config(*, current_datasource=None, services=None, model="gpt-4.1", language=None):
     return SimpleNamespace(
         prompt_version="1.2",
+        language=language,
         current_datasource=current_datasource,
         services=services,
         active_model=lambda: SimpleNamespace(type="openai", model=model),
@@ -190,6 +192,25 @@ class TestGetSessionSystemPrompt:
         assert node2.build_count == 0
         assert node2.lazy_mount_count == 1
 
+    def test_language_switch_rebuilds(self, session_manager):
+        """``language`` is a per-request Chat API field: a user switching the UI
+        language mid-session must not keep replaying the old directive."""
+        node = _SnapshotNode(session_manager, _agent_config(language="en"))
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#1"
+        node.agent_config = _agent_config(language="zh-CN")
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#2"
+        # The rebuilt snapshot replays for the new language.
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#2"
+        assert node.build_count == 2
+
+    def test_same_language_replays(self, session_manager):
+        """The common case — every request carries the same code — stays a hit."""
+        node = _SnapshotNode(session_manager, _agent_config(language="zh-CN"))
+        node._get_session_system_prompt(prompt_version="1.2")
+        node.agent_config = _agent_config(language="zh-CN")
+        node._get_session_system_prompt(prompt_version="1.2")
+        assert node.build_count == 1
+
     def test_node_model_override_switch_rebuilds(self, session_manager):
         """A node-level model override change must invalidate the snapshot."""
         node = _SnapshotNode(session_manager, _agent_config())
@@ -204,7 +225,12 @@ class TestSnapshotMeta:
     def test_meta_is_exactly_the_identity_keys(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config(current_datasource="main"))
         meta = node._system_prompt_snapshot_meta("1.2")
-        assert meta == {"node_name": "chat", "prompt_version": "1.2", "model_name": "openai:gpt-4.1"}
+        assert meta == {
+            "node_name": "chat",
+            "prompt_version": "1.2",
+            "model_name": "openai:gpt-4.1",
+            "language": "",
+        }
 
     def test_meta_falls_back_to_agent_config_version(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config())
@@ -220,6 +246,15 @@ class TestSnapshotMeta:
         node = _SnapshotNode(session_manager, cfg)
         meta = node._system_prompt_snapshot_meta("1.2")
         assert meta["model_name"] == ""
+
+    def test_meta_normalizes_language(self, session_manager):
+        """Unset and whitespace-only both collapse to the same identity, so a
+        blank per-request override never spuriously invalidates the snapshot."""
+        assert _SnapshotNode(session_manager, _agent_config())._system_prompt_snapshot_meta("1.2")["language"] == ""
+        node = _SnapshotNode(session_manager, _agent_config(language="  "))
+        assert node._system_prompt_snapshot_meta("1.2")["language"] == ""
+        node = _SnapshotNode(session_manager, _agent_config(language=" zh-CN "))
+        assert node._system_prompt_snapshot_meta("1.2")["language"] == "zh-CN"
 
     def test_meta_prefers_node_model_override(self, session_manager):
         """``node_config.model`` pins the effective model — it is the identity,

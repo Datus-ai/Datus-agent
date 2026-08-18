@@ -24,7 +24,12 @@ from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput, VisualizationWithContextOutput
 from datus.tools.base import BaseTool
 from datus.tools.llms_tools.visualization_messages import empty_dataset_reason, reason_for_chart
-from datus.utils.language_utils import resolve_language_name
+from datus.utils.language_utils import (
+    build_fallback_directive,
+    ensure_native_directive,
+    resolve_language_name,
+    resolve_native_directive,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -275,19 +280,19 @@ class VisualizationTool(BaseTool):
         code = self._effective_language(language)
         if not code:
             return ""
-        language_name = resolve_language_name(code)
         try:
             section = get_prompt_manager(agent_config=self.agent_config).render_template(
                 "response_language",
                 version=None,
                 language_code=code,
-                language_name=language_name,
+                language_name=resolve_language_name(code),
+                native_directive=resolve_native_directive(code),
             )
         except Exception as exc:
             # A render failure must not silently drop a pinned language.
             logger.warning(f"Failed to render response_language template: {exc}")
-            return f"# Response Language\n- Use: {language_name} ({code})"
-        return section.strip() or f"# Response Language\n- Use: {language_name} ({code})"
+            return build_fallback_directive(code)
+        return ensure_native_directive(section.strip(), code) or build_fallback_directive(code)
 
     # ------------------------------------------------------------------ #
     # Data preparation
