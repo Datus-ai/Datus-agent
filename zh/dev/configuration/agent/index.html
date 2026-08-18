@@ -4621,6 +4621,7 @@
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">zh</span><span class="w">   </span><span class="c1"># 常用取值：en, zh, ja, ko, es, fr, de, pt, ru, it</span>
 </span></code></pre></div>
 <p>内置语言码映射：<code>en</code> → English、<code>zh</code> / <code>zh-cn</code> → Chinese、<code>zh-tw</code> → Traditional Chinese、<code>ja</code> → Japanese、<code>ko</code> → Korean、<code>es</code> → Spanish、<code>fr</code> → French、<code>de</code> → German、<code>pt</code> → Portuguese、<code>ru</code> → Russian、<code>it</code> → Italian。未知代码将原样注入 system prompt，方便扩展。</p>
+<p>对映射表内的语言码，除英文的名称行外还会用<strong>该语言本身</strong>再写一遍指令：单独一行英文元指令要和几十轮英文表结构 / SQL 工具输出竞争注意力，小模型容易漂移。未知代码仅保留英文行。</p>
 <p>Chat API 请求可通过请求体中的 <code>language</code> 字段按任务覆盖该默认值（详见 <a href="../../API/chat/">Chat API</a>）。CLI 无覆盖参数，直接沿用 yaml 中的默认。</p>
 <h3 id="models-configuration">模型提供方（models）<a class="headerlink" href="#models-configuration" title="Permanent link">&para;</a></h3>
 <p>为智能体配置可用的 LLM 提供方：</p>
