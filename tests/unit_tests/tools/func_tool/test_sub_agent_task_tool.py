@@ -6,6 +6,7 @@
 
 import json
 from types import SimpleNamespace
+from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -13,7 +14,13 @@ from openai.types.responses import ResponseFunctionToolCall
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import (
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    ActionHistory,
+    ActionHistoryManager,
+    ActionRole,
+    ActionStatus,
+)
 from datus.schemas.agent_models import ScopedContext
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.sub_agent_task_tool import (
@@ -1259,7 +1266,7 @@ class TestActionBusIntegration:
 
     @pytest.mark.asyncio
     async def test_actions_forwarded_to_bus(self, task_tool):
-        """Child actions are put into action_bus with depth=1."""
+        """Child actions are copied into action_bus with depth=1."""
         from datus.schemas.action_bus import ActionBus
         from datus.schemas.action_history import ActionRole
 
@@ -1289,6 +1296,69 @@ class TestActionBusIntegration:
         # Forwarded action should be in the bus with depth=1
         forwarded = bus._queue.get_nowait()
         assert forwarded.depth == 1
+        assert forwarded is not mock_action
+        assert mock_action.depth == 0
+
+    @pytest.mark.asyncio
+    async def test_forwarding_preserves_child_history_for_token_accounting(self, task_tool):
+        """Parent-bus nesting must not hide usage from the child result."""
+        from datus.agent.node.agentic_node import AgenticNode
+        from datus.schemas.action_bus import ActionBus
+
+        bus = ActionBus()
+        task_tool.set_action_bus(bus)
+
+        mock_node = MagicMock()
+        mock_node.session_id = None
+
+        async def mock_stream(
+            action_history_manager: ActionHistoryManager,
+        ) -> AsyncGenerator[ActionHistory, None]:
+            user_action = ActionHistory.create_action(
+                role=ActionRole.USER,
+                action_type="gen_sql_request",
+                messages="User request",
+                input_data={},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(user_action)
+            yield user_action
+
+            model_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="assistant_message",
+                messages="Model response",
+                input_data={},
+                output_data={"content": "done", "usage": {"total_tokens": 12603}},
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(model_action)
+            yield model_action
+
+            tokens_used = AgenticNode._extract_total_tokens(action_history_manager.get_actions())
+            final_action = ActionHistory.create_action(
+                role=ActionRole.ASSISTANT,
+                action_type="gen_sql_response",
+                messages="Completed",
+                input_data={},
+                output_data={
+                    "sql": "SELECT 1",
+                    "response": "ok",
+                    "tokens_used": tokens_used,
+                },
+                status=ActionStatus.SUCCESS,
+            )
+            action_history_manager.add_action(final_action)
+            yield final_action
+
+        mock_node.execute_stream_with_interactions = mock_stream
+
+        with patch.object(task_tool, "_create_node", return_value=mock_node):
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="test")
+
+        assert result.success == 1
+        assert result.result["tokens_used"] == 12603
 
     @pytest.mark.asyncio
     async def test_actions_have_parent_action_id(self, task_tool):
@@ -1477,16 +1547,23 @@ class TestInteractionBrokerPassthrough:
         forwarded: list = []
         parent_bus.put = lambda action: forwarded.append(action)
 
-        final_action = Mock(spec=ActionHistory)
-        final_action.status = ActionStatus.SUCCESS
-        final_action.role = ActionRole.ASSISTANT
-        final_action.output = {"response": "ok", "tokens_used": 12603}
+        final_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="gen_sql_response",
+            messages="Completed",
+            input_data={},
+            output_data={"response": "ok", "tokens_used": 12603},
+            status=ActionStatus.SUCCESS,
+        )
 
-        usage_action = Mock(spec=ActionHistory)
-        usage_action.status = ActionStatus.SUCCESS
-        usage_action.role = ActionRole.ASSISTANT
-        usage_action.action_type = "token_usage"
-        usage_action.output = {"cumulative": {"total_tokens": 12603, "cached_tokens": 8192}}
+        usage_action = ActionHistory.create_action(
+            role=ActionRole.ASSISTANT,
+            action_type="token_usage",
+            messages="Token usage update",
+            input_data={},
+            output_data={"cumulative": {"total_tokens": 12603, "cached_tokens": 8192}},
+            status=ActionStatus.SUCCESS,
+        )
 
         node_bus = ActionBus()
         mock_node = MagicMock()
