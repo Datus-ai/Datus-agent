@@ -88,6 +88,8 @@ agent:
 
 Built-in code → name mapping (injected into the system prompt): `en` → English, `zh` / `zh-cn` → Chinese, `zh-tw` → Traditional Chinese, `ja` → Japanese, `ko` → Korean, `es` → Spanish, `fr` → French, `de` → German, `pt` → Portuguese, `ru` → Russian, `it` → Italian. Unknown codes are used verbatim.
 
+For every mapped code the directive is also restated **in that language**, next to the English name line — a lone English meta-instruction competes with dozens of turns of English schema/SQL tool output, and smaller models drift out of it. Unknown codes keep the English line only.
+
 Chat API requests can override this per task by sending a `language` field in the request body (see [Chat API](../API/chat.md)). CLI usage inherits the yaml default.
 
 ### Models Configuration (Custom Entries) {#models-configuration}
