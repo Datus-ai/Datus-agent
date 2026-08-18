@@ -1498,6 +1498,9 @@ run_gaussdb_adapter_tests() {
     cleanup_gaussdb_tls_host_artifacts
     return 1
   fi
+  # `docker compose cp` preserves the container file's mode (644); the GaussDB
+  # libpq refuses a root cert unless it is u=rw(600) or tighter.
+  chmod 600 "$tls_rootcert"
 
   run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env \
     DATUS_TEST_LAYER=nightly \
