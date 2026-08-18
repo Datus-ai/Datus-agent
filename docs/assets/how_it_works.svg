@@ -102,5 +102,5 @@
   <text x="681" y="324" class="num">6</text>
   <text x="810" y="328" text-anchor="middle" class="title">Measure</text>
   <text x="810" y="350" text-anchor="middle" class="sub">benchmark SQL accuracy</text>
-  <text x="810" y="366" text-anchor="middle" class="sub">BIRD · Spider 2.0-Snow datasets</text>
+  <text x="810" y="366" text-anchor="middle" class="sub">BIRD · Spider 2.0-Snow · your own datasets</text>
 </svg>
