@@ -137,7 +137,7 @@
   <g>
     <rect x="76" y="608" width="206" height="44" rx="8" class="chip"/>
     <text x="179" y="628" text-anchor="middle" class="title">Databases</text>
-    <text x="179" y="644" text-anchor="middle" class="sub">14 engines via adapters</text>
+    <text x="179" y="644" text-anchor="middle" class="sub">15 engines via adapters</text>
     <rect x="290" y="608" width="206" height="44" rx="8" class="chip"/>
     <text x="393" y="628" text-anchor="middle" class="title">BI Platforms</text>
     <text x="393" y="644" text-anchor="middle" class="sub">Superset · Grafana</text>

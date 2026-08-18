@@ -48,7 +48,7 @@ It plans, writes, runs, and validates SQL; builds semantic models and metrics; s
 
 - **Enterprise governance**: tiered permission profiles, statement-level [SQL authorization](https://docs.datus.ai/latest/configuration/sql_policy/) with AI pre-review, bash confined to an OS-level sandbox, and [traces](https://docs.datus.ai/latest/develop/observability/) exportable to any OTLP platform.
 - **[Plugins](https://docs.datus.ai/latest/plugin/introduction/) and [skills](https://docs.datus.ai/latest/skills/introduction/)**: a `datus-plugin.yml` manifest bundles CLI commands, skills, and prompt context into an installable plugin, activated per project; skills follow the agentskills.io convention.
-- **Open ecosystem**: adapters for [14 databases](https://docs.datus.ai/latest/adapters/db_adapters/), 10+ LLM providers, and an [MCP](https://docs.datus.ai/latest/integration/mcp/) server and client.
+- **Open ecosystem**: adapters for [15 databases](https://docs.datus.ai/latest/adapters/db_adapters/), 10+ LLM providers, and an [MCP](https://docs.datus.ai/latest/integration/mcp/) server and client.
 
 ## Quickstart
 
