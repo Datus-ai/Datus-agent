@@ -54,7 +54,7 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 | `/memory-organize` | | 审计并整理所有持久化存储（先出整改计划,确认后执行）；可附加自由文本作为关注点提示 | |
 | `/mcp` | | 管理 MCP 服务器（列表/添加/删除/检查/调用/过滤） | [MCP 扩展](mcp_extensions.zh.md) |
 | `/skill` | | 管理技能和市场 | [Skill 命令](skill_command.zh.md) |
-| `/bootstrap-bi` | | 为子 agent 上下文提取 BI 仪表盘资产 | |
+| `/bootstrap-bi` | | Skill 驱动 Dashboard-to-Metrics 流程的兼容快捷入口；可附加自由文本限定 plugin/profile/dashboard/query 范围 | [Dashboard to Metrics](../skills/dashboard_to_metrics.zh.md) |
 | `/services` | | 列出已配置的服务平台及其只读方法 | |
 | `/permission` | | 切换当前 CLI / agent 权限配置文件 | |
 | `/sandbox` | | 开关 OS 级 bash 沙箱（`status`/`on`/`off`/`strict`/`normal`，可用 `--project`/`--global` 持久化）。开启后 bash 命令只能写入工作区、会话数据目录和 tmp，只能读取系统目录与白名单目录（macOS `sandbox-exec` / Linux `bwrap`；其他平台 fail-closed 拒绝执行）。`strict` 为多租户加固档：仅工作区 + tmp + 显式白名单，`~/.datus` 完全不可读写，子进程环境变量收敛为最小白名单以隐藏进程级密钥；`agent.bash.sandbox` 中 `deny_network: true` 可额外禁网 | |

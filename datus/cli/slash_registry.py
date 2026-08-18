@@ -82,7 +82,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("skill", "Manage skills and marketplace (list/install/publish/...)", "system"),
     SlashSpec("plugins", "Manage installed plugins (profiles + per-project activation)", "system"),
     SlashSpec("bootstrap", "Bootstrap KB (schema / sql / semantic / metrics / knowledge)", "system"),
-    SlashSpec("bootstrap-bi", "Extract BI dashboard assets for sub-agent context", "system"),
+    SlashSpec("bootstrap-bi", "Build dashboard reference SQL and metrics through the dashboard-to-metrics skill", "system"),
     SlashSpec("model", "Switch LLM provider/model", "system", aliases=("models",)),
     SlashSpec("effort", "Set reasoning effort (off|minimal|low|medium|high)", "system"),
     SlashSpec("init", "Lightweight init: AGENTS.md inventory + knowledge/memory (no vector KB)", "system"),

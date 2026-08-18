@@ -89,24 +89,27 @@ flow_groups:
         quality_sensitive: true
         docs:
           - docs/getting_started/dashboard_copilot.md
+          - docs/skills/dashboard_to_metrics.md
           - docs/getting_started/data_engineering_quickstart.md
           - docs/configuration/bi_platforms.md
         entrypoints:
-          - "CLI: datus bootstrap-bi"
-          - "CLI chat: dashboard generation subagent"
+          - "REPL: /bootstrap-bi compatibility skill shortcut"
+          - "CLI chat: natural-language dashboard-to-metrics request"
         contracts:
-          - Bootstrap extracts semantic model, metrics, and reference SQL from documented BI context.
-          - Superset and Grafana integrations remain usable through BI tool contracts.
+          - The shortcut routes to the dashboard-to-metrics skill through the standard chat pipeline.
+          - The selected BI plugin exports confirmed SQL; builtin agents construct reference SQL and metrics.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_to_metrics_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_to_metrics_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_to_metrics_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_to_metrics_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           nightly:
             status: covered
