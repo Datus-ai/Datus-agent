@@ -1,6 +1,6 @@
 # Dashboard Copilot
 
-Dashboard Copilot builds project reference SQL and metrics from a BI dashboard. The workflow is driven by the bundled `dashboard-to-metrics` skill and the selected BI plugin; Datus does not hard-code a BI vendor's dashboard API or SQL compiler.
+Dashboard Copilot builds project reference SQL and metrics from a BI dashboard. The workflow is driven by the bundled `dashboard-bootstrap` skill and the selected BI plugin; Datus does not hard-code a BI vendor's dashboard API or SQL compiler.
 
 `/bootstrap-bi` remains available as a compatibility shortcut. It delegates to the normal chat/skill pipeline and no longer starts the legacy picker, BI streams, or dashboard-specific subagent generator.
 
@@ -29,7 +29,7 @@ Or use the compatibility shortcut and append the same scope as free text:
 /bootstrap-bi use Superset profile prod and the World Bank dashboard
 ```
 
-Both forms enter the same workflow. The shortcut asks the agent to load `dashboard-to-metrics`; it does not run a separate implementation.
+Both forms enter the same workflow. The shortcut asks the agent to load `dashboard-bootstrap`; it does not run a separate implementation.
 
 ## Selection and confirmation
 
@@ -86,4 +86,4 @@ The new flow builds shared project context. It does not automatically create the
 - Query matched to a non-active datasource: its metric partition is deferred until that datasource is active; the workflow never silently switches it.
 - Query-only semantic adapter: migrate the project to Dosi before authoring metrics.
 
-See [Dashboard to Metrics](../skills/dashboard_to_metrics.md) for the full workflow contract.
+See [Dashboard Bootstrap](../skills/dashboard_bootstrap.md) for the full workflow contract.

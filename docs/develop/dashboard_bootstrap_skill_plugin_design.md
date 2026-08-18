@@ -1,11 +1,11 @@
-# Dashboard to Metrics：通用 Skill 编排重构设计
+# Dashboard Bootstrap：通用 Skill 编排重构设计
 
 ## 1. 文档状态
 
 - 状态：MVP 已本地实现；实时跨仓 E2E 待具备已提交 Agent ref 后执行
-- 目标：以通用 `dashboard-to-metrics` skill 替代 `/bootstrap-bi` 的专用编排
+- 目标：以通用 `dashboard-bootstrap` skill 替代 `/bootstrap-bi` 的专用编排
 - 参考流程：[Dashboard Copilot](https://docs.datus.ai/zh/0.3/getting_started/dashboard_copilot/#dashboard-copilot)
-- 核心约束：尽量不修改 Datus Agent 自身 Python 逻辑，不新增 dashboard-to-metrics 特殊命令
+- 核心约束：尽量不修改 Datus Agent 自身 Python 逻辑，不新增 dashboard-bootstrap 特殊命令
 
 涉及项目：
 
@@ -18,7 +18,7 @@
 
 ## 2. 本轮设计结论
 
-Dashboard to Metrics 应重构为一个与 BI 产品无关的 bootstrap skill：
+Dashboard Bootstrap 应重构为一个与 BI 产品无关的 bootstrap skill：
 
 ```text
 选择 BI plugin + profile
@@ -58,7 +58,7 @@ MVP 不引入 evidence v2、provenance extension、request-scoped task API 等 A
 
 ### 3.2 非目标
 
-1. 不新增 `datus dashboard-to-metrics`、`datus bootstrap-bi` 的替代 CLI。
+1. 不新增 `datus dashboard-bootstrap`、`datus bootstrap-bi` 的替代 CLI。
 2. 不在 Agent 内硬编码 Superset/Tableau/Metabase 的 API 或 SQL 编译逻辑。
 3. 不要求所有 BI plugin 使用相同的底层 API、命令名或 Dashboard 数据结构。
 4. 不由通用 skill 直接写 reference SQL YAML、Dosi YAML 或向量索引。
@@ -99,14 +99,14 @@ MVP 不引入 evidence v2、provenance extension、request-scoped task API 等 A
 在 `Datus-agent` 新增：
 
 ```text
-datus/resources/skills/dashboard-to-metrics/SKILL.md
+datus/resources/skills/dashboard-bootstrap/SKILL.md
 ```
 
 建议元信息：
 
 ```yaml
 ---
-name: dashboard-to-metrics
+name: dashboard-bootstrap
 description: Bootstrap project reference SQL and metrics from a dashboard through an installed BI plugin
 tags:
   - dashboard
@@ -230,7 +230,7 @@ CLI 名称和 BI 私有 source metadata 可以不同，但最终必须提供一�
 
 ### Step 0：加载路由规则
 
-1. 加载 `dashboard-to-metrics` skill。
+1. 加载 `dashboard-bootstrap` skill。
 2. 加载已有 `storage-classify` 规则，确认：
    - reference SQL 只能交给 `gen_sql_summary`；
    - semantic model/metric 只能交给 `semantic_modeling`。
@@ -427,14 +427,14 @@ all_dashboard_queries
 
 MVP 必须修改：
 
-1. 新增 `datus/resources/skills/dashboard-to-metrics/SKILL.md`；
+1. 新增 `datus/resources/skills/dashboard-bootstrap/SKILL.md`；
 2. 新增 skill 静态/单元测试，验证 metadata、关键步骤、确认门和 builtin agent 路由；
 3. 更新 skill、plugin 和 Dashboard Copilot 使用文档；
 4. 增加不依赖具体 BI 名称的 mocked workflow 测试。
 
 MVP 仅对 Agent 入口做以下最小修改：
 
-- 将 `datus/cli/bootstrap_bi_commands.py::cmd` 改为 `dashboard-to-metrics` skill 的 chat shortcut；
+- 将 `datus/cli/bootstrap_bi_commands.py::cmd` 改为 `dashboard-bootstrap` skill 的 chat shortcut；
 - 保留旧内部 helper 作为迁移兼容面，但用户命令不再调用它们。
 
 MVP 明确不修改：
@@ -474,7 +474,7 @@ Plugin 不得调用 `task`、生成 Dosi YAML 或依赖 `datus` Python package�
 - profile schema、CLI、permissions 和 command catalogue 中不再存在 profile/Dashboard 级 datasource 映射；
 - `superset-query-export` bundled skill 与 contract、secret redaction、partial failure 测试。
 
-不需要在 Superset plugin 中增加 dashboard-to-metrics skill；通用流程只存在于 Agent 自带 skill。
+不需要在 Superset plugin 中增加 dashboard-bootstrap skill；通用流程只存在于 Agent 自带 skill。
 
 ### 10.4 `datus-semantic-adapter`
 
@@ -591,7 +591,7 @@ MVP 不修改。
 
 仓库：`Datus-agent`
 
-- 新增 `dashboard-to-metrics/SKILL.md`；
+- 新增 `dashboard-bootstrap/SKILL.md`；
 - 增加静态 contract 测试；
 - 使用 mock BI plugin 输出验证流程和确认门；
 - `/bootstrap-bi` 仅改为向标准 chat pipeline 注入 skill 请求，不保留专用编排行为。
@@ -630,7 +630,7 @@ MVP 不修改。
 | --- | --- | --- |
 | `Datus-agent` | 新增通用 skill、测试、文档；将 `/bootstrap-bi` 改为 skill shortcut | 不新增专用 CLI 编排；不改 task contract、semantic node、plugin registry |
 | BI plugin 通用要求 | bundled export skill、discovery、SQL manifest | 不生成 KB/Dosi artifact |
-| Superset plugin | contract/skill 适配、稳定 query ID；选择性导出可推荐实现 | 不增加 dashboard-to-metrics 工作流 |
+| Superset plugin | contract/skill 适配、稳定 query ID；选择性导出可推荐实现 | 不增加 dashboard-bootstrap 工作流 |
 | `datus-semantic-adapter` | 无 | API、provenance、query/validation 逻辑 |
 | E2E harness | 新增跨 plugin + builtin agent workflow | 不新增独立测试 CLI |
 
@@ -639,7 +639,7 @@ MVP 不修改。
 | 旧行为 | 新行为 |
 | --- | --- |
 | 专用 TUI 选择 BI service | skill 从已启用 plugin/profile 中选择 |
-| `/bootstrap-bi` 启动专用 Python pipeline | `/bootstrap-bi` 仅作为 `dashboard-to-metrics` 的兼容 chat shortcut |
+| `/bootstrap-bi` 启动专用 Python pipeline | `/bootstrap-bi` 仅作为 `dashboard-bootstrap` 的兼容 chat shortcut |
 | 专用 TUI 选择 Dashboard | 调用所选 plugin 的 discovery 能力 |
 | Reference SQL 默认全选 | skill 提议，用户在 manifest 明确确认 |
 | Metric 默认按五种聚合函数预选 | plugin metadata/LLM只做推荐，最终独立确认 |
@@ -677,8 +677,8 @@ MVP 不修改。
 
 | 项目 | 状态 |
 | --- | --- |
-| 通用 `dashboard-to-metrics` built-in skill | 已实现；除兼容 slash shortcut 外未修改 Agent Python 编排逻辑 |
-| `/bootstrap-bi` | 已改为标准 chat pipeline + `dashboard-to-metrics` skill，不再触发旧 Picker/streams/subagent persistence |
+| 通用 `dashboard-bootstrap` built-in skill | 已实现；除兼容 slash shortcut 外未修改 Agent Python 编排逻辑 |
+| `/bootstrap-bi` | 已改为标准 chat pipeline + `dashboard-bootstrap` skill，不再触发旧 Picker/streams/subagent persistence |
 | Skill contract/registry 测试 | 已实现并通过 |
 | Superset 选择性 SQL export | 已增加 repeatable `--chart-id` |
 | `dashboard-sql-export/v1` handoff | 已在保持 legacy 字段兼容的前提下实现 |

@@ -1,9 +1,9 @@
 ---
-name: dashboard-to-metrics
-description: Bootstrap project reference SQL and metrics from a BI dashboard through an installed plugin. Use when the user asks to initialize, import, extract, or build context, reference SQL, semantic models, or metrics from a dashboard, including dashboard-to-metrics and dashboard bootstrap requests.
+name: dashboard-bootstrap
+description: Bootstrap project reference SQL and metrics from a BI dashboard through an installed plugin. Use when the user asks to initialize, import, extract, or build context, reference SQL, semantic models, or metrics from a dashboard or requests dashboard bootstrap.
 ---
 
-# Dashboard to Metrics
+# Dashboard Bootstrap
 
 Bootstrap dashboard query context through an installed BI plugin. Keep BI access in the plugin and route exported SQL to the builtin agents that own each Knowledge Base store.
 

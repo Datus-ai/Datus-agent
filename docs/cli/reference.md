@@ -54,7 +54,7 @@ All slash commands available in Datus-CLI, grouped by category.
 | `/memory-organize` | | Audit and reorganize all persistent stores (remediation plan, then confirm); optional free text adds focus hints | |
 | `/mcp` | | Manage MCP servers (list/add/remove/check/call/filter) | [MCP Extensions](mcp_extensions.md) |
 | `/skill` | | Manage skills and marketplace | [Skill Command](skill_command.md) |
-| `/bootstrap-bi` | | Compatibility shortcut for the skill-driven Dashboard-to-Metrics workflow; optional free text scopes plugin/profile/dashboard/query selection | [Dashboard to Metrics](../skills/dashboard_to_metrics.md) |
+| `/bootstrap-bi` | | Compatibility shortcut for the skill-driven Dashboard Bootstrap workflow; optional free text scopes plugin/profile/dashboard/query selection | [Dashboard Bootstrap](../skills/dashboard_bootstrap.md) |
 | `/services` | | List configured service platforms and their read-only methods | |
 | `/permission` | | Switch the active CLI / agent permission profile | |
 | `/sandbox` | | Toggle the OS-level bash sandbox (`status`/`on`/`off`/`strict`/`normal`, optional `--project`/`--global` persistence). When on, bash commands can only write inside the workspace, session data dir and tmp, and only read system dirs plus the allowlist (macOS `sandbox-exec` / Linux `bwrap`; fail-closed elsewhere). `strict` is the multi-tenant tier: workspace + tmp + explicit allowlists only, `~/.datus` fully blocked, and a minimal child environment that hides process-wide secrets; `deny_network: true` in `agent.bash.sandbox` additionally cuts network access | |

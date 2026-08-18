@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
-from datus.cli.bootstrap_bi_commands import _DASHBOARD_TO_METRICS_PROMPT, BootstrapBiCommands
+from datus.cli.bootstrap_bi_commands import _DASHBOARD_BOOTSTRAP_PROMPT, BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPlan, DashboardCliOptions
 from datus.cli.bootstrap_bi_streams import BiBuildState
 from datus.cli.skill_command_utils import render_skill_prompt
@@ -99,19 +99,19 @@ def _cli(agent_config, console, *, plan_mode: bool = False) -> SimpleNamespace:
     )
 
 
-def test_cmd_delegates_to_dashboard_to_metrics_skill(agent_config, console) -> None:
+def test_cmd_delegates_to_dashboard_bootstrap_skill(agent_config, console) -> None:
     cli = _cli(agent_config, console)
     cmd = BootstrapBiCommands(cli)
 
     cmd.cmd()
 
     cli.chat_commands.execute_chat_command.assert_called_once_with(
-        render_skill_prompt(_DASHBOARD_TO_METRICS_PROMPT, ""),
+        render_skill_prompt(_DASHBOARD_BOOTSTRAP_PROMPT, ""),
         plan_mode=False,
         subagent_name=None,
     )
     message = cli.chat_commands.execute_chat_command.call_args.args[0]
-    assert 'load_skill(skill_name="dashboard-to-metrics")' in message
+    assert 'load_skill(skill_name="dashboard-bootstrap")' in message
     assert "legacy bootstrap picker" in message
 
 
@@ -123,7 +123,7 @@ def test_cmd_forwards_user_context_and_plan_mode(agent_config, console) -> None:
 
     cli.chat_commands.execute_chat_command.assert_called_once_with(
         render_skill_prompt(
-            _DASHBOARD_TO_METRICS_PROMPT,
+            _DASHBOARD_BOOTSTRAP_PROMPT,
             "Superset profile prod, dashboard 42, run automatically",
         ),
         plan_mode=True,

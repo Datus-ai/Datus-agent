@@ -1,6 +1,6 @@
-# Dashboard to Metrics
+# Dashboard Bootstrap
 
-`dashboard-to-metrics` 通过已安装的 BI plugin，从 Dashboard 初始化项目的 reference SQL 和 Dosi metrics。整个流程由 skill 编排，不增加 Dashboard 专用 CLI 命令。
+`dashboard-bootstrap` 通过已安装的 BI plugin，从 Dashboard 初始化项目的 reference SQL 和 Dosi metrics。整个流程由 skill 编排，不增加 Dashboard 专用 CLI 命令。
 
 可以直接用自然语言触发，也可以使用兼容快捷入口 `/bootstrap-bi`。该入口只把请求转交给同一套 chat/skill pipeline，不再调用旧 Picker 或 BI streams。命令后的文本会作为范围提示原样传递，例如：
 

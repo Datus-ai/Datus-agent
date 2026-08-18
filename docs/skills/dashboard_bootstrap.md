@@ -1,6 +1,6 @@
-# Dashboard to Metrics
+# Dashboard Bootstrap
 
-`dashboard-to-metrics` bootstraps project reference SQL and Dosi metrics from a dashboard through an installed BI plugin. The workflow is skill-driven; it does not add a dashboard-specific CLI command.
+`dashboard-bootstrap` bootstraps project reference SQL and Dosi metrics from a dashboard through an installed BI plugin. The workflow is skill-driven; it does not add a dashboard-specific CLI command.
 
 Use natural language or the compatibility shortcut `/bootstrap-bi`. The shortcut delegates to the same chat/skill pipeline and does not invoke the legacy picker or BI streams. Text after the command is forwarded as scope, for example:
 

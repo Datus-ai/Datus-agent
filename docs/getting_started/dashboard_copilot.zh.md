@@ -1,6 +1,6 @@
 # Dashboard Copilot
 
-Dashboard Copilot 从 BI 仪表盘构建项目的 reference SQL 和 metrics。流程由内置 `dashboard-to-metrics` skill 与用户选定的 BI plugin 驱动；Datus Agent 不再硬编码某个 BI 产品的 Dashboard API 或 SQL 编译逻辑。
+Dashboard Copilot 从 BI 仪表盘构建项目的 reference SQL 和 metrics。流程由内置 `dashboard-bootstrap` skill 与用户选定的 BI plugin 驱动；Datus Agent 不再硬编码某个 BI 产品的 Dashboard API 或 SQL 编译逻辑。
 
 `/bootstrap-bi` 继续作为兼容快捷入口保留。它只把请求转交给标准 chat/skill pipeline，不再启动旧 Picker、BI streams 或 Dashboard 专用 subagent 生成逻辑。
 
@@ -29,7 +29,7 @@ Superset plugin 已实现所需导出 contract。其他 BI plugin 只要通过�
 /bootstrap-bi 使用 Superset prod profile 和 World Bank dashboard
 ```
 
-两种方式进入完全相同的流程。slash command 只要求 Agent 加载 `dashboard-to-metrics`，没有独立的特殊实现。
+两种方式进入完全相同的流程。slash command 只要求 Agent 加载 `dashboard-bootstrap`，没有独立的特殊实现。
 
 ## 选择与确认
 
@@ -86,4 +86,4 @@ Plugin 负责访问 BI 和保证 SQL 忠实性。主 Agent 与 plugin 都不直�
 - 查询匹配到非 active datasource：对应 metric 分区延后处理，流程不会静默切换 datasource。
 - semantic adapter 只读：先迁移到 Dosi，再生成 metrics。
 
-完整流程 contract 参见 [Dashboard to Metrics](../skills/dashboard_to_metrics.zh.md)。
+完整流程 contract 参见 [Dashboard Bootstrap](../skills/dashboard_bootstrap.zh.md)。

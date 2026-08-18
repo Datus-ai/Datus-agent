@@ -89,27 +89,27 @@ flow_groups:
         quality_sensitive: true
         docs:
           - docs/getting_started/dashboard_copilot.md
-          - docs/skills/dashboard_to_metrics.md
+          - docs/skills/dashboard_bootstrap.md
           - docs/getting_started/data_engineering_quickstart.md
           - docs/configuration/bi_platforms.md
         entrypoints:
           - "REPL: /bootstrap-bi compatibility skill shortcut"
-          - "CLI chat: natural-language dashboard-to-metrics request"
+          - "CLI chat: natural-language dashboard bootstrap request"
         contracts:
-          - The shortcut routes to the dashboard-to-metrics skill through the standard chat pipeline.
+          - The shortcut routes to the dashboard-bootstrap skill through the standard chat pipeline.
           - The selected BI plugin exports confirmed SQL; builtin agents construct reference SQL and metrics.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_to_metrics_skill
-              - tests/unit_tests/tools/skill_tools/test_dashboard_to_metrics_skill.py
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_to_metrics_skill
-              - tests/unit_tests/tools/skill_tools/test_dashboard_to_metrics_skill.py
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           nightly:
             status: covered

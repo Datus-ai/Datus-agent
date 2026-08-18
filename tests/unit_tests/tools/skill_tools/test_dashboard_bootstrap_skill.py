@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).parents[4]
-SKILL = ROOT / "datus/resources/skills/dashboard-to-metrics/SKILL.md"
+SKILL = ROOT / "datus/resources/skills/dashboard-bootstrap/SKILL.md"
 
 
 def _parts() -> tuple[dict, str]:
@@ -14,11 +14,11 @@ def _parts() -> tuple[dict, str]:
     return yaml.safe_load(frontmatter), body
 
 
-def test_dashboard_to_metrics_skill_is_generic_and_discoverable():
+def test_dashboard_bootstrap_skill_is_generic_and_discoverable():
     metadata, body = _parts()
 
     assert metadata == {
-        "name": "dashboard-to-metrics",
+        "name": "dashboard-bootstrap",
         "description": metadata["description"],
     }
     assert "dashboard" in metadata["description"].lower()
@@ -27,7 +27,7 @@ def test_dashboard_to_metrics_skill_is_generic_and_discoverable():
     assert all(vendor not in body.lower() for vendor in ("superset", "tableau", "metabase"))
 
 
-def test_dashboard_to_metrics_skill_has_ordered_selection_and_generation_gate():
+def test_dashboard_bootstrap_skill_has_ordered_selection_and_generation_gate():
     _, body = _parts()
 
     ordered_markers = (
@@ -47,7 +47,7 @@ def test_dashboard_to_metrics_skill_has_ordered_selection_and_generation_gate():
     assert "auto_run=true" in body
 
 
-def test_dashboard_to_metrics_skill_routes_to_builtin_owners():
+def test_dashboard_bootstrap_skill_routes_to_builtin_owners():
     _, body = _parts()
 
     assert 'task(\n  type="gen_sql_summary"' in body

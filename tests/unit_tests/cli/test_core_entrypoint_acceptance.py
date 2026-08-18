@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
-from datus.cli.bootstrap_bi_commands import _DASHBOARD_TO_METRICS_PROMPT, BootstrapBiCommands
+from datus.cli.bootstrap_bi_commands import _DASHBOARD_BOOTSTRAP_PROMPT, BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPlan, DashboardCliOptions
 from datus.cli.bootstrap_streams import stream_semantic_modeling
 from datus.cli.build_kb_commands import BuildKbCommands
@@ -157,7 +157,7 @@ def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
     cli.bg_sync.schedule.assert_called_once_with(datasource="warehouse", reason="switch")
 
 
-def test_bootstrap_bi_routes_to_dashboard_to_metrics_skill() -> None:
+def test_bootstrap_bi_routes_to_dashboard_bootstrap_skill() -> None:
     cli = _build_core_cli()
     cli.bootstrap_bi_commands = BootstrapBiCommands(cli)
     cli.commands["/bootstrap-bi"] = cli.bootstrap_bi_commands.cmd
@@ -176,7 +176,7 @@ def test_bootstrap_bi_routes_to_dashboard_to_metrics_skill() -> None:
 
     cli.chat_commands.execute_chat_command.assert_called_once_with(
         render_skill_prompt(
-            _DASHBOARD_TO_METRICS_PROMPT,
+            _DASHBOARD_BOOTSTRAP_PROMPT,
             "use Superset profile prod and dashboard 42",
         ),
         plan_mode=True,

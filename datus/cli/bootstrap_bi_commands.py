@@ -2,10 +2,10 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""``/bootstrap-bi`` compatibility shortcut for ``dashboard-to-metrics``.
+"""``/bootstrap-bi`` compatibility shortcut for ``dashboard-bootstrap``.
 
 Dashboard bootstrap orchestration lives in the bundled
-``dashboard-to-metrics`` skill. The slash command only injects a deterministic
+``dashboard-bootstrap`` skill. The slash command only injects a deterministic
 request into the standard chat pipeline, so plugin discovery, selection,
 confirmation, export, and Knowledge Base construction remain skill/LLM driven.
 
@@ -46,10 +46,10 @@ from datus.utils.traceable_utils import optional_traceable
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
 
-_DASHBOARD_TO_METRICS_PROMPT = (
+_DASHBOARD_BOOTSTRAP_PROMPT = (
     "Bootstrap reference SQL and metrics from a BI dashboard by following the "
-    "`dashboard-to-metrics` skill. "
-    'Call `load_skill(skill_name="dashboard-to-metrics")` first and execute its steps in order. '
+    "`dashboard-bootstrap` skill. "
+    'Call `load_skill(skill_name="dashboard-bootstrap")` first and execute its steps in order. '
     "Use the selected BI plugin for dashboard discovery and SQL export, and use the builtin "
     "agents named by the skill to build context. Do not use the legacy bootstrap picker, "
     "legacy BI streams, or create dashboard-specific subagents."
@@ -89,7 +89,7 @@ class BootstrapBiCommands:
             return
 
         chat_commands.execute_chat_command(
-            render_skill_prompt(_DASHBOARD_TO_METRICS_PROMPT, args),
+            render_skill_prompt(_DASHBOARD_BOOTSTRAP_PROMPT, args),
             plan_mode=getattr(self.cli, "plan_mode_active", False),
             subagent_name=None,
         )
