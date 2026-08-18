@@ -226,6 +226,56 @@ class DatasourceService:
             return [_listing_failed(connector.database_name, str(e))]
 
         db_infos: List[DatabaseInfo] = []
+
+        # 1b) A dialect with no database level (Oracle: schema is the only
+        # namespace) yields nothing above — its connector reports no database and
+        # its get_databases() is empty by design. Iterating that dropped the whole
+        # datasource out of the catalog while its tables were perfectly listable.
+        # Its schemas ARE the top level, so report them as the roots: a table then
+        # addresses as schema.table, which is exactly the identifier such a dialect
+        # accepts. Only when nothing else produced a root, so a dialect that does
+        # report a database keeps its existing shape.
+        if not db_names and has_schema and not supports_namespace("database", connector=connector, dialect=dialect):
+            try:
+                schemas = (
+                    [request.schema_name]
+                    if request.schema_name
+                    else connector.get_schemas(
+                        catalog_name=request.catalog_name,
+                        include_sys=request.include_sys_schemas,
+                    )
+                )
+            except Exception as e:
+                logger.warning("Failed to get schemas for schema-only dialect=%s: %s", dialect, e)
+                return [_listing_failed(connector.schema_name, str(e))]
+
+            for schema in schemas:
+                try:
+                    tables = connector.get_tables(catalog_name=catalog_name, schema_name=schema)
+                    tables.sort()
+                except Exception as e:
+                    logger.warning("Failed to get tables for schema=%s dialect=%s: %s", schema, dialect, e)
+                    db_infos.append(_listing_failed(schema, str(e)))
+                    continue
+
+                db_infos.append(
+                    DatabaseInfo(
+                        name=schema,
+                        uri=_get_uri(connector),
+                        type=dialect,
+                        current=(schema == connector.schema_name),
+                        catalog_name=catalog_name,
+                        # Already the root: nesting it under itself would render the
+                        # same name twice in a catalog tree.
+                        schema_name=None,
+                        connection_status="connected",
+                        tables_count=len(tables),
+                        last_accessed=now,
+                        tables=tables,
+                    )
+                )
+            return db_infos
+
         for db_name in db_names:
             if has_schema:
                 # 2) Resolve schemas for this db — a single failing db must not
