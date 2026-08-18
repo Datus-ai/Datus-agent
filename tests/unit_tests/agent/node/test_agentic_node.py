@@ -22,6 +22,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.schemas.token_usage import TokenUsage
+from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
 
 _UNSET = object()
 
@@ -1825,12 +1826,30 @@ class TestInjectResponseLanguage:
         node = _make_node(agent_config=_Bare())
         assert node._inject_response_language("BASE") == "BASE"
 
-    def test_render_failure_returns_base_unchanged(self):
+    def test_directive_is_restated_in_the_target_language(self):
+        """The English ``Use: Chinese`` line alone gets drowned out by dozens of
+        turns of English tool output; the native sentence is what actually holds
+        a small model in language."""
+        node = _make_node(agent_config=self._agent_config("zh"))
+        result = node._inject_response_language("BASE")
+        assert "简体中文" in result
+
+    def test_unknown_code_has_no_native_line(self):
+        node = _make_node(agent_config=self._agent_config("xx"))
+        result = node._inject_response_language("BASE")
+        assert result.count("\n- Use:") == 1
+        assert result.rstrip().endswith("JSON keys")
+
+    def test_render_failure_still_pins_the_language(self):
+        """Dropping the directive on a render failure silently returns the turn
+        to the model's own language choice — what the directive exists to stop."""
         node = _make_node(agent_config=self._agent_config("zh"))
         with patch("datus.agent.node.agentic_node.get_prompt_manager") as mgr:
             mgr.return_value.render_template.side_effect = RuntimeError("boom")
             result = node._inject_response_language("BASE")
-        assert result == "BASE"
+        assert result.startswith("BASE\n\n# Response Language")
+        assert "Chinese (zh)" in result
+        assert result.endswith(NATIVE_DIRECTIVE_MAP["zh"])
 
 
 # ---------------------------------------------------------------------------

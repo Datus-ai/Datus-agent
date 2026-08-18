@@ -12,6 +12,7 @@ import pytest
 
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput
 from datus.tools.llms_tools.visualization_tool import VisualizationTool
+from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
 
 
 def _make_tool(model=None):
@@ -434,7 +435,10 @@ class TestLanguageDirective:
         kw = mock_gpm.return_value.render_template.call_args.kwargs
         assert kw["language_code"] == "zh"
         assert kw["language_name"] == "Chinese"
-        assert directive == "# Response Language\n- Use: Chinese (zh)"
+        assert kw["native_directive"] == NATIVE_DIRECTIVE_MAP["zh"]
+        # A home carrying a pre-upgrade template copy renders the name line
+        # only; the native sentence is restated on top of whatever came back.
+        assert directive == f"# Response Language\n- Use: Chinese (zh)\n- {NATIVE_DIRECTIVE_MAP['zh']}"
 
     def test_falls_back_to_agent_config_language(self):
         config = MagicMock()
@@ -477,7 +481,7 @@ class TestLanguageDirective:
             mock_gpm.return_value.render_template.side_effect = Exception("template missing")
             directive = tool._language_directive("zh")
 
-        assert directive == "# Response Language\n- Use: Chinese (zh)"
+        assert directive == f"# Response Language\n- Use: Chinese (zh)\n- {NATIVE_DIRECTIVE_MAP['zh']}"
 
     def test_empty_render_falls_back_to_minimal_directive(self):
         tool = _make_tool()
@@ -485,7 +489,7 @@ class TestLanguageDirective:
             mock_gpm.return_value.render_template.return_value = "   "
             directive = tool._language_directive("fr")
 
-        assert directive == "# Response Language\n- Use: French (fr)"
+        assert directive == f"# Response Language\n- Use: French (fr)\n- {NATIVE_DIRECTIVE_MAP['fr']}"
 
     def test_execute_passes_directive_into_prompt(self):
         mock_model = MagicMock()
@@ -504,7 +508,7 @@ class TestLanguageDirective:
 
         # The last render is the prompt itself; the directive render precedes it.
         prompt_call = mock_gpm.return_value.render_template.call_args_list[-1]
-        assert prompt_call.kwargs["language_directive"] == "directive"
+        assert prompt_call.kwargs["language_directive"] == f"directive\n- {NATIVE_DIRECTIVE_MAP['zh']}"
 
     def test_execute_with_context_passes_directive_into_prompt(self):
         mock_model = MagicMock()
@@ -525,7 +529,7 @@ class TestLanguageDirective:
             result = tool.execute_with_context(_make_input(df), sql="SELECT 1", language="zh")
 
         prompt_call = mock_gpm.return_value.render_template.call_args_list[-1]
-        assert prompt_call.kwargs["language_directive"] == "directive"
+        assert prompt_call.kwargs["language_directive"] == f"directive\n- {NATIVE_DIRECTIVE_MAP['zh']}"
         assert result.success is True
 
     def test_prompt_carries_empty_directive_when_unpinned(self):
