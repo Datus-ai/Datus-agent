@@ -34,13 +34,13 @@ Copilot 只回答问题,Datus 端到端地执行数据工作:规划、编写并�
 
 ## 核心特性
 
+### 指标与语义层
+
+通过可插拔的[语义适配器](https://docs.datus.ai/zh/latest/adapters/semantic_adapters/)超越裸 SQL:一套语义建模工作流负责编写数据集、模型与指标,三种执行后端负责运行。可用 [MetricFlow](https://docs.datus.ai/zh/latest/metricflow/introduction/) YAML 编写,也可写成 [OSI(Open Semantic Interchange)](https://docs.datus.ai/zh/latest/adapters/osi_semantic_adapter/) 规范文档,由 MetricFlow 执行或由原生 Rust 引擎 [Dosi](docs/adapters/dosi_semantic_adapter.zh.md) 直接执行。Datus 能从 schema 和 SQL 历史自动生成语义资产,涵盖累计、滚动窗口、环比等高级时间指标;键和关联只依据已验证的证据声明。AskMetrics subagent 直接基于指标层回答 KPI 与趋势问题,其维度归因能力不只回答指标是多少,还能解释为什么变了。[Dashboard Copilot](https://docs.datus.ai/zh/latest/getting_started/dashboard_copilot/) 则把现有 BI 看板变成对话式分析。
+
 ### 可演进的上下文引擎,而非静态管道
 
-NL2SQL 工具会幻觉出不存在的 join 和指标,因为它们对你的数据库一无所知。Datus 构建一个[**上下文引擎**](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/),把树状业务域结构与向量检索结合,将 schema 元数据、参考 SQL、参数化 SQL 模板、语义模型、指标和领域知识统一进一个由团队自己拥有的上下文层。`/init` 扫描项目生成 `AGENTS.md` 清单及文件型知识/记忆存储;`/build-kb` 在其上构建向量索引知识库,可按文件、表、数据源或业务域圈定范围。正是这些上下文让 Agent 生成的 SQL 准确可信,而每一次查询、修正和业务规则都会回流沉淀。
-
-### 指标与语义层:MetricFlow 与 OSI
-
-通过可插拔的[语义适配器](https://docs.datus.ai/zh/latest/adapters/semantic_adapters/)超越裸 SQL。业务指标可用 [MetricFlow](https://docs.datus.ai/zh/latest/metricflow/introduction/) YAML 或 [OSI(Open Semantic Interchange)](https://docs.datus.ai/zh/latest/adapters/osi_semantic_adapter/) 规范文档编写,由 MetricFlow 或原生 Rust 引擎 [Dosi](docs/adapters/dosi_semantic_adapter.zh.md) 执行;Datus 还能从 schema 和 SQL 历史自动生成指标,涵盖累计、滚动窗口、环比等高级时间指标。AskMetrics subagent 直接基于指标层回答 KPI、趋势和归因问题,[Dashboard Copilot](https://docs.datus.ai/zh/latest/getting_started/dashboard_copilot/) 则把现有 BI 看板变成对话式分析。
+NL2SQL 工具会幻觉出不存在的 join 和指标,因为它们对你的数据库一无所知。Datus 构建一个[**上下文引擎**](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/),把树状业务域结构与向量检索结合,将 schema 元数据、参考 SQL、参数化 SQL 模板、语义模型、指标和领域知识统一进一个由团队自己拥有的上下文层。`/init` 扫描项目生成 `AGENTS.md` 清单及文件型知识/记忆存储;`/build-kb` 在其上构建向量索引知识库,可按文件、表、数据源或业务域圈定范围。语义层正是从这些原料中提炼出来的,而每一次查询、修正和业务规则都会回流沉淀。
 
 ### 从探索到领域专属 Subagent
 
@@ -56,14 +56,17 @@ NL2SQL 工具会幻觉出不存在的 join 和指标,因为它们对你的数据
 
 ### 企业级治理
 
-Datus 内置权限三档(`normal` / `auto` / `dangerous`,可按请求切换)、按 SQL 语句类型细分的权限、命令级 bash 允许/拒绝规则与 OS 级沙箱、请求级 [SQL policy 框架](https://docs.datus.ai/zh/latest/configuration/sql_policy/)(行级改写)、只读多租户配置模式,以及可配置的 [tracing](https://docs.datus.ai/zh/latest/develop/observability/)(Langfuse、LangSmith、Datadog、Braintrust 或任意 OTLP collector)。
+Datus 内置权限三档(`normal` / `auto` / `dangerous`,可按请求切换)、按 SQL 语句类型细分的权限、自动 AI 审查(对 bash 与 SQL 权限请求预审)、命令级 bash 允许/拒绝规则与 OS 级沙箱、请求级 [SQL policy 框架](https://docs.datus.ai/zh/latest/configuration/sql_policy/)(行级改写)、只读多租户配置模式,以及可配置的 [tracing](https://docs.datus.ai/zh/latest/develop/observability/)(Langfuse、LangSmith、Datadog、Braintrust 或任意 OTLP collector)。
+
+### Skills 与插件
+
+以 [agentskills.io](https://agentskills.io) 风格的[打包技能](https://docs.datus.ai/zh/latest/skills/introduction/)扩展 Datus,支持 marketplace。更完整的扩展可以做成[插件](https://docs.datus.ai/zh/latest/plugin/introduction/):一份声明式 `datus-plugin.yml` 清单打包 CLI 命令、技能和提示词上下文,配套 install/pack/export 工具链、按项目激活与多租户托管部署。
 
 ### 开放平台
 
 - **10+ LLM 提供商**:OpenAI、Claude、Gemini、DeepSeek、Qwen、Kimi、OpenRouter 等,支持订阅认证(Claude 订阅、OpenAI Codex OAuth)与 coding-plan 提供商;按节点分配模型,单个工作流内可混用。
-- **13 种数据库**:内置 SQLite 和 DuckDB,插件式适配 PostgreSQL、MySQL、Snowflake、StarRocks、ClickHouse、Doris 等。
+- **14 种数据库**:内置 SQLite 和 DuckDB,插件式适配 PostgreSQL、MySQL、Snowflake、StarRocks、ClickHouse、Doris 等。
 - [**MCP 协议**](https://docs.datus.ai/zh/latest/integration/mcp/):既是 MCP 服务端(向 Claude Desktop、Cursor 等暴露 Datus 工具),也是 MCP 客户端(CLI 中通过 `/mcp` 消费外部工具)。
-- **Skills 与插件**:以 [agentskills.io](https://agentskills.io) 风格的[打包技能](https://docs.datus.ai/zh/latest/skills/introduction/)扩展 Datus(支持 marketplace),或以声明式 `datus-plugin.yml` 清单 + install/pack/export CLI 交付完整[插件](https://docs.datus.ai/zh/latest/plugin/introduction/)。
 
 ### 度量与改进
 
@@ -145,6 +148,8 @@ Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 /bootstrap       # TUI:爬取 schema、导入参考 SQL、生成语义模型与指标
 /build-kb        # 构建向量知识库,可按文件/表/业务域圈定范围
 ```
+
+**语义建模**:从 schema 和 SQL 历史生成数据集、语义模型与指标,经语义适配器校验后发布。
 
 **创建 Subagent**:打开统一 agent 管理器,把成熟上下文打包为带精选工具和业务规则的领域聊天机器人。
 
@@ -259,6 +264,7 @@ API key 通过环境变量以 `${ENV_VAR}` 语法注入。
 | ClickZetta | `clickzetta` | [`datus-clickzetta`](https://github.com/Datus-ai/datus-db-adapters) |
 | Apache Doris | `doris` | [`datus-doris`](https://github.com/Datus-ai/datus-db-adapters) |
 | Hologres | `hologres` | [`datus-hologres`](https://github.com/Datus-ai/datus-db-adapters) |
+| GaussDB / openGauss | `gaussdb` | [`datus-gaussdb`](https://github.com/Datus-ai/datus-db-adapters)(仅 Linux) |
 | Hive | `hive` | [`datus-hive`](https://github.com/Datus-ai/datus-db-adapters) |
 | Spark | `spark` | [`datus-spark`](https://github.com/Datus-ai/datus-db-adapters) |
 | Trino | `trino` | [`datus-trino`](https://github.com/Datus-ai/datus-db-adapters) |

@@ -1,11 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 300" role="img" aria-label="How Datus works: explore, build context, create a subagent, deliver, measure, iterate — with feedback flowing back into context.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" role="img" aria-label="How Datus works: the author half turns data engineering into semantics (explore, build context, model semantics), the semantic layer sits in the middle as the asset your team owns, and the consume half delivers it as subagents, SQL, metrics, and dashboards, measured by benchmarks; feedback flows back into context.">
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
     .box { fill: #f6f8fa; stroke: #d0d7de; }
-    .box-accent { fill: #f4f1fd; stroke: #c9bcf5; }
+    .bar { fill: #f4f1fd; stroke: #c9bcf5; }
+    .label { fill: #57606a; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
     .num { fill: #654FF0; font-size: 11px; font-weight: 700; }
     .title { fill: #1f2328; font-size: 13px; font-weight: 600; }
-    .sub { fill: #57606a; font-size: 10.5px; }
+    .title-accent { fill: #654FF0; font-size: 14px; font-weight: 600; }
+    .sub { fill: #57606a; font-size: 11px; }
     .flow { stroke: #8c959f; stroke-width: 1.5; fill: none; }
     .flow-accent { stroke: #654FF0; stroke-width: 1.5; fill: none; }
     .flowlabel-accent { fill: #654FF0; font-size: 11px; }
@@ -13,9 +15,11 @@
     .arrow-accent { fill: #654FF0; }
     @media (prefers-color-scheme: dark) {
       .box { fill: #161b22; stroke: #30363d; }
-      .box-accent { fill: #1c1832; stroke: #4c3d8f; }
+      .bar { fill: #1c1832; stroke: #4c3d8f; }
+      .label { fill: #8b949e; }
       .num { fill: #a78bfa; }
       .title { fill: #e6edf3; }
+      .title-accent { fill: #a78bfa; }
       .sub { fill: #8b949e; }
       .flow { stroke: #6e7681; }
       .flow-accent { stroke: #a78bfa; }
@@ -33,59 +37,70 @@
     </marker>
   </defs>
 
-  <!-- Stage 1: Explore -->
-  <rect x="25" y="70" width="140" height="110" rx="10" class="box"/>
-  <text x="41" y="94" class="num">1</text>
-  <text x="95" y="118" text-anchor="middle" class="title">Explore</text>
-  <text x="95" y="140" text-anchor="middle" class="sub">chat with your DB</text>
-  <text x="95" y="156" text-anchor="middle" class="sub">@table · @file refs</text>
+  <!-- Feedback loop: Measure back into Build Context (routed along the top) -->
+  <path d="M 955 344 L 978 344 L 978 22 L 560 22 L 560 44" class="flow-accent" marker-end="url(#hw-ah-accent)"/>
+  <text x="730" y="16" text-anchor="middle" class="flowlabel-accent">analyst feedback · corrections · success stories flow back into context</text>
 
-  <line x1="165" y1="125" x2="185" y2="125" class="flow" marker-end="url(#hw-ah)"/>
+  <!-- ===== Author half ===== -->
+  <text x="45" y="40" class="label">AUTHOR · THE FRONT HALF: FROM DATA ENGINEERING TO SEMANTICS</text>
 
-  <!-- Stage 2: Build Context -->
-  <rect x="187" y="70" width="140" height="110" rx="10" class="box-accent"/>
-  <text x="203" y="94" class="num">2</text>
-  <text x="257" y="118" text-anchor="middle" class="title">Build Context</text>
-  <text x="257" y="140" text-anchor="middle" class="sub">/init · /bootstrap</text>
-  <text x="257" y="156" text-anchor="middle" class="sub">/build-kb</text>
+  <rect x="45" y="48" width="290" height="92" rx="10" class="box"/>
+  <text x="61" y="72" class="num">1</text>
+  <text x="190" y="76" text-anchor="middle" class="title">Explore</text>
+  <text x="190" y="98" text-anchor="middle" class="sub">chat with your database</text>
+  <text x="190" y="114" text-anchor="middle" class="sub">@table · @file references</text>
 
-  <line x1="327" y1="125" x2="347" y2="125" class="flow" marker-end="url(#hw-ah)"/>
+  <line x1="335" y1="94" x2="353" y2="94" class="flow" marker-end="url(#hw-ah)"/>
 
-  <!-- Stage 3: Create Subagent -->
-  <rect x="349" y="70" width="140" height="110" rx="10" class="box"/>
-  <text x="365" y="94" class="num">3</text>
-  <text x="419" y="118" text-anchor="middle" class="title">Create Subagent</text>
-  <text x="419" y="140" text-anchor="middle" class="sub">/agent manager</text>
-  <text x="419" y="156" text-anchor="middle" class="sub">context · tools · rules</text>
+  <rect x="355" y="48" width="290" height="92" rx="10" class="box"/>
+  <text x="371" y="72" class="num">2</text>
+  <text x="500" y="76" text-anchor="middle" class="title">Build Context</text>
+  <text x="500" y="98" text-anchor="middle" class="sub">/init · /bootstrap · /build-kb</text>
+  <text x="500" y="114" text-anchor="middle" class="sub">schema · reference SQL · knowledge</text>
 
-  <line x1="489" y1="125" x2="509" y2="125" class="flow" marker-end="url(#hw-ah)"/>
+  <line x1="645" y1="94" x2="663" y2="94" class="flow" marker-end="url(#hw-ah)"/>
 
-  <!-- Stage 4: Deliver -->
-  <rect x="511" y="70" width="140" height="110" rx="10" class="box"/>
-  <text x="527" y="94" class="num">4</text>
-  <text x="581" y="118" text-anchor="middle" class="title">Deliver</text>
-  <text x="581" y="140" text-anchor="middle" class="sub">web · API · MCP</text>
-  <text x="581" y="156" text-anchor="middle" class="sub">Slack · Feishu · IDE</text>
+  <rect x="665" y="48" width="290" height="92" rx="10" class="box"/>
+  <text x="681" y="72" class="num">3</text>
+  <text x="810" y="76" text-anchor="middle" class="title">Model Semantics</text>
+  <text x="810" y="98" text-anchor="middle" class="sub">datasets · models · metrics</text>
+  <text x="810" y="114" text-anchor="middle" class="sub">mined from SQL history · validated</text>
 
-  <line x1="651" y1="125" x2="671" y2="125" class="flow" marker-end="url(#hw-ah)"/>
+  <!-- Author -> asset -->
+  <line x1="500" y1="140" x2="500" y2="176" class="flow-accent" marker-end="url(#hw-ah-accent)"/>
+  <text x="510" y="164" class="flowlabel-accent">create · validate · promote</text>
 
-  <!-- Stage 5: Measure -->
-  <rect x="673" y="70" width="140" height="110" rx="10" class="box"/>
-  <text x="689" y="94" class="num">5</text>
-  <text x="743" y="118" text-anchor="middle" class="title">Measure</text>
-  <text x="743" y="140" text-anchor="middle" class="sub">BIRD · Spider 2.0</text>
-  <text x="743" y="156" text-anchor="middle" class="sub">accuracy over time</text>
+  <!-- ===== Semantic layer asset ===== -->
+  <rect x="45" y="178" width="910" height="66" rx="10" class="bar"/>
+  <text x="500" y="206" text-anchor="middle" class="title-accent">Semantic Layer · the asset your team owns</text>
+  <text x="500" y="226" text-anchor="middle" class="sub">OSI semantic models &amp; metrics · verified keys · executed by MetricFlow or the native Dosi engine</text>
 
-  <line x1="813" y1="125" x2="833" y2="125" class="flow" marker-end="url(#hw-ah)"/>
+  <!-- Asset -> consume -->
+  <line x1="500" y1="244" x2="500" y2="280" class="flow-accent" marker-end="url(#hw-ah-accent)"/>
+  <text x="510" y="268" class="flowlabel-accent">grounded consumption</text>
 
-  <!-- Stage 6: Iterate -->
-  <rect x="835" y="70" width="140" height="110" rx="10" class="box"/>
-  <text x="851" y="94" class="num">6</text>
-  <text x="905" y="118" text-anchor="middle" class="title">Iterate</text>
-  <text x="905" y="140" text-anchor="middle" class="sub">fix SQL · add rules</text>
-  <text x="905" y="156" text-anchor="middle" class="sub">refine semantics</text>
+  <!-- ===== Consume half ===== -->
+  <text x="45" y="292" class="label">CONSUME · THE BACK HALF: SQL · METRICS · DASHBOARDS · CHATBOTS</text>
 
-  <!-- Feedback loop: Iterate back to Build Context -->
-  <path d="M 905 180 L 905 232 L 257 232 L 257 186" class="flow-accent" marker-end="url(#hw-ah-accent)"/>
-  <text x="581" y="252" text-anchor="middle" class="flowlabel-accent">analyst feedback and success stories flow back into context — the agent gets more accurate over time</text>
+  <rect x="45" y="300" width="290" height="92" rx="10" class="box"/>
+  <text x="61" y="324" class="num">4</text>
+  <text x="190" y="328" text-anchor="middle" class="title">Create Subagent</text>
+  <text x="190" y="350" text-anchor="middle" class="sub">/agent manager</text>
+  <text x="190" y="366" text-anchor="middle" class="sub">curated context · tools · rules</text>
+
+  <line x1="335" y1="346" x2="353" y2="346" class="flow" marker-end="url(#hw-ah)"/>
+
+  <rect x="355" y="300" width="290" height="92" rx="10" class="box"/>
+  <text x="371" y="324" class="num">5</text>
+  <text x="500" y="328" text-anchor="middle" class="title">Deliver</text>
+  <text x="500" y="350" text-anchor="middle" class="sub">web · API · MCP · Slack/Feishu · IDE</text>
+  <text x="500" y="366" text-anchor="middle" class="sub">AskMetrics · reports · dashboards</text>
+
+  <line x1="645" y1="346" x2="663" y2="346" class="flow" marker-end="url(#hw-ah)"/>
+
+  <rect x="665" y="300" width="290" height="92" rx="10" class="box"/>
+  <text x="681" y="324" class="num">6</text>
+  <text x="810" y="328" text-anchor="middle" class="title">Measure</text>
+  <text x="810" y="350" text-anchor="middle" class="sub">BIRD · Spider 2.0-Snow</text>
+  <text x="810" y="366" text-anchor="middle" class="sub">accuracy over time</text>
 </svg>

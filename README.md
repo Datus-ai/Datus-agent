@@ -34,13 +34,13 @@ The journey is concrete: explore your data in a Claude-Code-like CLI, build cont
 
 ## Key Features
 
+### Metrics and Semantic Layer
+
+Go beyond raw SQL with pluggable [semantic adapters](https://docs.datus.ai/latest/adapters/semantic_adapters/): one semantic modeling workflow authors datasets, models, and metrics, with three execution backends to run them. Author in [MetricFlow](https://docs.datus.ai/latest/metricflow/introduction/) YAML, or as [OSI (Open Semantic Interchange)](https://docs.datus.ai/latest/adapters/osi_semantic_adapter/) documents executed through MetricFlow or natively by the Rust-based [Dosi engine](docs/adapters/dosi_semantic_adapter.md). Datus generates them from your schema and SQL history, covering cumulative, rolling-window, and period-over-period time metrics; keys and joins are declared only from verified evidence. The AskMetrics subagent answers KPI and trend questions directly from the metric layer, and its dimension attribution explains not just what a metric is but why it changed. [Dashboard Copilot](https://docs.datus.ai/latest/getting_started/dashboard_copilot/) turns existing BI dashboards into conversational analytics.
+
 ### An Evolvable Context Engine, Not Static Pipelines
 
-NL2SQL tools hallucinate joins and metrics because they see your database cold. Datus builds a [**context engine**](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/) that combines tree-structured business domains with vector retrieval. It captures schema metadata, reference SQL, parameterized SQL templates, semantic models, metrics, and domain knowledge in one layer your team owns. `/init` scans your project into an `AGENTS.md` inventory with file-based knowledge and memory stores; `/build-kb` builds the vector-indexed knowledge base on top, scoped by file, table, datasource, or business domain. This context is what makes agent-generated SQL accurate and trustworthy, and every query, correction, and domain rule feeds it back.
-
-### Metrics and Semantic Layer: MetricFlow and OSI
-
-Go beyond raw SQL with pluggable [semantic adapters](https://docs.datus.ai/latest/adapters/semantic_adapters/). Author business metrics in [MetricFlow](https://docs.datus.ai/latest/metricflow/introduction/) YAML or as [OSI (Open Semantic Interchange)](https://docs.datus.ai/latest/adapters/osi_semantic_adapter/) spec-aligned documents, executed through MetricFlow or the native Rust-based [Dosi engine](docs/adapters/dosi_semantic_adapter.md). Datus generates them from your schema and SQL history, including cumulative, rolling-window, and period-over-period time metrics. The AskMetrics subagent answers KPI, trend, and attribution questions directly from the metric layer instead of raw SQL, and [Dashboard Copilot](https://docs.datus.ai/latest/getting_started/dashboard_copilot/) turns existing BI dashboards into conversational analytics.
+NL2SQL tools hallucinate joins and metrics because they see your database cold. Datus builds a [**context engine**](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/) that combines tree-structured business domains with vector retrieval. It captures schema metadata, reference SQL, parameterized SQL templates, semantic models, metrics, and domain knowledge in one layer your team owns. `/init` scans your project into an `AGENTS.md` inventory with file-based knowledge and memory stores; `/build-kb` builds the vector-indexed knowledge base on top, scoped by file, table, datasource, or business domain. This is the raw material the semantic layer is refined from, and every query, correction, and domain rule feeds it back.
 
 ### From Exploration to Domain-Specific Subagents
 
@@ -56,14 +56,17 @@ Generate self-contained [HTML reports](https://docs.datus.ai/latest/subagent/gen
 
 ### Enterprise-Ready Governance
 
-Datus ships with permission profiles (`normal` / `auto` / `dangerous`, switchable per request), fine-grained SQL permissions by statement class, command-level bash allow/deny rules backed by an OS-level sandbox, a request-scoped [SQL policy framework](https://docs.datus.ai/latest/configuration/sql_policy/) for row-level rewriting, a read-only multi-tenant configuration mode, and configurable [tracing](https://docs.datus.ai/latest/develop/observability/) to Langfuse, LangSmith, Datadog, Braintrust, or any OTLP collector.
+Datus ships with permission profiles (`normal` / `auto` / `dangerous`, switchable per request), fine-grained SQL permissions by statement class, an automatic AI reviewer that screens bash and SQL permission requests, command-level bash allow/deny rules backed by an OS-level sandbox, a request-scoped [SQL policy framework](https://docs.datus.ai/latest/configuration/sql_policy/) for row-level rewriting, a read-only multi-tenant configuration mode, and configurable [tracing](https://docs.datus.ai/latest/develop/observability/) to Langfuse, LangSmith, Datadog, Braintrust, or any OTLP collector.
+
+### Skills and Plugins
+
+Extend Datus with [agentskills.io](https://agentskills.io)-style packaged [skills](https://docs.datus.ai/latest/skills/introduction/) and marketplace support. For a full extension, ship a [plugin](https://docs.datus.ai/latest/plugin/introduction/): a declarative `datus-plugin.yml` manifest that bundles CLI commands, skills, and prompt context, with install/pack/export tooling, per-project activation, and managed multi-tenant deployment.
 
 ### Open Platform
 
 - **10+ LLM providers**: OpenAI, Claude, Gemini, DeepSeek, Qwen, Kimi, OpenRouter, and more, plus subscription auth (Claude subscription, OpenAI Codex OAuth) and coding-plan providers. Per-node model assignment mixes models within a single workflow.
-- **13 databases**: built-in SQLite & DuckDB plus pluggable adapters for PostgreSQL, MySQL, Snowflake, StarRocks, ClickHouse, Doris, and more.
+- **14 databases**: built-in SQLite & DuckDB plus pluggable adapters for PostgreSQL, MySQL, Snowflake, StarRocks, ClickHouse, Doris, and more.
 - [**MCP protocol**](https://docs.datus.ai/latest/integration/mcp/): both an MCP server (exposing Datus tools to Claude Desktop, Cursor, etc.) and an MCP client (consuming external tools via `/mcp` in the CLI).
-- **Skills and plugins**: extend Datus with [agentskills.io](https://agentskills.io)-style packaged [skills](https://docs.datus.ai/latest/skills/introduction/) and marketplace support, or ship a full extension as a [plugin](https://docs.datus.ai/latest/plugin/introduction/) with a declarative `datus-plugin.yml` manifest and install/pack/export CLI.
 
 ### Measure and Improve
 
@@ -145,6 +148,8 @@ Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 /bootstrap       # TUI: crawl schema, import reference SQL, generate semantic models & metrics
 /build-kb        # Build the vector knowledge base, optionally scoped to files/tables/domains
 ```
+
+**Model Semantics**: generate datasets, semantic models, and metrics from your schema and SQL history, then validate and publish them through the semantic adapter.
 
 **Create a Subagent**: open the unified agent manager and package mature context into a scoped, domain-aware chatbot with curated tools and business rules.
 
@@ -259,6 +264,7 @@ Per-node model assignment lets you use different providers for different workflo
 | ClickZetta | `clickzetta` | [`datus-clickzetta`](https://github.com/Datus-ai/datus-db-adapters) |
 | Apache Doris | `doris` | [`datus-doris`](https://github.com/Datus-ai/datus-db-adapters) |
 | Hologres | `hologres` | [`datus-hologres`](https://github.com/Datus-ai/datus-db-adapters) |
+| GaussDB / openGauss | `gaussdb` | [`datus-gaussdb`](https://github.com/Datus-ai/datus-db-adapters) (Linux only) |
 | Hive | `hive` | [`datus-hive`](https://github.com/Datus-ai/datus-db-adapters) |
 | Spark | `spark` | [`datus-spark`](https://github.com/Datus-ai/datus-db-adapters) |
 | Trino | `trino` | [`datus-trino`](https://github.com/Datus-ai/datus-db-adapters) |
