@@ -40,6 +40,7 @@ nav:
       - Built-in Skills:
         - Init: skills/init.md
         - Build KB: skills/build_kb.md
+        - Dashboard Bootstrap: skills/dashboard_bootstrap.md
         - Storage Classify: skills/storage_classify.md
         - Extract Knowledge: skills/extract_knowledge.md
         - Memory Organization: skills/memory_organization.md

@@ -237,8 +237,8 @@ def _build_tool(
     dataset_db_config=None,
     bi_service: str = "test_bi",
     features=None,
-    serving_datasource_name: str = "serving_pg",
-    serving_db_config=None,
+    linked_datasource_name: str = "linked_pg",
+    linked_db_config=None,
 ):
     """Construct ``BIFuncTool`` with a mock ``agent_config`` for tests.
 
@@ -251,14 +251,14 @@ def _build_tool(
       the new ``datasource_name`` alias for ``DatasetDbConfig.bi_database_name``
 
     The linked ``DbConfig`` is registered on the mock agent_config under
-    ``services.datasources[serving_datasource_name]`` so ``serving_db_config``
+    ``services.datasources[linked_datasource_name]`` so ``linked_db_config``
     can resolve it.
     """
     from datus.configuration.agent_config import DatasetDbConfig, DbConfig, ServicesConfig
     from datus.tools.func_tool.bi_tools import BIFuncTool
 
     cfg = dataset_db_config
-    db_cfg = serving_db_config
+    db_cfg = linked_db_config
     if cfg is None:
         if dataset_db_uri or dataset_db_schema or datasource_name:
             kwargs = {}
@@ -277,7 +277,7 @@ def _build_tool(
                 kwargs["schema"] = dataset_db_schema
             db_cfg = DbConfig(**kwargs)
             cfg = DatasetDbConfig(
-                datasource_ref=serving_datasource_name,
+                datasource_ref=linked_datasource_name,
                 bi_database_name=datasource_name or None,
             )
 
@@ -898,7 +898,7 @@ class TestGetBiServingTarget:
             tool = _build_tool(
                 adapter=FullMockAdapter(),
                 dataset_db_config=self._dataset_cfg(),
-                serving_db_config=self._db_cfg(),
+                linked_db_config=self._db_cfg(),
             )
         result = tool.get_bi_serving_target()
         assert result.success == 1
