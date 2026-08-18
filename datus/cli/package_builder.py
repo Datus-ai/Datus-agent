@@ -60,6 +60,13 @@ from datus.utils.path_manager import DatusPathManager
 logger = get_logger(__name__)
 
 PACKAGE_FORMAT = "datus-project-package"
+# Deliberately still 1 while the format is unreleased. ``env_vars`` changed
+# shape here -- one object per variable (``var`` / ``config_paths`` /
+# ``preexisting``) instead of a flat list of names -- which would be breaking
+# for anything doing ``sorted(manifest["env_vars"])``. Nothing reads it: no
+# reader exists in this repo, and no package has been published for the format
+# to be compatible with. Bump on the first change made after a package exists in
+# the wild.
 PACKAGE_FORMAT_VERSION = 1
 PACKAGE_MANIFEST_NAME = "package_manifest.json"
 
@@ -209,6 +216,32 @@ class EnvVarBinding:
     var: str
     config_path: str
     preexisting: bool
+
+
+@dataclass(frozen=True)
+class EnvVarRequirement:
+    """One env var the receiver must bind, with every config field that uses it.
+
+    The per-variable view of :class:`EnvVarBinding`, which is recorded once per
+    ``(var, config_path)`` pair. Both the README table and the package manifest
+    consume this shape; see :func:`group_env_vars`.
+
+    A dataclass rather than a Pydantic model, deliberately. It is built only by
+    ``group_env_vars`` from bindings this module produced itself, so there is no
+    untrusted input for validation to guard, and the manifest needs plain JSON
+    which ``as_manifest_record`` already gives. Against that, it is the paired
+    view of ``EnvVarBinding`` directly above -- a dataclass, as are the other
+    five structures in this module, none of which import pydantic. Splitting one
+    half of a pair onto a different framework costs more than it buys.
+    """
+
+    var: str
+    config_paths: List[str]
+    preexisting: bool
+
+    def as_manifest_record(self) -> Dict[str, Any]:
+        """Serialize for ``package_manifest.json`` (``env_vars`` entries)."""
+        return {"var": self.var, "config_paths": list(self.config_paths), "preexisting": self.preexisting}
 
 
 @dataclass
@@ -1714,11 +1747,8 @@ def generate_readme(
     lines += ["", "## Required environment variables", ""]
     if env_vars:
         lines += ["| Variable | Used by |", "|---|---|"]
-        grouped: Dict[str, List[str]] = {}
-        for binding in env_vars:
-            grouped.setdefault(binding.var, []).append(binding.config_path)
-        for var in sorted(grouped):
-            lines.append(f"| `{var}` | {', '.join(sorted(set(grouped[var])))} |")
+        for record in group_env_vars(env_vars):
+            lines.append(f"| `{record.var}` | {', '.join(record.config_paths)} |")
     else:
         lines.append("None — this package carries no credential-bearing config.")
     lines += [
@@ -1745,6 +1775,34 @@ def generate_readme(
         )
     lines.append("")
     return "\n".join(lines).encode("utf-8")
+
+
+def group_env_vars(env_vars: Sequence[EnvVarBinding]) -> List[EnvVarRequirement]:
+    """Collapse the ``(var, config_path)`` binding list into one record per var.
+
+    ``_PlaceholderAllocator`` records a binding per ``(var, config_path)`` pair,
+    so one variable can appear several times — a single API key referenced from
+    both ``providers.*`` and ``models.*``, say. Both the README table and the
+    package manifest want the per-variable view; sharing this keeps the two from
+    drifting apart.
+
+    ``preexisting`` is aggregated with ``all``: a var counts as preexisting only
+    if EVERY site already carried a ``${VAR}``. If any site held a literal the
+    packer rewrote, the receiver is being asked to supply something that used to
+    be a plaintext secret — the stronger claim, and the one that must not be
+    hidden by an unrelated harvested occurrence.
+    """
+    grouped: Dict[str, List[EnvVarBinding]] = {}
+    for binding in env_vars:
+        grouped.setdefault(binding.var, []).append(binding)
+    return [
+        EnvVarRequirement(
+            var=var,
+            config_paths=sorted({binding.config_path for binding in grouped[var]}),
+            preexisting=all(binding.preexisting for binding in grouped[var]),
+        )
+        for var in sorted(grouped)
+    ]
 
 
 def _unique_vars(env_vars: Sequence[EnvVarBinding]) -> List[EnvVarBinding]:
@@ -1782,7 +1840,10 @@ def build_package_manifest(
         "builder": f"datus/{datus.__version__}",
         "project_name": project_name,
         "selections": selections,
-        "env_vars": sorted({binding.var for binding in env_vars}),
+        # One record per variable, each naming the config paths that reference
+        # it. The receiver has to bind every ``${VAR}`` to something; without the
+        # paths they can only guess what a given variable is for.
+        "env_vars": [record.as_manifest_record() for record in group_env_vars(env_vars)],
         "editable_source_packages": sorted(editable_packages),
         "files": files,
     }
@@ -2051,9 +2112,11 @@ __all__ = [
     "PackageOptions",
     "PackageResult",
     "SecretFinding",
+    "EnvVarRequirement",
     "StagedEntry",
     "build_package",
     "default_output_path",
+    "group_env_vars",
     "list_artifact_slugs",
     "list_metric_datasources",
     "list_packageable_plugins",

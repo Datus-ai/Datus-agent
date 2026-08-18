@@ -85,7 +85,7 @@ datus package -y
 <project_name>.zip
 ├── README.md                    # 生成：快速上手 + 所需环境变量
 ├── requirements.txt             # 生成：固定版本的 datus 依赖
-├── package_manifest.json        # 生成：格式、选择项、逐文件 sha256
+├── package_manifest.json        # 生成：格式、选择项、环境变量及其引用位置、逐文件 sha256
 ├── conf/
 │   ├── agent.yml                # 生成：home: .，凭据为 ${VAR} 占位符
 │   └── .mcp.json                # 生成（仅当配置了 MCP server）
@@ -105,6 +105,20 @@ datus package -y
 ```
 
 `package_manifest.json` 记录包格式版本、精确的选择项、所需环境变量，以及每个文件的 `sha256` 和 `generated` / `project` 来源标记。
+
+`env_vars` 不再是一个变量名列表，而是每个变量一条记录，接收方可以据此看出每个占位符对应哪个配置项：
+
+```json
+"env_vars": [
+  {
+    "var": "OPENAI_API_KEY",
+    "config_paths": ["models.gpt4.api_key", "providers.openai.api_key"],
+    "preexisting": false
+  }
+]
+```
+
+`config_paths` 列出 `conf/agent.yml`（或 `conf/.mcp.json`）中引用该变量的所有字段。`preexisting` 为 `true` 表示源配置在上述每一处本来就写的是 `${VAR}`；为 `false` 表示其中至少有一处原本是字面量、由打包器替换而来——也就是说，该变量顶替的是一个原本明文的凭据。
 
 ### 永不入包的内容
 
