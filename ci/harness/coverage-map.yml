@@ -98,18 +98,21 @@ flow_groups:
         contracts:
           - The shortcut routes to the dashboard-bootstrap skill through the standard chat pipeline.
           - The selected BI plugin exports confirmed SQL; builtin agents construct reference SQL and metrics.
+          - When configuration is mutable, the workflow uses create-subagent to persist the dashboard agent pair.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
               - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+              - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           merge_queue:
             status: covered
             nodeids:
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
               - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+              - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           nightly:
             status: covered

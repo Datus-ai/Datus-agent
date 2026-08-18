@@ -18,6 +18,7 @@ Bootstrap dashboard query context through an installed BI plugin. Keep BI access
 - Do not display or copy profile secrets. Use only profile names and non-secret fields already exposed by the plugin prompt.
 - Never assume one datasource for a BI profile or dashboard. Resolve and match source identity independently for every selected query.
 - Do not switch the shared datasource during the workflow. Run metric authoring only for query batches whose uniquely matched Datus datasource is already active.
+- Treat dashboard subagent creation as an optional final persistence step. It may reference only context identifiers confirmed by their owning builtin agents.
 
 ## Step 0 — Resolve execution mode and routing
 
@@ -107,6 +108,7 @@ Before any plugin export or builtin generation task, print this manifest:
 | Excluded | candidate IDs and reasons |
 | Export mode | selective or full-dashboard compatibility |
 | Ambiguities | unresolved business meaning or plugin limitations |
+| Subagents | planned main and attribution names, or `unavailable` when `create-subagent` is not discoverable |
 
 When `auto_run=false`, **STOP after the manifest and end the turn**. Do not call `ask_user` merely to confirm it, do not export files, and do not invoke generation tasks. Tell the user to confirm or correct the manifest in the next message.
 
@@ -167,7 +169,50 @@ task(
 - Do not make reference-SQL success a prerequisite for metrics, or metric success a prerequisite for reference SQL.
 - Report metric partitions matched to other Datus datasources as pending; process them only in a later run after the user activates that datasource. Never silently switch the shared datasource.
 
-## Step 8 — Report
+## Step 8 — Create dashboard subagents when supported
+
+Run this optional step only after all reference-SQL and semantic-modeling tasks for the active datasource have finished.
+
+1. Inspect the skills available to the current main agent for `create-subagent`.
+2. If it is absent, report `subagent creation skipped: mutable configuration skill unavailable`. Do not edit configuration by another mechanism, and do not change the success status of context construction.
+3. If it is present, load `create-subagent`. If loading is refused, skip creation and report the refusal without attempting a direct write.
+4. Build one scoped context from successful artifacts for the active datasource only:
+   - `datasource`: the active, uniquely matched Datus datasource;
+   - `tables`: complete table identifiers returned or used successfully by `semantic_modeling`;
+   - `metrics`: exact canonical subject references, each formed from the synchronized metric's stored `subject_path` plus its `name`;
+   - `sqls`: exact canonical subject references, each formed from the synchronized reference SQL's `subject_tree` plus its `name`.
+5. Derive and validate the subject references rather than treating task outputs as ready-to-store identifiers:
+   - for each successful `semantic_modeling` result, read every returned `semantic_models` file and enumerate every metric in that selected model, matching the legacy bootstrap scope; resolve each metric's actual post-sync subject path and write `<metric.subject_path>.<metric.name>`;
+   - for each successful `gen_sql_summary` result, read its returned `sql_summary_file` and write `<subject_tree>.<name>`;
+   - apply Datus reference-path quoting to every segment and confirm each exact leaf resolves in the matching post-sync subject tree;
+   - never store metric IDs, bare metric names, SQL summary IDs, artifact file paths, checksums, or plugin query IDs in `metrics` or `sqls`;
+   - never use a bare subject path unless the confirmed scope explicitly requests the entire subtree.
+6. Exclude failed, skipped, pending, unselected, unconfirmed, unresolved, or ambiguous artifacts. If `tables`, `metrics`, and `sqls` are all empty, skip creation. If a selected exact subject reference cannot be resolved, fail the subagent-creation step instead of writing a scope that could degrade to datasource-only visibility.
+7. Derive the base name with the legacy Dashboard convention:
+   - extract ASCII alphanumeric or contiguous CJK tokens, lowercase ASCII tokens, and join them with underscores;
+   - use `bi` when the plugin/platform produces no token and `dashboard` when the title produces no token;
+   - keep at most the first three dashboard-title tokens;
+   - join them as `<platform>_<dashboard>`;
+   - if the result does not start with a letter, prefix it with `dashboard_`.
+8. Ask `create-subagent` to create or update both legacy-shaped nodes:
+
+```text
+name: <base-name>
+node_class: gen_sql
+agent_description: <dashboard description, falling back to its title>
+tools: context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.execute_sql
+scoped_context: <successful active-datasource artifacts>
+
+name: <base-name>_attribution
+node_class: gen_report
+agent_description: Attribution analysis for <dashboard description, falling back to its title>
+tools: semantic_tools,context_search_tools.list_subject_tree
+scoped_context: <the same successful active-datasource artifacts>
+```
+
+For a dashboard spanning multiple datasources, create or update nodes only for the partition processed against the active datasource in this run. Never mix context from another datasource into these nodes. A creation failure does not invalidate context already built; retry only the configuration step after correcting the reported cause.
+
+## Step 9 — Report
 
 Return a compact report containing:
 
@@ -175,6 +220,7 @@ Return a compact report containing:
 - export directory and manifest path;
 - reference SQL succeeded, failed, and skipped entries plus artifact identifiers;
 - semantic/metric succeeded, failed, and skipped domains plus selected model files and metric names when returned;
+- subagents created, updated, unchanged, failed, or skipped, including the configuration path when modified;
 - partial, unselected, or blocked candidates and reasons;
 - the smallest safe retry set.
 
@@ -193,3 +239,5 @@ Say `context built` only for artifacts confirmed by their owning builtin agent. 
 | Query uniquely matches a non-active Datus datasource | Defer that metric partition to a later run with that datasource active |
 | Semantic adapter is query-only | Stop metrics and report the migration requirement |
 | A builtin task fails | Preserve its diagnosis and retry only that confirmed item/domain |
+| `create-subagent` is unavailable or refuses to load | Skip subagent persistence; keep confirmed context results |
+| Subagent configuration write or verification fails | Report the failure and retry only Step 8 after correction |

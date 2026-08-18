@@ -2,7 +2,7 @@
 
 Dashboard Copilot 从 BI 仪表盘构建项目的 reference SQL 和 metrics。流程由内置 `dashboard-bootstrap` skill 与用户选定的 BI plugin 驱动；Datus Agent 不再硬编码某个 BI 产品的 Dashboard API 或 SQL 编译逻辑。
 
-`/bootstrap-bi` 继续作为兼容快捷入口保留。它只把请求转交给标准 chat/skill pipeline，不再启动旧 Picker、BI streams 或 Dashboard 专用 subagent 生成逻辑。
+`/bootstrap-bi` 继续作为兼容快捷入口保留。它只把请求转交给标准 chat/skill pipeline，不再启动旧 Picker 或 BI streams。流程最后可通过通用 `create-subagent` skill 持久化与旧流程一致的主 subagent 和 attribution subagent。
 
 ## 前置条件
 
@@ -12,6 +12,7 @@ Dashboard Copilot 从 BI 仪表盘构建项目的 reference SQL 和 metrics。�
 2. 将 Dashboard 使用的每个物理数据库配置为 Datus datasource。不需要 profile 级映射；Datus 根据每条查询的真实 BI 连接 identity 匹配，并且每轮只为当前 active datasource 对应的分区生成 metric。
 3. 通过 `/model` 选定可用的 LLM。
 4. 需要写入 metric 时，项目应使用可写的 Dosi semantic project。MetricFlow 和普通 OSI 项目在该流程中仅支持查询。
+5. 需要持久化 Dashboard 专用 subagent 时，当前加载的 `agent.yml` 必须可修改。只读 runtime 会隐藏 `create-subagent`；context bootstrap 仍会完成，只跳过持久化。
 
 Superset plugin 已实现所需导出 contract。其他 BI plugin 只要通过自己的 bundled skill 提供相同能力，就可以接入，无需修改 Datus Agent。
 
@@ -61,6 +62,7 @@ SQL 中存在聚合函数只是一种推荐信号，不再自动把 Dashboard �
 - 已确认的 metric queries 先按唯一匹配到的 Datus datasource 分区，再按业务域分组，并以完整原始 SQL 交给 `semantic_modeling`。每轮只处理 active datasource 对应的分区。
 - `semantic_modeling` 检查在线 schema，更新 Dosi semantic model 和 metrics，执行校验并 reconcile Knowledge Base。
 - 一条路径失败不会隐式阻断另一条路径。
+- Context 构建完成后，`dashboard-bootstrap` 会在可用时加载 `create-subagent`，并在 `agent.agentic_nodes` 下新增或更新 `<platform>_<dashboard>` 与 `<platform>_<dashboard>_attribution`。它们只引用 active datasource 上成功生成的 tables，以及精确的 metric/reference-SQL subject references。
 
 Plugin 负责访问 BI 和保证 SQL 忠实性。主 Agent 与 plugin 都不直接手写 reference SQL 索引或 Dosi artifact。
 
@@ -73,9 +75,12 @@ Plugin 负责访问 BI 和保证 SQL 忠实性。主 Agent 与 plugin 都不直�
 - 成功、失败和跳过的 reference queries；
 - 成功、失败和跳过的 semantic domains；
 - builtin agents 返回的 reference SQL identifiers、semantic model 文件和 metric names；
+- subagents 的 created、updated、unchanged、failed 或 skipped 状态；
 - 最小安全重试范围。
 
-新流程构建共享的项目 context，不再自动创建旧 `/bootstrap-bi` pipeline 生成的两个 Dashboard 专用 subagents。现有项目 agents 会正常使用生成后的 reference SQL 与 metric Knowledge Base。
+Subagent 创建是可选的最后一步，不改变 Knowledge Base context 是否成功。通用 skill 只修改当前加载的 `agent.yml`；无需复制自定义 prompt 文件，因为节点会回退到内置 `gen_sql` 和 `gen_report` 模板。如果配置不可修改或 skill 无法加载，流程会报告跳过，并保留所有已成功构建的 context。
+
+精确 Knowledge Base scope 中，`metrics` 和 `sqls` 使用 `<subject_path>.<item_name>` 形式的 canonical dotted reference。它们从已同步的 Dosi metric 或 SQL-summary artifact 中派生，而不是 metric storage ID、单独的 adapter metric name、YAML 路径或 plugin query ID。只写 subject path 会选中整个 subtree，仅在明确要求该更大范围时使用。
 
 ## 失败处理
 
@@ -85,5 +90,6 @@ Plugin 负责访问 BI 和保证 SQL 忠实性。主 Agent 与 plugin 都不直�
 - query source identity 缺失、证据不足或匹配不唯一：reference SQL 可以继续，只停止对应查询的 metric authoring。
 - 查询匹配到非 active datasource：对应 metric 分区延后处理，流程不会静默切换 datasource。
 - semantic adapter 只读：先迁移到 Dosi，再生成 metrics。
+- Agent 配置不可修改或不可用：跳过 subagent 创建，reference SQL 和 metric context 结果仍然有效。
 
 完整流程 contract 参见 [Dashboard Bootstrap](../skills/dashboard_bootstrap.zh.md)。

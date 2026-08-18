@@ -39,6 +39,8 @@ def test_dashboard_bootstrap_skill_has_ordered_selection_and_generation_gate():
         "Step 5 — Export the confirmed SQL",
         "Step 6 — Build reference-SQL context",
         "Step 7 — Build semantic-model and metric context",
+        "Step 8 — Create dashboard subagents when supported",
+        "Step 9 — Report",
     )
     offsets = [body.index(marker) for marker in ordered_markers]
 
@@ -58,3 +60,30 @@ def test_dashboard_bootstrap_skill_routes_to_builtin_owners():
     assert "Dataset/table/schema equality" in body
     assert "matched_datus_datasource" in body
     assert "Never hand-write their YAML or index rows" in body
+
+
+def test_dashboard_bootstrap_optionally_creates_legacy_shaped_subagents_last():
+    _, body = _parts()
+
+    assert "Inspect the skills available to the current main agent for `create-subagent`" in body
+    assert "load `create-subagent`" in body
+    assert "mutable configuration skill unavailable" in body
+    assert "<platform>_<dashboard>" in body
+    assert "<base-name>_attribution" in body
+    assert "node_class: gen_sql" in body
+    assert "node_class: gen_report" in body
+    assert "context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.execute_sql" in body
+    assert "semantic_tools,context_search_tools.list_subject_tree" in body
+    assert "successful active-datasource artifacts" in body
+    assert "creation failure does not invalidate context already built" in body
+    assert "<metric.subject_path>.<metric.name>" in body
+    assert "<subject_tree>.<name>" in body
+    assert "returned `semantic_models` file" in body
+    assert "every metric in that selected model" in body
+    assert "returned `sql_summary_file`" in body
+    assert "never store metric IDs" in body
+    assert "datasource-only visibility" in body
+
+    create_offset = body.index("Step 8 — Create dashboard subagents when supported")
+    report_offset = body.index("Step 9 — Report")
+    assert create_offset < report_offset

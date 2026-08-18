@@ -30,9 +30,18 @@ The skill guides these selections in order:
 3. queries to index as reference SQL;
 4. queries to use as metric evidence.
 
-It then prints a Generation Manifest and stops. Confirm or correct that manifest in the next message. After confirmation, the selected plugin exports SQL, `gen_sql_summary` indexes each reference query, and `semantic_modeling` creates or updates the related Dosi datasets, relationships, and metrics.
+It then prints a Generation Manifest and stops. Confirm or correct that manifest in the next message. After confirmation, the selected plugin exports SQL, `gen_sql_summary` indexes each reference query, and `semantic_modeling` creates or updates the related Dosi datasets, relationships, and metrics. As the final step, `dashboard-bootstrap` loads `create-subagent` when that skill is available and persists the dashboard's main and attribution nodes in the loaded `agent.yml`.
 
 The two query selections are independent. A query may be used for reference SQL, metrics, both, or neither.
+
+## Dashboard subagents
+
+When Agent configuration is mutable, the final step creates or updates two nodes using the legacy naming and tool pattern:
+
+- `<platform>_<dashboard>` uses `gen_sql` with database and context-search tools.
+- `<platform>_<dashboard>_attribution` uses `gen_report` with semantic attribution tools.
+
+Both nodes are scoped only to successful tables and exact metric/reference-SQL subject references for the active datasource. Metric scope uses `<metric.subject_path>.<metric.name>` from the synchronized Dosi model; reference-SQL scope uses `<subject_tree>.<name>` from the generated SQL summary. Bare subject paths select whole subtrees and are not used for an exact Dashboard selection. The generic `create-subagent` skill resolves these references against the post-sync subject trees, edits `agent.agentic_nodes` without replacing sibling entries, and verifies the YAML after writing. When the runtime marks configuration read-only, that skill is not discoverable and the workflow skips persistence without failing context construction.
 
 ## Auto-run
 
@@ -45,3 +54,4 @@ Explicitly say `skip confirmation`, `auto-run`, or an equivalent instruction to 
 - Missing, weak, or ambiguous query-level source identity blocks metric generation for only the affected queries; reference SQL may continue.
 - A dashboard may span multiple datasources. Metric queries are partitioned by their uniquely matched Datus datasource, and only the currently active partition is authored in one run.
 - Successful context generation does not by itself prove numerical equivalence with the source dashboard.
+- Subagent creation failure does not invalidate successfully built context and can be retried independently.

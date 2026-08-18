@@ -30,9 +30,18 @@ Skill 会依次完成以下选择：
 3. 哪些查询初始化 reference SQL；
 4. 哪些查询作为 metric evidence。
 
-随后 skill 会输出 Generation Manifest 并停止。下一轮确认或修正 manifest 后，所选 plugin 才会导出 SQL；`gen_sql_summary` 逐条构建 reference SQL context，`semantic_modeling` 创建或更新相关的 Dosi dataset、relationship 和 metric。
+随后 skill 会输出 Generation Manifest 并停止。下一轮确认或修正 manifest 后，所选 plugin 才会导出 SQL；`gen_sql_summary` 逐条构建 reference SQL context，`semantic_modeling` 创建或更新相关的 Dosi dataset、relationship 和 metric。最后，`dashboard-bootstrap` 会在 `create-subagent` 可用时加载它，并把 Dashboard 主节点与 attribution 节点持久化到当前加载的 `agent.yml`。
 
 两个查询集合相互独立。同一查询可以只进入 reference SQL、只用于 metric、同时进入两条路径，或者都不选。
+
+## Dashboard subagents
+
+当 Agent 配置可修改时，最后一步会按旧流程的命名与工具模式新增或更新两个节点：
+
+- `<platform>_<dashboard>` 使用 `gen_sql` 以及数据库和 context-search tools。
+- `<platform>_<dashboard>_attribution` 使用 `gen_report` 以及 semantic attribution tools。
+
+两个节点都只绑定 active datasource 上成功生成的 tables，以及精确的 metric/reference-SQL subject references。Metric scope 使用已同步 Dosi model 中的 `<metric.subject_path>.<metric.name>`；reference-SQL scope 使用已生成 SQL summary 中的 `<subject_tree>.<name>`。只写 subject path 会选中整个 subtree，不能用于 Dashboard 的精确条目选择。通用 `create-subagent` skill 会先在同步后的 subject trees 中解析这些 references，再修改 `agent.agentic_nodes`、保留其他节点，并在写入后重新校验 YAML。runtime 将配置标记为只读时，该 skill 不可发现，流程会跳过持久化，但不会把 context 构建判为失败。
 
 ## 自动执行
 
@@ -45,3 +54,4 @@ Skill 会依次完成以下选择：
 - query-level source identity 缺失、证据不足或匹配不唯一时，只阻止对应查询的 metric 生成；reference SQL 可以继续。
 - 一个 Dashboard 可以跨多个 datasource。metric 查询按唯一匹配到的 Datus datasource 分区，每轮只处理当前 active datasource 对应的分区。
 - context 构建成功不等于已经证明与源 Dashboard 数值等价。
+- subagent 创建失败不会使已成功构建的 context 失效，可单独重试。
