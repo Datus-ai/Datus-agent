@@ -769,10 +769,15 @@ class ClaudeModel(OpenAICompatibleModel):
                 if session is not None:
                     try:
                         prior_items = await session.get_items()
-                        if prior_items:
-                            messages.extend(prior_items)
                     except Exception as e:
                         logger.warning(f"Failed to load session history; starting fresh: {e}")
+                        prior_items = []
+                    if prior_items:
+                        messages.extend(prior_items)
+                        # Do not swallow a seal write failure. Continuing would
+                        # append the new user prompt after the durable
+                        # tool_result tail and corrupt replay role ordering.
+                        await self._seal_interrupted_native_history(session, messages)
                 # Anthropic ``text`` blocks must be a single string. The signature
                 # inherits ``prompt: Union[str, List[Dict[str, str]]]`` from the
                 # base class for legacy callers; defensively normalise list-shaped
@@ -784,15 +789,18 @@ class ClaudeModel(OpenAICompatibleModel):
                 }
                 # Index of this turn's first NEW message in ``messages`` (prior
                 # session history was just replayed above, so anything before
-                # this index is already persisted). The end-of-turn persistence
-                # stores ``messages[turn_start_index:]`` — the full structured
-                # delta including every ``tool_use`` / ``tool_result`` — instead
-                # of only the final text.
+                # this index is already persisted). ``persisted_message_index``
+                # advances after every complete model/tool round so a long native
+                # Claude run survives max-turn exhaustion, process interruption,
+                # or a later model failure without replaying duplicate rows.
                 turn_start_index = len(messages)
+                persisted_message_index = turn_start_index
                 messages.append(user_turn_message)
                 tool_call_cache = {}
                 sql_contexts = []
                 final_content = ""
+                last_assistant_text = ""
+                conversation_completed = False
                 # Guards the failure-path persistence below: the success path
                 # sets this once it has committed the turn, so the ``except``
                 # handler never double-writes a turn it already saved.
@@ -1022,6 +1030,15 @@ class ClaudeModel(OpenAICompatibleModel):
                     active_generation_span = None
 
                     message = response.content
+                    # Keep the fully rehydrated text from this model response.
+                    # Streaming ``thinking_delta.output.delta`` intentionally
+                    # remains one incremental fragment per event; this separate
+                    # snapshot is the source of truth when the last allowed turn
+                    # also contains tool_use blocks and the loop exhausts before
+                    # a normal text-only completion.
+                    last_assistant_text = "\n".join(
+                        block.text for block in message if block.type == "text" and block.text
+                    )
 
                     # Surface server-side tool calls (Anthropic web_search /
                     # web_fetch) as TOOL ActionHistory. The streaming path already
@@ -1092,7 +1109,8 @@ class ClaudeModel(OpenAICompatibleModel):
 
                     # If no tool calls, conversation is complete
                     if not any(block.type == "tool_use" for block in message):
-                        final_content = "\n".join([block.text for block in message if block.type == "text"])
+                        final_content = last_assistant_text
+                        conversation_completed = True
                         # Persist the final assistant message — including any
                         # sanitized ``server_tool_use`` / ``web_search_tool_result``
                         # blocks from a ``web_search``-only turn — before breaking.
@@ -1369,7 +1387,36 @@ class ClaudeModel(OpenAICompatibleModel):
                                 }
                             )
 
+                    # A native Claude "turn" is durable once every tool_use in
+                    # the assistant response has a corresponding tool_result.
+                    # Persist only the new suffix; persisting the whole in-memory
+                    # transcript here would duplicate prior checkpoints.  The
+                    # database may temporarily end in a tool_result while the run
+                    # is active. Graceful termination seals that tail below, and
+                    # the next invocation repairs it if the process dies between
+                    # these two points.
+                    persisted_message_index = await self._persist_native_message_delta(
+                        session,
+                        messages,
+                        persisted_message_index,
+                    )
+
                 logger.debug("Agent execution completed")
+                max_turns_exhausted = not conversation_completed
+                max_turns_notice = f"[Agent stopped after reaching max_turns={max_turns}; work may remain incomplete.]"
+                empty_completion_notice = "[Assistant completed without returning text.]"
+                if max_turns_exhausted:
+                    # Text accompanying the final tool_use was already emitted
+                    # through thinking_delta + its paired response action and is
+                    # checkpointed in ``messages``. Do not publish it again as a
+                    # final_response: the run is incomplete, and upper layers use
+                    # that wrapper as a de-dup/finalization boundary which can
+                    # otherwise suppress the live delta stream.
+                    # A tool-only response has no text/delta to preserve, so make
+                    # the stop explicit instead of returning a completely blank
+                    # assistant result. This notice is a final response, never a
+                    # fabricated model delta.
+                    final_content = "" if last_assistant_text else max_turns_notice
                 usage_info = self._build_native_usage_info(
                     requests=turn + 1,
                     cumulative_input_tokens=cumulative_input_tokens,
@@ -1396,49 +1443,39 @@ class ClaudeModel(OpenAICompatibleModel):
                 if action_history_manager is not None:
                     action_history_manager.add_action(final_action)
 
-                # Persist this turn into the session so the next turn replays it
-                # via ``session.get_items()``. Mirror what openai-agents Runner
-                # would do via SQLiteSession.add_items, but driven by us since
-                # the native Anthropic loop bypasses Runner.run.
-                #
-                # When the loop exits via ``max_turns`` exhaustion while still
-                # tool-calling, ``final_content`` stays "" — Anthropic rejects
-                # empty assistant text blocks on replay
-                # (``messages.{i}.content.{j}.text: text content blocks must be
-                # non-empty``), which would poison the session. Skip persistence
-                # in that case so the next turn starts from a clean slate.
-                if session is not None and final_content:
+                # A max-turn exit has no text-only completion, but the completed
+                # tool rounds (and any prose accompanying the final tool_use) are
+                # valuable history. Seal the persisted tool_result tail with a
+                # non-empty assistant message so the next user turn remains valid
+                # Anthropic replay input.
+                if max_turns_exhausted or not final_content:
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": max_turns_notice if max_turns_exhausted else empty_completion_notice,
+                                }
+                            ],
+                        }
+                    )
+
+                persisted_message_index = await self._persist_native_message_delta(
+                    session,
+                    messages,
+                    persisted_message_index,
+                )
+                turn_persisted = session is not None and persisted_message_index == len(messages)
+
+                if turn_persisted:
+                    # The native loop never calls Runner.run (which normally
+                    # drives ``store_run_usage``), so commit the durable usage
+                    # only after every message in this turn is safely stored.
                     try:
-                        # Persist the FULL structured turn — every assistant
-                        # ``tool_use`` block and its matching ``tool_result``
-                        # reply — not just ``final_content``. ``messages`` from
-                        # ``turn_start_index`` on is exactly the sequence
-                        # Anthropic accepted during the loop, so replaying it on
-                        # resume is safe and keeps the tool-calling history
-                        # intact. Storing only the final text previously dropped
-                        # every tool call/result, leaving resumed turns with
-                        # broken history (and tool calls leaking into text).
-                        turn_items = self._replay_safe_turn_items(
-                            messages[turn_start_index:], user_turn_message, final_content
-                        )
-                        await session.add_items(turn_items)
-                        turn_persisted = True
-                        # Persist the turn's token usage into the durable
-                        # ``turn_usage`` table. The native loop never calls
-                        # ``Runner.run`` (which is what normally triggers
-                        # ``store_run_usage``), so the CLI status bar's
-                        # cumulative total would stay at 0 without this. Must
-                        # run AFTER ``add_items`` so the SDK derives the right
-                        # ``user_turn_number`` from the freshly inserted rows.
                         await self._store_native_turn_usage(session, usage_info)
                     except Exception as e:
-                        logger.warning(f"Failed to persist session history for native Claude turn: {e}")
-                elif session is not None:
-                    logger.warning(
-                        "Skipping native Claude session persist: turn ended without final text "
-                        "(max_turns=%s exhausted while tool-calling).",
-                        max_turns,
-                    )
+                        logger.warning(f"Failed to persist usage for native Claude turn: {e}")
 
                 # Close out the composed hooks' lifecycle, completing parity with
                 # the SDK Runner path (current ``on_end`` implementations are
@@ -1465,6 +1502,58 @@ class ClaudeModel(OpenAICompatibleModel):
         finally:
             finish_native_span(active_tool_span, error=trace_failure)
             finish_native_span(active_generation_span, error=trace_failure)
+
+    @staticmethod
+    async def _persist_native_message_delta(
+        session: Any,
+        messages: List[Dict[str, Any]],
+        persisted_message_index: int,
+    ) -> int:
+        """Append the not-yet-persisted suffix of a native Claude run.
+
+        Returns the new durable boundary. A failed write leaves the boundary
+        unchanged so a later checkpoint retries the complete missing suffix.
+        """
+        if session is None or persisted_message_index >= len(messages):
+            return persisted_message_index
+        pending = messages[persisted_message_index:]
+        try:
+            await session.add_items(pending)
+        except Exception as exc:
+            logger.warning("Failed to checkpoint native Claude session history: %s", exc)
+            return persisted_message_index
+        return len(messages)
+
+    @staticmethod
+    async def _seal_interrupted_native_history(session: Any, messages: List[Dict[str, Any]]) -> None:
+        """Repair a prior hard-stop checkpoint that ends in tool_result.
+
+        A process can die after a complete tool round is checkpointed but before
+        the following model call or graceful max-turn seal. Appending a normal
+        user prompt to that tail would create consecutive user messages, so add
+        one replay-safe assistant marker before accepting the next turn.
+        """
+        if not messages:
+            return
+        last = messages[-1]
+        if not isinstance(last, dict):
+            return
+        content = last.get("content")
+        if last.get("role") != "user" or not isinstance(content, list) or not content:
+            return
+        if not all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content):
+            return
+        marker = {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "[Previous agent run stopped after completing a tool round; continuing from checkpoint.]",
+                }
+            ],
+        }
+        await session.add_items([marker])
+        messages.append(marker)
 
     async def _persist_failed_turn(self, frame_locals: Dict[str, Any], error: Exception) -> None:
         """Best-effort save of an interrupted turn so the next turn isn't amnesiac.
@@ -1499,10 +1588,27 @@ class ClaudeModel(OpenAICompatibleModel):
             # message Anthropic will accept on replay.
             messages = frame_locals.get("messages")
             turn_start_index = frame_locals.get("turn_start_index")
+            persisted_message_index = frame_locals.get("persisted_message_index")
             if isinstance(messages, list) and isinstance(turn_start_index, int):
-                turn_items = self._replay_safe_turn_items(
-                    messages[turn_start_index:], user_turn_message, assistant_text
+                durable_boundary = (
+                    persisted_message_index if isinstance(persisted_message_index, int) else turn_start_index
                 )
+                if durable_boundary > turn_start_index:
+                    # Complete tool rounds before this boundary are already in
+                    # SQLite. Replay-sanitize only the missing suffix: a failure
+                    # can occur after the next model response appended a tool_use
+                    # but before its tool_result was recorded. The helper uses
+                    # ``user_turn_message`` as an empty-suffix fallback, so strip
+                    # that already-durable message back out before appending.
+                    turn_items = self._replay_safe_turn_items(
+                        messages[durable_boundary:], user_turn_message, assistant_text
+                    )
+                    if turn_items and turn_items[0] == user_turn_message:
+                        turn_items = turn_items[1:]
+                else:
+                    turn_items = self._replay_safe_turn_items(
+                        messages[turn_start_index:], user_turn_message, assistant_text
+                    )
             else:
                 turn_items = [
                     user_turn_message,

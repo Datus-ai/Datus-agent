@@ -1502,6 +1502,97 @@ class TestGetSessionMessages:
         assert complete.status == ActionStatus.SUCCESS
         assert complete.output == {"rows": 30000}
 
+    def test_native_max_turn_seal_does_not_hide_last_assistant_text(self, sm):
+        """The replay-only max-turn seal follows tool_result in SQLite, but
+        history rendering must keep the model's preceding complete text."""
+        session_id = f"test_native_max_turn_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        full_text = "First fragment. Second fragment."
+
+        rows = [
+            ({"role": "user", "content": [{"type": "text", "text": "probe"}]}, "2026-05-21T00:00:00"),
+            (
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": full_text},
+                        {"type": "tool_use", "id": "toolu_last", "name": "read_query", "input": {}},
+                    ],
+                },
+                "2026-05-21T00:00:01",
+            ),
+            (
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "toolu_last", "content": "result"}],
+                },
+                "2026-05-21T00:00:02",
+            ),
+            (
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "[Agent stopped after reaching max_turns=1; work may remain incomplete.]",
+                        }
+                    ],
+                },
+                "2026-05-21T00:00:03",
+            ),
+        ]
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            conn.executemany(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                [(session_id, json.dumps(data), timestamp) for data, timestamp in rows],
+            )
+            conn.commit()
+
+        assistant = next(message for message in sm.get_session_messages(session_id) if message["role"] == "assistant")
+        assert assistant["content"] == full_text
+        assert "max_turns" not in assistant["content"]
+
+    def test_native_resume_joins_all_text_blocks_from_last_assistant_message(self, sm):
+        """Anthropic may interleave multiple text blocks with tool_use blocks;
+        resume must reconstruct the entire assistant message, not its last block."""
+        import asyncio
+
+        session_id = f"test_native_multi_text_{uuid.uuid4().hex[:8]}"
+        session = sm.get_session(session_id)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": [{"type": "text", "text": "probe"}]},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "First fragment."},
+                            {"type": "tool_use", "id": "toolu_multi", "name": "read_query", "input": {}},
+                            {"type": "text", "text": "Second fragment."},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "toolu_multi", "content": "result"}],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "[Agent stopped after reaching max_turns=1; work may remain incomplete.]",
+                            }
+                        ],
+                    },
+                ]
+            )
+        )
+
+        assistant = next(message for message in sm.get_session_messages(session_id) if message["role"] == "assistant")
+        assert assistant["content"] == "First fragment.\nSecond fragment."
+
     def test_native_server_web_tool_result_resume(self, sm):
         """A ``server_tool_use`` block plus inline ``web_search_tool_result`` in
         the same assistant message restore a tool call and its result."""
