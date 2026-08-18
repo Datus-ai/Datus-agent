@@ -36,27 +36,62 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-# (label, sql, is_a_read)
+
+class Probe(NamedTuple):
+    """One statement to run under both flag settings.
+
+    A NamedTuple rather than a bare tuple so the third field is self-describing
+    at every use site -- `is_a_read` flips the whole verdict, and a positional
+    bool is exactly the field a reader guesses wrong. Not a Pydantic model:
+    these are literals in this file, there is no untrusted input to validate,
+    and a standalone operator script should not grow a dependency to name three
+    fields.
+    """
+
+    label: str
+    sql: str
+    is_a_read: bool
+
+
 CASES = [
-    ("SELECT", "SELECT COUNT(*) FROM t", True),
-    ("SHOW-ish (PRAGMA table_info)", "PRAGMA table_info(t)", True),
-    ("EXPLAIN", "EXPLAIN SELECT * FROM t", True),
-    ("INSERT", "INSERT INTO t (v) VALUES ('written')", False),
-    ("UPDATE", "UPDATE t SET v = 'mutated'", False),
-    ("DELETE", "DELETE FROM t", False),
-    ("CREATE TABLE", "CREATE TABLE t2 (id INT)", False),
-    ("DROP TABLE", "DROP TABLE t", False),
-    ("multi-statement", "SELECT 1; DROP TABLE t", False),
-    ("writable PRAGMA", "PRAGMA journal_mode=WAL", False),
+    Probe("SELECT", "SELECT COUNT(*) FROM t", True),
+    Probe("SHOW-ish (PRAGMA table_info)", "PRAGMA table_info(t)", True),
+    Probe("EXPLAIN", "EXPLAIN SELECT * FROM t", True),
+    Probe("INSERT", "INSERT INTO t (v) VALUES ('written')", False),
+    Probe("UPDATE", "UPDATE t SET v = 'mutated'", False),
+    Probe("DELETE", "DELETE FROM t", False),
+    Probe("CREATE TABLE", "CREATE TABLE t2 (id INT)", False),
+    Probe("DROP TABLE", "DROP TABLE t", False),
+    Probe("multi-statement", "SELECT 1; DROP TABLE t", False),
+    Probe("writable PRAGMA", "PRAGMA journal_mode=WAL", False),
 ]
 
 # Substring identifying a refusal that came from the read-only gate specifically,
 # as opposed to the statement-shape checks that run regardless.
+#
+# It must match the gate's wording and NOT the statement-shape wording, which is
+# the whole distinction the verdict table reports. That rules out both obvious
+# alternatives:
+#
+#   "read-only"          too loose -- classify_read_only_violation also says
+#                        "Only read-only queries (SELECT, SHOW, ...) are
+#                        allowed", so gate refusals and shape refusals would
+#                        become indistinguishable.
+#   "agent.sql_read_only" never matches -- that string appears only in the REST
+#                        route's message (cli_service), and these scripts probe
+#                        the MCP execute_sql tool, whose refusal reads "This
+#                        agent is read-only: ...". Using it would report every
+#                        gated statement as having reached the database.
+#
+# If the tool's wording ever changes, the flag-on matrix reports the writes as
+# executed and fails loudly; run_endpoint's zero-gated check catches the same
+# drift. Neither mode can pass silently on a stale marker.
 GATE_MARKER = "this agent is read-only"
 
 

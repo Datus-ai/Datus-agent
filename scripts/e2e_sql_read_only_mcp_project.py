@@ -55,6 +55,7 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 from uuid import uuid4
 
 import yaml
@@ -64,20 +65,42 @@ from mcp.client.streamable_http import streamablehttp_client
 
 MISSING = "datus_readonly_probe_missing"
 
-# (label, sql, is_a_read)
+
+class Probe(NamedTuple):
+    """One statement to run under both flag settings.
+
+    A NamedTuple rather than a bare tuple so the third field is self-describing
+    at every use site -- `is_a_read` flips the whole verdict, and a positional
+    bool is exactly the field a reader guesses wrong. Not a Pydantic model:
+    these are literals built in this file, there is no untrusted input to
+    validate, and a standalone operator script should not grow a dependency to
+    name three fields.
+    """
+
+    label: str
+    sql: str
+    is_a_read: bool
+
+
 CASES = [
-    ("SELECT", "SELECT 1", True),
-    ("SHOW", "SHOW DATABASES", True),
-    ("EXPLAIN", "EXPLAIN SELECT 1", True),
-    ("INSERT", f"INSERT INTO {MISSING} (v) VALUES ('x')", False),
-    ("UPDATE", f"UPDATE {MISSING} SET v = 'x'", False),
-    ("DELETE", f"DELETE FROM {MISSING}", False),
-    ("CREATE TABLE (CTAS)", f"CREATE TABLE {MISSING}_2 AS SELECT * FROM {MISSING}", False),
-    ("DROP TABLE", f"DROP TABLE {MISSING}", False),
-    ("TRUNCATE", f"TRUNCATE TABLE {MISSING}", False),
-    ("multi-statement", f"SELECT 1; DROP TABLE {MISSING}", False),
+    Probe("SELECT", "SELECT 1", True),
+    Probe("SHOW", "SHOW DATABASES", True),
+    Probe("EXPLAIN", "EXPLAIN SELECT 1", True),
+    Probe("INSERT", f"INSERT INTO {MISSING} (v) VALUES ('x')", False),
+    Probe("UPDATE", f"UPDATE {MISSING} SET v = 'x'", False),
+    Probe("DELETE", f"DELETE FROM {MISSING}", False),
+    Probe("CREATE TABLE (CTAS)", f"CREATE TABLE {MISSING}_2 AS SELECT * FROM {MISSING}", False),
+    Probe("DROP TABLE", f"DROP TABLE {MISSING}", False),
+    Probe("TRUNCATE", f"TRUNCATE TABLE {MISSING}", False),
+    Probe("multi-statement", f"SELECT 1; DROP TABLE {MISSING}", False),
 ]
 
+# Substring identifying a refusal that came from the read-only gate specifically,
+# as opposed to the statement-shape checks that run regardless. See the same
+# constant in e2e_sql_read_only_mcp.py for why neither "read-only" (too loose --
+# it also matches the statement-shape message) nor "agent.sql_read_only" (never
+# matches -- that wording belongs to the REST route, not the MCP tool) can be
+# used here.
 GATE_MARKER = "this agent is read-only"
 
 
@@ -229,18 +252,18 @@ def create_probe_ddl(dialect: str, table: str) -> str:
     return f"CREATE TABLE {table} (id INT, v VARCHAR(64))"
 
 
-def live_cases(dml: str, drop_me: str, ctas: str) -> list[tuple[str, str, bool]]:
+def live_cases(dml: str, drop_me: str, ctas: str) -> list[Probe]:
     """Probes for --live-writes, all scoped to this run's own scratch tables."""
     return [
-        ("SELECT", f"SELECT COUNT(*) FROM {dml}", True),
-        ("EXPLAIN", f"EXPLAIN SELECT * FROM {dml}", True),
-        ("INSERT", f"INSERT INTO {dml} (id, v) VALUES (99, 'written')", False),
-        ("UPDATE", f"UPDATE {dml} SET v = 'mutated' WHERE id = 1", False),
-        ("DELETE", f"DELETE FROM {dml} WHERE id = 2", False),
-        ("CREATE TABLE (CTAS)", f"CREATE TABLE {ctas} AS SELECT * FROM {dml}", False),
-        ("TRUNCATE", f"TRUNCATE TABLE {dml}", False),
-        ("DROP TABLE", f"DROP TABLE {drop_me}", False),
-        ("multi-statement", f"SELECT 1; DROP TABLE {dml}", False),
+        Probe("SELECT", f"SELECT COUNT(*) FROM {dml}", True),
+        Probe("EXPLAIN", f"EXPLAIN SELECT * FROM {dml}", True),
+        Probe("INSERT", f"INSERT INTO {dml} (id, v) VALUES (99, 'written')", False),
+        Probe("UPDATE", f"UPDATE {dml} SET v = 'mutated' WHERE id = 1", False),
+        Probe("DELETE", f"DELETE FROM {dml} WHERE id = 2", False),
+        Probe("CREATE TABLE (CTAS)", f"CREATE TABLE {ctas} AS SELECT * FROM {dml}", False),
+        Probe("TRUNCATE", f"TRUNCATE TABLE {dml}", False),
+        Probe("DROP TABLE", f"DROP TABLE {drop_me}", False),
+        Probe("multi-statement", f"SELECT 1; DROP TABLE {dml}", False),
     ]
 
 
