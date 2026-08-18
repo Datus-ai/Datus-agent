@@ -32,6 +32,7 @@ from datus.tools.func_tool import (
     DBFuncTool,
     SemanticTools,
 )
+from datus.utils.language_utils import NATIVE_DIRECTIVE_MAP
 from tests.unit_tests.mock_llm_model import (
     MockToolCall,
     build_tool_then_response,
@@ -752,7 +753,7 @@ class TestFinalizeLanguageDirective:
 
         directive = node._finalize_language_directive()
 
-        assert directive == "# Response Language\n- Use: Japanese (ja)"
+        assert directive == f"# Response Language\n- Use: Japanese (ja)\n- {NATIVE_DIRECTIVE_MAP['ja']}"
 
     def test_run_finalize_forwards_the_directive_to_the_llm(self, real_agent_config, mock_llm_create, tmp_path):
         """End-to-end through ``_run_finalize`` → ``run_finalize_analysis``:

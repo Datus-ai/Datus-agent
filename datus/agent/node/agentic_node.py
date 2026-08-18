@@ -33,7 +33,9 @@ from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.language_utils import ensure_native_directive as _ensure_native_directive
 from datus.utils.language_utils import resolve_language_name as _resolve_language_name
+from datus.utils.language_utils import resolve_native_directive as _resolve_native_directive
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 from datus.utils.node_utils import build_database_context
@@ -1055,8 +1057,11 @@ class AgenticNode(Node):
         node template, its version, and the active model (a model switch also
         resets the provider-side prefix cache, so rebuilding is free). The
         live per-turn datasource/dialect is injected in the user message
-        instead, so it deliberately does **not** appear here; date, language,
-        memory, and skills are frozen until the snapshot is rebuilt.
+        instead, so it deliberately does **not** appear here. ``language`` DOES
+        appear: it is a per-request field on the Chat API, so a user switching
+        the UI language mid-session must not keep replaying a snapshot that
+        pins the old one. Date, memory, and skills stay frozen until the
+        snapshot is rebuilt.
         """
         agent_config = getattr(self, "agent_config", None)
         version = prompt_version
@@ -1077,10 +1082,12 @@ class AgenticNode(Node):
                     model_id = f"{getattr(mc, 'type', '') or ''}:{getattr(mc, 'model', '') or ''}"
             except Exception:
                 model_id = ""
+        language = getattr(agent_config, "language", None) if agent_config is not None else None
         return {
             "node_name": self.get_node_name(),
             "prompt_version": str(version or ""),
             "model_name": model_id,
+            "language": str(language or "").strip(),
         }
 
     def _get_session_system_prompt(
@@ -1362,10 +1369,12 @@ class AgenticNode(Node):
                 version=None,
                 language_code=language_code,
                 language_name=_resolve_language_name(language_code),
+                native_directive=_resolve_native_directive(language_code),
             )
         except Exception as e:
             logger.warning(f"Failed to render response_language template: {e}")
             return base_prompt
+        language_section = _ensure_native_directive(language_section, language_code)
         if language_section and language_section.strip():
             base_prompt = base_prompt + "\n\n" + language_section
         return base_prompt

@@ -1825,6 +1825,20 @@ class TestInjectResponseLanguage:
         node = _make_node(agent_config=_Bare())
         assert node._inject_response_language("BASE") == "BASE"
 
+    def test_directive_is_restated_in_the_target_language(self):
+        """The English ``Use: Chinese`` line alone gets drowned out by dozens of
+        turns of English tool output; the native sentence is what actually holds
+        a small model in language."""
+        node = _make_node(agent_config=self._agent_config("zh"))
+        result = node._inject_response_language("BASE")
+        assert "简体中文" in result
+
+    def test_unknown_code_has_no_native_line(self):
+        node = _make_node(agent_config=self._agent_config("xx"))
+        result = node._inject_response_language("BASE")
+        assert result.count("\n- Use:") == 1
+        assert result.rstrip().endswith("JSON keys")
+
     def test_render_failure_returns_base_unchanged(self):
         node = _make_node(agent_config=self._agent_config("zh"))
         with patch("datus.agent.node.agentic_node.get_prompt_manager") as mgr:

@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, ClassVar, Dict, Generic, 
 
 from pydantic import BaseModel
 
-from datus.agent.node.agentic_node import AgenticNode, _resolve_language_name
+from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.visual_artifact._visual_artifact_finalize import (
     finalize_stage_text,
     narrative_outputs_present,
@@ -44,6 +44,7 @@ from datus.agent.node.visual_artifact._visual_artifact_finalize import (
 )
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.language_utils import build_fallback_directive
 
 if TYPE_CHECKING:
     from datus.agent.node.stream_run_context import StreamRunContext
@@ -456,8 +457,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         directive = self._inject_response_language("").strip()
         if directive:
             return directive
-        language_code = str(language_raw).strip()
-        return f"# Response Language\n- Use: {_resolve_language_name(language_code)} ({language_code})"
+        return build_fallback_directive(str(language_raw).strip())
 
     def _run_finalize(
         self,
