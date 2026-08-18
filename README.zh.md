@@ -36,7 +36,7 @@ Copilot 只回答问题,Datus 端到端地执行数据工作:规划、编写并�
 
 ### 指标与语义层
 
-通过可插拔的[语义适配器](https://docs.datus.ai/zh/latest/adapters/semantic_adapters/)超越裸 SQL:一套语义建模工作流负责编写数据集、模型与指标,三种执行后端负责运行。可用 [MetricFlow](https://docs.datus.ai/zh/latest/metricflow/introduction/) YAML 编写,也可写成 [OSI(Open Semantic Interchange)](https://docs.datus.ai/zh/latest/adapters/osi_semantic_adapter/) 规范文档,由 MetricFlow 执行或由原生 Rust 引擎 [Dosi](docs/adapters/dosi_semantic_adapter.zh.md) 直接执行。Datus 能从 schema 和 SQL 历史自动生成语义资产,涵盖累计、滚动窗口、环比等高级时间指标;键和关联只依据已验证的证据声明。AskMetrics subagent 直接基于指标层回答 KPI 与趋势问题,其维度归因能力不只回答指标是多少,还能解释为什么变了。[Dashboard Copilot](https://docs.datus.ai/zh/latest/getting_started/dashboard_copilot/) 则把现有 BI 看板变成对话式分析。
+通过可插拔的[语义适配器](https://docs.datus.ai/zh/latest/adapters/semantic_adapters/)超越裸 SQL:一套语义建模工作流负责编写数据集、模型与指标,三种执行后端负责运行。可用 [MetricFlow](https://docs.datus.ai/zh/latest/metricflow/introduction/) YAML 编写,也可写成 [OSI(Open Semantic Interchange)](https://docs.datus.ai/zh/latest/adapters/osi_semantic_adapter/) 规范文档,由 MetricFlow 执行或由 [Dosi](https://dosi.datus.ai/) 原生执行。Dosi 是 OSI 原生的 Rust 引擎:模型定义一次,即可编译为 13+ 种方言的正确 SQL,自带 fan-out 防护;既可嵌在 Datus 中,也能独立作为 CLI、REST 服务、Python 库或 MCP server 使用。Datus 能从 schema 和 SQL 历史自动生成语义资产,涵盖累计、滚动窗口、环比等高级时间指标;键和关联只依据已验证的证据声明。AskMetrics subagent 直接基于指标层回答 KPI 与趋势问题,其维度归因能力不只回答指标是多少,还能解释为什么变了。[Dashboard Copilot](https://docs.datus.ai/zh/latest/getting_started/dashboard_copilot/) 则把现有 BI 看板变成对话式分析。
 
 ### 可演进的上下文引擎,而非静态管道
 
