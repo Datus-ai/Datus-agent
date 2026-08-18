@@ -915,16 +915,21 @@ class SubAgentTaskTool:
 
                     # Forward sub-action to the ActionBus (real-time CoT streaming)
                     if self._action_bus is not None:
-                        action.depth = 1
+                        # The yielded action is also stored in the child node's
+                        # ActionHistoryManager. Keep that root-level history
+                        # intact so child-local accounting (for example,
+                        # _extract_total_tokens) can still find depth=0 actions.
+                        forwarded_action = action.model_copy()
+                        forwarded_action.depth = 1
                         if call_id:
-                            action.parent_action_id = call_id
+                            forwarded_action.parent_action_id = call_id
                         logger.debug(
                             "SubAgentTaskTool bus.put",
-                            action_type=action.action_type,
-                            role=str(action.role),
-                            status=str(action.status),
+                            action_type=forwarded_action.action_type,
+                            role=str(forwarded_action.role),
+                            status=str(forwarded_action.status),
                         )
-                        self._action_bus.put(action)
+                        self._action_bus.put(forwarded_action)
 
                     if action.role == ActionRole.TOOL:
                         tool_count += 1
