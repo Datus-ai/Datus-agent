@@ -25,7 +25,7 @@
 
 **Datus** is the open-source data engineering agent for the modern data stack: one agent that connects your warehouse, catalog, semantic layer, and BI, grounded in an evolvable context engine your team owns.
 
-It plans, writes, runs, and validates SQL; builds semantic models and metrics; ships pipelines, reports, and dashboards. The longer you use it, the more accurate it gets.
+Datus handles SQL authoring and validation, semantic model and metric construction, and the generation of pipelines, reports, and dashboards. Every run and every correction settles into context, which steadily raises the accuracy of its output.
 
 ![How Datus works](docs/assets/how_it_works.svg)
 
