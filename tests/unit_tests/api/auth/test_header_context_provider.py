@@ -58,6 +58,11 @@ class TestHeaderContextProviderAuthenticate:
         assert ctx.user_id is None
         assert ctx.policy_context == {"row_filter": {"access_mode": "scoped", "market_codes": ["MKT300", "MKT301"]}}
 
+    async def test_blank_policy_context_header_returns_empty_context(self):
+        provider = HeaderContextProvider()
+        ctx = await provider.authenticate(_make_request({HEADER_POLICY_CONTEXT: "   "}))
+        assert ctx.policy_context == {}
+
     async def test_user_id_header_is_independent_from_policy_context(self):
         provider = HeaderContextProvider()
         ctx = await provider.authenticate(

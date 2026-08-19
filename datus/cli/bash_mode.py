@@ -425,28 +425,21 @@ def _enforce_policy_if_read(cli: "DatusCLI", sql: str) -> str:
         )
     rewritten_sql = sql if enforced.sql is None else enforced.sql
     if rewritten_sql != sql:
-        from datus.utils.sql_utils import _first_statement, strip_sql_comments
+        from datus.utils.sql_utils import (
+            READ_ONLY_MULTI_STATEMENT,
+            READ_ONLY_NON_READ,
+            READ_ONLY_WRITABLE_PRAGMA,
+            validate_read_only_sql,
+        )
 
-        cleaned = strip_sql_comments(rewritten_sql).strip()
-        normalized = cleaned.rstrip(";").strip()
-        if normalized and _first_statement(normalized) != normalized:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message="Policy runtime produced multi-statement SQL",
-            )
-        rewritten_type = parse_sql_type(rewritten_sql, dialect)
-        if rewritten_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message=f"Policy runtime produced non-read SQL: {rewritten_type.value}",
-            )
-        if rewritten_type == SQLType.METADATA_SHOW:
-            first_word = cleaned.split()[0].upper() if cleaned else ""
-            if first_word == "PRAGMA" and "=" in cleaned:
-                raise DatusException(
-                    ErrorCode.TOOL_INVALID_INPUT,
-                    message="Policy runtime produced a writable PRAGMA statement",
-                )
+        violation, rewritten_type = validate_read_only_sql(rewritten_sql, dialect)
+        messages = {
+            READ_ONLY_MULTI_STATEMENT: "Policy runtime produced multi-statement SQL",
+            READ_ONLY_NON_READ: f"Policy runtime produced non-read SQL: {rewritten_type.value}",
+            READ_ONLY_WRITABLE_PRAGMA: "Policy runtime produced a writable PRAGMA statement",
+        }
+        if violation is not None:
+            raise DatusException(ErrorCode.TOOL_INVALID_INPUT, message=messages[violation])
     return rewritten_sql
 
 

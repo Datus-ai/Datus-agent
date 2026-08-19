@@ -7,6 +7,9 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import (
     _WIDEST_FIELD_ORDER,
+    READ_ONLY_MULTI_STATEMENT,
+    READ_ONLY_NON_READ,
+    READ_ONLY_WRITABLE_PRAGMA,
     _fallback_sql_type,
     _first_statement,
     _is_escaped,
@@ -28,6 +31,7 @@ from datus.utils.sql_utils import (
     read_workspace_sql_file,
     strip_sql_comments,
     table_name_field_order,
+    validate_read_only_sql,
 )
 
 _CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = (
@@ -702,6 +706,19 @@ FROM gold_vs_bitcoin"""
     assert parse_sql_type("USE test", dialect="mysql") == SQLType.CONTENT_SET
     assert parse_sql_type("USE test", dialect="starrocks") == SQLType.CONTENT_SET
     assert parse_sql_type(" USE test ", dialect="snowflake") == SQLType.CONTENT_SET
+
+
+@pytest.mark.parametrize(
+    ("sql", "violation", "sql_type"),
+    [
+        ("SELECT 1", None, SQLType.SELECT),
+        ("SELECT 1; DROP TABLE orders", READ_ONLY_MULTI_STATEMENT, SQLType.UNKNOWN),
+        ("DROP TABLE orders", READ_ONLY_NON_READ, SQLType.DDL),
+        ("PRAGMA foreign_keys = OFF", READ_ONLY_WRITABLE_PRAGMA, SQLType.METADATA_SHOW),
+    ],
+)
+def test_validate_read_only_sql(sql, violation, sql_type):
+    assert validate_read_only_sql(sql, "sqlite") == (violation, sql_type)
 
 
 def test_parse_sql_type_with():

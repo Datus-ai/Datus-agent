@@ -749,6 +749,36 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     return inferred if inferred else SQLType.UNKNOWN
 
 
+READ_ONLY_MULTI_STATEMENT = "multi_statement"
+READ_ONLY_NON_READ = "non_read"
+READ_ONLY_WRITABLE_PRAGMA = "writable_pragma"
+
+
+def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLType]:
+    """Classify one SQL statement and identify read-only safety violations.
+
+    Returns a violation code plus the detected SQL type. A ``None`` violation
+    means the statement is one read-only SELECT, metadata query, or EXPLAIN.
+    Callers own their user-facing error wording while sharing the security
+    checks themselves.
+    """
+    cleaned = strip_sql_comments(sql).strip()
+    normalized_sql = cleaned.rstrip(";").strip()
+    if normalized_sql and _first_statement(normalized_sql) != normalized_sql:
+        return READ_ONLY_MULTI_STATEMENT, SQLType.UNKNOWN
+
+    sql_type = parse_sql_type(sql, dialect)
+    if sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+        return READ_ONLY_NON_READ, sql_type
+
+    if sql_type == SQLType.METADATA_SHOW:
+        first_word = cleaned.split()[0].upper() if cleaned else ""
+        if first_word == "PRAGMA" and "=" in cleaned:
+            return READ_ONLY_WRITABLE_PRAGMA, sql_type
+
+    return None, sql_type
+
+
 # ``SQLType.DDL`` refinements for the permission layer: statements that
 # destroy data or schema get their own kind so they can be gated separately
 # from benign DDL (COMMENT/GRANT/ANALYZE/...). RENAME maps to ``alter`` — it

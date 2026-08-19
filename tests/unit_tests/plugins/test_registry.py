@@ -15,6 +15,7 @@ import importlib.metadata as importlib_metadata
 import pytest
 
 from datus.plugins import registry
+from datus.utils.exceptions import DatusException, ErrorCode
 
 MINIMAL = "manifest_version: 1\n"
 
@@ -632,8 +633,9 @@ def test_policy_runtime_bad_ref_fails_closed(plugin_env):
         MINIMAL + "policy_runtime: {pkg}.runtime:NOT_CALLABLE\n",
         files={"runtime.py": POLICY_RUNTIME_MODULE},
     )
-    with pytest.raises(RuntimeError, match="could not be loaded as a callable"):
+    with pytest.raises(DatusException, match="could not be loaded as a callable") as exc_info:
         registry.collect_plugin_policy_runtime_factories()
+    assert exc_info.value.code == ErrorCode.COMMON_CONFIG_ERROR
 
 
 def test_policy_runtime_respects_active_names(plugin_env):

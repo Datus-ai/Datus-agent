@@ -35,6 +35,7 @@ from datus.plugins.base import (
     read_manifest_file,
 )
 from datus.plugins.prompt import render_plugin_prompt
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -488,8 +489,12 @@ def collect_plugin_policy_runtime_factories(active_names: Optional[Set[str]] = N
             _RESOLVED_POLICY_RUNTIME_CACHE[key] = resolve_code_ref(manifest.policy_runtime, plugin_name)
         factory = _RESOLVED_POLICY_RUNTIME_CACHE[key]
         if not callable(factory):
-            raise RuntimeError(
-                f"Plugin {plugin_name!r} policy_runtime {manifest.policy_runtime!r} could not be loaded as a callable"
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    f"Plugin {plugin_name!r} policy_runtime {manifest.policy_runtime!r} "
+                    "could not be loaded as a callable"
+                ),
             )
         factories[plugin_name] = factory
     return factories

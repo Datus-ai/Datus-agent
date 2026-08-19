@@ -33,6 +33,7 @@ from datus.api.routes.chat_routes import (
     submit_user_interaction,
 )
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 async def _timeout_wait_for(awaitable, timeout):
@@ -285,6 +286,38 @@ class TestStreamChatPolicyContextPreCheck:
         )
         assert payload["error_type"] == "POLICY_CONTEXT_REJECTED"
         assert "denies all data reads" in payload["error"]
+        svc.chat.stream_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_policy_runtime_failure_returns_generic_sse_error(self):
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
+        ctx = MagicMock(user_id=None, policy_context={})
+        request = StreamChatInput(message="hi")
+
+        runtime = MagicMock()
+        runtime.validate_context.side_effect = DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message="internal plugin path and policy details",
+        )
+        with (
+            patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime),
+            patch("datus.api.routes.chat_routes.logger.error") as log_error,
+        ):
+            response = await stream_chat(request, svc, ctx, MagicMock())
+
+        chunks = [chunk.decode() if isinstance(chunk, bytes) else chunk async for chunk in response.body_iterator]
+        payload = json.loads(
+            next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
+        )
+        assert payload["error_type"] == "POLICY_RUNTIME_ERROR"
+        assert payload["error"] == "Policy validation failed."
+        assert "internal plugin" not in chunks[0]
+        log_error.assert_called_once_with(
+            "Policy runtime validation failed: %s",
+            ANY,
+            exc_info=True,
+        )
         svc.chat.stream_chat.assert_not_called()
 
     @pytest.mark.asyncio

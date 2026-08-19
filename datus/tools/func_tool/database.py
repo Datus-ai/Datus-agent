@@ -1696,11 +1696,15 @@ class DBFuncTool:
         return effective_datasource or "default"
 
     def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
-        from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+        from datus.utils.sql_utils import (
+            READ_ONLY_MULTI_STATEMENT,
+            READ_ONLY_NON_READ,
+            READ_ONLY_WRITABLE_PRAGMA,
+            validate_read_only_sql,
+        )
 
-        cleaned = strip_sql_comments(sql).strip()
-        normalized_sql = cleaned.rstrip(";").strip()
-        if normalized_sql and _first_statement(normalized_sql) != normalized_sql:
+        violation, sql_type = validate_read_only_sql(sql, connector.dialect)
+        if violation == READ_ONLY_MULTI_STATEMENT:
             return (
                 FuncToolResult(
                     success=0,
@@ -1709,9 +1713,7 @@ class DBFuncTool:
                 SQLType.UNKNOWN,
             )
 
-        sql_type = parse_sql_type(sql, connector.dialect)
-        readonly_sql_types = {SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN}
-        if sql_type not in readonly_sql_types:
+        if violation == READ_ONLY_NON_READ:
             return (
                 FuncToolResult(
                     success=0,
@@ -1721,16 +1723,14 @@ class DBFuncTool:
                 sql_type,
             )
 
-        if sql_type == SQLType.METADATA_SHOW:
-            first_word = cleaned.split()[0].upper() if cleaned else ""
-            if first_word == "PRAGMA" and "=" in cleaned:
-                return (
-                    FuncToolResult(
-                        success=0,
-                        error="Writable PRAGMA statements are not allowed in read-only mode.",
-                    ),
-                    sql_type,
-                )
+        if violation == READ_ONLY_WRITABLE_PRAGMA:
+            return (
+                FuncToolResult(
+                    success=0,
+                    error="Writable PRAGMA statements are not allowed in read-only mode.",
+                ),
+                sql_type,
+            )
 
         out_of_scope = self._check_sql_table_scope(sql, connector)
         if out_of_scope:

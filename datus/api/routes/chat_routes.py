@@ -100,7 +100,12 @@ def _policy_context_pre_check(svc: "DatusService", ctx: "AppContext") -> Optiona
         context = getattr(ctx, "policy_context", None)
         decision = PolicyRuntime(agent_config).validate_context(context if isinstance(context, dict) else {})
     except DatusException as exc:
-        return ChatPreCheckOutcome(allow=False, error=str(exc), error_type="POLICY_RUNTIME_ERROR")
+        logger.error("Policy runtime validation failed: %s", exc, exc_info=True)
+        return ChatPreCheckOutcome(
+            allow=False,
+            error="Policy validation failed.",
+            error_type="POLICY_RUNTIME_ERROR",
+        )
     if decision.allowed:
         return None
     return ChatPreCheckOutcome(

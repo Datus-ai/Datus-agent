@@ -11,7 +11,7 @@ the meaning of ``policy_context`` and the concrete read transformations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from datus.plugins.registry import collect_plugin_policy_runtime_factories
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -160,7 +160,13 @@ class PolicyRuntime:
         return dict(policy_context)
 
     @staticmethod
-    def _invoke(plugin_name: str, hook_name: str, hook, *args, **kwargs):
+    def _invoke(
+        plugin_name: str,
+        hook_name: str,
+        hook: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         try:
             return hook(*args, **kwargs)
         except DatusException:

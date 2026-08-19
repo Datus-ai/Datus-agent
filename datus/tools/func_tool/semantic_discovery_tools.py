@@ -377,7 +377,7 @@ class SemanticDiscoveryTools:
 
         Historical JOINs and column names can suggest key columns, but they do
         not prove uniqueness. Each candidate is checked over all rows visible
-        to rows visible under the current policy context for NULL components and duplicate
+        under the current policy context for NULL components and duplicate
         ordered key groups. A passing result may be authored as one OSI
         ``unique_keys`` entry. This tool never infers a physical
         ``primary_key``.

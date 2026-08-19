@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,18 +10,34 @@ from datus.utils.exceptions import DatusException
 
 
 class FakeRuntime:
-    def __init__(self, *, sql=None, result=None, allowed=True, reason=None):
+    def __init__(
+        self,
+        *,
+        sql: str | None = None,
+        result: Any = None,
+        allowed: bool = True,
+        result_allowed: bool | None = None,
+        reason: str | None = None,
+    ) -> None:
         self.sql = sql
         self.result = result
         self.allowed = allowed
+        self.result_allowed = allowed if result_allowed is None else result_allowed
         self.reason = reason
-        self.contexts = []
+        self.contexts: list[dict[str, Any]] = []
 
-    def validate_context(self, policy_context):
+    def validate_context(self, policy_context: dict[str, Any]) -> SimpleNamespace:
         self.contexts.append(policy_context)
         return SimpleNamespace(allowed=self.allowed, reason=self.reason)
 
-    def before_sql_read(self, sql, *, datasource, dialect, policy_context):
+    def before_sql_read(
+        self,
+        sql: str,
+        *,
+        datasource: str,
+        dialect: str,
+        policy_context: dict[str, Any],
+    ) -> SimpleNamespace:
         self.contexts.append(policy_context)
         return SimpleNamespace(
             allowed=self.allowed,
@@ -29,17 +46,25 @@ class FakeRuntime:
             applied_policies=["row_scope"] if self.sql else [],
         )
 
-    def after_read_result(self, result, *, sql, datasource, dialect, policy_context):
+    def after_read_result(
+        self,
+        result: Any,
+        *,
+        sql: str,
+        datasource: str,
+        dialect: str,
+        policy_context: dict[str, Any],
+    ) -> SimpleNamespace:
         self.contexts.append(policy_context)
         return SimpleNamespace(
-            allowed=self.allowed,
+            allowed=self.result_allowed,
             result=result if self.result is None else self.result,
             reason=self.reason,
             applied_policies=["email_mask"] if self.result is not None else [],
         )
 
 
-def config(policy_context=None):
+def config(policy_context: dict[str, Any] | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         active_plugin_names=lambda: {"sql-policy"},
         get_plugin_profile=lambda name: {"policies": []},
@@ -48,7 +73,7 @@ def config(policy_context=None):
     )
 
 
-def runtime_with(fake, monkeypatch):
+def runtime_with(fake: Any, monkeypatch: pytest.MonkeyPatch) -> PolicyRuntime:
     monkeypatch.setattr(
         "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
         lambda active: {"sql-policy": lambda profile: fake},
@@ -140,7 +165,7 @@ def test_db_read_applies_before_and_after_hooks(monkeypatch):
     cfg = config({"row_filter": {"access_mode": "scoped", "store_ids": [1]}})
     db = connector()
     result = make_db_tool(db, cfg).execute_read_enforced("SELECT * FROM orders", db, datasource="warehouse")
-    assert result.success
+    assert result.success is True
     assert db.execute_query.call_args.args[0] == "SELECT * FROM orders WHERE store_id = 1"
     assert result.sql_return == [{"email": "***"}]
     assert fake.contexts[-1] == cfg.policy_context
@@ -157,6 +182,20 @@ def test_db_policy_denial_does_not_execute(monkeypatch):
     assert not result.success
     assert "access denied" in result.error
     db.execute_query.assert_not_called()
+
+
+def test_db_result_policy_denial_fails_after_one_execution(monkeypatch):
+    fake = FakeRuntime(result_allowed=False, reason="result denied")
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    db = connector()
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
+    assert result.success is False
+    assert "result denied" in result.error
+    assert result.sql_return is None
+    db.execute_query.assert_called_once()
 
 
 def test_db_revalidates_policy_rewrite(monkeypatch):

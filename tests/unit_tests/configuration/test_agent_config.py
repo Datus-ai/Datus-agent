@@ -13,6 +13,7 @@ CI-level: zero external deps, zero network.
 """
 
 import argparse
+from unittest.mock import patch
 
 import pytest
 
@@ -2142,7 +2143,10 @@ class TestAgentConfigLanguage:
 
 class TestAgentConfigPolicyContext:
     def test_legacy_sql_policy_config_is_rejected(self, tmp_path):
-        with pytest.raises(DatusException, match="agent.sql_policy has been removed"):
+        with (
+            patch("datus.plugins.store.activate") as activate,
+            pytest.raises(DatusException, match="agent.sql_policy has been removed") as exc_info,
+        ):
             AgentConfig(
                 nodes={"test": NodeConfig(model="test-model", input=None)},
                 home=str(tmp_path / "h"),
@@ -2158,6 +2162,8 @@ class TestAgentConfigPolicyContext:
                 sql_policy={"enabled": True},
                 skip_init_dirs=True,
             )
+        assert exc_info.value.code == ErrorCode.COMMON_CONFIG_ERROR
+        activate.assert_not_called()
 
 
 class TestServicesConfigFromDict:
