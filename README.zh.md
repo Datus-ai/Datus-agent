@@ -33,7 +33,7 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 
 ### 语义层
 
-- **语义建模自动化**：Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://docs.datus.ai/zh/latest/adapters/osi_semantic_adapter/) 格式的语义模型与指标定义，不需要手写 YAML。
+- **语义建模自动化**：Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://dosi.datus.ai/) 格式的语义模型与指标定义，不需要手写 YAML。
 - **[Dosi](https://dosi.datus.ai/) 执行引擎**：把同一份语义模型编译成 13+ 种数据库方言的 SQL；它是一个独立程序，也可以单独以 CLI、REST 服务或 MCP server 的方式部署。
 - **指标问答与归因**：[AskMetrics](https://docs.datus.ai/zh/latest/subagent/ask_metrics/) 依据指标定义回答业务问题，而不是临时拼 SQL；指标出现波动时，维度归因能定位变化来自哪个维度。
 

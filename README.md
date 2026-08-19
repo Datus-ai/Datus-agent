@@ -33,7 +33,7 @@ Datus handles SQL authoring and validation, semantic model and metric constructi
 
 ### Semantic layer
 
-- **Automated semantic modeling**: the agent reads your database schema and SQL history, then generates [OSI](https://docs.datus.ai/latest/adapters/osi_semantic_adapter/) semantic models and metric definitions, with no hand-written YAML.
+- **Automated semantic modeling**: the agent reads your database schema and SQL history, then generates [OSI](https://dosi.datus.ai/) semantic models and metric definitions, with no hand-written YAML.
 - **[Dosi](https://dosi.datus.ai/) execution engine**: compiles one semantic model into SQL for 13+ database dialects, and ships as an independent program you can also run as a CLI, REST server, or MCP server.
 - **Metric Q&A and attribution**: [AskMetrics](https://docs.datus.ai/latest/subagent/ask_metrics/) answers business questions from metric definitions instead of improvising SQL, and when a metric moves, dimension attribution locates which dimension drove the change.
 
