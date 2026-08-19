@@ -26,12 +26,14 @@ import copy
 import json
 import os
 import time
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any
 
 import httpx
 
+from datus.cli.opencode_go_catalog import resolve_opencode_go_models
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
@@ -54,7 +56,7 @@ OPENROUTER_PROVIDER_KEY = "openrouter"
 
 # OpenRouter prefixes every model id as "<vendor>/<slug>". Map the vendor half
 # onto the provider keys used in datus/conf/providers.yml.
-OPENROUTER_VENDOR_MAP: Dict[str, str] = {
+OPENROUTER_VENDOR_MAP: dict[str, str] = {
     "openai": "openai",
     "anthropic": "claude",
     "deepseek": "deepseek",
@@ -80,6 +82,7 @@ PROTECTED_PROVIDERS = frozenset(
         "kimi_coding",
         "claude_subscription",
         "codex",
+        "opencode_go",
     }
 )
 
@@ -113,11 +116,11 @@ def _cache_is_fresh(max_age_sec: float) -> bool:
     return (time.time() - mtime) < max_age_sec
 
 
-def _extract_pricing(raw_pricing: Any) -> Optional[Dict[str, str]]:
+def _extract_pricing(raw_pricing: Any) -> dict[str, str] | None:
     """Keep only input/output token prices; drop noisy per-request fields."""
     if not isinstance(raw_pricing, dict):
         return None
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     for key in ("prompt", "completion"):
         value = raw_pricing.get(key)
         if isinstance(value, (str, int, float)):
@@ -125,7 +128,7 @@ def _extract_pricing(raw_pricing: Any) -> Optional[Dict[str, str]]:
     return out or None
 
 
-def _extract_context_length(item: Dict[str, Any]) -> Optional[int]:
+def _extract_context_length(item: dict[str, Any]) -> int | None:
     """OpenRouter exposes context_length at the top level and under top_provider."""
     raw = item.get("context_length")
     if isinstance(raw, int):
@@ -138,7 +141,7 @@ def _extract_context_length(item: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _is_model_unfit(slug: str, context_length: Optional[int]) -> bool:
+def _is_model_unfit(slug: str, context_length: int | None) -> bool:
     if ":" in slug:
         return True
     slug_lower = slug.lower()
@@ -150,16 +153,16 @@ def _is_model_unfit(slug: str, context_length: Optional[int]) -> bool:
 
 
 def _bucket_by_vendor(
-    raw_models: List[Dict[str, Any]],
-    allowed_providers: Optional[Iterable[str]] = None,
-) -> Dict[str, List[Dict[str, Any]]]:
+    raw_models: list[dict[str, Any]],
+    allowed_providers: Iterable[str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     """Group OpenRouter models into provider buckets, preserving first-seen order.
 
     When ``allowed_providers`` is given, only provider keys present in that set
     are kept — this lets providers.yml act as the single whitelist.
     """
-    allowed: Optional[Set[str]] = set(allowed_providers) if allowed_providers is not None else None
-    buckets: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    allowed: set[str] | None = set(allowed_providers) if allowed_providers is not None else None
+    buckets: dict[str, dict[str, dict[str, Any]]] = {}
     for item in raw_models:
         if not isinstance(item, dict):
             continue
@@ -187,7 +190,7 @@ def _bucket_by_vendor(
             # same payload, so drop the alias.
             if slug.endswith("-fast"):
                 continue
-        entry: Dict[str, Any] = {"id": slug}
+        entry: dict[str, Any] = {"id": slug}
         name = item.get("name")
         if isinstance(name, str) and name:
             entry["name"] = name
@@ -211,7 +214,7 @@ def _bucket_by_vendor(
     return result
 
 
-def _aggregate_openrouter(raw_models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _aggregate_openrouter(raw_models: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collect every chat-capable model under one ``openrouter`` bucket.
 
     Entries keep their full ``vendor/slug`` id (e.g. ``anthropic/claude-sonnet-4``)
@@ -219,7 +222,7 @@ def _aggregate_openrouter(raw_models: List[Dict[str, Any]]) -> List[Dict[str, An
     Reuses the same unfit filter as the per-vendor buckets; dedupes by full id
     while preserving first-seen order.
     """
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for item in raw_models:
         if not isinstance(item, dict):
             continue
@@ -234,7 +237,7 @@ def _aggregate_openrouter(raw_models: List[Dict[str, Any]]) -> List[Dict[str, An
         ctx_len = _extract_context_length(item)
         if _is_model_unfit(slug, ctx_len):
             continue
-        entry: Dict[str, Any] = {"id": full_id}
+        entry: dict[str, Any] = {"id": full_id}
         name = item.get("name")
         if isinstance(name, str) and name:
             entry["name"] = name
@@ -249,8 +252,8 @@ def _aggregate_openrouter(raw_models: List[Dict[str, Any]]) -> List[Dict[str, An
 
 def fetch_openrouter_models(
     timeout: float = OPENROUTER_TIMEOUT_SEC,
-    allowed_providers: Optional[Iterable[str]] = None,
-) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+    allowed_providers: Iterable[str] | None = None,
+) -> dict[str, list[dict[str, Any]]] | None:
     """Fetch and bucket the OpenRouter model catalog. Returns None on any failure."""
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -285,7 +288,7 @@ def fetch_openrouter_models(
     return buckets
 
 
-def _read_cache_file() -> Optional[Dict[str, Any]]:
+def _read_cache_file() -> dict[str, Any] | None:
     """Read and shallowly validate the cache file. Returns None on any problem."""
     path = _cache_file_path()
     if not path.exists():
@@ -310,7 +313,7 @@ def _read_cache_file() -> Optional[Dict[str, Any]]:
     return raw
 
 
-def load_cached_models() -> Optional[Dict[str, List[str]]]:
+def load_cached_models() -> dict[str, list[str]] | None:
     """Return the cached model slugs as ``Dict[provider, List[slug]]``.
 
     Accepts both v1 (list of strings) and v2 (list of dicts) caches. v2 entries
@@ -321,11 +324,11 @@ def load_cached_models() -> Optional[Dict[str, List[str]]]:
     if raw is None:
         return None
 
-    result: Dict[str, List[str]] = {}
+    result: dict[str, list[str]] = {}
     for provider_key, value in raw["models"].items():
         if not isinstance(provider_key, str) or not isinstance(value, list):
             continue
-        slugs: List[str] = []
+        slugs: list[str] = []
         for entry in value:
             if isinstance(entry, str):
                 slugs.append(entry)
@@ -338,7 +341,7 @@ def load_cached_models() -> Optional[Dict[str, List[str]]]:
     return result or None
 
 
-def load_cached_model_details() -> Optional[Dict[str, List[Dict[str, Any]]]]:
+def load_cached_model_details() -> dict[str, list[dict[str, Any]]] | None:
     """Return the full per-model metadata from the cache, upgrading v1 on the fly.
 
     v1 caches (list of slug strings) are promoted to ``[{"id": slug}]`` so
@@ -349,11 +352,11 @@ def load_cached_model_details() -> Optional[Dict[str, List[Dict[str, Any]]]]:
     if raw is None:
         return None
 
-    result: Dict[str, List[Dict[str, Any]]] = {}
+    result: dict[str, list[dict[str, Any]]] = {}
     for provider_key, value in raw["models"].items():
         if not isinstance(provider_key, str) or not isinstance(value, list):
             continue
-        entries: List[Dict[str, Any]] = []
+        entries: list[dict[str, Any]] = []
         for entry in value:
             if isinstance(entry, str):
                 if entry:
@@ -367,7 +370,7 @@ def load_cached_model_details() -> Optional[Dict[str, List[Dict[str, Any]]]]:
     return result or None
 
 
-def load_cache_fetched_at() -> Optional[str]:
+def load_cache_fetched_at() -> str | None:
     """Return the cache file's ISO-8601 ``fetched_at`` timestamp, or None."""
     raw = _read_cache_file()
     if raw is None:
@@ -376,7 +379,7 @@ def load_cache_fetched_at() -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
-def save_cached_models(buckets: Dict[str, List[Dict[str, Any]]]) -> None:
+def save_cached_models(buckets: dict[str, list[dict[str, Any]]]) -> None:
     """Atomically persist the bucketed model list as schema v2. Swallows I/O errors."""
     path = _cache_file_path()
     try:
@@ -384,7 +387,7 @@ def save_cached_models(buckets: Dict[str, List[Dict[str, Any]]]) -> None:
         payload = {
             "version": CACHE_SCHEMA_VERSION,
             "source": "openrouter",
-            "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "fetched_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "models": buckets,
         }
         tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -398,7 +401,7 @@ def save_cached_models(buckets: Dict[str, List[Dict[str, Any]]]) -> None:
             pass
 
 
-def _overlay(local_catalog: dict, buckets: Dict[str, List[Dict[str, Any]]]) -> dict:
+def _overlay(local_catalog: dict, buckets: dict[str, list[dict[str, Any]]]) -> dict:
     """Return a new catalog with each non-protected provider's `models` replaced.
 
     The overlay only writes slug lists into ``providers.yml`` consumers — the
@@ -440,21 +443,8 @@ def _resolve_models_from(catalog: dict) -> dict:
     return catalog
 
 
-def resolve_provider_models(local_catalog: dict) -> dict:
-    """Resolution order: fresh-cache → remote → stale-cache → local. Never raises.
-
-    A cache file refreshed within ``FRESH_CACHE_TTL_SEC`` is treated as
-    authoritative and short-circuits the remote fetch — this dedupes the two
-    openrouter requests that otherwise fire on every CLI startup (the
-    credential probe in ``main.py`` plus ``AgentConfig.provider_catalog``).
-
-    Only overlays per-provider `models` lists; `model_overrides`, `model_specs`,
-    `default_model`, `base_url`, `api_key_env`, `type`, `auth_type` are preserved.
-    PROTECTED_PROVIDERS keep their local `models` regardless of remote content.
-
-    Providers not declared in ``providers.yml`` are dropped at fetch time — the
-    YAML is the single source of truth for which vendors are considered verified.
-    """
+def _resolve_openrouter_models(local_catalog: dict) -> dict:
+    """Resolve OpenRouter fresh cache -> remote -> stale cache -> local."""
     providers_block = local_catalog.get("providers") if isinstance(local_catalog, dict) else None
     allowed_providers = set(providers_block.keys()) if isinstance(providers_block, dict) else None
 
@@ -475,7 +465,17 @@ def resolve_provider_models(local_catalog: dict) -> dict:
     return _resolve_models_from(copy.deepcopy(local_catalog))
 
 
-def _overlay_from_cache(local_catalog: dict, allowed_providers: Optional[Set[str]]) -> Optional[dict]:
+def resolve_provider_models(local_catalog: dict) -> dict:
+    """Resolve every supported remote provider catalog without failing startup."""
+    catalog = _resolve_openrouter_models(local_catalog)
+    try:
+        return resolve_opencode_go_models(catalog)
+    except Exception as exc:  # noqa: BLE001 - local catalog remains usable
+        logger.debug("OpenCode Go catalog resolution failed: %s", exc)
+        return catalog
+
+
+def _overlay_from_cache(local_catalog: dict, allowed_providers: set[str] | None) -> dict | None:
     """Apply the on-disk cache as an overlay, filtered by ``allowed_providers``."""
     cached_details = load_cached_model_details()
     if cached_details is None:

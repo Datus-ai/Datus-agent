@@ -2,14 +2,21 @@ import csv
 import json
 import shutil
 from pathlib import Path
-from typing import Optional
 
+import pandas as pd
 import pytest
 import yaml
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.utils.benchmark_utils import evaluate_benchmark_and_report
+from datus.utils.benchmark_utils import (
+    BenchmarkEvaluator,
+    GoldArtifacts,
+    ResultData,
+    SingleFileGoldProvider,
+    TrajectoryParser,
+    evaluate_benchmark_and_report,
+)
 from datus.utils.constants import DBType
 
 TESTS_ROOT = Path(__file__).resolve().parent.parent.parent  # tests/
@@ -67,7 +74,7 @@ def _write_sql(path: Path, sql: str) -> None:
     path.write_text(sql, encoding="utf-8")
 
 
-def _write_trajectory(path: Path, task_id: str, tool_actions: Optional[list[dict]] = None) -> None:
+def _write_trajectory(path: Path, task_id: str, tool_actions: list[dict] | None = None) -> None:
     payload = {
         "workflow": {
             "completion_time": 1,
@@ -88,6 +95,45 @@ def _write_trajectory(path: Path, task_id: str, tool_actions: Optional[list[dict
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, allow_unicode=True)
+
+
+def test_trajectory_parser_extracts_retrieval_events(tmp_path: Path) -> None:
+    trajectory_path = tmp_path / "trajectory.yaml"
+    _write_trajectory(
+        trajectory_path,
+        "task-1",
+        [
+            {
+                "action_id": "complete_call_1",
+                "action_type": "tool",
+                "input": {
+                    "function_name": "search_table",
+                    "arguments": {"query_text": "school meals", "top_n": 5},
+                },
+                "output": {
+                    "result": {
+                        "metadata": [
+                            {"identifier": "california_schools.schools"},
+                            {"identifier": "california_schools.frpm"},
+                        ],
+                        "sample_data": [],
+                    }
+                },
+                "status": "completed",
+                "start_time": "2026-07-31T10:00:00+00:00",
+                "end_time": "2026-07-31T10:00:00.100000+00:00",
+            }
+        ],
+    )
+
+    analysis = TrajectoryParser().parse(trajectory_path, "task-1")
+
+    assert len(analysis.retrieval_events) == 1
+    assert analysis.retrieval_events[0].query_text == "school meals"
+    assert analysis.retrieval_events[0].retrieved_tables == [
+        "california_schools.schools",
+        "california_schools.frpm",
+    ]
 
 
 def _benchmark_root(agent_config: AgentConfig, relative_path: str) -> Path:
@@ -422,3 +468,187 @@ def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentCo
     )
     assert report["status"] == "success"
     _assert_report_structure(report)
+
+
+def test_gold_provider_loads_expected_tables_from_csv(tmp_path: Path) -> None:
+    gold_path = tmp_path / "gold.csv"
+    gold_path.write_text(
+        "\n".join(
+            [
+                "file,expected_table,gold_sql",
+                'task_1.json,"schools; frpm","select * from schools join frpm using (CDSCode)"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = SingleFileGoldProvider(
+        result_file=str(gold_path),
+        db_manager=object(),
+        datasource="test",
+        task_id_key="file",
+        sql_key="gold_sql",
+    )
+    artifacts = provider.get_artifacts("task_1.json")
+
+    assert artifacts is not None
+    assert artifacts.expected_tables == ["schools", "frpm"]
+
+
+def test_gold_provider_loads_expected_tables_plural_column(tmp_path: Path) -> None:
+    gold_path = tmp_path / "gold.csv"
+    gold_path.write_text(
+        "\n".join(
+            [
+                "file,expected_tables,gold_sql",
+                'task_1.json,"crm.accounts, billing.invoices","select * from crm.accounts"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = SingleFileGoldProvider(
+        result_file=str(gold_path),
+        db_manager=object(),
+        datasource="test",
+        task_id_key="file",
+        sql_key="gold_sql",
+    )
+    artifacts = provider.get_artifacts("task_1.json")
+
+    assert artifacts is not None
+    assert artifacts.expected_tables == ["crm.accounts", "billing.invoices"]
+
+
+def test_benchmark_evaluator_reports_retrieval_evaluation(tmp_path: Path) -> None:
+    trajectory_path = tmp_path / "task_1.jsonl"
+    _write_trajectory(
+        trajectory_path,
+        "task_1.jsonl",
+        [
+            {
+                "action_id": "complete_call_1",
+                "action_type": "tool",
+                "input": {
+                    "function_name": "search_table",
+                    "arguments": {"query_text": "school meals", "top_n": 5},
+                },
+                "output": {
+                    "result": {
+                        "metadata": [
+                            {"identifier": "california_schools.schools"},
+                            {"identifier": "california_schools.frpm"},
+                        ],
+                        "sample_data": [],
+                    }
+                },
+                "status": "completed",
+                "start_time": "2026-07-31T10:00:00+00:00",
+                "end_time": "2026-07-31T10:00:00.100000+00:00",
+            },
+            {
+                "action_id": "final",
+                "action_type": "message",
+                "input": {},
+                "output": {"sql": "select * from schools join frpm using (CDSCode)"},
+                "status": "completed",
+            },
+        ],
+    )
+
+    class InMemoryResultProvider:
+        def fetch(self, task_id: str) -> ResultData:
+            return ResultData(
+                task_id=task_id,
+                source="memory",
+                dataframe=pd.DataFrame({"value": [1]}),
+            )
+
+        def get_artifacts(self, task_id: str) -> GoldArtifacts:
+            return GoldArtifacts(
+                expected_metrics="",
+                expected_tables=["schools", "frpm"],
+            )
+
+    evaluator = BenchmarkEvaluator(
+        trajectory_parser=None,
+        result_provider=InMemoryResultProvider(),
+        gold_result_provider=InMemoryResultProvider(),
+    )
+    report = evaluator.evaluate({"task_1.jsonl": trajectory_path}).to_dict()
+    task = report["details"]["task_1.jsonl"]
+
+    retrieval = task["retrieval_evaluation"]
+    assert retrieval["status"] == "evaluated"
+    assert retrieval["expected_tables_source"] == "explicit"
+    assert retrieval["expected_tables"] == ["schools", "frpm"]
+    assert retrieval["retrieved_tables"] == [
+        "california_schools.schools",
+        "california_schools.frpm",
+    ]
+    assert retrieval["matched_tables"] == ["schools", "frpm"]
+    assert retrieval["missing_tables"] == []
+    assert retrieval["search_call_count"] == 1
+    assert retrieval["failed_search_call_count"] == 0
+    assert retrieval["table_recall"] == 1.0
+    assert retrieval["full_recall"] is True
+
+
+def test_evaluation_report_builder_includes_retrieval_summary(tmp_path: Path) -> None:
+    trajectory_path = tmp_path / "task_1.jsonl"
+    _write_trajectory(
+        trajectory_path,
+        "task_1.jsonl",
+        [
+            {
+                "action_id": "complete_call_1",
+                "action_type": "tool",
+                "input": {
+                    "function_name": "search_table",
+                    "arguments": {"query_text": "school meals", "top_n": 5},
+                },
+                "output": {
+                    "result": {
+                        "metadata": [
+                            {"identifier": "california_schools.schools"},
+                            {"identifier": "california_schools.frpm"},
+                        ],
+                        "sample_data": [],
+                    }
+                },
+                "status": "completed",
+            }
+        ],
+    )
+
+    class InMemoryResultProvider:
+        def fetch(self, task_id: str) -> ResultData:
+            return ResultData(
+                task_id=task_id,
+                source="memory",
+                dataframe=pd.DataFrame({"value": [1]}),
+            )
+
+        def get_artifacts(self, task_id: str) -> GoldArtifacts:
+            return GoldArtifacts(
+                expected_metrics="",
+                expected_tables=["schools", "frpm"],
+            )
+
+    evaluator = BenchmarkEvaluator(
+        trajectory_parser=None,
+        result_provider=InMemoryResultProvider(),
+        gold_result_provider=InMemoryResultProvider(),
+    )
+    report = evaluator.evaluate({"task_1.jsonl": trajectory_path}).to_dict()
+
+    retrieval_summary = report["summary"]["retrieval_summary"]
+    assert retrieval_summary["total_tasks"] == 1
+    assert retrieval_summary["grounded_tasks"] == 1
+    assert retrieval_summary["observed_tasks"] == 1
+    assert retrieval_summary["scored_tasks"] == 1
+    assert retrieval_summary["not_observed_tasks"] == 0
+    assert retrieval_summary["not_evaluable_tasks"] == 0
+    assert retrieval_summary["full_recall_count"] == 1
+    assert retrieval_summary["full_recall_rate_pct"] == 100.0
+    assert retrieval_summary["total_search_calls"] == 1

@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from datus.cli.tui.wizard_host import EmbeddedWizard
@@ -52,7 +53,9 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
-_CODING_PLAN_PROVIDERS = frozenset({"alibaba_coding", "bigmodel_coding", "zai_coding", "minimax_coding", "kimi_coding"})
+_CODING_PLAN_PROVIDERS = frozenset(
+    {"alibaba_coding", "bigmodel_coding", "zai_coding", "minimax_coding", "kimi_coding", "opencode_go"}
+)
 # Providers that live on a separate "Plans" tab: everything that isn't a
 # straightforward api_key endpoint — coding plans (all use
 # Anthropic-compatible gateways), the Claude Code subscription path, and the
@@ -69,8 +72,9 @@ _MAX_LIST_ROWS = 15
 # Display-name overrides shown in the UI. The internal key (used as the
 # ``agent.providers`` map key and in ``providers.yml``) stays unchanged so
 # no config migration is required.
-_DISPLAY_NAME_OVERRIDES: Dict[str, str] = {
+_DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "claude_subscription": "claude code",
+    "opencode_go": "OpenCode Go",
 }
 
 
@@ -87,7 +91,7 @@ def _display_name(provider: str) -> str:
     return provider.replace("_", " ")
 
 
-def _validate_single_line_value(label: str, value: str, *, ascii_only: bool = False) -> Optional[str]:
+def _validate_single_line_value(label: str, value: str, *, ascii_only: bool = False) -> str | None:
     """Return an error when a single-line form field received invalid text."""
     if "\n" in value or "\r" in value:
         return f"{label} must be a single line"
@@ -105,7 +109,7 @@ class _Tab(Enum):
     CUSTOM = "custom"
 
 
-_TAB_CYCLE: Tuple[_Tab, ...] = (_Tab.PROVIDERS, _Tab.PLANS, _Tab.CUSTOM)
+_TAB_CYCLE: tuple[_Tab, ...] = (_Tab.PROVIDERS, _Tab.PLANS, _Tab.CUSTOM)
 
 
 class _View(Enum):
@@ -134,10 +138,10 @@ class ModelSelection:
     """
 
     kind: str
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    name: Optional[str] = None
-    payload: Optional[Dict[str, Any]] = None
+    provider: str | None = None
+    model: str | None = None
+    name: str | None = None
+    payload: dict[str, Any] | None = None
 
 
 class ModelApp:
@@ -158,8 +162,8 @@ class ModelApp:
         agent_config: AgentConfig,
         console: Console,
         *,
-        seed_provider: Optional[str] = None,
-        seed_tab: Optional[str] = None,
+        seed_provider: str | None = None,
+        seed_tab: str | None = None,
     ) -> None:
         self._cfg = agent_config
         self._console = console
@@ -169,19 +173,19 @@ class ModelApp:
         self._tab: _Tab = _Tab.PROVIDERS
         self._view: _View = _View.PROVIDER_LIST
 
-        self._providers: List[str] = []
-        self._provider_meta: Dict[str, Dict[str, Any]] = {}
-        self._availability: Dict[str, bool] = {}
+        self._providers: list[str] = []
+        self._provider_meta: dict[str, dict[str, Any]] = {}
+        self._availability: dict[str, bool] = {}
         self._list_cursor: int = 0
         self._list_offset: int = 0
 
-        self._active_provider: Optional[str] = None
-        self._provider_models: List[str] = []
-        self._custom_names: List[str] = []
+        self._active_provider: str | None = None
+        self._provider_models: list[str] = []
+        self._custom_names: list[str] = []
 
         # Built lazily in ``_build_root_container``; read by
         # ``_effective_max_visible`` for the live rendered row count.
-        self._list_window: Optional[Window] = None
+        self._list_window: Window | None = None
 
         self._current_provider, self._current_model = self._read_current_selection()
         self._current_custom = self._cfg.target if self._cfg.target in (self._cfg.models or {}) else None
@@ -189,8 +193,8 @@ class ModelApp:
         self._load_providers()
         self._refresh_custom_names()
 
-        self._result: Optional[ModelSelection] = None
-        self._error_message: Optional[str] = None
+        self._result: ModelSelection | None = None
+        self._error_message: str | None = None
 
         # Form buffers. Built up-front so key bindings can reference them
         # directly; a ConditionalContainer decides which ones are visible.
@@ -213,28 +217,28 @@ class ModelApp:
         # freshly filtered list.
         self._model_search.buffer.on_text_changed += lambda _buf: self._on_model_search_changed()
 
-        self._form_focus_order: List[TextArea] = []
+        self._form_focus_order: list[TextArea] = []
         self._form_focus_idx: int = 0
         # Set to the name of the custom entry that the user has pressed
         # ``d`` on once. A second press confirms deletion; any other key
         # clears the pending state.
-        self._pending_delete_custom: Optional[str] = None
+        self._pending_delete_custom: str | None = None
 
         # ``_on_done`` is the active "finish" callable. Standalone mode
         # points it at ``Application.exit``; embedded mode points it at
         # ``done_future.set_result``. Both ``self._app.exit(result=X)``
         # call sites are now ``self._finish(X)`` so the same closures
         # work in both modes.
-        self._on_done: Optional[Callable[[Optional[ModelSelection]], None]] = None
+        self._on_done: Callable[[ModelSelection | None], None] | None = None
         # Active ``Application`` when running standalone; ``None`` when
         # embedded (the parent ``DatusApp`` owns the layout instead).
-        self._app: Optional[Application] = None
+        self._app: Application | None = None
 
     # ─────────────────────────────────────────────────────────────────
     # Public API
     # ─────────────────────────────────────────────────────────────────
 
-    def run(self) -> Optional[ModelSelection]:
+    def run(self) -> ModelSelection | None:
         """Run as a transient ``Application(full_screen=False)``.
 
         Used for non-TUI fallbacks. The TUI path goes through
@@ -270,7 +274,7 @@ class ModelApp:
             self._on_done = None
             self._app = None
 
-    def build_embedded_panel(self, done_future: "asyncio.Future") -> "EmbeddedWizard":
+    def build_embedded_panel(self, done_future: asyncio.Future) -> EmbeddedWizard:
         """Build the panel for the parent :class:`DatusApp`'s bottom slot.
 
         The seed-driven early hand-off (``needs_oauth``) needs to
@@ -324,13 +328,13 @@ class ModelApp:
     # Embedded/standalone shared hooks
     # ─────────────────────────────────────────────────────────────────
 
-    def _finish(self, result: Optional["ModelSelection"]) -> None:
+    def _finish(self, result: ModelSelection | None) -> None:
         if self._on_done is None:
             return
         self._on_done(result)
 
     @staticmethod
-    def _finish_via_future(done_future: "asyncio.Future", result: Optional["ModelSelection"]) -> None:
+    def _finish_via_future(done_future: asyncio.Future, result: ModelSelection | None) -> None:
         from datus.cli.tui.wizard_host import resolve_cancel, resolve_with
 
         if result is None:
@@ -338,7 +342,7 @@ class ModelApp:
         else:
             resolve_with(done_future, result)
 
-    def _layout(self) -> Optional[Layout]:
+    def _layout(self) -> Layout | None:
         """Active layout — wizard's own in standalone, parent's in embedded."""
         if self._app is not None:
             return self._app.layout
@@ -358,7 +362,7 @@ class ModelApp:
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("ModelApp focus(%r) failed: %s", target, exc)
 
-    def _apply_seed(self) -> Optional[ModelSelection]:
+    def _apply_seed(self) -> ModelSelection | None:
         """Pre-position the state machine based on seed kwargs.
 
         Returns a result when the seed implies an immediate caller
@@ -408,7 +412,7 @@ class ModelApp:
     # Data loading
     # ─────────────────────────────────────────────────────────────────
 
-    def _read_current_selection(self) -> Tuple[Optional[str], Optional[str]]:
+    def _read_current_selection(self) -> tuple[str | None, str | None]:
         return getattr(self._cfg, "_target_provider", None), getattr(self._cfg, "_target_model", None)
 
     def _load_providers(self) -> None:
@@ -552,8 +556,8 @@ class ModelApp:
     # Rendering
     # ─────────────────────────────────────────────────────────────────
 
-    def _render_tab_strip(self) -> List[Tuple[str, str]]:
-        parts: List[Tuple[str, str]] = [("", "  ")]
+    def _render_tab_strip(self) -> list[tuple[str, str]]:
+        parts: list[tuple[str, str]] = [("", "  ")]
         for tab, label in (
             (_Tab.PROVIDERS, " Providers "),
             (_Tab.PLANS, " Plans "),
@@ -565,7 +569,7 @@ class ModelApp:
         parts.append(("class:model-app.tabs-hint", "  (Tab or \u2190/\u2192 to switch)"))
         return parts
 
-    def _render_footer_hint(self) -> List[Tuple[str, str]]:
+    def _render_footer_hint(self) -> list[tuple[str, str]]:
         if self._view == _View.PROVIDER_LIST:
             hint = "  \u2191\u2193 navigate   Enter select   e edit credentials   Tab/\u2190\u2192 switch   Esc back   Ctrl+C cancel"
         elif self._view == _View.CUSTOM_LIST:
@@ -580,13 +584,13 @@ class ModelApp:
             hint = "  Tab next field   Enter submit   Esc back   Ctrl+C cancel"
         return [("class:model-app.hint", hint)]
 
-    def _render_list(self) -> List[Tuple[str, str]]:
+    def _render_list(self) -> list[tuple[str, str]]:
         items = self._current_items()
         if not items:
             return [("class:model-app.dim", "  (nothing to show)\n")]
         self._clamp_cursor(len(items))
         visible = self._visible_slice(len(items))
-        lines: List[Tuple[str, str]] = []
+        lines: list[tuple[str, str]] = []
         start, end = visible
         if end - start < len(items):
             lines.append(("class:model-app.scroll", f"  ({start + 1}-{end} of {len(items)})\n"))
@@ -598,7 +602,7 @@ class ModelApp:
                 lines.append((style, f"    {label}\n"))
         return lines
 
-    def _render_cred_header(self) -> List[Tuple[str, str]]:
+    def _render_cred_header(self) -> list[tuple[str, str]]:
         provider = self._active_provider or ""
         default_base = str((self._provider_meta.get(provider) or {}).get("base_url", ""))
         env = (self._provider_meta.get(provider) or {}).get("api_key_env")
@@ -609,14 +613,14 @@ class ModelApp:
             ("class:model-app.dim", hint),
         ]
 
-    def _render_token_header(self) -> List[Tuple[str, str]]:
+    def _render_token_header(self) -> list[tuple[str, str]]:
         provider = self._active_provider or ""
         return [
             ("bold", f"  Configure provider: {_display_name(provider)}\n"),
             ("class:model-app.dim", "  Paste your subscription token (e.g. sk-ant-oat01-...)\n"),
         ]
 
-    def _render_add_header(self) -> List[Tuple[str, str]]:
+    def _render_add_header(self) -> list[tuple[str, str]]:
         return [
             ("bold", "  Add custom model\n"),
             (
@@ -629,7 +633,7 @@ class ModelApp:
     # List content (data model per view)
     # ─────────────────────────────────────────────────────────────────
 
-    def _current_items(self) -> List[Tuple[str, str]]:
+    def _current_items(self) -> list[tuple[str, str]]:
         if self._view == _View.PROVIDER_LIST:
             return self._provider_items()
         if self._view == _View.PROVIDER_MODELS:
@@ -638,7 +642,7 @@ class ModelApp:
             return self._custom_items()
         return []
 
-    def _providers_for_tab(self, tab: _Tab) -> List[str]:
+    def _providers_for_tab(self, tab: _Tab) -> list[str]:
         """Return the provider keys surfaced under ``tab``.
 
         ``Providers`` hides the curated plan / subscription / OAuth entries
@@ -652,7 +656,7 @@ class ModelApp:
             return [p for p in self._providers if p not in _PLAN_PROVIDERS]
         return []
 
-    def _provider_items(self) -> List[Tuple[str, str]]:
+    def _provider_items(self) -> list[tuple[str, str]]:
         """Render rows for the provider list under the active tab.
 
         The ``Plans`` tab omits the ``(coding plan / subscription / oauth)``
@@ -662,14 +666,14 @@ class ModelApp:
         providers live on ``Plans``), so the code path converges on a
         name-only label there as well.
         """
-        out: List[Tuple[str, str]] = []
+        out: list[tuple[str, str]] = []
         on_plans = self._tab == _Tab.PLANS
         for name in self._providers_for_tab(self._tab):
             meta = self._provider_meta.get(name) or {}
             auth_type = str(meta.get("auth_type", "api_key"))
             suffix = ""
             if not on_plans:
-                tags: List[str] = []
+                tags: list[str] = []
                 if name in _CODING_PLAN_PROVIDERS:
                     tags.append("coding plan")
                 if auth_type in ("subscription", "oauth"):
@@ -693,7 +697,7 @@ class ModelApp:
             out.append((label, style))
         return out
 
-    def _filtered_models(self) -> List[str]:
+    def _filtered_models(self) -> list[str]:
         """Provider models narrowed by the search box (case-insensitive substring)."""
         query = self._model_search.text.strip().lower()
         if not query:
@@ -705,9 +709,9 @@ class ModelApp:
         self._list_cursor = 0
         self._list_offset = 0
 
-    def _provider_models_items(self) -> List[Tuple[str, str]]:
+    def _provider_models_items(self) -> list[tuple[str, str]]:
         provider = self._active_provider or ""
-        out: List[Tuple[str, str]] = []
+        out: list[tuple[str, str]] = []
         for model in self._filtered_models():
             label = model
             is_current = provider == self._current_provider and model == self._current_model
@@ -716,8 +720,8 @@ class ModelApp:
             out.append((label, CLR_CURRENT if is_current else ""))
         return out
 
-    def _custom_items(self) -> List[Tuple[str, str]]:
-        out: List[Tuple[str, str]] = []
+    def _custom_items(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
         models_map = self._cfg.models or {}
         for name in self._custom_names:
             cfg = models_map.get(name)
@@ -768,7 +772,7 @@ class ModelApp:
         term_rows = shutil.get_terminal_size((120, 40)).lines
         return max(_MIN_LIST_ROWS, min(_MAX_LIST_ROWS, term_rows // 2 - 2))
 
-    def _visible_slice(self, total: int) -> Tuple[int, int]:
+    def _visible_slice(self, total: int) -> tuple[int, int]:
         max_visible = self._effective_max_visible()
         if total <= max_visible:
             self._list_offset = 0
@@ -868,7 +872,7 @@ class ModelApp:
         self._focus(self._add_name)
         self._error_message = None
 
-    def _initial_cursor(self, items: List[str], current: Optional[str]) -> int:
+    def _initial_cursor(self, items: list[str], current: str | None) -> int:
         if current and current in items:
             return items.index(current)
         return 0
@@ -1073,7 +1077,7 @@ class ModelApp:
         if name in (self._cfg.models or {}):
             self._error_message = f"Custom model `{name}` already exists"
             return
-        payload: Dict[str, Any] = {"type": type_, "model": model_name}
+        payload: dict[str, Any] = {"type": type_, "model": model_name}
         if base_url:
             payload["base_url"] = base_url
         if api_key:
@@ -1085,7 +1089,7 @@ class ModelApp:
     # External helpers (synchronous, no stdin access)
     # ─────────────────────────────────────────────────────────────────
 
-    def _try_auto_detect_subscription_token(self, provider: str = "claude_subscription") -> Optional[str]:
+    def _try_auto_detect_subscription_token(self, provider: str = "claude_subscription") -> str | None:
         try:
             from datus.auth.claude_credential import get_claude_subscription_token
 

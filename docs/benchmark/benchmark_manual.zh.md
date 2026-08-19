@@ -359,6 +359,47 @@ agent:
 
 ---
 
+## Retrieval Diagnostics
+
+Benchmark 可以对 agent trajectory 里的 `search_table` 调用做检索质量诊断。它仍然属于整体 Data Agent benchmark 的一部分，不是独立的 schema retrieval benchmark。
+
+在 benchmark CSV 或 JSONL 里可以增加下面任意一列：
+
+- `expected_table`: 当前任务需要命中的 Golden Tables。
+- `expected_tables`: 复数别名，含义相同。
+
+多个表可以用分号、逗号或换行分隔：
+
+```csv
+file,question,expected_tables,gold_sql
+task_001.jsonl,"Which schools have high FRPM rates?","schools; frpm","select * from schools join frpm using (CDSCode)"
+```
+
+Golden Tables 的来源优先级：
+
+1. 显式 `expected_table` 或 `expected_tables`。
+2. 从 `gold_sql` 解析出的表。
+3. 如果两者都不存在，标记为 `not_evaluable`。
+
+每个任务报告会包含 `retrieval_evaluation`：
+
+- `status`: `evaluated`、`not_observed` 或 `not_evaluable`。
+- `events`: 终态 `search_table` 调用，包括 query、top-n、候选表、耗时和错误状态。
+- `table_recall`: 至少被检索到一次的 Golden Tables 占比。
+- `recall_at_1`、`recall_at_3`、`recall_at_5`: 第一次成功检索调用的 top-k recall。
+- `first_relevant_rank`: 第一个 Golden Table 出现的位置。
+- `diagnosis`: 把检索表现和最终 benchmark 结果连接起来的诊断标签。
+
+Benchmark 报告汇总部分还会包含 `retrieval_summary`，聚合所有可评估任务的结果。
+
+诊断标签的含义：
+
+- `retrieval_likely_bottleneck`: 少检了至少一个 Golden Table，最终结果也失败。
+- `downstream_reasoning_failure`: Golden Tables 都检到了，但最终结果失败。
+- `recovered_without_full_retrieval`: 少检了至少一个 Golden Table，但最终结果仍然匹配。
+
+私有 Eval Pack 不需要进入这个仓库。私有业务问题和表名只要在本地 benchmark 输入文件里提供相同的 `expected_table` 或 `expected_tables` 列即可。
+
 ### 构建基础知识库
 
 根据你的情况，构建metadata、metrics和reference_sql。具体参考 [knowledge_base/introduction](../knowledge_base/introduction.md)
