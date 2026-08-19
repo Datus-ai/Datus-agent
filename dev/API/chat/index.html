@@ -5279,12 +5279,26 @@ else returns the standard <a href="../introduction/#response-envelope"><code>Res
 <tr>
 <td><code>subagent_id</code></td>
 <td>string?</td>
-<td>Filter by subagent. Pass <code>chat</code> for the default chat agent, or any builtin/custom subagent id. Omit to return every session for the user.</td>
+<td>Filter by subagent. Pass <code>chat</code> for the default chat agent, or any built-in/custom subagent id. Omit to return sessions for every agent.</td>
+</tr>
+<tr>
+<td><code>offset</code></td>
+<td>int</td>
+<td>Number of sessions to skip. Defaults to <code>0</code>; must be <code>&gt;= 0</code>.</td>
+</tr>
+<tr>
+<td><code>limit</code></td>
+<td>int?</td>
+<td>Page size; must be <code>&gt;= 1</code>. Omit to use the server default (<code>api.default_session_page_size</code>, default <code>50</code>). Values above <code>api.max_session_page_size</code> (default <code>200</code>) are clamped down rather than rejected.</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Response</strong>: <code>Result[ChatSessionData]</code> with an array of <code>{ session_id, user_query, created_at, last_updated,
-total_turns, token_count, last_sql_queries, is_active }</code>.</p>
+<p>The response is always paginated — omitting <code>limit</code> yields the default page, not the full list. Only the
+requested page is opened as SQLite, so the dominant per-session cost no longer scales with the user's total
+session count; enumerating the session directory and stat-ing each file for the mtime sort still does, at a
+far lower cost per session. Use <code>total_count</code> (the unpaginated total) with <code>offset</code> to page through the rest.</p>
+<p><strong>Response</strong>: <code>Result[ChatSessionData]</code> with <code>total_count</code> and an array of <code>{ session_id, user_query,
+created_at, last_updated, total_turns, token_count, last_sql_queries, is_active }</code>.</p>
 <h3 id="delete-apiv1chatsessionssession_id"><code>DELETE /api/v1/chat/sessions/{session_id}</code><a class="headerlink" href="#delete-apiv1chatsessionssession_id" title="Permanent link">&para;</a></h3>
 <p>Delete a session by id.</p>
 <h3 id="get-apiv1chathistorysession_id"><code>GET /api/v1/chat/history?session_id=...</code><a class="headerlink" href="#get-apiv1chathistorysession_id" title="Permanent link">&para;</a></h3>
