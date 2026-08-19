@@ -457,13 +457,37 @@ async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_con
     node._finalize_selected_osi_artifact.assert_called_once_with()
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_status", "expected_success"),
+    [
+        ({"status": "generated", "output": "Updated orders"}, "generated", True),
+        (
+            {"status": "skipped", "skip_reason": "no_semantic_change", "output": "No change required"},
+            "skipped",
+            True,
+        ),
+        (
+            {
+                "status": "blocked",
+                "blocker_code": "semantic_model_required",
+                "output": "A semantic model is required",
+            },
+            "blocked",
+            False,
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_supported_outcome_does_not_retry(real_agent_config, mock_llm_create):
+async def test_supported_outcome_does_not_retry(
+    real_agent_config,
+    mock_llm_create,
+    payload,
+    expected_status,
+    expected_success,
+):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    mock_llm_create.reset(
-        responses=[build_simple_response(json.dumps({"status": "generated", "output": "Updated orders"}))]
-    )
+    mock_llm_create.reset(responses=[build_simple_response(json.dumps(payload))])
     _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
@@ -472,7 +496,12 @@ async def test_supported_outcome_does_not_retry(real_agent_config, mock_llm_crea
     actions = [action async for action in node.execute_stream(ActionHistoryManager())]
 
     assert _stream_call_count(mock_llm_create) == 1
-    assert actions[-1].output["success"] is True
+    assert actions[-1].output["status"] == expected_status
+    assert actions[-1].output["success"] is expected_success
+    if expected_status == "generated":
+        node._finalize_selected_osi_artifact.assert_called_once_with()
+    else:
+        node._finalize_selected_osi_artifact.assert_not_called()
 
 
 @pytest.mark.asyncio

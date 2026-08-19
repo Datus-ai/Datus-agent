@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, List, Literal, Optional
+from typing import Any, Final, Iterable, List, Literal, Optional
 
 import yaml
 
@@ -23,8 +23,8 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-_SUPPORTED_SEMANTIC_MODELING_STATUSES = {"generated", "skipped", "blocked"}
-_SEMANTIC_MODELING_RESULT_RETRY_PROMPT = """Your semantic model changes have been preserved.
+_SUPPORTED_SEMANTIC_MODELING_STATUSES: Final[frozenset[str]] = frozenset({"generated", "skipped", "blocked"})
+_SEMANTIC_MODELING_RESULT_RETRY_PROMPT: Final[str] = """Your semantic model changes have been preserved.
 Return only one JSON object with this shape:
 {
   "status": "generated",
@@ -40,7 +40,7 @@ You may use the available tools first if more work or verification is needed.
 class SemanticModelingResultRetryPolicy:
     """Retry once when semantic modeling returns an unsupported outcome status."""
 
-    max_attempts = 2
+    max_attempts: int = 2
 
     def __init__(self, node: "SemanticModelingAgenticNode"):
         self.node = node
