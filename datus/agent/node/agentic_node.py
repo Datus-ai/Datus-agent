@@ -3317,12 +3317,13 @@ class AgenticNode(Node):
         # argument too late and the first run would execute unwrapped tools.
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
+        tools_enabled = ctx.tools_enabled
         try:
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=ctx.user_prompt,
-                tools=self.tools or [],
-                builtin_web_tools=getattr(self, "_builtin_web_tools", None),
-                mcp_servers=self.mcp_servers,
+                tools=(self.tools or []) if tools_enabled else [],
+                builtin_web_tools=getattr(self, "_builtin_web_tools", None) if tools_enabled else None,
+                mcp_servers=self.mcp_servers if tools_enabled else {},
                 instruction=ctx.system_instruction,
                 max_turns=effective_max_turns,
                 session=ctx.session,
