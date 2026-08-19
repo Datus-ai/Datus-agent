@@ -22,9 +22,6 @@ agent:
               column: store_id
               operator: in
               value_from: policy_context.row_filter.store_ids
-            enforcement:
-              on_read: filter
-              on_unhandled: deny
 ```
 
 Policy types and their fields belong to the policy plugin. Agent only loads the plugin runtime declared by its `datus-plugin.yml` manifest.

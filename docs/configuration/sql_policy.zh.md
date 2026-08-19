@@ -22,9 +22,6 @@ agent:
               column: store_id
               operator: in
               value_from: policy_context.row_filter.store_ids
-            enforcement:
-              on_read: filter
-              on_unhandled: deny
 ```
 
 policy type 及其字段由 policy plugin 定义。Agent 只加载 plugin 在 `datus-plugin.yml` 中声明的运行时。
