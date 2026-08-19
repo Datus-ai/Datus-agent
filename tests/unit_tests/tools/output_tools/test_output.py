@@ -5,6 +5,7 @@
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from datus.schemas.node_models import OutputInput
@@ -148,7 +149,8 @@ class TestOutputToolExecute:
             data = json.load(f)
         assert data["finished"] is False
 
-    def test_execute_benchmark_profile_writes_only_canonical_files(self, tmp_path):
+    def test_execute_benchmark_profile_writes_only_canonical_files(self, tmp_path: Path) -> None:
+        """The benchmark profile writes only the canonical SQL and CSV files."""
         tool = OutputTool()
         input_data = _make_output_input(tmp_path, file_type="all").model_copy(
             update={"artifact_profile": "benchmark_v1"}
@@ -163,7 +165,8 @@ class TestOutputToolExecute:
         assert (tmp_path / "task_001.csv").read_text() == "id\n1"
         assert not (tmp_path / "task_001.json").exists()
 
-    def test_execute_failed_benchmark_profile_defers_manifest_to_runner(self, tmp_path):
+    def test_execute_failed_benchmark_profile_defers_manifest_to_runner(self, tmp_path: Path) -> None:
+        """Failed benchmark output returns the error and defers manifest writing to the runner."""
         tool = OutputTool()
         input_data = _make_output_input(tmp_path, finished=False, error="SQL failed").model_copy(
             update={"artifact_profile": "benchmark_v1"}

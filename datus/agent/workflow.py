@@ -423,7 +423,7 @@ class Workflow:
         """
         return self.task.task if self.task else None
 
-    def save(self, file_path: str, *, schema_version: Optional[int] = None):
+    def save(self, file_path: str, *, schema_version: Optional[int] = None) -> None:
         """
         Save the workflow to a YAML file.
 

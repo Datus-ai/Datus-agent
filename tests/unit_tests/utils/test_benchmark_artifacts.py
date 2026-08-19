@@ -30,12 +30,14 @@ SCHEMA_PATH = (
 
 
 def _validator() -> Draft202012Validator:
+    """Build a format-checking validator for the v1 task-output schema."""
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     return Draft202012Validator(schema, format_checker=FormatChecker())
 
 
 def _model_config() -> SimpleNamespace:
+    """Model config stub carrying private fields that must never reach manifests."""
     return SimpleNamespace(
         type="openai",
         model="gpt-5.5",
@@ -49,12 +51,14 @@ def _model_config() -> SimpleNamespace:
 
 
 def _agent_config() -> MagicMock:
+    """Agent config mock exposing the active model."""
     config = MagicMock()
     config.active_model.return_value = _model_config()
     return config
 
 
 def _task(task_id: str = "42") -> SqlTask:
+    """Benchmark SqlTask fixture."""
     return SqlTask(
         id=task_id,
         datasource="analytics",
@@ -65,6 +69,7 @@ def _task(task_id: str = "42") -> SqlTask:
 
 
 def _success_workflow(task: SqlTask) -> SimpleNamespace:
+    """Workflow stub with token usage and a completed output node."""
     model = SimpleNamespace(model_config=_model_config())
     gen_result = SimpleNamespace(
         action_history=[
@@ -110,6 +115,7 @@ def _success_workflow(task: SqlTask) -> SimpleNamespace:
 
 
 def _failed_workflow(task: SqlTask, node_type: str, message: str) -> SimpleNamespace:
+    """Workflow stub whose node failed with the given type and message."""
     node = SimpleNamespace(
         id="failed_node",
         type=node_type,
@@ -129,6 +135,7 @@ def _failed_workflow(task: SqlTask, node_type: str, message: str) -> SimpleNames
 
 
 def _allocate(tmp_path: Path, task_id: str = "42") -> BenchmarkAttempt:
+    """Allocate an attempt under a nested datasource/run root."""
     save_root = tmp_path / "save" / "analytics" / "run-1"
     trajectory_root = tmp_path / "trajectory" / "analytics" / "run-1"
     trajectory_root.mkdir(parents=True, exist_ok=True)
@@ -141,6 +148,7 @@ def _allocate(tmp_path: Path, task_id: str = "42") -> BenchmarkAttempt:
 
 
 def _write_success_files(attempt: BenchmarkAttempt) -> Path:
+    """Write canonical SQL/CSV outputs and a trajectory file for the attempt."""
     (attempt.output_dir / f"{attempt.task_id}.sql").write_text(
         "SELECT order_id, amount FROM analytics.orders",
         encoding="utf-8",
@@ -154,7 +162,8 @@ def _write_success_files(attempt: BenchmarkAttempt) -> Path:
     return trajectory
 
 
-def test_success_manifest_validates_and_does_not_inline_query_result(tmp_path):
+def test_success_manifest_validates_and_does_not_inline_query_result(tmp_path: Path) -> None:
+    """A successful attempt yields a schema-valid manifest without inlined query results."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = _write_success_files(attempt)
@@ -197,7 +206,10 @@ def test_success_manifest_validates_and_does_not_inline_query_result(tmp_path):
     ("node_type", "expected_error_type"),
     [("execute_sql", "sql_execution"), ("schema_linking", "node_failure")],
 )
-def test_failure_manifest_validates_before_output_node(tmp_path, node_type, expected_error_type):
+def test_failure_manifest_validates_before_output_node(
+    tmp_path: Path, node_type: str, expected_error_type: str
+) -> None:
+    """Failures before the output node still produce schema-valid failure manifests."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = attempt.trajectory_run_root / "42_456.yaml"
@@ -221,7 +233,8 @@ def test_failure_manifest_validates_before_output_node(tmp_path, node_type, expe
     assert json.loads((attempt.save_run_root / "42.json").read_text())["finished"] is False
 
 
-def test_uninitialized_workflow_still_writes_valid_failure_manifest(tmp_path):
+def test_uninitialized_workflow_still_writes_valid_failure_manifest(tmp_path: Path) -> None:
+    """A crash before workflow init still yields a valid failure manifest."""
     attempt = _allocate(tmp_path)
 
     manifest_path = finalize_benchmark_attempt(
@@ -244,7 +257,8 @@ def test_uninitialized_workflow_still_writes_valid_failure_manifest(tmp_path):
     }
 
 
-def test_manifest_uses_token_event_deltas_when_actions_have_no_usage(tmp_path):
+def test_manifest_uses_token_event_deltas_when_actions_have_no_usage(tmp_path: Path) -> None:
+    """Token event deltas are used when assistant actions carry no usage."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = _write_success_files(attempt)
@@ -280,11 +294,13 @@ def test_manifest_uses_token_event_deltas_when_actions_have_no_usage(tmp_path):
     }
 
 
-def test_attempt_allocation_is_retry_and_concurrency_safe(tmp_path):
+def test_attempt_allocation_is_retry_and_concurrency_safe(tmp_path: Path) -> None:
+    """Concurrent allocations receive distinct attempt directories."""
     save_root = tmp_path / "save"
     trajectory_root = tmp_path / "trajectory"
 
     def allocate(_: int) -> BenchmarkAttempt:
+        """Allocate one attempt for the shared task."""
         return allocate_benchmark_attempt(
             save_root,
             trajectory_root,
@@ -299,14 +315,16 @@ def test_attempt_allocation_is_retry_and_concurrency_safe(tmp_path):
     assert len({attempt.output_dir for attempt in attempts}) == 8
 
 
-def test_attempt_requires_run_id_and_missing_manifest_is_explicit(tmp_path):
+def test_attempt_requires_run_id_and_missing_manifest_is_explicit(tmp_path: Path) -> None:
+    """Empty run ids are rejected and missing manifests load as None."""
     with pytest.raises(DatusException, match="run_id must be non-empty"):
         allocate_benchmark_attempt(tmp_path / "save", tmp_path / "trajectory", run_id="", task_id="42")
 
     assert load_task_output_manifest(tmp_path / "save", "42") is None
 
 
-def test_retry_updates_manifest_without_overwriting_prior_attempt(tmp_path):
+def test_retry_updates_manifest_without_overwriting_prior_attempt(tmp_path: Path) -> None:
+    """A retry refreshes the manifest while keeping the prior attempt's files."""
     task = _task()
     first = _allocate(tmp_path)
     first_trajectory = _write_success_files(first)
@@ -338,12 +356,14 @@ def test_retry_updates_manifest_without_overwriting_prior_attempt(tmp_path):
 
 
 @pytest.mark.parametrize("task_id", ["../42", "task/42", "task\\42", "C:drive", "."])
-def test_attempt_rejects_nonportable_task_ids(tmp_path, task_id):
+def test_attempt_rejects_nonportable_task_ids(tmp_path: Path, task_id: str) -> None:
+    """Task ids that are not portable path segments are rejected."""
     with pytest.raises(DatusException, match="portable path segment"):
         allocate_benchmark_attempt(tmp_path / "save", tmp_path / "trajectory", run_id="run-1", task_id=task_id)
 
 
-def test_manifest_resolvers_use_authoritative_relative_paths(tmp_path):
+def test_manifest_resolvers_use_authoritative_relative_paths(tmp_path: Path) -> None:
+    """Resolvers return the manifest-declared files inside the run roots."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = _write_success_files(attempt)
@@ -364,7 +384,8 @@ def test_manifest_resolvers_use_authoritative_relative_paths(tmp_path):
 
 
 @pytest.mark.parametrize("bad_path", ["../outside.sql", "/etc/passwd", "tasks\\42\\evil.sql"])
-def test_manifest_resolvers_reject_escaping_paths(tmp_path, bad_path):
+def test_manifest_resolvers_reject_escaping_paths(tmp_path: Path, bad_path: str) -> None:
+    """Lexically escaping manifest paths raise DatusException."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = _write_success_files(attempt)
@@ -386,7 +407,8 @@ def test_manifest_resolvers_reject_escaping_paths(tmp_path, bad_path):
         resolve_task_trajectory_path(attempt.save_run_root, attempt.trajectory_run_root, "42")
 
 
-def test_manifest_resolvers_reject_symlink_escapes(tmp_path):
+def test_manifest_resolvers_reject_symlink_escapes(tmp_path: Path) -> None:
+    """Symlinked manifest paths resolving outside the run root raise DatusException."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = _write_success_files(attempt)
@@ -415,7 +437,8 @@ def test_manifest_resolvers_reject_symlink_escapes(tmp_path):
         resolve_task_trajectory_path(attempt.save_run_root, attempt.trajectory_run_root, "42")
 
 
-def test_internal_evaluators_prefer_manifest_over_stale_flat_files(tmp_path):
+def test_internal_evaluators_prefer_manifest_over_stale_flat_files(tmp_path: Path) -> None:
+    """Providers read attempt files via the manifest, ignoring stale flat aliases."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = _write_success_files(attempt)
@@ -438,7 +461,8 @@ def test_internal_evaluators_prefer_manifest_over_stale_flat_files(tmp_path):
     assert sql.sql == "SELECT order_id, amount FROM analytics.orders"
 
 
-def test_sql_provider_reports_missing_canonical_sql_instead_of_legacy_json(tmp_path):
+def test_sql_provider_reports_missing_canonical_sql_instead_of_legacy_json(tmp_path: Path) -> None:
+    """A manifest with missing canonical SQL errors out instead of using legacy JSON."""
     attempt = _allocate(tmp_path)
     task = _task()
     trajectory = _write_success_files(attempt)
@@ -461,7 +485,8 @@ def test_sql_provider_reports_missing_canonical_sql_instead_of_legacy_json(tmp_p
     assert "generated_sql file is missing" in sql.error
 
 
-def test_ensure_benchmark_run_id_generates_and_preserves_ids():
+def test_ensure_benchmark_run_id_generates_and_preserves_ids() -> None:
+    """Missing run ids are generated in the shared timestamp format."""
     assert Agent._ensure_benchmark_run_id("run-7") == "run-7"
     for missing in (None, ""):
         generated = Agent._ensure_benchmark_run_id(missing)
@@ -469,7 +494,8 @@ def test_ensure_benchmark_run_id_generates_and_preserves_ids():
         assert re.fullmatch(r"\d{8}_\d{6}", generated)
 
 
-def test_agent_wrapper_writes_manifest_when_runner_raises_before_output(tmp_path):
+def test_agent_wrapper_writes_manifest_when_runner_raises_before_output(tmp_path: Path) -> None:
+    """Runner exceptions still produce a schema-valid failure manifest."""
     save_root = tmp_path / "save" / "analytics" / "run-1"
     trajectory_root = tmp_path / "trajectory" / "analytics" / "run-1"
     config = MagicMock()

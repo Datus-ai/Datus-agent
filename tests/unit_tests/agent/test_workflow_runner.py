@@ -10,6 +10,7 @@ execution paths are mocked.
 """
 
 import argparse
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -318,7 +319,8 @@ class TestFinalizeWorkflow:
         assert mock_wf.metadata.get("trace_run_id") == "run1"
         assert result["trace_reference"]["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
 
-    def test_benchmark_workflow_uses_compatibility_v1_envelope(self, tmp_path):
+    def test_benchmark_workflow_uses_compatibility_v1_envelope(self, tmp_path: Path) -> None:
+        """Benchmark-profile runs save trajectories with a schema_version 1 envelope."""
         runner = _make_runner()
         runner.global_config.current_datasource = "default"
         runner.global_config.trajectory_run_dir.return_value = tmp_path

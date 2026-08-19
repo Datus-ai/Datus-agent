@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -270,7 +271,8 @@ class TestWorkflow:
         assert loaded_node2.description == "Second node"
         assert loaded_node2.type == NodeType.TYPE_EXECUTE_SQL
 
-    def test_workflow_save_can_add_versioned_compatibility_envelope(self, tmp_path, real_agent_config):
+    def test_workflow_save_can_add_versioned_compatibility_envelope(self, tmp_path: Path, real_agent_config) -> None:
+        """Workflow.save wraps the payload in a versioned envelope for benchmark runs."""
         import yaml
 
         workflow = Workflow(
