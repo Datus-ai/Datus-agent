@@ -29,6 +29,7 @@ from agents.lifecycle import AgentHooks
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.schemas.interaction_event import InteractionEvent
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
+from datus.tools.permission import review_registry
 from datus.tools.permission.bash_classifier import BashClassifierContext
 from datus.tools.permission.bash_rules import (
     BashDecisionSource,
@@ -454,6 +455,37 @@ class PermissionHooks(AgentHooks):
             f"AI review classified the action as {verdict.risk_level.value} risk "
             f"with {verdict.user_authorization.value} user authorization: {verdict.rationale}"
         )
+
+    @staticmethod
+    def _record_review(
+        context: Any,
+        verdict: Optional["AutoReviewVerdict"],
+        config: Any,
+        outcome: str,
+    ) -> None:
+        """Publish a review outcome for the tool action this call will produce.
+
+        Keyed by the SDK's ``tool_call_id`` so whoever builds the completed
+        ``ActionHistory`` for the same call can stamp it into ``output`` (see
+        ``review_registry``). Silent when review is disabled — the CLI must not
+        claim a review happened when none did.
+        """
+        if not getattr(config, "enabled", False):
+            return
+        payload: Dict[str, Any] = {"outcome": outcome}
+        if verdict is None:
+            # No rationale to report — the renderer's "unavailable" marker says
+            # it once; a canned sentence here would just repeat it on the row.
+            payload["decision"] = "unavailable"
+        else:
+            payload.update(
+                decision=verdict.decision.value,
+                risk_level=verdict.risk_level.value,
+                user_authorization=verdict.user_authorization.value,
+                confidence=verdict.confidence,
+                rationale=verdict.rationale,
+            )
+        review_registry.record(getattr(context, "tool_call_id", None), payload)
 
     # Plan-mode tooling is always allowed regardless of permission profile:
     # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
@@ -1050,6 +1082,7 @@ class PermissionHooks(AgentHooks):
                 verdict.risk_level.value,
                 verdict.confidence,
             )
+            self._record_review(context, verdict, review_config, "auto_allowed")
             return True
 
         if self.non_interactive:
@@ -1082,6 +1115,8 @@ class PermissionHooks(AgentHooks):
                 review_verdict=verdict,
                 review_enabled=review_config.enabled,
             )
+            if choice in ("y", "a") or (choice == "p" and offer_project):
+                self._record_review(context, verdict, review_config, "user_approved")
             if choice == "y":
                 logger.info("User approved execute_sql (%s, once)", kind)
                 return True
@@ -1375,6 +1410,7 @@ class PermissionHooks(AgentHooks):
                     review_verdict.confidence,
                     command,
                 )
+                self._record_review(context, review_verdict, review_config, "auto_allowed")
                 return True
 
         # Backwards-compatible injection seam used by existing embedders and
@@ -1444,6 +1480,11 @@ class PermissionHooks(AgentHooks):
                 review_verdict=review_verdict,
                 review_enabled=bool(review_config and review_config.enabled),
             )
+            if choice in ("y", "a") or (choice == "p" and offer_project):
+                # The reviewer flagged this (or could not decide) and the user
+                # overrode it — record that so the tool action shows both the
+                # verdict and who actually authorised the run.
+                self._record_review(context, review_verdict, review_config, "user_approved")
             if choice == "y":
                 logger.info("User approved bash command (once): %s", command)
                 return True

@@ -42,10 +42,12 @@ def verdict(risk="low", decision="allow", confidence=0.95):
     )
 
 
-def context(args, *, direct=False):
+def context(args, *, direct=False, call_id="call_1"):
     ctx = MagicMock()
     ctx.tool_arguments = json.dumps(args)
     ctx.direct_user_invocation = direct
+    # A real string, not a MagicMock: the gate keys review verdicts by this.
+    ctx.tool_call_id = call_id
     return ctx
 
 
@@ -537,3 +539,118 @@ class TestSqlAutoReview:
 
         event = broker.request.await_args.args[0][0]
         assert "`high` risk" in event.content
+
+
+class TestReviewHandoffToToolAction:
+    """The gate publishes its verdict so the tool action can display it."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        from datus.tools.permission import review_registry
+
+        review_registry.clear()
+        yield
+        review_registry.clear()
+
+    @staticmethod
+    def _take(call_id="call_1"):
+        from datus.tools.permission import review_registry
+
+        return review_registry.take(call_id)
+
+    @pytest.mark.asyncio
+    async def test_auto_allowed_bash_publishes_the_verdict(self):
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        published = self._take()
+        assert published["outcome"] == "auto_allowed"
+        assert published["decision"] == "allow"
+        assert published["risk_level"] == "low"
+        assert published["rationale"] == "low test action"
+        broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_user_override_is_published_as_such(self):
+        """A flagged action the user approved must not read as a clean pass."""
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["y"]])
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("high", decision="ask")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        published = self._take()
+        assert published["outcome"] == "user_approved"
+        assert published["decision"] == "ask"
+        assert published["risk_level"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_denied_action_publishes_nothing(self):
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["n"]])
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("high", decision="ask")), broker)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        assert self._take() is None
+
+    @pytest.mark.asyncio
+    async def test_inconclusive_review_is_published_as_unavailable(self):
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["y"]])
+        hooks, _ = hooks_for("auto", StubReviewer(None), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        published = self._take()
+        assert published == {"outcome": "user_approved", "decision": "unavailable"}
+
+    @pytest.mark.asyncio
+    async def test_review_disabled_publishes_nothing(self):
+        """The CLI must never claim a review happened when none did."""
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["y"]])
+        hooks, _ = hooks_for("normal", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        assert self._take() is None
+
+    @pytest.mark.asyncio
+    async def test_statically_allowed_command_publishes_nothing(self):
+        """No review ran, so there is nothing to show on the tool action."""
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "git status"}), MagicMock(), tool("bash"))
+
+        assert self._take() is None
+
+    @pytest.mark.asyncio
+    async def test_auto_allowed_sql_publishes_the_verdict(self):
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("medium")), broker)
+
+        await hooks.on_tool_start(context({"sql": "DELETE FROM t WHERE id = 1"}), MagicMock(), tool("execute_sql"))
+
+        published = self._take()
+        assert published["outcome"] == "auto_allowed"
+        assert published["risk_level"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_each_call_is_keyed_separately(self):
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}, call_id="a"), MagicMock(), tool("bash"))
+        await hooks.on_tool_start(context({"command": "cargo test"}, call_id="b"), MagicMock(), tool("bash"))
+
+        assert self._take("a")["outcome"] == "auto_allowed"
+        assert self._take("b")["outcome"] == "auto_allowed"

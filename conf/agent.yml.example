@@ -105,6 +105,9 @@ agent:
   #   # is trimmed to fit ``max_history_bytes`` (the planned action itself is
   #   # never trimmed), and too small a ``max_completion_tokens`` truncates the
   #   # structured verdict, which fails closed into a manual prompt.
+  #   # Every reviewed call reports its verdict on the tool call in the CLI
+  #   # ("AI review ✓ passed · low risk · conf 0.92 · <rationale>"), including
+  #   # ones the reviewer auto-allowed; ctrl+o shows the full rationale.
   #   # auto_review:
   #   #   enabled: true
   #   #   model: openai/gpt-5-mini

@@ -4,6 +4,7 @@
 
 """Unit tests for datus/cli/action_display/renderers.py (ActionRenderer)."""
 
+import json
 import uuid
 from datetime import datetime, timedelta
 from io import StringIO
@@ -1351,3 +1352,72 @@ class TestResolveAssistantBody:
             output_data={"raw_output": LITELLM_EMPTY_PLACEHOLDER, "response": "real body"},
         )
         assert resolve_assistant_body(action) == "real body"
+
+
+class TestPermissionReviewRow:
+    """The AI review row sits above the result, in both compact and verbose."""
+
+    @staticmethod
+    def _action(review, result="added 42 packages"):
+        now = datetime.now()
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={
+                "raw_output": json.dumps({"success": 1, "result": result}),
+                "permission_review": review,
+            },
+            start_time=now,
+            end_time=now + timedelta(seconds=2.3),
+        )
+
+    def test_compact_shows_verdict_above_the_result(self):
+        action = self._action({"decision": "allow", "risk_level": "low", "confidence": 0.92, "rationale": "reversible"})
+        text = _plain(_renderer()._render_main_tool(action, verbose=False))
+
+        assert "AI review ✓ passed" in text
+        assert "reversible" in text
+        assert text.index("AI review") < text.index("added 42 packages")
+
+    def test_compact_flagged_run_names_the_override(self):
+        action = self._action(
+            {"outcome": "user_approved", "decision": "ask", "risk_level": "high", "rationale": "irreversible"}
+        )
+        text = _plain(_renderer()._render_main_tool(action, verbose=False))
+
+        assert "AI review ✗ flagged" in text
+        assert "user approved" in text
+
+    def test_unreviewed_call_renders_no_review_row(self):
+        now = datetime.now()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={"raw_output": json.dumps({"success": 1, "result": "ok"})},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.1),
+        )
+        assert "AI review" not in _plain(_renderer()._render_main_tool(action, verbose=False))
+
+    def test_verbose_shows_the_untruncated_rationale(self):
+        rationale = "y" * 300
+        action = self._action({"decision": "allow", "risk_level": "low", "rationale": rationale})
+        text = _plain(_renderer()._render_main_tool(action, verbose=True))
+
+        assert rationale in text.replace("\n", "")
+
+    def test_multiline_output_keeps_its_own_rows(self):
+        """The review row must not be counted as one of the output lines."""
+        action = self._action({"decision": "allow", "rationale": "safe"}, result="\n".join(f"l{i}" for i in range(8)))
+        text = _plain(_renderer()._render_main_tool(action, verbose=False))
+
+        assert "AI review" in text
+        # Three output rows plus the folded remainder, unchanged by the review row.
+        assert "l0" in text and "l2" in text
+        assert "+5 lines" in text

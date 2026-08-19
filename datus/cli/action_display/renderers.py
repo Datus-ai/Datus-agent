@@ -855,6 +855,9 @@ class ActionRenderer:
             result: List[Union[Text, Markdown, Syntax]] = [
                 Text.from_markup(f"\u23fa \U0001f527 {rich_escape(tc.label)} - {tc.status_mark}{tc.duration_str}")
             ]
+            if tc.review_line:
+                # Verbose carries the untruncated rationale.
+                result.append(Text.from_markup(f"    [dim]{rich_escape(tc.review_line)}[/dim]"))
             for line in tc.args_lines:
                 result.append(Text.from_markup(f"    {line}"))
             if tc.args_lines and tc.output_lines:
@@ -877,12 +880,17 @@ class ActionRenderer:
             dur = tc.duration_str.strip()  # "(<0.1s)" or "(12.4s)"
             dur_suffix = f" \u00b7 [dim]{dur.strip('()')}[/dim]" if dur else ""
 
+            # The AI permission review (when the call was reviewed) gets its own
+            # row above the result, so the verdict that authorised the run reads
+            # in the same block as what the run produced.
+            review_rows = [f"  \u2514\u2500 [dim]{rich_escape(tc.review_line)}[/dim]"] if tc.review_line else []
+
             # Multi-line compact result (e.g. bash showing the first few output
             # lines). Continuation rows align under the first line's content; an
             # overflow row folds the remainder claude-style.
             if tc.compact_result_lines:
                 first, *rest = tc.compact_result_lines
-                body_lines = [f"  \u2514\u2500 {mark} {rich_escape(first)}{dur_suffix}"]
+                body_lines = review_rows + [f"  \u2514\u2500 {mark} {rich_escape(first)}{dur_suffix}"]
                 body_lines.extend(f"     {rich_escape(line)}" for line in rest)
                 if tc.compact_result_overflow > 0:
                     body_lines.append(f"     [dim]\u2026 +{tc.compact_result_overflow} lines (ctrl+o to expand)[/dim]")
@@ -894,6 +902,7 @@ class ActionRenderer:
                 body = f"  \u2514\u2500 {mark} {rich_escape(result_text)}{dur_suffix}"
             else:
                 body = f"  \u2514\u2500 {mark}{dur_suffix}"
+            body = "\n".join(review_rows + [body])
             return [Text.from_markup(f"{status_dot} {header}\n{body}")]
 
     @staticmethod

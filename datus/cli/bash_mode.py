@@ -24,6 +24,7 @@ import asyncio
 import inspect
 import json
 import time
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -31,8 +32,15 @@ from rich.console import Console
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled, merge_interaction_stream
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.tools.permission import review_registry
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+
+# Call id of the manual-exec frame currently being rendered, so the permission
+# gate's context shims can key an AI-review verdict the same way the SDK keys a
+# real tool call. ``_run_with_live_frame`` mints the id before invoking the gate;
+# without a frame there is no action to annotate and this stays ``None``.
+_manual_exec_call_id: "ContextVar[Optional[str]]" = ContextVar("datus_manual_exec_call_id", default=None)
 
 if TYPE_CHECKING:
     from datus.cli.repl import DatusCLI
@@ -45,13 +53,16 @@ logger = get_logger(__name__)
 class _BashContextShim:
     """Minimal stand-in for the SDK ``RunContextWrapper``.
 
-    ``PermissionHooks`` reads only ``context.tool_arguments`` (via
-    ``_parse_tool_args``, which accepts a JSON string or a dict).
+    ``PermissionHooks`` reads ``context.tool_arguments`` (via
+    ``_parse_tool_args``, which accepts a JSON string or a dict) and
+    ``context.tool_call_id`` (to key an AI-review verdict onto the resulting
+    tool action).
     """
 
     def __init__(self, command: str) -> None:
         self.tool_arguments = json.dumps({"command": command})
         self.direct_user_invocation = True
+        self.tool_call_id = _manual_exec_call_id.get()
 
 
 class _BashToolStub:
@@ -66,6 +77,7 @@ class _SqlContextShim:
     def __init__(self, sql: str) -> None:
         self.tool_arguments = json.dumps({"sql": sql})
         self.direct_user_invocation = True
+        self.tool_call_id = _manual_exec_call_id.get()
 
 
 class _SqlToolStub:
@@ -83,6 +95,7 @@ class _ToolContextShim:
     def __init__(self, args: Dict[str, Any]) -> None:
         self.tool_arguments = json.dumps(args)
         self.direct_user_invocation = True
+        self.tool_call_id = _manual_exec_call_id.get()
 
 
 class _ToolStub:
@@ -639,11 +652,15 @@ def _run_with_live_frame(cli: "DatusCLI", kind: str, command: str, work: Callabl
 
     payload = None
     dispatch = False
+    token = _manual_exec_call_id.set(call_id)
     with ctx:
         try:
             payload, dispatch = work()
         finally:
+            _manual_exec_call_id.reset(token)
             status = ActionStatus.SUCCESS if (payload and payload.get("success")) else ActionStatus.FAILED
+            # Bash mode builds its actions directly instead of going through
+            # ActionHistoryManager, so the review annotation is stamped here.
             actions.append(
                 ActionHistory(
                     action_id=f"complete_{call_id}",
@@ -651,7 +668,7 @@ def _run_with_live_frame(cli: "DatusCLI", kind: str, command: str, work: Callabl
                     action_type=MANUAL_EXEC_ACTION_TYPE,
                     messages=f"{kind}> {command}",
                     input={"kind": kind, "command": command},
-                    output={"payload": payload},
+                    output=review_registry.stamp({"payload": payload}, call_id),
                     status=status,
                     start_time=start,
                     end_time=datetime.now(),

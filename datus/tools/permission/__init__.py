@@ -9,6 +9,7 @@ This module provides pattern-based permission control (allow/deny/ask)
 for all tool types in Datus-agent, following Claude Code and OpenCode patterns.
 """
 
+from datus.schemas.action_history import register_action_enricher
 from datus.tools.permission.bash_classifier import (
     BashClassifierContext,
     BashCommandClassifier,
@@ -35,8 +36,19 @@ from datus.tools.permission.permission_hooks import (
     PermissionHooks,
 )
 from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.review_registry import (
+    PERMISSION_REVIEW_OUTPUT_KEY,
+    enrich_action,
+)
+
+# Wire the AI-review annotation into every action history at import time. The
+# permission package owns the dependency direction: ``datus.schemas`` stays
+# unaware of reviews, and any consumer that imports the permission system gets
+# reviewed tool actions annotated for display.
+register_action_enricher(enrich_action)
 
 __all__ = [
+    "PERMISSION_REVIEW_OUTPUT_KEY",
     "PermissionLevel",
     "AutoReviewConfig",
     "PermissionRule",
