@@ -14,6 +14,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from datus.agent.agent import Agent
 from datus.schemas.node_models import SqlTask
 from datus.utils.benchmark_artifacts import (
+    BenchmarkAttempt,
     allocate_benchmark_attempt,
     finalize_benchmark_attempt,
     load_task_output_manifest,
@@ -34,7 +35,7 @@ def _validator() -> Draft202012Validator:
     return Draft202012Validator(schema, format_checker=FormatChecker())
 
 
-def _model_config():
+def _model_config() -> SimpleNamespace:
     return SimpleNamespace(
         type="openai",
         model="gpt-5.5",
@@ -47,13 +48,13 @@ def _model_config():
     )
 
 
-def _agent_config():
+def _agent_config() -> MagicMock:
     config = MagicMock()
     config.active_model.return_value = _model_config()
     return config
 
 
-def _task(task_id="42") -> SqlTask:
+def _task(task_id: str = "42") -> SqlTask:
     return SqlTask(
         id=task_id,
         datasource="analytics",
@@ -63,7 +64,7 @@ def _task(task_id="42") -> SqlTask:
     )
 
 
-def _success_workflow(task: SqlTask):
+def _success_workflow(task: SqlTask) -> SimpleNamespace:
     model = SimpleNamespace(model_config=_model_config())
     gen_result = SimpleNamespace(
         action_history=[
@@ -108,7 +109,7 @@ def _success_workflow(task: SqlTask):
     )
 
 
-def _failed_workflow(task: SqlTask, node_type: str, message: str):
+def _failed_workflow(task: SqlTask, node_type: str, message: str) -> SimpleNamespace:
     node = SimpleNamespace(
         id="failed_node",
         type=node_type,
@@ -127,7 +128,7 @@ def _failed_workflow(task: SqlTask, node_type: str, message: str):
     )
 
 
-def _allocate(tmp_path, task_id="42"):
+def _allocate(tmp_path: Path, task_id: str = "42") -> BenchmarkAttempt:
     save_root = tmp_path / "save" / "analytics" / "run-1"
     trajectory_root = tmp_path / "trajectory" / "analytics" / "run-1"
     trajectory_root.mkdir(parents=True, exist_ok=True)
@@ -139,7 +140,7 @@ def _allocate(tmp_path, task_id="42"):
     )
 
 
-def _write_success_files(attempt):
+def _write_success_files(attempt: BenchmarkAttempt) -> Path:
     (attempt.output_dir / f"{attempt.task_id}.sql").write_text(
         "SELECT order_id, amount FROM analytics.orders",
         encoding="utf-8",
@@ -283,7 +284,7 @@ def test_attempt_allocation_is_retry_and_concurrency_safe(tmp_path):
     save_root = tmp_path / "save"
     trajectory_root = tmp_path / "trajectory"
 
-    def allocate(_):
+    def allocate(_: int) -> BenchmarkAttempt:
         return allocate_benchmark_attempt(
             save_root,
             trajectory_root,
@@ -360,6 +361,29 @@ def test_manifest_resolvers_use_authoritative_relative_paths(tmp_path):
     assert resolve_task_trajectory_path(attempt.save_run_root, attempt.trajectory_run_root, "42") == (
         trajectory.resolve()
     )
+
+
+@pytest.mark.parametrize("bad_path", ["../outside.sql", "/etc/passwd", "tasks\\42\\evil.sql"])
+def test_manifest_resolvers_reject_escaping_paths(tmp_path, bad_path):
+    attempt = _allocate(tmp_path)
+    task = _task()
+    trajectory = _write_success_files(attempt)
+    finalize_benchmark_attempt(
+        attempt,
+        task=task,
+        workflow=_success_workflow(task),
+        trajectory_path=trajectory,
+        agent_config=_agent_config(),
+    )
+    payload = json.loads(attempt.manifest_path.read_text(encoding="utf-8"))
+    payload["outputs"][0]["path"] = bad_path
+    payload["trajectory"]["path"] = bad_path
+    attempt.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(DatusException, match="invalid benchmark output path"):
+        resolve_task_output_path(attempt.save_run_root, "42", "generated_sql")
+    with pytest.raises(DatusException, match="invalid benchmark trajectory path"):
+        resolve_task_trajectory_path(attempt.save_run_root, attempt.trajectory_run_root, "42")
 
 
 def test_internal_evaluators_prefer_manifest_over_stale_flat_files(tmp_path):
