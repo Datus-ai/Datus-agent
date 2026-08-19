@@ -3069,7 +3069,7 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        框架边界
+        配置
       
     </span>
   </a>
@@ -3080,7 +3080,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        运行时流程
+        请求上下文
       
     </span>
   </a>
@@ -3091,62 +3091,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置契约
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider 接口
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#principal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        请求 Principal
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider 契约
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        错误行为
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        限制
+        运行流程
       
     </span>
   </a>
@@ -4291,7 +4236,7 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        框架边界
+        配置
       
     </span>
   </a>
@@ -4302,7 +4247,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        运行时流程
+        请求上下文
       
     </span>
   </a>
@@ -4313,62 +4258,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置契约
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider 接口
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#principal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        请求 Principal
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider 契约
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        错误行为
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        限制
+        运行流程
       
     </span>
   </a>
@@ -4401,196 +4291,80 @@
 
 
 <h1 id="sql-policy">SQL Policy<a class="headerlink" href="#sql-policy" title="Permanent link">&para;</a></h1>
-<p>SQL policy 是一个扩展框架，用于在请求级别控制 SQL 读查询。适用于 API 请求只能访问调用方业务范围内数据的场景，例如租户、市场、区域或门店列表。</p>
-<p>开源 Agent 提供框架边界和运行时 hook 点，不内置具体策略引擎。需要执行策略的部署应提供自己的 SQL policy 包。</p>
-<h2 id="_1">框架边界<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>开源 Agent 负责：</p>
-<ul>
-<li>从 Agent 配置中加载 <code>agent.sql_policy</code>。</li>
-<li>从 <code>agent.sql_policy.provider</code> 加载配置的 provider class。</li>
-<li>将完整的原始 <code>agent.sql_policy</code> mapping 传给 provider。</li>
-<li>将请求 principal 字段解析到 <code>AppContext.principal</code>。</li>
-<li>对必需的 <code>principal.*</code> 值执行通用 API pre-check。</li>
-<li>在读查询到达数据库前调用 provider。</li>
-<li>在 provider 改写 SQL 后重新校验 SQL。</li>
-<li>将策略拒绝原因返回给 tool/model 层。</li>
-</ul>
-<p>provider 负责：</p>
-<ul>
-<li>定义 <code>agent.sql_policy</code> 下的策略 schema。</li>
-<li>校验 provider 自己的策略字段。</li>
-<li>将策略匹配到 datasource、表、列或其他业务概念。</li>
-<li>从请求 principal 中解析策略值。</li>
-<li>改写读 SQL 或拒绝查询。</li>
-<li>返回清晰的拒绝原因，说明 model 或调用方缺少什么。</li>
-</ul>
-<h2 id="_2">运行时流程<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>启用 SQL policy 后，请求处理流程如下：</p>
-<ol>
-<li>API auth provider 创建 <code>AppContext</code>。</li>
-<li>请求级属性被写入 <code>AppContext.principal</code>。</li>
-<li>Agent 配置被加载，其中包括 <code>agent.sql_policy</code>。</li>
-<li>如果原始策略配置引用了 <code>value_from: principal.&lt;path&gt;</code>，chat API 会在 Agent 启动前检查每个 principal path 是否存在。</li>
-<li>Agent 正常运行，直到调用数据库读工具。</li>
-<li><code>DBFuncTool.read_query</code> 校验原始 SQL 是否只读。</li>
-<li>通过 <code>enforce_read(...)</code> 加载并调用配置的 provider。</li>
-<li>如果 provider 拒绝查询，tool 返回 provider 的拒绝原因，不执行 SQL。</li>
-<li>如果 provider 返回改写后的 SQL，Agent 会重新校验改写后的 SQL 仍然只读。</li>
-<li>校验通过的 SQL 被发送到目标 datasource 执行。</li>
-</ol>
-<p>第 4 步的 pre-check 是通用逻辑。它会扫描原始策略 mapping 中以 <code>principal.</code> 开头的 <code>value_from</code> 字符串，不假设特定 policy type、列名或业务字段。</p>
-<h2 id="_3">配置契约<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>开源 Agent 只解释这些字段：</p>
+<p>Datus Agent 不负责用户认证，也不判断用户具有什么权限。可信上游服务完成认证和鉴权后，只把策略执行所需的输入作为 <code>policy_context</code> 传给 Agent；启用的 policy plugin 负责解释这些输入并保护数据读取。</p>
+<h2 id="_1">配置<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<p>SQL policy 只通过 plugin profile 配置；原来的 <code>agent.sql_policy</code> provider 配置不再支持。</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">sql-policy</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">default</span><span class="p">:</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">policies</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_scope_sql</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">            </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">            </span><span class="nt">applies_to</span><span class="p">:</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">              </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"warehouse"</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">              </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"orders"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"store_sales"</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">            </span><span class="nt">condition</span><span class="p">:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">              </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_id</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">              </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">in</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">              </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">policy_context.row_filter.store_ids</span>
 </span></code></pre></div>
-<p><code>enabled</code> 用于打开框架。<code>provider</code> 必须是 <code>module:Class</code> 格式的 Python class path。</p>
-<p><code>agent.sql_policy</code> 下的其他字段会原样放进 <code>SqlPolicyConfig.raw</code> 传给 provider。你的 provider 可以定义自己需要的 schema：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">policies</span><span class="p">:</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_scope</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">applies_to</span><span class="p">:</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">          </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"warehouse"</span><span class="p p-Indicator">]</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">          </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"orders"</span><span class="p p-Indicator">]</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">        </span><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">          </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">          </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">          </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.tenant.id</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">enforcement</span><span class="p">:</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">          </span><span class="nt">on_read</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filter</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">          </span><span class="nt">on_unhandled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
+<p>policy type 及其字段由 policy plugin 定义。Agent 只加载 plugin 在 <code>datus-plugin.yml</code> 中声明的运行时。</p>
+<h2 id="_2">请求上下文<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>默认 API provider 从 <code>X-Datus-Policy-Context</code> 读取 JSON object：</p>
+<div class="language-http highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}</span>
 </span></code></pre></div>
-<p>在这个例子里，开源 Agent 使用 <code>enabled</code>、<code>provider</code>，并使用 <code>principal.tenant.id</code> 引用做 pre-check。<code>policies</code>、<code>type</code>、<code>applies_to</code>、<code>condition</code> 和 <code>enforcement</code> 的含义都由 provider 决定。</p>
-<h2 id="provider">Provider 接口<a class="headerlink" href="#provider" title="Permanent link">&para;</a></h2>
-<p>SQL policy provider 是一个安装在 <code>datus-api</code> 同一 Python 环境中的普通 Python 包。provider class 必须接收 <code>SqlPolicyConfig</code> 参数，并实现 <code>enforce_read(...)</code>。</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Optional</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus.tools.sql_policy</span><span class="w"> </span><span class="kn">import</span> <span class="n">SqlPolicyConfig</span><span class="p">,</span> <span class="n">EnforcementResult</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">SqlPolicyProvider</span><span class="p">:</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">SqlPolicyConfig</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">SqlPolicyConfig</span><span class="p">()</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">policies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"policies"</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[]</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_validate_policy_config</span><span class="p">()</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">enforce_read</span><span class="p">(</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        <span class="n">sql</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>        <span class="n">datasource</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="n">dialect</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="n">principal</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EnforcementResult</span><span class="p">:</span>
-</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>        <span class="n">principal</span> <span class="o">=</span> <span class="n">principal</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>
-</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>        <span class="c1"># 在这里实现策略选择和执行逻辑：</span>
-</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>        <span class="c1"># - 解析 SQL 并识别引用的表</span>
-</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>        <span class="c1"># - 为 datasource 和表匹配策略</span>
-</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>        <span class="c1"># - 从 principal 中解析配置值</span>
-</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="c1"># - 返回改写后的读查询，或带清晰原因地拒绝查询</span>
-</span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
-</span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>
-</span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_validate_policy_config</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="c1"># 如果 provider 自己需要的配置不合法，在这里抛出异常。</span>
-</span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>        <span class="k">pass</span>
+<p>约定结构按 policy family 分两层，不包含用户身份或 groups：</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"row_filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">"access_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scoped"</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">"store_ids"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"column_mask"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">"customers.email"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"strategy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"email_partial"</span><span class="p">}</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">}</span>
 </span></code></pre></div>
-<p>返回值决定后续行为：</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">sql</span><span class="o">=</span><span class="n">rewritten_sql</span><span class="p">,</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">applied_policies</span><span class="o">=</span><span class="p">[</span><span class="s2">"tenant_scope"</span><span class="p">],</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">)</span>
-</span></code></pre></div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">allowed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">reason</span><span class="o">=</span><span class="s2">"Missing required principal path: principal.tenant.id"</span><span class="p">,</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
-</span></code></pre></div>
-<p>改写 SQL 时应使用 SQL parser 或数据库安全的 query builder，不要用字符串拼接生成策略谓词。</p>
-<h2 id="principal">请求 Principal<a class="headerlink" href="#principal" title="Permanent link">&para;</a></h2>
-<p>principal 是策略 provider 使用的请求级调用方属性。默认 API auth provider 会从 <code>X-Datus-Principal</code> header 读取 principal 字段，header 值必须是 JSON object：</p>
-<div class="language-http highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">X-Datus-Principal: {"tenant":{"id":"tenant_001"},"market_codes":["MKT300","MKT301"]}</span>
-</span></code></pre></div>
-<p>provider 会收到解析后的对象：</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="s2">"tenant"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"id"</span><span class="p">:</span> <span class="s2">"tenant_001"</span><span class="p">},</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="s2">"market_codes"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"MKT300"</span><span class="p">,</span> <span class="s2">"MKT301"</span><span class="p">],</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">}</span>
-</span></code></pre></div>
-<p>策略配置可以通过 <code>principal.&lt;path&gt;</code> 引用嵌套字段：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.tenant.id</span>
-</span></code></pre></div>
-<p>API pre-check 会把缺失 key、<code>null</code>、空字符串和空数组都视为缺失值。</p>
-<p><code>X-Datus-User-Id</code> 和 SQL policy principal 是两件事。它用于调用方会话隔离，不会被复制进 <code>AppContext.principal</code>。</p>
-<h2 id="provider_1">Provider 契约<a class="headerlink" href="#provider_1" title="Permanent link">&para;</a></h2>
+<p>当前 sql-policy plugin 支持三种 row-filter 模式：</p>
 <table>
 <thead>
 <tr>
-<th>项</th>
-<th>契约</th>
+<th><code>access_mode</code></th>
+<th>行为</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>agent.sql_policy.enabled</code></td>
-<td>启用 SQL policy 框架。</td>
+<td><code>denied</code></td>
+<td>拒绝所有数据读取。</td>
 </tr>
 <tr>
-<td><code>agent.sql_policy.provider</code></td>
-<td>Python class path，格式为 <code>module:Class</code>。启用时必填。</td>
+<td><code>scoped</code></td>
+<td>执行已配置的行过滤，并解析其 <code>policy_context.*</code> 输入；缺少输入时 fail closed。</td>
 </tr>
 <tr>
-<td><code>SqlPolicyConfig.raw</code></td>
-<td>完整的原始 <code>agent.sql_policy</code> mapping，会传给 provider。</td>
-</tr>
-<tr>
-<td><code>enforce_read(sql, datasource, dialect, principal)</code></td>
-<td>在读 SQL 执行前调用。</td>
-</tr>
-<tr>
-<td><code>EnforcementResult.allowed=True</code></td>
-<td>查询可以继续。<code>sql</code> 可以是原始 SQL 或改写后的 SQL。</td>
-</tr>
-<tr>
-<td><code>EnforcementResult.allowed=False</code></td>
-<td>查询被拒绝。<code>reason</code> 会返回给 tool/model 层。</td>
-</tr>
-<tr>
-<td><code>applied_policies</code></td>
-<td>可选的策略名称列表，用于日志和诊断。</td>
-</tr>
-<tr>
-<td><code>value_from: principal.*</code></td>
-<td>可选约定，用于 API pre-check 检查缺失的 principal 字段。</td>
+<td><code>unrestricted</code></td>
+<td>仅跳过行过滤；未来的 column masking 等其他 policy family 仍会执行。</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_4">错误行为<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>如果 SQL policy 已启用但没有配置 provider，enforcement 会在 SQL 执行前失败。</p>
-<p>如果配置的 provider class 无法 import、无法初始化，或没有实现可调用的 <code>enforce_read</code>，enforcement 会返回 SQL policy provider error。</p>
-<p>如果策略配置引用了缺失的 <code>principal.*</code> 值，chat API 会在 Agent 启动前失败：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>SQL_POLICY_PRINCIPAL_REQUIRED
+<p>配置了 row policy 时，缺少 <code>access_mode</code> 或传入未知值都会被拒绝；没有配置 row policy 时，空 context 可以通过。</p>
+<p><code>X-Datus-User-Id</code> 只用于会话隔离。Agent 不会把它合并进 <code>policy_context</code>，也不会把 context 中的任何字段当作已认证身份。</p>
+<h2 id="_3">运行流程<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<ol>
+<li>上游服务完成认证、鉴权并生成 <code>policy_context</code>。</li>
+<li>API 将 header 解析为 <code>AppContext.policy_context</code>，并在启动任何内置或用户自定义 subagent 前调用启用的 policy runtime 校验。</li>
+<li>请求级 <code>AgentConfig</code> 副本把同一 context 传给所有 subagent 和 tool transformer。</li>
+<li><code>DBFuncTool.execute_read_enforced</code> 先校验原始 SQL，再调用 <code>before_sql_read</code>，然后重新校验改写后的 SQL 并执行。</li>
+<li>查询成功后，原始结果会先经过 <code>after_read_result</code>，之后才允许压缩、保存 artifact、渲染或返回；column masking 将在这个扩展点实现。</li>
+<li>语义指标工具也调用同一个 plugin runtime，在聚合前写入 <code>where</code> 条件。</li>
+</ol>
+<p>无效 runtime 声明、格式错误的 decision、策略异常、策略拒绝和不安全 SQL 改写都会 fail closed。proxied tool 在 Agent 进程外执行，需要由外部 executor 自行保护。</p>
+<p>手工检查时显式传入同一个对象：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>sql-policy<span class="w"> </span>check<span class="w"> </span>--sql<span class="w"> </span><span class="s2">"SELECT * FROM orders"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--policy-context<span class="w"> </span><span class="s1">'{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'</span>
 </span></code></pre></div>
-<p>错误信息会包含缺失的 principal path，例如 <code>principal.tenant.id</code>。</p>
-<p>如果 provider 拒绝查询，SQL 不会执行，tool 会返回 provider 的 <code>reason</code>。</p>
-<p>如果 provider 将 SQL 改写成非读语句或多语句查询，读查询校验器会在执行前拒绝它。</p>
-<h2 id="_5">限制<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<ul>
-<li>开源 Agent 不包含内置 row-filter 或 SQL 注入审查 provider。</li>
-<li>除了 <code>enabled</code>、<code>provider</code> 和可选的 <code>principal.*</code> pre-check 约定，框架不定义强制策略 schema。</li>
-<li>CLI 请求没有 HTTP header。请求级 API principal 输入来自 API auth context。对于 CLI 或自定义部署，需要通过对应 auth 或运行时集成填充 <code>AppContext.principal</code>。</li>
-<li>不要把 <code>user_id</code> 放进 <code>X-Datus-Principal</code>；<code>user_id</code> 是 <code>X-Datus-User-Id</code> 的保留字段。</li>
-</ul>
 
 
 
