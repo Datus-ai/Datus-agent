@@ -450,8 +450,8 @@ async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_con
     actions = [action async for action in node.execute_stream(ActionHistoryManager())]
 
     assert _stream_call_count(mock_llm_create) == 2
-    assert "Do not call tools or modify files" in mock_llm_create.call_history[-1]["prompt"]
-    assert mock_llm_create.call_history[-1]["tools"] == []
+    assert "You may use the available tools" in mock_llm_create.call_history[-1]["prompt"]
+    assert mock_llm_create.call_history[-1]["tools"]
     assert actions[-1].output["success"] is True
     assert actions[-1].output["status"] == "generated"
     node._finalize_selected_osi_artifact.assert_called_once_with()

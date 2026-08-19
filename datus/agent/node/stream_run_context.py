@@ -54,7 +54,6 @@ class StreamRunContext:
     last_tool_summary: str = ""
 
     attempt: int = 1
-    tools_enabled: bool = True
 
     # When set by ``_before_stream``, the template replaces
     # ``user_input.user_message`` for the duration of ``_build_enhanced_message``

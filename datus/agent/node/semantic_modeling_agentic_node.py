@@ -25,7 +25,6 @@ logger = get_logger(__name__)
 
 _SUPPORTED_SEMANTIC_MODELING_STATUSES = {"generated", "skipped", "blocked"}
 _SEMANTIC_MODELING_RESULT_RETRY_PROMPT = """Your semantic model changes have been preserved.
-Do not call tools or modify files.
 Return only one JSON object with this shape:
 {
   "status": "generated",
@@ -34,6 +33,7 @@ Return only one JSON object with this shape:
   "output": "brief summary of reused and changed semantic objects"
 }
 Use status "blocked" or "skipped" only when appropriate under the original instructions.
+You may use the available tools first if more work or verification is needed.
 """
 
 
@@ -54,7 +54,6 @@ class SemanticModelingResultRetryPolicy:
         return status not in _SUPPORTED_SEMANTIC_MODELING_STATUSES
 
     def next_prompt(self, ctx: StreamRunContext) -> str:
-        ctx.tools_enabled = False
         return _SEMANTIC_MODELING_RESULT_RETRY_PROMPT
 
     def on_retry_actions(self, ctx: StreamRunContext) -> Iterable[ActionHistory]:
