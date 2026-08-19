@@ -65,7 +65,7 @@ Open a new shell and run `datus`, then:
 2. `/datasource` to add a datasource
 3. `/init` (optional) to scan the current project
 
-Manual install works too: `pip install datus-agent` (Python 3.12+); more install options are covered in the [Quickstart](https://docs.datus.ai/latest/getting_started/Quickstart/). The [end-to-end tutorial](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/#part-2--hands-on-tutorial-california-schools) demonstrates the full flow on a sample dataset. Configuration has two levels: a global `agent.yml` for the main settings, and a per-project `.datus/config.yml` for overrides such as the active model and default datasource (see the [configuration docs](https://docs.datus.ai/latest/configuration/introduction/)).
+Manual install works too: `pip install datus-agent` (Python 3.12+); more install options are covered in the [Quickstart](https://docs.datus.ai/latest/getting_started/Quickstart/). The [end-to-end tutorial](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/#part-2-hands-on-tutorial-california-schools) demonstrates the full flow on a sample dataset. Configuration has two levels: a global `agent.yml` for the main settings, and a per-project `.datus/config.yml` for overrides such as the active model and default datasource (see the [configuration docs](https://docs.datus.ai/latest/configuration/introduction/)).
 
 ## Interfaces
 
