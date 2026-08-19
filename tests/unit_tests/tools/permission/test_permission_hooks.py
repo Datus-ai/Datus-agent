@@ -2485,12 +2485,20 @@ class TestBashCommandPermission:
         assert mock_broker.request.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_safety_forced_prompt_offers_no_project_choice(self, mock_broker):
-        """Wrapper/metachar asks must not offer the persistent 'p' choice."""
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git status && sudo rm -rf /",  # wrapper sub-command
+            "git status && echo $(id)",  # command substitution
+            "git status & rm -rf /",  # background: not segmentable
+        ],
+    )
+    async def test_safety_forced_prompt_offers_no_project_choice(self, mock_broker, command):
+        """One safety-ceiling sub-command withholds 'p' from the whole chain."""
         hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git status"]})
         mock_broker.request = AsyncMock(return_value=[["y"]])
 
-        await hooks.on_tool_start(self._ctx("git status && rm -rf /"), MagicMock(), self._tool())
+        await hooks.on_tool_start(self._ctx(command), MagicMock(), self._tool())
 
         event = mock_broker.request.await_args.args[0][0]
         assert "p" not in event.choices
@@ -2809,6 +2817,230 @@ class TestBashPipelinePermission:
 
         with pytest.raises(PermissionDeniedException):
             await hooks.on_tool_start(self._ctx("cat x | frobnicate"), MagicMock(), self._tool())
+
+
+class TestBashChainedCommandPrompt:
+    """A chained command must be shown, approved and persisted per sub-command."""
+
+    def _make_hooks(self, mock_broker, bash_commands=None, project_root=None, config_mutable=True):
+        from datus.tools.permission.bash_rules import BashCommandRules
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
+            bash_commands=BashCommandRules(**bash_commands) if bash_commands else None,
+        )
+        manager = PermissionManager(global_config=config)
+        return (
+            PermissionHooks(
+                broker=mock_broker,
+                permission_manager=manager,
+                node_name="chat",
+                tool_registry=registry,
+                project_root=project_root,
+                config_mutable=config_mutable,
+            ),
+            manager,
+        )
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_prompt_body_lists_every_sub_command_needing_approval(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"], "ask": ["npm:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && npm ci"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        # The full command still renders verbatim in a bash fence...
+        assert "```bash\ngit fetch && rm -rf build && npm ci\n```" in event.content
+        # ...and each sub-command needing approval is named individually.
+        assert "2 sub-commands require confirmation" in event.content
+        assert "`rm -rf build`" in event.content
+        assert "`npm ci`" in event.content
+        # The allowed sub-command is not presented as needing approval.
+        assert "`git fetch`" not in event.content
+
+    @pytest.mark.asyncio
+    async def test_choice_labels_name_every_bucket_and_pattern(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"]}, project_root=None)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert event.choices["a"] == "Allow 'rm', 'cargo test' (session)"
+        assert event.choices["p"] == "Allow 'rm:*', 'cargo test:*' (project)"
+
+    @pytest.mark.asyncio
+    async def test_long_chain_label_degrades_to_a_count(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("aa; bb; cc; dd"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert event.choices["a"] == "Allow all 4 sub-commands (session)"
+        # The body still enumerates them, so nothing is hidden by the short label.
+        for name in ("`aa`", "`bb`", "`cc`", "`dd`"):
+            assert name in event.content
+
+    @pytest.mark.asyncio
+    async def test_sub_command_with_backticks_stays_a_valid_code_span(self, mock_broker):
+        """``echo `whoami``` must not close its own inline code span."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("frobnicate; echo `whoami`"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        # A two-backtick fence plus padding holds the backticks in the command.
+        assert "`` echo `whoami` ``" in event.content
+        assert "`frobnicate`" in event.content
+        # The safety-forced sub-command is named in full, matching the grant it
+        # actually creates (an exact-command key, not the ``echo`` bucket).
+        assert event.choices["a"] == "Allow 'frobnicate', 'echo `whoami`' (session)"
+
+    @pytest.mark.asyncio
+    async def test_single_sub_command_keeps_the_original_layout(self, mock_broker):
+        """Plain commands must not regress into the multi-sub-command rendering."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "**Reason:**" in event.content
+        assert "sub-commands require confirmation" not in event.content
+        assert event.choices["a"] == "Allow 'cargo build' (session)"
+
+    @pytest.mark.asyncio
+    async def test_session_choice_approves_every_sub_command(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git fetch"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        assert manager._session_approvals.get("bash_tools.bash::rm") is True
+        assert manager._session_approvals.get("bash_tools.bash::cargo test") is True
+
+        # Re-running the same chain, and each sub-command on its own, is silent.
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+        await hooks.on_tool_start(self._ctx("cargo test --release"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_session_approval_does_not_cover_an_unreviewed_sub_command(self, mock_broker):
+        """Approving ``a && b`` must not green-light ``a && c``."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("rm -rf build && cargo test"), MagicMock(), self._tool())
+        await hooks.on_tool_start(self._ctx("rm -rf build && curl http://evil"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_broad_session_approval_still_covers_a_whole_chain(self, mock_broker):
+        """A deliberate wide grant (``bash_tools.bash``) is honored as before.
+
+        Per-sub-command keys tightened the *narrow* path; they must not break
+        the coarse approval a legacy prompt may already have recorded.
+        """
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        manager.approve_for_session("bash_tools", "bash")
+
+        await hooks.on_tool_start(self._ctx("rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_safety_forced_session_approval_is_scoped_to_the_exact_command(self, mock_broker):
+        """A safety-ceiling bucket (``sudo``) describes nothing about what runs.
+
+        Regression guard: keying the approval on the bucket let ``sudo ls``
+        green-light ``sudo rm -rf ~`` for the rest of the session.
+        """
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("sudo ls"), MagicMock(), self._tool())
+        assert manager._session_approvals.get("bash_tools.bash::sudo") is None
+        assert manager._session_approvals.get("bash_tools.bash::exact:sudo ls") is True
+
+        await hooks.on_tool_start(self._ctx("sudo rm -rf /tmp/x"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_project_choice_persists_one_pattern_per_sub_command(self, mock_broker, tmp_path):
+        from datus.configuration.project_config import load_project_override
+
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["git fetch"]}, project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        override = load_project_override(str(tmp_path))
+        # Both patterns land on disk; the writer's insert-after-key placement
+        # decides their order, so compare as a set.
+        assert set(override.bash_allow) == {"rm:*", "cargo test:*"}
+        assert len(override.bash_allow) == 2
+        for pattern in ("rm:*", "cargo test:*"):
+            assert pattern in manager.global_config.bash_commands.allow
+
+    @pytest.mark.asyncio
+    async def test_project_choice_makes_the_chain_idempotent_across_sessions(self, mock_broker, tmp_path):
+        """A fresh manager loading the persisted grants must not re-prompt.
+
+        Previously only the representative sub-command was persisted, so each
+        later session re-prompted once per remaining sub-command.
+        """
+        from datus.configuration.project_config import load_project_override
+
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"]}, project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+
+        # Simulate a restart: rebuild from the persisted project override only.
+        persisted = load_project_override(str(tmp_path)).bash_allow
+        fresh_broker = MagicMock()
+        fresh_broker.request = AsyncMock(return_value=[["n"]])
+        fresh_hooks, _ = self._make_hooks(
+            fresh_broker,
+            {"allow": ["git fetch", *persisted]},
+            project_root=str(tmp_path),
+        )
+
+        await fresh_hooks.on_tool_start(self._ctx("git fetch && rm -rf build && cargo test"), MagicMock(), self._tool())
+        fresh_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_user_authored_ask_sub_command_withholds_project_choice(self, mock_broker):
+        """One user-authored ask rule in the chain removes 'p' for all of it."""
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["git fetch"], "ask": ["npm:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git fetch && rm -rf build && npm ci"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
 
 
 class TestPluginCliBashPermission:

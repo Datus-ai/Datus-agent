@@ -389,6 +389,25 @@ class TestBashAutoReview:
 
     @pytest.mark.asyncio
     async def test_safety_forced_command_is_reviewed(self):
+        """The reviewer sees the full text of a safety-ceiling command.
+
+        ``&&`` alone no longer forces the ceiling (each sub-command is judged
+        on its own), so this uses command substitution — a construct the argv
+        rules genuinely cannot decompose.
+        """
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        reviewer = StubReviewer(verdict("low"))
+        hooks, _ = hooks_for("auto", reviewer, broker)
+
+        await hooks.on_tool_start(context({"command": "git status && echo $(id)"}), MagicMock(), tool("bash"))
+
+        assert reviewer.requests[0][0].static_assessment["safety_forced"] is True
+        broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fully_allow_listed_chain_never_reaches_the_reviewer(self):
+        """Static per-sub-command ALLOW short-circuits before any model call."""
         broker = MagicMock()
         broker.request = AsyncMock()
         reviewer = StubReviewer(verdict("low"))
@@ -396,7 +415,7 @@ class TestBashAutoReview:
 
         await hooks.on_tool_start(context({"command": "git status && git diff"}), MagicMock(), tool("bash"))
 
-        assert reviewer.requests[0][0].static_assessment["safety_forced"] is True
+        assert reviewer.requests == []
         broker.request.assert_not_called()
 
     @pytest.mark.asyncio
