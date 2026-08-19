@@ -47,7 +47,7 @@ Datus handles SQL authoring and validation, semantic model and metric constructi
 ### Platform and governance
 
 - **Enterprise governance**: tiered permission profiles, statement-level [SQL authorization](https://docs.datus.ai/latest/configuration/sql_policy/) with AI pre-review, bash confined to an OS-level sandbox, and [traces](https://docs.datus.ai/latest/develop/observability/) exportable to any OTLP platform.
-- **[Plugins](https://docs.datus.ai/latest/plugin/introduction/) and [skills](https://docs.datus.ai/latest/skills/introduction/)**: a `datus-plugin.yml` manifest bundles CLI commands, skills, and prompt context into an installable plugin, activated per project; skills follow the agentskills.io convention.
+- **[Skills](https://docs.datus.ai/latest/skills/introduction/)**: packaged tools following the agentskills.io convention, installable from a marketplace; full extensions ship as plugins, described below.
 - **Open ecosystem**: adapters for [15 databases](https://docs.datus.ai/latest/adapters/db_adapters/), 10+ LLM providers, and an [MCP](https://docs.datus.ai/latest/integration/mcp/) server and client.
 
 ## Quickstart
@@ -80,6 +80,10 @@ The examples below use a datasource named `demo`; create one first with `/dataso
 | [**VS Code**](https://docs.datus.ai/latest/vscode_extension/introduction/) (Datus Studio) | connects to `datus --web` | Catalog explorer, chat panel, SQL results & AI charts in the IDE |
 
 > **Tip:** Print mode streams JSON to stdout for scripting and CI: `datus -p "your question" --datasource demo`.
+
+## Plugins
+
+A plugin packages a complete extension in one `datus-plugin.yml` manifest: CLI commands (run as `datus <plugin>`, or with the `!` prefix inside chat), bundled skills, and additional prompt context. Plugins support installation, upgrades, offline packing, and export; they activate per project with selectable profiles, and run under managed multi-tenant configuration. The [plugin docs](https://docs.datus.ai/latest/plugin/introduction/) cover authoring and distribution.
 
 ## Architecture
 

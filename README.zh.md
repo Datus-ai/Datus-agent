@@ -47,7 +47,7 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 ### 平台与治理
 
 - **企业级治理**：权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，[trace](https://docs.datus.ai/zh/latest/develop/observability/) 可导出到任意 OTLP 平台。
-- **[Plugin](https://docs.datus.ai/zh/latest/plugin/introduction/) 与 [Skill](https://docs.datus.ai/zh/latest/skills/introduction/)**：用 `datus-plugin.yml` 清单把 CLI 命令、Skill 和 prompt 上下文打包成 Plugin，可安装、可按项目启用；Skill 遵循 agentskills.io 约定。
+- **[Skill](https://docs.datus.ai/zh/latest/skills/introduction/)**：遵循 agentskills.io 约定的打包工具，支持从 marketplace 安装；完整的扩展以 Plugin 交付，见下文章节。
 - **开放生态**：[15 种数据库适配器](https://docs.datus.ai/zh/latest/adapters/db_adapters/)、10+ LLM 提供商，以及 [MCP](https://docs.datus.ai/zh/latest/integration/mcp/) 服务端与客户端。
 
 ## 快速开始
@@ -80,6 +80,10 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 | [**VS Code**](https://docs.datus.ai/zh/latest/vscode_extension/introduction/)(Datus Studio) | 连接 `datus --web` | IDE 内的目录浏览器、聊天面板、SQL 结果与 AI 图表 |
 
 > **提示：** Print 模式向 stdout 流式输出 JSON，适合脚本与 CI：`datus -p "你的问题" --datasource demo`。
+
+## Plugin
+
+一个 Plugin 用一份 `datus-plugin.yml` 清单打包完整的扩展：CLI 命令（以 `datus <plugin>` 运行，或在对话中用 `!` 前缀调用）、内置 Skill，以及附加的 prompt 上下文。Plugin 支持安装、升级、离线打包与导出，可按项目激活并选择 profile，也能在多租户托管配置下运行。开发与分发方式见[插件文档](https://docs.datus.ai/zh/latest/plugin/introduction/)。
 
 ## 架构
 
