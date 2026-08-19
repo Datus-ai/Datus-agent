@@ -423,8 +423,14 @@ def test_manifest_resolvers_reject_symlink_escapes(tmp_path: Path) -> None:
     outside.mkdir()
     (outside / "evil.sql").write_text("SELECT 999", encoding="utf-8")
     (outside / "evil.yaml").write_text("workflow: {}\n", encoding="utf-8")
-    (attempt.save_run_root / "link").symlink_to(outside, target_is_directory=True)
-    (attempt.trajectory_run_root / "link").symlink_to(outside, target_is_directory=True)
+    try:
+        # Setup-only guard: the OSError comes from symlink creation on platforms
+        # without the privilege (e.g. Windows sans Developer Mode), never from
+        # the resolvers under test.
+        (attempt.save_run_root / "link").symlink_to(outside, target_is_directory=True)
+        (attempt.trajectory_run_root / "link").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"platform cannot create symlinks: {exc}")  # audit-noqa: try_except_skip
 
     payload = json.loads(attempt.manifest_path.read_text(encoding="utf-8"))
     payload["outputs"][0]["path"] = "link/evil.sql"
