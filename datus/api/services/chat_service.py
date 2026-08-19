@@ -40,6 +40,29 @@ from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
+# Session-list pagination bounds. Overridable via the ``api`` section of
+# agent.yml (``api.default_session_page_size`` / ``api.max_session_page_size``),
+# mirroring ``api.max_prefetch_tables``. Both are finite so that the default
+# request path — clients that omit ``limit`` entirely — stays bounded.
+_DEFAULT_SESSION_PAGE_SIZE = 50
+_DEFAULT_MAX_SESSION_PAGE_SIZE = 200
+
+
+def _positive_int(raw: Any, fallback: int) -> int:
+    """Coerce a config value or caller-supplied page size to a positive int.
+
+    Both operator YAML and direct (non-HTTP) callers are untrusted here: a
+    missing key, ``null``, a non-numeric string, or a non-positive number all
+    fall back to *fallback* rather than producing an empty or reversed page.
+    ``OverflowError`` is caught alongside the usual pair because YAML ``.inf``
+    parses to float infinity, which ``int()`` refuses to convert.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+    return value if value > 0 else fallback
+
 
 class ChatService:
     """Thin service that delegates chat execution to ChatTaskManager.
@@ -100,6 +123,8 @@ class ChatService:
         self,
         user_id: Optional[str] = None,
         subagent_id: Optional[str] = None,
+        offset: int = 0,
+        limit: Optional[int] = None,
     ) -> Result[ChatSessionData]:
         """List chat sessions from disk, optionally filtered by agent.
 
@@ -107,15 +132,57 @@ class ChatService:
         returned. When set, only sessions whose id prefix encodes that agent
         are returned; the sentinel ``"chat"`` selects the default chat agent
         (including legacy prefix-less sessions).
+
+        ``offset``/``limit`` are applied *before* the per-session enrichment
+        below: only the requested page pays the per-file ``get_session_info``
+        cost (an individual sqlite open), so cost no longer scales with the
+        user's total lifetime session count. Ordering ids by file mtime here
+        (via ``sort_by_modified``, a cheap ``stat`` pass) is a proxy for the
+        final ``last_updated``-based sort applied to the enriched page below;
+        the two can disagree at page boundaries in rare cases, which is an
+        accepted tradeoff for avoiding an eager full-directory sqlite scan.
+
+        The page size is always finite. ``limit=None`` (the caller omitted it)
+        means "server default", not "unbounded" — otherwise the default request
+        path would still open every session file and re-trigger the very
+        timeouts pagination was added to prevent. An explicitly requested
+        ``limit`` is clamped down to ``api.max_session_page_size`` rather than
+        rejected, so an over-large page still returns a valid first page, and a
+        non-positive one falls back to the default; ``total_count`` reports the
+        unpaginated total for callers to page through. Both bounds come from
+        the ``api`` section of agent.yml.
+
+        Note that only the *sqlite enrichment* is page-bounded. Listing the
+        directory and stat-ing each file for the mtime sort still costs one
+        ``stat`` per session, so that pass scales with the total; it is orders
+        of magnitude cheaper than the per-file sqlite open it replaces.
         """
         try:
+            api_config = getattr(self.agent_config, "api_config", {}) or {}
+            max_page_size = _positive_int(api_config.get("max_session_page_size"), _DEFAULT_MAX_SESSION_PAGE_SIZE)
+            default_page_size = min(
+                _positive_int(api_config.get("default_session_page_size"), _DEFAULT_SESSION_PAGE_SIZE),
+                max_page_size,
+            )
+            # A non-positive ``limit`` is treated as unspecified rather than
+            # passed through: the route pins ``ge=1``, but a direct caller
+            # passing -1 would otherwise slice ``all_ids[offset:-1]`` and
+            # enrich nearly every session — the exact cost this bounds.
+            page_size = min(_positive_int(limit, default_page_size), max_page_size)
+            # Likewise the route pins ``ge=0``; clamp again for non-HTTP callers,
+            # since a negative offset would silently slice from the tail.
+            offset = max(offset, 0)
+
             session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
-            all_ids = session_mgr.list_sessions()
+            all_ids = session_mgr.list_sessions(sort_by_modified=True)
             if subagent_id is not None:
                 all_ids = [sid for sid in all_ids if session_matches_agent(sid, subagent_id)]
-            sessions = []
 
-            for sid in all_ids:
+            total_count = len(all_ids)
+            page_ids = all_ids[offset : offset + page_size]
+
+            sessions = []
+            for sid in page_ids:
                 try:
                     info = session_mgr.get_session_info(sid)
                     if not info.get("exists", False):
@@ -142,7 +209,7 @@ class ChatService:
                 success=True,
                 data=ChatSessionData(
                     sessions=sessions,
-                    total_count=len(sessions),
+                    total_count=total_count,
                 ),
             )
 

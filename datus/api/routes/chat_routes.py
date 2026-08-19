@@ -336,8 +336,14 @@ async def compact_chat_session(
     summary="List Chat Sessions",
     description=(
         "List chat sessions. Pass subagent_id to filter by agent "
-        "(use 'chat' for the default chat agent, or any builtin/custom subagent id). "
-        "Omit to return every session for the user."
+        "(use 'chat' for the default chat agent, or any built-in/custom subagent id). "
+        "Omit to return sessions for every agent. Use offset/limit to paginate — "
+        "only the requested page is opened as sqlite, so the dominant per-session "
+        "cost doesn't scale with the user's total session count (the mtime sort "
+        "still stats every session file, far more cheaply). Omitting limit yields "
+        "the server default page size (api.default_session_page_size); larger "
+        "requested limits are clamped to api.max_session_page_size. total_count "
+        "reports the unpaginated total."
     ),
 )
 async def list_sessions(
@@ -347,10 +353,22 @@ async def list_sessions(
         default=None,
         description="Filter by subagent id; 'chat' selects the default chat agent",
     ),
+    offset: int = Query(default=0, ge=0, description="Number of sessions to skip"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        description="Maximum number of sessions to return; omit for the server default page size",
+    ),
 ) -> Result[ChatSessionData]:
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(svc.chat.list_sessions, user_id=ctx.user_id, subagent_id=subagent_id),
+            asyncio.to_thread(
+                svc.chat.list_sessions,
+                user_id=ctx.user_id,
+                subagent_id=subagent_id,
+                offset=offset,
+                limit=limit,
+            ),
             timeout=_FUSE_IO_TIMEOUT,
         )
     except TimeoutError:
