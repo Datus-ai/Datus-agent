@@ -25,7 +25,7 @@
 
 **Datus** is the open-source data engineering agent for the modern data stack: one agent that connects your warehouse, catalog, semantic layer, and BI, grounded in an evolvable context engine your team owns.
 
-Datus handles SQL authoring and validation, semantic model and metric construction, and the generation of pipelines, reports, and dashboards. Every run and every correction settles into context, which steadily raises the accuracy of its output.
+Datus handles SQL authoring and validation, semantic model and metric construction, and the generation of pipelines, reports, and dashboards. Every run and every correction settles into context, which steadily raises the accuracy of its output. The whole stack stays open and flexible: databases, BI, schedulers, LLMs, and your team's own tools all connect through standard interfaces.
 
 ![How Datus works](docs/assets/how_it_works.svg)
 
@@ -44,11 +44,12 @@ Datus handles SQL authoring and validation, semantic model and metric constructi
 - **Data engineering automation**: [built-in subagents](https://docs.datus.ai/latest/subagent/builtin_subagents/) handle cross-database migration, ETL job generation, and wide-table builds, with [Airflow](https://docs.datus.ai/latest/adapters/scheduler_adapters/) orchestration and Superset/Grafana dashboard read-write.
 - **Report and dashboard generation**: produce self-contained [HTML reports and interactive dashboards](https://docs.datus.ai/latest/subagent/gen_visual_report/) straight from chat, previewed locally with no SaaS backend.
 
-### Platform and governance
+### Openness and governance
 
-- **Enterprise governance**: tiered permission profiles, statement-level [SQL authorization](https://docs.datus.ai/latest/configuration/sql_policy/) with AI pre-review, bash confined to an OS-level sandbox, and [traces](https://docs.datus.ai/latest/develop/observability/) exportable to any OTLP platform.
-- **[Skills](https://docs.datus.ai/latest/skills/introduction/)**: packaged tools following the agentskills.io convention, installable from a marketplace; full extensions ship as plugins, described below.
 - **Open ecosystem**: adapters for [15 databases](https://docs.datus.ai/latest/adapters/db_adapters/), 10+ LLM providers, and an [MCP](https://docs.datus.ai/latest/integration/mcp/) server and client.
+- **External integrations**: the [plugin](https://docs.datus.ai/latest/plugin/introduction/) framework connects third-party platforms and in-house tools to the agent; one `datus-plugin.yml` manifest declares CLI commands, skills, and prompt context, with per-project activation.
+- **[Skills](https://docs.datus.ai/latest/skills/introduction/)**: packaged tools following the agentskills.io convention, installable from a marketplace.
+- **Enterprise governance**: tiered permission profiles, statement-level [SQL authorization](https://docs.datus.ai/latest/configuration/sql_policy/) with AI pre-review, bash confined to an OS-level sandbox, and [traces](https://docs.datus.ai/latest/develop/observability/) exportable to any OTLP platform.
 
 ## Quickstart
 
@@ -81,10 +82,6 @@ The examples below use a datasource named `demo`; create one first with `/dataso
 
 > **Tip:** Print mode streams JSON to stdout for scripting and CI: `datus -p "your question" --datasource demo`.
 
-## Plugins
-
-A plugin packages a complete extension in one `datus-plugin.yml` manifest: CLI commands (run as `datus <plugin>`, or with the `!` prefix inside chat), bundled skills, and additional prompt context. Plugins support installation, upgrades, offline packing, and export; they activate per project with selectable profiles, and run under managed multi-tenant configuration. The [plugin docs](https://docs.datus.ai/latest/plugin/introduction/) cover authoring and distribution.
-
 ## Architecture
 
 ![Datus Architecture](docs/assets/datus_architecture.svg)
@@ -98,6 +95,10 @@ The architecture has four layers, matching the diagram above:
 
 ## Development
 
+### Developing Datus
+
+Start here to work on Datus itself: install dependencies with uv, then run the PR test harness and format checks before submitting.
+
 ```bash
 uv sync                                                                    # Install dependencies
 uv run python ci/run-pr-tests.py upstream/main                             # PR CI harness (no external deps)
@@ -105,6 +106,10 @@ uv run ruff format datus/ tests/ && uv run ruff check --fix datus/ tests/  # Lin
 ```
 
 See [CLAUDE.md](CLAUDE.md) for development conventions, architecture patterns, and testing rules.
+
+### Developing a plugin
+
+Extending Datus does not require touching its core: declare CLI commands, skills, and prompt context in a `datus-plugin.yml` manifest, then pack it for distribution and per-project activation. The [plugin development guide](https://docs.datus.ai/latest/plugin/development/) walks through the full flow.
 
 ## License
 

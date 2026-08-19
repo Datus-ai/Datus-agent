@@ -25,7 +25,7 @@
 
 **Datus** 是面向现代数据栈的开源数据工程 Agent：用一个 Agent 连接数据仓库、数据目录、语义层和 BI，底座是一套沉淀在团队自己手里的可演进上下文引擎(evolvable context engine)。
 
-Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数据管道、报告和看板的生成；每一次执行与修正都会沉淀为上下文，持续提升后续输出的准确性。
+Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数据管道、报告和看板的生成；每一次执行与修正都会沉淀为上下文，持续提升后续输出的准确性。整个体系在生态上保持开放与灵活：数据库、BI、调度、LLM 乃至团队自己的工具，都能以标准方式接入。
 
 ![Datus 工作方式](docs/assets/how_it_works.svg)
 
@@ -44,11 +44,12 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 - **数据工程自动化**：[内置 subagent](https://docs.datus.ai/zh/latest/subagent/builtin_subagents/) 承担跨库迁移、ETL 作业生成和宽表构建，可编排 [Airflow](https://docs.datus.ai/zh/latest/adapters/scheduler_adapters/) 调度，读写 Superset 和 Grafana 看板。
 - **报告与看板生成**：在对话里直接生成自包含的 [HTML 报告和可交互看板](https://docs.datus.ai/zh/latest/subagent/gen_visual_report/)，本地即可预览，不依赖任何 SaaS 后端。
 
-### 平台与治理
+### 开放与治理
 
-- **企业级治理**：权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，[trace](https://docs.datus.ai/zh/latest/develop/observability/) 可导出到任意 OTLP 平台。
-- **[Skill](https://docs.datus.ai/zh/latest/skills/introduction/)**：遵循 agentskills.io 约定的打包工具，支持从 marketplace 安装；完整的扩展以 Plugin 交付，见下文章节。
 - **开放生态**：[15 种数据库适配器](https://docs.datus.ai/zh/latest/adapters/db_adapters/)、10+ LLM 提供商，以及 [MCP](https://docs.datus.ai/zh/latest/integration/mcp/) 服务端与客户端。
+- **外部生态对接**：[Plugin](https://docs.datus.ai/zh/latest/plugin/introduction/) 框架把第三方平台和公司内部工具接入 Agent，一份 `datus-plugin.yml` 清单即可声明 CLI 命令、Skill 和 prompt 上下文，按项目启用。
+- **[Skill](https://docs.datus.ai/zh/latest/skills/introduction/)**：遵循 agentskills.io 约定的打包工具，支持从 marketplace 安装。
+- **企业级治理**：权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，[trace](https://docs.datus.ai/zh/latest/develop/observability/) 可导出到任意 OTLP 平台。
 
 ## 快速开始
 
@@ -81,10 +82,6 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
 > **提示：** Print 模式向 stdout 流式输出 JSON，适合脚本与 CI：`datus -p "你的问题" --datasource demo`。
 
-## Plugin
-
-一个 Plugin 用一份 `datus-plugin.yml` 清单打包完整的扩展：CLI 命令（以 `datus <plugin>` 运行，或在对话中用 `!` 前缀调用）、内置 Skill，以及附加的 prompt 上下文。Plugin 支持安装、升级、离线打包与导出，可按项目激活并选择 profile，也能在多租户托管配置下运行。开发与分发方式见[插件文档](https://docs.datus.ai/zh/latest/plugin/introduction/)。
-
 ## 架构
 
 ![Datus 架构](docs/assets/datus_architecture.svg)
@@ -98,6 +95,10 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
 ## 开发
 
+### 开发 Datus
+
+参与本体开发从这里开始：用 uv 安装依赖，提交前跑一遍 PR 测试与格式检查。
+
 ```bash
 uv sync                                                                    # 安装依赖
 uv run python ci/run-pr-tests.py upstream/main                             # PR CI 测试(无外部依赖)
@@ -105,6 +106,10 @@ uv run ruff format datus/ tests/ && uv run ruff check --fix datus/ tests/  # 格
 ```
 
 开发规范、架构模式与测试规则见 [CLAUDE.md](CLAUDE.md)。
+
+### 开发 Plugin
+
+为 Datus 编写扩展不需要改动本体代码：在 `datus-plugin.yml` 清单里声明 CLI 命令、Skill 和 prompt 上下文，打包后即可分发安装、按项目启用。完整流程见[插件开发指南](https://docs.datus.ai/zh/latest/plugin/development/)。
 
 ## 许可证
 
