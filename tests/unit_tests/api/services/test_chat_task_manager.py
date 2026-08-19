@@ -1183,6 +1183,32 @@ class TestStartChat:
         assert real_agent_config.config_mutable is True
         assert real_agent_config.compile_visual_html is True
 
+    async def test_policy_context_reaches_custom_subagent_on_request_clone(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["config"] = agent_config
+            captured["sub_agent_id"] = kwargs.get("sub_agent_id")
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        context = {"row_filter": {"access_mode": "scoped", "store_ids": [1, 2]}}
+        request = StreamChatInput(message="hello", session_id="policy-context")
+        task = await manager.start_chat(
+            real_agent_config,
+            request,
+            sub_agent_id="custom-sales-agent",
+            policy_context=context,
+        )
+        await task.asyncio_task
+
+        assert captured["sub_agent_id"] == "custom-sales-agent"
+        assert captured["config"] is not real_agent_config
+        assert captured["config"].policy_context == context
+        assert real_agent_config.policy_context == {}
+
     async def test_start_chat_duplicate_session_raises(self, real_agent_config, mock_llm_create):
         """start_chat raises ValueError for duplicate session_id."""
         from datus.api.models.cli_models import StreamChatInput

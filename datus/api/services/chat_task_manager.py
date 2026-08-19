@@ -354,7 +354,7 @@ class ChatTaskManager:
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        principal: Optional[Dict[str, Any]] = None,
+        policy_context: Optional[Dict[str, Any]] = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
@@ -362,7 +362,7 @@ class ChatTaskManager:
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
         agent_config = copy.deepcopy(agent_config)
-        agent_config.principal = dict(principal or {})
+        agent_config.policy_context = dict(policy_context or {})
         # API surface has no interactive broker to confirm EXTERNAL file
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().

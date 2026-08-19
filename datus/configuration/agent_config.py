@@ -801,6 +801,14 @@ class AgentConfig:
         """
         Initialize the global config from yaml file
         """
+        if "sql_policy" in kwargs:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "agent.sql_policy has been removed; configure policies under agent.plugins.sql-policy instead"
+                ),
+            )
+
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
         # project_name must be computed before _set_path_manager so shard-aware
@@ -1146,13 +1154,10 @@ class AgentConfig:
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
 
-        # SQL policies are enforced at the DB tool boundary. The config
-        # is static, while the request-scoped principal is attached later by
-        # API/gateway callers to the per-request AgentConfig copy.
-        from datus.tools.sql_policy import SqlPolicyConfig
-
-        self.sql_policy_config = SqlPolicyConfig.from_dict(kwargs.get("sql_policy", {}))
-        self.principal: Dict[str, Any] = {}
+        # Runtime policy data is attached by API/gateway callers to a
+        # per-request AgentConfig copy. Identity and authorization stay outside
+        # the agent; active policy plugins interpret this execution context.
+        self.policy_context: Dict[str, Any] = {}
 
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))

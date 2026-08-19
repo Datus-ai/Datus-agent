@@ -33,7 +33,7 @@ from datus.api.routes.chat_routes import (
     submit_user_interaction,
 )
 from datus.tools.proxy.tool_result_channel import ToolResultChannel
-from datus.tools.sql_policy import SqlPolicyConfig
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 async def _timeout_wait_for(awaitable, timeout):
@@ -259,25 +259,21 @@ class TestStreamChat404Gate:
         assert response.media_type == "text/event-stream"
 
 
-class TestStreamChatSqlPolicyPreCheck:
-    """SQL policy enabled chat requests must carry required request principal fields."""
+class TestStreamChatPolicyContextPreCheck:
+    """Active policy runtimes validate context before agent execution."""
 
     @pytest.mark.asyncio
-    async def test_enabled_sql_policy_without_principal_returns_sse_error(self):
+    async def test_rejected_policy_context_returns_sse_error(self):
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"condition": {"value_from": "principal.market_code"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
         ctx = MagicMock(user_id=None)
-        ctx.principal = {}
+        ctx.policy_context = {"row_filter": {"access_mode": "denied"}}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=False, reason="Policy context denies all data reads")
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -288,80 +284,98 @@ class TestStreamChatSqlPolicyPreCheck:
         payload = json.loads(
             next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
         )
-        assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
-        assert "principal.market_code" in payload["error"]
-        assert "provider that populates principal fields" in payload["error"]
-        assert "agent.sql_policy" in payload["error"]
+        assert payload["error_type"] == "POLICY_CONTEXT_REJECTED"
+        assert "denies all data reads" in payload["error"]
         svc.chat.stream_chat.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enabled_sql_policy_with_required_principal_allows_service_call(self):
+    async def test_policy_runtime_failure_returns_generic_sse_error(self):
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
+        ctx = MagicMock(user_id=None, policy_context={})
+        request = StreamChatInput(message="hi")
+
+        runtime = MagicMock()
+        runtime.validate_context.side_effect = DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message="internal plugin path and policy details",
+        )
+        with (
+            patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime),
+            patch("datus.api.routes.chat_routes.logger.error") as log_error,
+        ):
+            response = await stream_chat(request, svc, ctx, MagicMock())
+
+        chunks = [chunk.decode() if isinstance(chunk, bytes) else chunk async for chunk in response.body_iterator]
+        payload = json.loads(
+            next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
+        )
+        assert payload["error_type"] == "POLICY_RUNTIME_ERROR"
+        assert payload["error"] == "Policy validation failed."
+        assert "internal plugin" not in chunks[0]
+        log_error.assert_called_once_with(
+            "Policy runtime validation failed: %s",
+            ANY,
+            exc_info=True,
+        )
+        svc.chat.stream_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allowed_policy_context_reaches_service(self):
         async def empty_stream(*_args, **_kwargs):
             if False:
                 yield
 
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"condition": {"value_from": "principal.market_code"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(return_value=empty_stream())
         ctx = MagicMock(user_id=None)
-        ctx.principal = {"market_code": "MKT300"}
+        ctx.policy_context = {"row_filter": {"access_mode": "scoped", "market_codes": ["MKT300"]}}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=True)
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
         async for _ in response.body_iterator:
             pass
 
         svc.chat.stream_chat.assert_called_once()
-        assert svc.chat.stream_chat.call_args.kwargs["principal"] == {"market_code": "MKT300"}
+        assert svc.chat.stream_chat.call_args.kwargs["policy_context"] == ctx.policy_context
 
     @pytest.mark.asyncio
-    async def test_enabled_sql_policy_without_principal_paths_allows_service_call(self):
+    async def test_no_active_policy_allows_empty_context(self):
         async def empty_stream(*_args, **_kwargs):
             if False:
                 yield
 
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"name": "static_policy", "condition": {"value_from": "literal.MKT300"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(return_value=empty_stream())
         ctx = MagicMock(user_id=None)
-        ctx.principal = {}
+        ctx.policy_context = {}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=True)
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
         async for _ in response.body_iterator:
             pass
 
         svc.chat.stream_chat.assert_called_once()
-        assert svc.chat.stream_chat.call_args.kwargs["principal"] == {}
+        assert svc.chat.stream_chat.call_args.kwargs["policy_context"] == {}
 
     @pytest.mark.asyncio
-    async def test_user_id_only_does_not_satisfy_required_business_principal(self):
+    async def test_user_id_is_not_merged_into_policy_context(self):
         svc = _mock_svc_with_nodes()
-        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-            {
-                "enabled": True,
-                "provider": "x:Y",
-                "policies": [{"condition": {"value_from": "principal.market_code"}}],
-            }
-        )
         svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
         ctx = MagicMock(user_id="alice")
-        ctx.principal = {}
+        ctx.policy_context = {}
         request = StreamChatInput(message="hi")
 
-        response = await stream_chat(request, svc, ctx, MagicMock())
+        runtime = MagicMock()
+        runtime.validate_context.return_value = MagicMock(allowed=False, reason="missing policy context field")
+        with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+            response = await stream_chat(request, svc, ctx, MagicMock())
 
         chunks = []
         async for chunk in response.body_iterator:
@@ -370,8 +384,9 @@ class TestStreamChatSqlPolicyPreCheck:
         payload = json.loads(
             next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
         )
-        assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
-        assert "principal.market_code" in payload["error"]
+        assert payload["error_type"] == "POLICY_CONTEXT_REJECTED"
+        assert "missing policy context field" in payload["error"]
+        assert runtime.validate_context.call_args.args[0] == {}
         svc.chat.stream_chat.assert_not_called()
 
 

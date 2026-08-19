@@ -6,7 +6,7 @@
 
 A *plugin* is an installable package that extends datus with a ``datus
 <plugin> ...`` CLI subcommand plus optional bundled skills, a system-prompt
-section, bash-permission rules, tool transformers and a profile config schema
+section, bash-permission rules, tool transformers, a policy runtime and a profile config schema
 — all declared in a single ``datus-plugin.yml`` shipped **inside** the
 importable package. A plugin package never imports ``datus.*`` and ships no
 plugin class: the only Python it provides are plain functions referenced from
@@ -26,7 +26,7 @@ datus locates the package directory with ``importlib.util.find_spec`` (which
 does **not** execute ``__init__.py``) and reads ``datus-plugin.yml`` from it.
 Collecting skills, permissions, prompt sections and config schemas therefore
 never runs plugin code; only the ``cli`` entry (on ``datus <name> ...``
-dispatch) and declared ``tool_transformers`` are imported, lazily. The
+dispatch) and declared ``tool_transformers`` / ``policy_runtime`` are imported lazily. The
 entry-point name is the plugin name: it becomes the ``datus <name>``
 subcommand and the ``agent.plugins.<name>`` config key. It must match
 ``^[A-Za-z0-9][A-Za-z0-9._-]*$`` and must not be a reserved subcommand
@@ -61,9 +61,17 @@ Only ``manifest_version`` is required — every other key is optional::
     # return the possibly-modified argument dict to continue, or raise to
     # deny the call — the tool then never runs and the model receives the
     # exception message as a normal tool failure (fail closed). ``context``
-    # is a plain dict with ``node_name``, ``principal``, ``project_root``
+    # is a plain dict with ``node_name``, ``policy_context``, ``project_root``
     # and ``agent_config``. Transformers only cover LLM-driven tool calls;
     # direct Python invocations bypass them.
+
+    policy_runtime: datus_plugin_hello.runtime:create_runtime
+    # Optional factory called as ``create_runtime(profile: dict)`` for the
+    # active plugin profile. The returned object may implement
+    # ``validate_context(policy_context)``, ``before_sql_read(...)`` and
+    # ``after_read_result(...)``. These hooks protect direct DB execution paths
+    # as well as LLM tools. Invalid factories and malformed hook decisions fail
+    # closed instead of silently disabling configured data protection.
 
     permissions:
       normal:
@@ -214,6 +222,7 @@ _MANIFEST_KEYS = frozenset(
         "description",
         "cli",
         "tool_transformers",
+        "policy_runtime",
         "permissions",
         "system_prompt",
         "skills",
@@ -269,6 +278,7 @@ class PluginManifest:
     description: Optional[str] = None
     cli: Optional[str] = None
     tool_transformers: Dict[str, List[str]] = field(default_factory=dict)
+    policy_runtime: Optional[str] = None
     permissions: Dict[str, Any] = field(default_factory=dict)
     system_prompt: Optional[str] = None
     skills: Optional[str] = None
@@ -314,6 +324,30 @@ def _parse_cli(data: Dict[str, Any], name: str) -> Optional[str]:
             value,
         )
         return None
+    return value
+
+
+def _parse_policy_runtime(data: Dict[str, Any], name: str) -> Optional[str]:
+    """Validate the ``policy_runtime`` dotted factory ref."""
+    declared = data.get("policy_runtime")
+    if declared is None:
+        return None
+    if not isinstance(declared, str) or not declared.strip():
+        logger.warning(
+            "Plugin %r manifest `policy_runtime` must be a non-empty dotted code ref, got %r; activation will fail.",
+            name,
+            declared,
+        )
+        return "<invalid>"
+    value = declared.strip()
+    if parse_code_ref(value) is None:
+        logger.warning(
+            "Plugin %r manifest `policy_runtime` must be a dotted code ref like "
+            "'pkg.runtime:create_runtime', got %r; activation will fail.",
+            name,
+            value,
+        )
+        return value
     return value
 
 
@@ -532,6 +566,7 @@ def parse_manifest(data: Any, name: str, package_dir: Path) -> Optional[PluginMa
         description=_parse_str(data, "description", name),
         cli=_parse_cli(data, name),
         tool_transformers=_parse_tool_transformers(data, name),
+        policy_runtime=_parse_policy_runtime(data, name),
         permissions=_parse_permissions(data, name),
         system_prompt=_parse_rel_path(data, "system_prompt", name),
         skills=_parse_rel_path(data, "skills", name),

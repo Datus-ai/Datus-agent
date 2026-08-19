@@ -395,34 +395,8 @@ def run_bash_mode_command(cli: "DatusCLI", command: str) -> BashModeRun:
 # ── SQL permission / policy gate ──────────────────────────────────────────
 
 
-def _enabled_sql_policy(agent_config):
-    """Return the enabled ``SqlPolicyConfig`` on *agent_config*, else ``None``."""
-    if agent_config is None:
-        return None
-    policy = getattr(agent_config, "sql_policy_config", None)
-    try:
-        from datus.tools.sql_policy import SqlPolicyConfig
-    except Exception:  # pragma: no cover - defensive (optional deps)
-        return None
-    if isinstance(policy, SqlPolicyConfig) and getattr(policy, "enabled", False):
-        return policy
-    return None
-
-
-def _enforce_sql_policy_if_read(cli: "DatusCLI", sql: str) -> str:
-    """Apply the SQL data-governance policy to a read statement (rewrite/deny),
-    matching ``DBFuncTool``'s read path. No-op for writes/DDL (only reads are
-    governed).
-
-    Enforcement is resolved independently of the chat node so governance is not
-    silently skipped before the first chat turn: the live node's tool is reused
-    when present (so its request-scoped principal applies, identical to an agent
-    ``execute_sql`` call); otherwise the policy is applied directly off
-    ``agent_config`` (the enforcement only needs the policy config + principal,
-    not connector / RAG state — avoiding a heavyweight ``DBFuncTool`` build).
-
-    Raises ``DatusException`` when the policy denies the query (same as the tool).
-    """
+def _enforce_policy_if_read(cli: "DatusCLI", sql: str) -> str:
+    """Apply active policy runtimes to a manual read statement."""
     from datus.utils.constants import SQLType
     from datus.utils.sql_utils import parse_sql_type
 
@@ -434,37 +408,49 @@ def _enforce_sql_policy_if_read(cli: "DatusCLI", sql: str) -> str:
     agent_config = getattr(cli, "agent_config", None)
     datasource = getattr(agent_config, "current_datasource", "") or ""
 
-    node = getattr(getattr(cli, "chat_commands", None), "current_node", None)
-    db_func_tool = getattr(node, "db_func_tool", None) if node is not None else None
-    if db_func_tool is not None:
-        return db_func_tool._enforce_sql_policy(sql, datasource=datasource, dialect=dialect)
+    from datus.tools.policy_runtime import PolicyRuntime
 
-    policy = _enabled_sql_policy(agent_config)
-    if policy is None:
-        return sql
-    from datus.tools.sql_policy import load_sql_policy_enforcer
-
-    principal_source = getattr(agent_config, "principal", None)
-    principal = dict(principal_source) if isinstance(principal_source, dict) else {}
-    enforced = load_sql_policy_enforcer(policy).enforce_read(
-        sql, datasource=datasource, dialect=dialect, principal=principal
+    context_source = getattr(agent_config, "policy_context", None)
+    policy_context = dict(context_source) if isinstance(context_source, dict) else {}
+    enforced = PolicyRuntime(agent_config).before_sql_read(
+        sql,
+        datasource=datasource,
+        dialect=dialect,
+        policy_context=policy_context,
     )
     if not enforced.allowed:
         raise DatusException(
             ErrorCode.TOOL_INVALID_INPUT,
-            message=enforced.reason or "SQL policy denied the query",
+            message=enforced.reason or "Policy denied the query",
         )
-    return sql if enforced.sql is None else enforced.sql
+    rewritten_sql = sql if enforced.sql is None else enforced.sql
+    if rewritten_sql != sql:
+        from datus.utils.sql_utils import (
+            READ_ONLY_MULTI_STATEMENT,
+            READ_ONLY_NON_READ,
+            READ_ONLY_WRITABLE_PRAGMA,
+            validate_read_only_sql,
+        )
+
+        violation, rewritten_type = validate_read_only_sql(rewritten_sql, dialect)
+        messages = {
+            READ_ONLY_MULTI_STATEMENT: "Policy runtime produced multi-statement SQL",
+            READ_ONLY_NON_READ: f"Policy runtime produced non-read SQL: {rewritten_type.value}",
+            READ_ONLY_WRITABLE_PRAGMA: "Policy runtime produced a writable PRAGMA statement",
+        }
+        if violation is not None:
+            raise DatusException(ErrorCode.TOOL_INVALID_INPUT, message=messages[violation])
+    return rewritten_sql
 
 
 async def _sql_gate_stream(
     result: SqlGateResult, hooks: "PermissionHooks", cli: "DatusCLI"
 ) -> AsyncGenerator[ActionHistory, None]:
-    """Run the SQL permission gate + plugin transformers + sql_policy.
+    """Run the SQL permission gate, transformers and policy runtime.
 
     Fires the same enforcement an LLM ``execute_sql`` call gets: ``on_tool_start``
     → ``_handle_sql_permission`` (read auto-allow / write·DDL ASK), then plugin
-    transformers, then ``_enforce_sql_policy``. Sets ``result.approved`` and the
+    transformers, then ``PolicyRuntime.before_sql_read``. Sets ``result.approved`` and the
     effective ``result.sql``; yields nothing (execution + rendering happen in
     the REPL). Written as an async generator so ``ActionBus.merge`` can drive it.
     """
@@ -474,7 +460,7 @@ async def _sql_gate_stream(
         await hooks.on_tool_start(_SqlContextShim(result.sql), None, _SqlToolStub())
         args = await _apply_plugin_transformers(cli, "execute_sql", "db_tools", {"sql": result.sql})
         sql = args.get("sql", result.sql)
-        sql = await asyncio.to_thread(_enforce_sql_policy_if_read, cli, sql)
+        sql = await asyncio.to_thread(_enforce_policy_if_read, cli, sql)
         result.sql = sql
         result.approved = True
     except PermissionDeniedException as exc:

@@ -403,6 +403,7 @@ class DashboardService:
         dashboard_slug: str,
         query_slug: str,
         params: Dict[str, Any],
+        policy_context: Optional[Dict[str, Any]] = None,
         published_version: Optional[int] = None,
         published_template_loader: Optional[PublishedTemplateLoader] = None,
     ) -> Result[SqlQueryResultEnvelope]:
@@ -518,6 +519,7 @@ class DashboardService:
                 connector,
                 datasource=meta.datasource or "",
                 result_format="list",
+                policy_context=policy_context,
             )
         except Exception as exc:
             logger.exception("Query execution crashed for %s/%s: %s", dashboard_slug, query_slug, exc)

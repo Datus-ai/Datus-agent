@@ -22,10 +22,10 @@ default unscoped session; when present, the user id is used to isolate chat sess
 X-Datus-User-Id: alice
 ```
 
-SQL policies use a separate request principal. When `agent.sql_policy.enabled` is `true`, send business
-scope fields in `X-Datus-Principal` as a JSON object, for example `{"market_code":"MKT300"}`. `X-Datus-User-Id`
-does not populate SQL policy principal fields. See [SQL Policy](../configuration/sql_policy.md).
-Do not include `user_id` in `X-Datus-Principal`; that field is reserved for `X-Datus-User-Id` and will be rejected.
+Active policy plugins use a separate execution context. Send it in `X-Datus-Policy-Context` as a JSON object,
+for example `{"row_filter":{"access_mode":"scoped","market_codes":["MKT300"]}}`. Authentication and
+authorization happen upstream; Agent forwards this object without treating it as identity. `X-Datus-User-Id`
+remains session identity and is not merged into policy context. See [SQL Policy](../configuration/sql_policy.md).
 
 Datasource isolation is controlled separately by the `--datasource` CLI flag (or `DATUS_DATASOURCE` env var) and selects
 which datasource from `agent.yml` is used to load databases and knowledge.

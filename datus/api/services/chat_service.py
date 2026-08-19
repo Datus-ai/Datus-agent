@@ -86,7 +86,7 @@ class ChatService:
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        principal: Optional[Dict[str, Any]] = None,
+        policy_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Start a background chat task and yield SSE events."""
         task_manager = self._task_manager
@@ -96,7 +96,7 @@ class ChatService:
                 request,
                 sub_agent_id=sub_agent_id,
                 user_id=user_id,
-                principal=principal,
+                policy_context=policy_context,
             )
         except (ValueError, DatusException) as e:
             error_code = e.code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name
