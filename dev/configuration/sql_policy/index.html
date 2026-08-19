@@ -3066,10 +3066,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#framework-boundary" class="md-nav__link">
+  <a href="#configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Framework Boundary
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Context
       
     </span>
   </a>
@@ -3081,72 +3092,6 @@
     <span class="md-ellipsis">
       
         Runtime Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration Contract
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider-interface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider Interface
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#request-principal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Request Principal
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider Contract
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#error-behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Error Behavior
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#limits" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Limits
       
     </span>
   </a>
@@ -4288,10 +4233,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#framework-boundary" class="md-nav__link">
+  <a href="#configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Framework Boundary
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Context
       
     </span>
   </a>
@@ -4303,72 +4259,6 @@
     <span class="md-ellipsis">
       
         Runtime Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration Contract
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider-interface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider Interface
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#request-principal" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Request Principal
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#provider-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Provider Contract
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#error-behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Error Behavior
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#limits" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Limits
       
     </span>
   </a>
@@ -4401,196 +4291,80 @@
 
 
 <h1 id="sql-policy">SQL Policy<a class="headerlink" href="#sql-policy" title="Permanent link">&para;</a></h1>
-<p>SQL policy is an extension framework for enforcing request-scoped SQL read controls. It is useful when an API request should only access rows or tables within the caller's business scope, such as a tenant, market, region, or store list.</p>
-<p>The open-source agent provides the framework boundary and runtime hook points. It does not ship a concrete policy engine. Deployments that need enforcement should provide their own SQL policy package.</p>
-<h2 id="framework-boundary">Framework Boundary<a class="headerlink" href="#framework-boundary" title="Permanent link">&para;</a></h2>
-<p>The open-source agent owns these responsibilities:</p>
-<ul>
-<li>Loading <code>agent.sql_policy</code> from agent configuration.</li>
-<li>Loading the configured provider class from <code>agent.sql_policy.provider</code>.</li>
-<li>Passing the full raw <code>agent.sql_policy</code> mapping to the provider.</li>
-<li>Parsing request principal fields into <code>AppContext.principal</code>.</li>
-<li>Running a generic API pre-check for required <code>principal.*</code> values.</li>
-<li>Calling the provider before read queries reach the database.</li>
-<li>Revalidating SQL after a provider rewrite.</li>
-<li>Returning policy denial reasons to the tool/model layer.</li>
-</ul>
-<p>The provider owns these responsibilities:</p>
-<ul>
-<li>Defining the policy schema under <code>agent.sql_policy</code>.</li>
-<li>Validating provider-specific policy fields.</li>
-<li>Matching policies to datasources, tables, columns, or other business concepts.</li>
-<li>Resolving values from the request principal.</li>
-<li>Rewriting read SQL or denying the query.</li>
-<li>Returning clear denial reasons that tell the model or caller what is missing.</li>
-</ul>
-<h2 id="runtime-flow">Runtime Flow<a class="headerlink" href="#runtime-flow" title="Permanent link">&para;</a></h2>
-<p>When SQL policy is enabled, request handling follows this flow:</p>
-<ol>
-<li>The API auth provider creates an <code>AppContext</code>.</li>
-<li>Request-scoped attributes are stored on <code>AppContext.principal</code>.</li>
-<li>Agent configuration is loaded, including <code>agent.sql_policy</code>.</li>
-<li>If the raw policy config references <code>value_from: principal.&lt;path&gt;</code>, the chat API checks that each referenced principal path is present before the agent starts.</li>
-<li>The agent runs normally until a database read tool is called.</li>
-<li><code>DBFuncTool.read_query</code> validates that the original SQL is read-only.</li>
-<li>The configured provider is loaded and called through <code>enforce_read(...)</code>.</li>
-<li>If the provider denies the query, the tool returns the provider's reason and does not execute SQL.</li>
-<li>If the provider returns rewritten SQL, the agent revalidates that rewritten SQL is still read-only.</li>
-<li>The validated SQL is executed against the target datasource.</li>
-</ol>
-<p>The pre-check in step 4 is intentionally generic. It scans the raw policy mapping for <code>value_from</code> strings that start with <code>principal.</code>. It does not assume a specific policy type, column name, or business field.</p>
-<h2 id="configuration-contract">Configuration Contract<a class="headerlink" href="#configuration-contract" title="Permanent link">&para;</a></h2>
-<p>The open-source agent only interprets these fields:</p>
+<p>Datus Agent does not authenticate users or decide their permissions. A trusted upstream service authenticates and authorizes the request, then sends execution-only inputs as <code>policy_context</code>. Active policy plugins interpret that context and protect reads.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>SQL policy is configured only as a plugin profile; the former <code>agent.sql_policy</code> provider configuration is not supported.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">sql-policy</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">default</span><span class="p">:</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">policies</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_scope_sql</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">            </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">            </span><span class="nt">applies_to</span><span class="p">:</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">              </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"warehouse"</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">              </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"orders"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"store_sales"</span><span class="p p-Indicator">]</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">            </span><span class="nt">condition</span><span class="p">:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">              </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">store_id</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">              </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">in</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">              </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">policy_context.row_filter.store_ids</span>
 </span></code></pre></div>
-<p><code>enabled</code> turns on the framework. <code>provider</code> must be a Python class path in <code>module:Class</code> format.</p>
-<p>All other fields under <code>agent.sql_policy</code> are passed through unchanged as <code>SqlPolicyConfig.raw</code>. Your provider can define any schema it needs:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">policies</span><span class="p">:</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_scope</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">applies_to</span><span class="p">:</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">          </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"warehouse"</span><span class="p p-Indicator">]</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">          </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"orders"</span><span class="p p-Indicator">]</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">        </span><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">          </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">          </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">          </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.tenant.id</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">enforcement</span><span class="p">:</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">          </span><span class="nt">on_read</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filter</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">          </span><span class="nt">on_unhandled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
+<p>Policy types and their fields belong to the policy plugin. Agent only loads the plugin runtime declared by its <code>datus-plugin.yml</code> manifest.</p>
+<h2 id="request-context">Request Context<a class="headerlink" href="#request-context" title="Permanent link">&para;</a></h2>
+<p>The default API provider reads a JSON object from <code>X-Datus-Policy-Context</code>:</p>
+<div class="language-http highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}</span>
 </span></code></pre></div>
-<p>In this example, the open-source agent uses <code>enabled</code>, <code>provider</code>, and the <code>principal.tenant.id</code> reference for pre-checking. The provider decides what <code>policies</code>, <code>type</code>, <code>applies_to</code>, <code>condition</code>, and <code>enforcement</code> mean.</p>
-<h2 id="provider-interface">Provider Interface<a class="headerlink" href="#provider-interface" title="Permanent link">&para;</a></h2>
-<p>A SQL policy provider is a normal Python package installed in the same environment as <code>datus-api</code>. The provider class must accept a <code>SqlPolicyConfig</code> argument and implement <code>enforce_read(...)</code>.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Optional</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus.tools.sql_policy</span><span class="w"> </span><span class="kn">import</span> <span class="n">SqlPolicyConfig</span><span class="p">,</span> <span class="n">EnforcementResult</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">SqlPolicyProvider</span><span class="p">:</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">SqlPolicyConfig</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">SqlPolicyConfig</span><span class="p">()</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">policies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"policies"</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[]</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_validate_policy_config</span><span class="p">()</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">enforce_read</span><span class="p">(</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        <span class="n">sql</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>        <span class="n">datasource</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="n">dialect</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="n">principal</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EnforcementResult</span><span class="p">:</span>
-</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>        <span class="n">principal</span> <span class="o">=</span> <span class="n">principal</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>
-</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>        <span class="c1"># Implement policy selection and enforcement here:</span>
-</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>        <span class="c1"># - parse SQL and identify referenced tables</span>
-</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>        <span class="c1"># - match policies for the datasource and tables</span>
-</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>        <span class="c1"># - resolve configured values from principal</span>
-</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="c1"># - return a rewritten read query or deny with a clear reason</span>
-</span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
-</span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>
-</span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_validate_policy_config</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="c1"># Raise an exception if required provider-specific config is invalid.</span>
-</span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>        <span class="k">pass</span>
+<p>The agreed shape has one section per policy family, without an identity or groups layer:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"row_filter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">"access_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"scoped"</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">"store_ids"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">]</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="p">},</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"column_mask"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">"customers.email"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"strategy"</span><span class="p">:</span><span class="w"> </span><span class="s2">"email_partial"</span><span class="p">}</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">}</span>
 </span></code></pre></div>
-<p>The result controls what happens next:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">sql</span><span class="o">=</span><span class="n">rewritten_sql</span><span class="p">,</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">applied_policies</span><span class="o">=</span><span class="p">[</span><span class="s2">"tenant_scope"</span><span class="p">],</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">)</span>
-</span></code></pre></div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">allowed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">reason</span><span class="o">=</span><span class="s2">"Missing required principal path: principal.tenant.id"</span><span class="p">,</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
-</span></code></pre></div>
-<p>Use a SQL parser or database-safe query builder when rewriting SQL. Avoid string concatenation for policy predicates.</p>
-<h2 id="request-principal">Request Principal<a class="headerlink" href="#request-principal" title="Permanent link">&para;</a></h2>
-<p>The principal is the request-scoped input that policy providers use for caller attributes. For the default API auth provider, principal fields are read from the <code>X-Datus-Principal</code> header as a JSON object:</p>
-<div class="language-http highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">X-Datus-Principal: {"tenant":{"id":"tenant_001"},"market_codes":["MKT300","MKT301"]}</span>
-</span></code></pre></div>
-<p>The provider receives the parsed object:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="s2">"tenant"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"id"</span><span class="p">:</span> <span class="s2">"tenant_001"</span><span class="p">},</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="s2">"market_codes"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"MKT300"</span><span class="p">,</span> <span class="s2">"MKT301"</span><span class="p">],</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">}</span>
-</span></code></pre></div>
-<p>Policy config can reference nested fields with <code>principal.&lt;path&gt;</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.tenant.id</span>
-</span></code></pre></div>
-<p>The API pre-check treats missing keys, <code>null</code>, empty strings, and empty arrays as missing values.</p>
-<p><code>X-Datus-User-Id</code> is separate from the SQL policy principal. It identifies a caller for session isolation and is not copied into <code>AppContext.principal</code>.</p>
-<h2 id="provider-contract">Provider Contract<a class="headerlink" href="#provider-contract" title="Permanent link">&para;</a></h2>
+<p>The current sql-policy plugin supports these row-filter modes:</p>
 <table>
 <thead>
 <tr>
-<th>Item</th>
-<th>Contract</th>
+<th><code>access_mode</code></th>
+<th>Behavior</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>agent.sql_policy.enabled</code></td>
-<td>Enables the SQL policy framework.</td>
+<td><code>denied</code></td>
+<td>Reject every data read.</td>
 </tr>
 <tr>
-<td><code>agent.sql_policy.provider</code></td>
-<td>Python class path in <code>module:Class</code> format. Required when enabled.</td>
+<td><code>scoped</code></td>
+<td>Apply configured row filters and resolve their <code>policy_context.*</code> inputs. Missing inputs fail closed.</td>
 </tr>
 <tr>
-<td><code>SqlPolicyConfig.raw</code></td>
-<td>Full raw <code>agent.sql_policy</code> mapping passed to the provider.</td>
-</tr>
-<tr>
-<td><code>enforce_read(sql, datasource, dialect, principal)</code></td>
-<td>Called before read SQL is executed.</td>
-</tr>
-<tr>
-<td><code>EnforcementResult.allowed=True</code></td>
-<td>The query may continue. <code>sql</code> can contain the original or rewritten SQL.</td>
-</tr>
-<tr>
-<td><code>EnforcementResult.allowed=False</code></td>
-<td>The query is denied. <code>reason</code> is returned to the tool/model layer.</td>
-</tr>
-<tr>
-<td><code>applied_policies</code></td>
-<td>Optional policy names for logging and diagnostics.</td>
-</tr>
-<tr>
-<td><code>value_from: principal.*</code></td>
-<td>Optional convention used by the API pre-check to detect missing principal fields.</td>
+<td><code>unrestricted</code></td>
+<td>Skip row filtering. Other policy families, such as future column masking, still run.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="error-behavior">Error Behavior<a class="headerlink" href="#error-behavior" title="Permanent link">&para;</a></h2>
-<p>If SQL policy is enabled but no provider is configured, enforcement fails before SQL is executed.</p>
-<p>If the configured provider class cannot be imported, initialized, or does not implement a callable <code>enforce_read</code>, enforcement fails with a SQL policy provider error.</p>
-<p>If policy config references a missing <code>principal.*</code> value, the chat API fails before the agent starts:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>SQL_POLICY_PRINCIPAL_REQUIRED
+<p>When row policies are configured, a missing or unknown <code>access_mode</code> is rejected. When no row policy is configured, an empty context is allowed.</p>
+<p><code>X-Datus-User-Id</code> remains session identity only. Agent does not merge it into <code>policy_context</code>, and it does not treat any context field as authenticated identity.</p>
+<h2 id="runtime-flow">Runtime Flow<a class="headerlink" href="#runtime-flow" title="Permanent link">&para;</a></h2>
+<ol>
+<li>The upstream service authenticates and authorizes the caller and builds <code>policy_context</code>.</li>
+<li>The API parses the header into <code>AppContext.policy_context</code> and validates it through active policy runtimes before starting any built-in or user-defined subagent.</li>
+<li>The request-specific <code>AgentConfig</code> clone carries the same context to every subagent and tool transformer.</li>
+<li><code>DBFuncTool.execute_read_enforced</code> validates the original SQL, calls <code>before_sql_read</code>, revalidates rewritten SQL, then executes it.</li>
+<li>A successful raw result passes through <code>after_read_result</code> before compression, artifact storage, rendering, or return to the caller. This is the extension point for column masking.</li>
+<li>Semantic metric tools call the same plugin runtime before aggregation to add their <code>where</code> predicates.</li>
+</ol>
+<p>Invalid runtime declarations, malformed decisions, policy exceptions, denials, and unsafe SQL rewrites all fail closed. Proxied tools execute outside the Agent process and therefore must be protected by the external executor.</p>
+<p>For manual checks, pass the same object explicitly:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>sql-policy<span class="w"> </span>check<span class="w"> </span>--sql<span class="w"> </span><span class="s2">"SELECT * FROM orders"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--policy-context<span class="w"> </span><span class="s1">'{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'</span>
 </span></code></pre></div>
-<p>The error message includes the missing principal path, for example <code>principal.tenant.id</code>.</p>
-<p>If the provider denies a query, SQL is not executed and the tool returns the provider's <code>reason</code>.</p>
-<p>If the provider rewrites SQL into a non-read statement or a multi-statement query, the read-query validator rejects it before execution.</p>
-<h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
-<ul>
-<li>The open-source agent does not include a built-in row-filter or SQL-injection review provider.</li>
-<li>The framework does not define a required policy schema beyond <code>enabled</code>, <code>provider</code>, and the optional <code>principal.*</code> pre-check convention.</li>
-<li>CLI requests do not have HTTP headers. Request-scoped API principal input is available through the API auth context. For CLI or custom deployments, populate <code>AppContext.principal</code> through the relevant auth or runtime integration.</li>
-<li>Do not put <code>user_id</code> inside <code>X-Datus-Principal</code>; <code>user_id</code> is reserved for <code>X-Datus-User-Id</code>.</li>
-</ul>
 
 
 
