@@ -911,6 +911,46 @@ class TestExecuteSqlMode:
         payload = decode_exec_message(cli.chat_commands.execute_chat_command.call_args.args[0])
         assert payload["command"] == rewritten
 
+    def test_successful_read_applies_result_policy_before_payload(self, cli):
+        import pyarrow as pa
+
+        original = pa.table({"email": ["alice@example.com"]})
+        masked = pa.table({"email": ["a***@example.com"]})
+        mock_result = MagicMock(success=True, sql_return=original, row_count=1)
+        cli.db_connector.execute.return_value = mock_result
+        runtime = MagicMock()
+        runtime.after_read_result.return_value = SimpleNamespace(allowed=True, result=masked)
+
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            payload = cli._run_manual_sql("SELECT email FROM customers")
+
+        assert payload["rows"] == [["a***@example.com"]]
+        assert cli.last_result.sql_return is masked
+        runtime.after_read_result.assert_called_once()
+
+    def test_result_policy_denial_returns_only_error_payload(self, cli):
+        import pyarrow as pa
+
+        mock_result = MagicMock(
+            success=True,
+            sql_return=pa.table({"email": ["alice@example.com"]}),
+            row_count=1,
+        )
+        cli.db_connector.execute.return_value = mock_result
+        runtime = MagicMock()
+        runtime.after_read_result.return_value = SimpleNamespace(
+            allowed=False,
+            result=None,
+            reason="result denied",
+        )
+
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            payload = cli._run_manual_sql("SELECT email FROM customers")
+
+        assert payload["success"] is False
+        assert "result denied" in payload["error"]
+        assert "alice@example.com" not in str(payload)
+
     def test_infra_failure_does_not_dispatch(self, cli):
         cli.db_connector = None
         with self._approve("SELECT 1"):

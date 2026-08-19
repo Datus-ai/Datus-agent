@@ -373,32 +373,31 @@ flow_groups:
           - docs/API/introduction.md
         entrypoints:
           - "REST API: /api/v1/chat/stream"
-          - "REST API header: X-Datus-Principal"
-          - DBFuncTool SQL policy enforcement
+          - "REST API header: X-Datus-Policy-Context"
+          - DBFuncTool policy runtime enforcement
         contracts:
-          - The default API auth provider parses request principals from X-Datus-Principal JSON.
-          - X-Datus-User-Id remains session identity and does not satisfy SQL policy principal fields.
-          - Enabled SQL policies fail fast when required principal fields are missing.
-          - Custom SQL policy providers can rewrite or deny protected read queries before database execution.
+          - The default API provider parses execution policy inputs from X-Datus-Policy-Context JSON.
+          - X-Datus-User-Id remains session identity and is not merged into policy context.
+          - Active policy runtimes validate context before any subagent starts.
+          - Policy plugins can rewrite or deny reads before execution and transform successful results afterward.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
-              - tests/unit_tests/tools/test_sql_policy.py
+              - tests/unit_tests/api/auth/test_header_context_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
+              - tests/unit_tests/tools/test_policy_runtime.py
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
-              - tests/unit_tests/tools/test_sql_policy.py
+              - tests/unit_tests/api/auth/test_header_context_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
+              - tests/unit_tests/tools/test_policy_runtime.py
           nightly:
             status: covered
             notes: >
               Nightly API and adapter jobs exercise chat streaming and database reads; deterministic unit
-              tests cover request-principal parsing and the open-source provider contract without requiring
-              a live private policy provider deployment.
+              tests cover policy-context parsing and the plugin runtime contract without requiring a live deployment.
             nodeids:
               - tests/integration/api/test_api_chat.py
               - tests/integration/adapters/test_starrocks.py

@@ -1,206 +1,82 @@
 # SQL Policy
 
-SQL policy 是一个扩展框架，用于在请求级别控制 SQL 读查询。适用于 API 请求只能访问调用方业务范围内数据的场景，例如租户、市场、区域或门店列表。
+Datus Agent 不负责用户认证，也不判断用户具有什么权限。可信上游服务完成认证和鉴权后，只把策略执行所需的输入作为 `policy_context` 传给 Agent；启用的 policy plugin 负责解释这些输入并保护数据读取。
 
-开源 Agent 提供框架边界和运行时 hook 点，不内置具体策略引擎。需要执行策略的部署应提供自己的 SQL policy 包。
+## 配置
 
-## 框架边界
-
-开源 Agent 负责：
-
-- 从 Agent 配置中加载 `agent.sql_policy`。
-- 从 `agent.sql_policy.provider` 加载配置的 provider class。
-- 将完整的原始 `agent.sql_policy` mapping 传给 provider。
-- 将请求 principal 字段解析到 `AppContext.principal`。
-- 对必需的 `principal.*` 值执行通用 API pre-check。
-- 在读查询到达数据库前调用 provider。
-- 在 provider 改写 SQL 后重新校验 SQL。
-- 将策略拒绝原因返回给 tool/model 层。
-
-provider 负责：
-
-- 定义 `agent.sql_policy` 下的策略 schema。
-- 校验 provider 自己的策略字段。
-- 将策略匹配到 datasource、表、列或其他业务概念。
-- 从请求 principal 中解析策略值。
-- 改写读 SQL 或拒绝查询。
-- 返回清晰的拒绝原因，说明 model 或调用方缺少什么。
-
-## 运行时流程
-
-启用 SQL policy 后，请求处理流程如下：
-
-1. API auth provider 创建 `AppContext`。
-2. 请求级属性被写入 `AppContext.principal`。
-3. Agent 配置被加载，其中包括 `agent.sql_policy`。
-4. 如果原始策略配置引用了 `value_from: principal.<path>`，chat API 会在 Agent 启动前检查每个 principal path 是否存在。
-5. Agent 正常运行，直到调用数据库读工具。
-6. `DBFuncTool.read_query` 校验原始 SQL 是否只读。
-7. 通过 `enforce_read(...)` 加载并调用配置的 provider。
-8. 如果 provider 拒绝查询，tool 返回 provider 的拒绝原因，不执行 SQL。
-9. 如果 provider 返回改写后的 SQL，Agent 会重新校验改写后的 SQL 仍然只读。
-10. 校验通过的 SQL 被发送到目标 datasource 执行。
-
-第 4 步的 pre-check 是通用逻辑。它会扫描原始策略 mapping 中以 `principal.` 开头的 `value_from` 字符串，不假设特定 policy type、列名或业务字段。
-
-## 配置契约
-
-开源 Agent 只解释这些字段：
+SQL policy 只通过 plugin profile 配置；原来的 `agent.sql_policy` provider 配置不再支持。
 
 ```yaml
 agent:
-  sql_policy:
-    enabled: true
-    provider: my_company.sql_policies:SqlPolicyProvider
+  plugins:
+    sql-policy:
+      default:
+        default: true
+        policies:
+          - name: store_scope_sql
+            type: row_filter
+            applies_to:
+              datasources: ["warehouse"]
+              tables: ["orders", "store_sales"]
+            condition:
+              column: store_id
+              operator: in
+              value_from: policy_context.row_filter.store_ids
+            enforcement:
+              on_read: filter
+              on_unhandled: deny
 ```
 
-`enabled` 用于打开框架。`provider` 必须是 `module:Class` 格式的 Python class path。
+policy type 及其字段由 policy plugin 定义。Agent 只加载 plugin 在 `datus-plugin.yml` 中声明的运行时。
 
-`agent.sql_policy` 下的其他字段会原样放进 `SqlPolicyConfig.raw` 传给 provider。你的 provider 可以定义自己需要的 schema：
+## 请求上下文
 
-```yaml
-agent:
-  sql_policy:
-    enabled: true
-    provider: my_company.sql_policies:SqlPolicyProvider
-    policies:
-      - name: tenant_scope
-        type: row_filter
-        applies_to:
-          datasources: ["warehouse"]
-          tables: ["orders"]
-        condition:
-          column: tenant_id
-          operator: eq
-          value_from: principal.tenant.id
-        enforcement:
-          on_read: filter
-          on_unhandled: deny
-```
-
-在这个例子里，开源 Agent 使用 `enabled`、`provider`，并使用 `principal.tenant.id` 引用做 pre-check。`policies`、`type`、`applies_to`、`condition` 和 `enforcement` 的含义都由 provider 决定。
-
-## Provider 接口
-
-SQL policy provider 是一个安装在 `datus-api` 同一 Python 环境中的普通 Python 包。provider class 必须接收 `SqlPolicyConfig` 参数，并实现 `enforce_read(...)`。
-
-```python
-from typing import Any, Dict, Optional
-
-from datus.tools.sql_policy import SqlPolicyConfig, EnforcementResult
-
-
-class SqlPolicyProvider:
-    def __init__(self, config: Optional[SqlPolicyConfig] = None) -> None:
-        self.config = config or SqlPolicyConfig()
-        self.policies = self.config.raw.get("policies", []) or []
-        self._validate_policy_config()
-
-    def enforce_read(
-        self,
-        sql: str,
-        *,
-        datasource: str,
-        dialect: str,
-        principal: Optional[Dict[str, Any]],
-    ) -> EnforcementResult:
-        principal = principal or {}
-
-        # 在这里实现策略选择和执行逻辑：
-        # - 解析 SQL 并识别引用的表
-        # - 为 datasource 和表匹配策略
-        # - 从 principal 中解析配置值
-        # - 返回改写后的读查询，或带清晰原因地拒绝查询
-        return EnforcementResult(allowed=True, sql=sql)
-
-    def _validate_policy_config(self) -> None:
-        # 如果 provider 自己需要的配置不合法，在这里抛出异常。
-        pass
-```
-
-返回值决定后续行为：
-
-```python
-return EnforcementResult(
-    allowed=True,
-    sql=rewritten_sql,
-    applied_policies=["tenant_scope"],
-)
-```
-
-```python
-return EnforcementResult(
-    allowed=False,
-    reason="Missing required principal path: principal.tenant.id",
-)
-```
-
-改写 SQL 时应使用 SQL parser 或数据库安全的 query builder，不要用字符串拼接生成策略谓词。
-
-## 请求 Principal
-
-principal 是策略 provider 使用的请求级调用方属性。默认 API auth provider 会从 `X-Datus-Principal` header 读取 principal 字段，header 值必须是 JSON object：
+默认 API provider 从 `X-Datus-Policy-Context` 读取 JSON object：
 
 ```http
-X-Datus-Principal: {"tenant":{"id":"tenant_001"},"market_codes":["MKT300","MKT301"]}
+X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}
 ```
 
-provider 会收到解析后的对象：
+约定结构按 policy family 分两层，不包含用户身份或 groups：
 
-```python
+```json
 {
-    "tenant": {"id": "tenant_001"},
-    "market_codes": ["MKT300", "MKT301"],
+  "row_filter": {
+    "access_mode": "scoped",
+    "store_ids": [1, 2]
+  },
+  "column_mask": {
+    "customers.email": {"strategy": "email_partial"}
+  }
 }
 ```
 
-策略配置可以通过 `principal.<path>` 引用嵌套字段：
+当前 sql-policy plugin 支持三种 row-filter 模式：
 
-```yaml
-condition:
-  column: tenant_id
-  operator: eq
-  value_from: principal.tenant.id
+| `access_mode` | 行为 |
+|---|---|
+| `denied` | 拒绝所有数据读取。 |
+| `scoped` | 执行已配置的行过滤，并解析其 `policy_context.*` 输入；缺少输入时 fail closed。 |
+| `unrestricted` | 仅跳过行过滤；未来的 column masking 等其他 policy family 仍会执行。 |
+
+配置了 row policy 时，缺少 `access_mode` 或传入未知值都会被拒绝；没有配置 row policy 时，空 context 可以通过。
+
+`X-Datus-User-Id` 只用于会话隔离。Agent 不会把它合并进 `policy_context`，也不会把 context 中的任何字段当作已认证身份。
+
+## 运行流程
+
+1. 上游服务完成认证、鉴权并生成 `policy_context`。
+2. API 将 header 解析为 `AppContext.policy_context`，并在启动任何内置或用户自定义 subagent 前调用启用的 policy runtime 校验。
+3. 请求级 `AgentConfig` 副本把同一 context 传给所有 subagent 和 tool transformer。
+4. `DBFuncTool.execute_read_enforced` 先校验原始 SQL，再调用 `before_sql_read`，然后重新校验改写后的 SQL 并执行。
+5. 查询成功后，原始结果会先经过 `after_read_result`，之后才允许压缩、保存 artifact、渲染或返回；column masking 将在这个扩展点实现。
+6. 语义指标工具也调用同一个 plugin runtime，在聚合前写入 `where` 条件。
+
+无效 runtime 声明、格式错误的 decision、策略异常、策略拒绝和不安全 SQL 改写都会 fail closed。proxied tool 在 Agent 进程外执行，需要由外部 executor 自行保护。
+
+手工检查时显式传入同一个对象：
+
+```bash
+datus sql-policy check --sql "SELECT * FROM orders" \
+  --policy-context '{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'
 ```
-
-API pre-check 会把缺失 key、`null`、空字符串和空数组都视为缺失值。
-
-`X-Datus-User-Id` 和 SQL policy principal 是两件事。它用于调用方会话隔离，不会被复制进 `AppContext.principal`。
-
-## Provider 契约
-
-| 项 | 契约 |
-|----|------|
-| `agent.sql_policy.enabled` | 启用 SQL policy 框架。 |
-| `agent.sql_policy.provider` | Python class path，格式为 `module:Class`。启用时必填。 |
-| `SqlPolicyConfig.raw` | 完整的原始 `agent.sql_policy` mapping，会传给 provider。 |
-| `enforce_read(sql, datasource, dialect, principal)` | 在读 SQL 执行前调用。 |
-| `EnforcementResult.allowed=True` | 查询可以继续。`sql` 可以是原始 SQL 或改写后的 SQL。 |
-| `EnforcementResult.allowed=False` | 查询被拒绝。`reason` 会返回给 tool/model 层。 |
-| `applied_policies` | 可选的策略名称列表，用于日志和诊断。 |
-| `value_from: principal.*` | 可选约定，用于 API pre-check 检查缺失的 principal 字段。 |
-
-## 错误行为
-
-如果 SQL policy 已启用但没有配置 provider，enforcement 会在 SQL 执行前失败。
-
-如果配置的 provider class 无法 import、无法初始化，或没有实现可调用的 `enforce_read`，enforcement 会返回 SQL policy provider error。
-
-如果策略配置引用了缺失的 `principal.*` 值，chat API 会在 Agent 启动前失败：
-
-```text
-SQL_POLICY_PRINCIPAL_REQUIRED
-```
-
-错误信息会包含缺失的 principal path，例如 `principal.tenant.id`。
-
-如果 provider 拒绝查询，SQL 不会执行，tool 会返回 provider 的 `reason`。
-
-如果 provider 将 SQL 改写成非读语句或多语句查询，读查询校验器会在执行前拒绝它。
-
-## 限制
-
-- 开源 Agent 不包含内置 row-filter 或 SQL 注入审查 provider。
-- 除了 `enabled`、`provider` 和可选的 `principal.*` pre-check 约定，框架不定义强制策略 schema。
-- CLI 请求没有 HTTP header。请求级 API principal 输入来自 API auth context。对于 CLI 或自定义部署，需要通过对应 auth 或运行时集成填充 `AppContext.principal`。
-- 不要把 `user_id` 放进 `X-Datus-Principal`；`user_id` 是 `X-Datus-User-Id` 的保留字段。

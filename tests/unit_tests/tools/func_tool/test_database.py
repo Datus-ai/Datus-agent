@@ -2,12 +2,13 @@
 Test cases for DBFuncTool compressor model_name initialization and execute_ddl.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 
 from datus.tools.func_tool.database import DBFuncTool
-from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.exceptions import DatusException
 
 
 class TestDBFuncToolCompressorModelName:
@@ -1959,9 +1960,14 @@ class TestDBFuncToolExecuteReadEnforced:
         connector = self._connector()
         tool = self._make_tool(connector)
 
-        # A policy that injects a row cap; the rewrite is still a single
-        # read-only statement, so it must reach the connector verbatim.
-        with patch.object(tool, "_enforce_sql_policy", return_value="SELECT 1 AS n LIMIT 100"):
+        runtime = Mock()
+        runtime.before_sql_read.return_value = SimpleNamespace(
+            allowed=True, sql="SELECT 1 AS n LIMIT 100", applied_policies=[]
+        )
+        runtime.after_read_result.side_effect = lambda result, **kwargs: SimpleNamespace(
+            allowed=True, result=result, applied_policies=[]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             result = tool.execute_read_enforced("SELECT 1 AS n", connector)
 
         assert result.success is True
@@ -1971,11 +1977,11 @@ class TestDBFuncToolExecuteReadEnforced:
         connector = self._connector()
         tool = self._make_tool(connector)
 
-        with patch.object(
-            tool,
-            "_enforce_sql_policy",
-            side_effect=DatusException(ErrorCode.TOOL_INVALID_INPUT, message="denied by policy"),
-        ):
+        runtime = Mock()
+        runtime.before_sql_read.return_value = SimpleNamespace(
+            allowed=False, sql=None, reason="denied by policy", applied_policies=[]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             result = tool.execute_read_enforced("SELECT 1 AS n", connector)
 
         assert result.success is False
@@ -1986,9 +1992,9 @@ class TestDBFuncToolExecuteReadEnforced:
         connector = self._connector()
         tool = self._make_tool(connector)
 
-        # A buggy/hostile policy rewrite that turns a read into a mutation must
-        # be caught by the post-rewrite re-validation, not forwarded to the DB.
-        with patch.object(tool, "_enforce_sql_policy", return_value="DROP TABLE t"):
+        runtime = Mock()
+        runtime.before_sql_read.return_value = SimpleNamespace(allowed=True, sql="DROP TABLE t", applied_policies=[])
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             result = tool.execute_read_enforced("SELECT 1 AS n", connector)
 
         assert result.success is False

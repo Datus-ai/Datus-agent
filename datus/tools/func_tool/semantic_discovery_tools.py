@@ -377,7 +377,7 @@ class SemanticDiscoveryTools:
 
         Historical JOINs and column names can suggest key columns, but they do
         not prove uniqueness. Each candidate is checked over all rows visible
-        to the current datasource principal for NULL components and duplicate
+        to rows visible under the current policy context for NULL components and duplicate
         ordered key groups. A passing result may be authored as one OSI
         ``unique_keys`` entry. This tool never infers a physical
         ``primary_key``.
@@ -520,7 +520,7 @@ class SemanticDiscoveryTools:
                 "table": table_name,
                 "columns": normalized_columns,
                 "verification_scope": "full_table",
-                "access_scope": "rows visible to the current datasource principal",
+                "access_scope": "rows visible under the current policy context",
                 "verified_at_utc": datetime.now(timezone.utc).isoformat(),
                 "row_count": row_count,
                 "null_key_rows": null_key_rows,

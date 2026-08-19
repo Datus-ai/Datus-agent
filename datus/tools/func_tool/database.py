@@ -198,16 +198,10 @@ class DBFuncTool:
             self.has_table_semantic_profiles = False
 
     @property
-    def principal(self) -> Dict[str, Any]:
-        """Request-scoped SQL policy attributes, read from the config on access.
-
-        The API assigns this onto a per-request clone of the config. Resolving it
-        per access rather than caching it at construction keeps this tool and the
-        plugin tool-transformers on one value: they enforce the same policies and
-        must not disagree about who is asking.
-        """
-        principal = getattr(self.agent_config, "principal", None)
-        return dict(principal) if isinstance(principal, dict) else {}
+    def policy_context(self) -> Dict[str, Any]:
+        """Request-scoped policy inputs, read fresh from the config."""
+        policy_context = getattr(self.agent_config, "policy_context", None)
+        return dict(policy_context) if isinstance(policy_context, dict) else {}
 
     def _has_schema_storage(self) -> bool:
         if not self.schema_rag:
@@ -1572,16 +1566,17 @@ class DBFuncTool:
         *,
         datasource: Optional[str] = "",
         result_format: str = "list",
+        policy_context: Optional[Dict[str, Any]] = None,
     ) -> ExecuteSQLResult:
         """Run a read-only query through the shared read guardrails.
 
         Single enforcement path for every read that hits the DB directly: the
         LLM ``read_query`` path plus the report/dashboard artifact save paths
         and dashboard view-time re-execution. Rejects multi-statement input and
-        applies the configured SQL policy (row caps / rewrites / denials) before
+        applies configured policy runtimes (rewrites / denials) before
         the statement reaches the engine, then returns the connector's raw
-        ``ExecuteSQLResult`` so callers keep control over row post-processing.
-        Without this, artifact query execution bypassed ``_enforce_sql_policy``
+        ``ExecuteSQLResult`` after result policies have run. Without this,
+        artifact query execution bypassed policy enforcement
         and could hand the engine an unbounded statement (e.g. a cross-join
         cartesian product that OOM-killed the DB backend).
         """
@@ -1589,8 +1584,29 @@ class DBFuncTool:
         if validation_error:
             return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=sql)
         effective_datasource = self._resolve_effective_datasource(datasource)
+        effective_policy_context = self.policy_context if policy_context is None else policy_context
         try:
-            enforced_sql = self._enforce_sql_policy(sql, datasource=effective_datasource, dialect=connector.dialect)
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            runtime = PolicyRuntime(self.agent_config)
+            decision = runtime.before_sql_read(
+                sql,
+                datasource=effective_datasource,
+                dialect=connector.dialect,
+                policy_context=effective_policy_context,
+            )
+            if not decision.allowed:
+                raise DatusException(
+                    ErrorCode.TOOL_INVALID_INPUT,
+                    message=decision.reason or "Policy denied the query",
+                )
+            enforced_sql = decision.sql if decision.sql is not None else sql
+            if decision.applied_policies:
+                logger.info(
+                    "Applied pre-read policies",
+                    policies=decision.applied_policies,
+                    datasource=effective_datasource,
+                )
         except DatusException as exc:
             return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql)
         if enforced_sql != sql:
@@ -1599,7 +1615,32 @@ class DBFuncTool:
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
             if validation_error:
                 return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=enforced_sql)
-        return connector.execute_query(enforced_sql, result_format=result_format)
+        result = connector.execute_query(enforced_sql, result_format=result_format)
+        if not result.success:
+            return result
+        try:
+            result_decision = runtime.after_read_result(
+                result.sql_return,
+                sql=enforced_sql,
+                datasource=effective_datasource,
+                dialect=connector.dialect,
+                policy_context=effective_policy_context,
+            )
+            if not result_decision.allowed:
+                raise DatusException(
+                    ErrorCode.TOOL_INVALID_INPUT,
+                    message=result_decision.reason or "Policy denied the query result",
+                )
+            result.sql_return = result_decision.result
+            if result_decision.applied_policies:
+                logger.info(
+                    "Applied result policies",
+                    policies=result_decision.applied_policies,
+                    datasource=effective_datasource,
+                )
+            return result
+        except DatusException as exc:
+            return ExecuteSQLResult(success=False, error=str(exc), sql_query=enforced_sql)
 
     def guard_estimated_rows(
         self,
@@ -1701,34 +1742,6 @@ class DBFuncTool:
                 sql_type,
             )
         return None, sql_type
-
-    def _enforce_sql_policy(self, sql: str, datasource: str, dialect: str) -> str:
-        if not self.agent_config:
-            return sql
-        sql_policy_config = getattr(self.agent_config, "sql_policy_config", None)
-        from datus.tools.sql_policy import SqlPolicyConfig, load_sql_policy_enforcer
-
-        if not isinstance(sql_policy_config, SqlPolicyConfig) or not sql_policy_config.enabled:
-            return sql
-
-        enforced = load_sql_policy_enforcer(sql_policy_config).enforce_read(
-            sql,
-            datasource=datasource,
-            dialect=dialect,
-            principal=self.principal,
-        )
-        if not enforced.allowed:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message=enforced.reason or "SQL policy denied the query",
-            )
-        if enforced.applied_policies:
-            logger.info(
-                "Applied SQL policies",
-                policies=enforced.applied_policies,
-                datasource=datasource,
-            )
-        return sql if enforced.sql is None else enforced.sql
 
     def get_table_ddl(
         self,

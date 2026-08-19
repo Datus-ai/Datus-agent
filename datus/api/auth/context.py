@@ -16,12 +16,11 @@ class AppContext:
       (default) project.
     - ``config``: optional preloaded ``AgentConfig``; when ``None``,
       ``get_datus_service`` loads it on demand.
-    - ``principal``: request-scoped SQL policy attributes consumed by
-      SQL policies. This is separate from ``user_id`` because one
-      authenticated identity can carry many business scopes.
+    - ``policy_context``: request-scoped inputs consumed by active policy
+      plugins. Authentication and authorization happen before this boundary.
     """
 
     user_id: Optional[str] = None
     project_id: Optional[str] = None
     config: Optional[AgentConfig] = None
-    principal: Dict[str, Any] = field(default_factory=dict)
+    policy_context: Dict[str, Any] = field(default_factory=dict)

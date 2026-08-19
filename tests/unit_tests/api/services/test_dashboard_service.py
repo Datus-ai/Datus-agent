@@ -104,7 +104,8 @@ def _patch_executor(monkeypatch, *, captured: dict) -> None:
             captured["datasource"] = datasource
             return _FakeConnector()
 
-        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list"):
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
+            captured["policy_context"] = policy_context
             return connector.execute_query(sql, result_format=result_format)
 
     import datus.tools.func_tool as func_tool_mod
@@ -266,6 +267,25 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
     # so the connector picks the same datasource binding the LLM saved.
     assert captured["sub_agent_name"] == "gen_visual_dashboard"
     assert captured["datasource"] == "warehouse"
+
+
+@pytest.mark.asyncio
+async def test_run_query_forwards_request_policy_context_to_enforced_read(monkeypatch, tmp_path: Path):
+    _write_dashboard(tmp_path)
+    captured: dict = {}
+    _patch_executor(monkeypatch, captured=captured)
+    policy_context = {"row_filter": {"access_mode": "scoped", "store_ids": [1, 2]}}
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+        policy_context=policy_context,
+    )
+
+    assert result.success is True
+    assert captured["policy_context"] is policy_context
 
 
 @pytest.mark.asyncio
@@ -510,7 +530,7 @@ def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_r
         def _get_connector(self, datasource):
             return _Connector()
 
-        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list"):
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
             return connector.execute_query(sql, result_format=result_format)
 
     import datus.tools.func_tool as func_tool_mod

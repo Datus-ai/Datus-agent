@@ -2140,6 +2140,26 @@ class TestAgentConfigLanguage:
         assert cfg.language == "ja"
 
 
+class TestAgentConfigPolicyContext:
+    def test_legacy_sql_policy_config_is_rejected(self, tmp_path):
+        with pytest.raises(DatusException, match="agent.sql_policy has been removed"):
+            AgentConfig(
+                nodes={"test": NodeConfig(model="test-model", input=None)},
+                home=str(tmp_path / "h"),
+                target="mock",
+                models={
+                    "mock": {
+                        "type": "openai",
+                        "api_key": "k",
+                        "model": "m",
+                        "base_url": "http://localhost:0",
+                    }
+                },
+                sql_policy={"enabled": True},
+                skip_init_dirs=True,
+            )
+
+
 class TestServicesConfigFromDict:
     def test_bi_platforms_key_is_parsed(self):
         cfg = ServicesConfig.from_dict({"bi_platforms": {"superset": {"type": "superset"}}})

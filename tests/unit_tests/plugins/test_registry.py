@@ -12,11 +12,14 @@ so these tests exercise the actual ``find_spec``-without-import path.
 import importlib
 import importlib.metadata as importlib_metadata
 
+import pytest
+
 from datus.plugins import registry
 
 MINIMAL = "manifest_version: 1\n"
 
 TRANSFORMER_MODULE = "def passthrough(tool_name, args, context):\n    return args\n\nNOT_CALLABLE = 42\n"
+POLICY_RUNTIME_MODULE = "def create_runtime(profile):\n    return profile\n\nNOT_CALLABLE = 42\n"
 
 
 class _FakeConfig:
@@ -605,6 +608,41 @@ def test_tool_transformers_resolution_memoized(plugin_env, monkeypatch):
     registry.collect_plugin_tool_transformers()
     registry.collect_plugin_tool_transformers()
     assert len(calls) == 1  # second collection served from the memo
+
+
+# ---------------------------------------------------------------------------
+# collect_plugin_policy_runtime_factories
+# ---------------------------------------------------------------------------
+
+
+def test_policy_runtime_factory_is_resolved_lazily(plugin_env):
+    pkg = plugin_env(
+        "policy",
+        MINIMAL + "policy_runtime: {pkg}.runtime:create_runtime\n",
+        files={"runtime.py": POLICY_RUNTIME_MODULE},
+    )
+    factory = registry.collect_plugin_policy_runtime_factories()["policy"]
+    assert factory is importlib.import_module(f"{pkg.name}.runtime").create_runtime
+    assert factory({"policies": []}) == {"policies": []}
+
+
+def test_policy_runtime_bad_ref_fails_closed(plugin_env):
+    plugin_env(
+        "policy",
+        MINIMAL + "policy_runtime: {pkg}.runtime:NOT_CALLABLE\n",
+        files={"runtime.py": POLICY_RUNTIME_MODULE},
+    )
+    with pytest.raises(RuntimeError, match="could not be loaded as a callable"):
+        registry.collect_plugin_policy_runtime_factories()
+
+
+def test_policy_runtime_respects_active_names(plugin_env):
+    plugin_env(
+        "policy",
+        MINIMAL + "policy_runtime: {pkg}.runtime:create_runtime\n",
+        files={"runtime.py": POLICY_RUNTIME_MODULE},
+    )
+    assert registry.collect_plugin_policy_runtime_factories(active_names=set()) == {}
 
 
 # ---------------------------------------------------------------------------

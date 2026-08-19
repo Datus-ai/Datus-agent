@@ -9,13 +9,14 @@ whose value is the package name, e.g. ``hello = datus_plugin_hello``. This
 module locates each package directory via ``importlib.util.find_spec``
 (WITHOUT executing the package), reads its ``datus-plugin.yml`` manifest, and
 exposes the declared skill directories, system-prompt templates, CLI
-bash-permission rules, tool transformers and config schemas. Plugin code is
+bash-permission rules, tool transformers, policy runtimes and config schemas. Plugin code is
 imported only lazily, through :func:`resolve_code_ref`, when a declared ``cli``
-or ``tool_transformers`` entry actually runs. See :mod:`datus.plugins.base`
+or ``tool_transformers`` / ``policy_runtime`` entry actually runs. See :mod:`datus.plugins.base`
 for the manifest contract.
 
-Every lookup is defensive: a broken or missing plugin must never crash the CLI
-or block skill discovery.
+Discovery lookups are defensive so a broken optional contribution does not
+block the CLI. Policy-runtime activation is the exception: it fails closed
+because silently skipping configured protection would expose data.
 """
 
 from __future__ import annotations
@@ -173,6 +174,7 @@ _PLUGIN_CACHE: Optional[List[Tuple[Optional[str], Optional[PluginManifest]]]] = 
 # the underlying import happens once, not on every per-node collection.
 # ``None`` marks a failed resolution (import error / non-callable).
 _RESOLVED_TRANSFORMER_CACHE: Dict[Tuple[str, str], Optional[Any]] = {}
+_RESOLVED_POLICY_RUNTIME_CACHE: Dict[Tuple[str, str], Optional[Any]] = {}
 
 
 def _loaded_manifests() -> List[Tuple[Optional[str], Optional[PluginManifest]]]:
@@ -212,6 +214,7 @@ def invalidate_plugin_cache() -> None:
     global _PLUGIN_CACHE
     _PLUGIN_CACHE = None
     _RESOLVED_TRANSFORMER_CACHE.clear()
+    _RESOLVED_POLICY_RUNTIME_CACHE.clear()
 
 
 def resolve_code_ref(ref: str, plugin_name: str) -> Optional[Any]:
@@ -465,6 +468,31 @@ def collect_plugin_tool_transformers(active_names: Optional[Set[str]] = None) ->
             if valid:
                 accumulated.setdefault(pattern, []).extend(valid)
     return accumulated
+
+
+def collect_plugin_policy_runtime_factories(active_names: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """Resolve policy runtime factories declared by active plugins.
+
+    A broken active policy runtime fails closed: silently skipping it would
+    execute reads without the configured protection.
+    """
+    factories: Dict[str, Any] = {}
+    for name, manifest in _loaded_manifests():
+        if manifest is None or not manifest.policy_runtime:
+            continue
+        if not _is_active(name, active_names):
+            continue
+        plugin_name = str(name)
+        key = (plugin_name, manifest.policy_runtime)
+        if key not in _RESOLVED_POLICY_RUNTIME_CACHE:
+            _RESOLVED_POLICY_RUNTIME_CACHE[key] = resolve_code_ref(manifest.policy_runtime, plugin_name)
+        factory = _RESOLVED_POLICY_RUNTIME_CACHE[key]
+        if not callable(factory):
+            raise RuntimeError(
+                f"Plugin {plugin_name!r} policy_runtime {manifest.policy_runtime!r} could not be loaded as a callable"
+            )
+        factories[plugin_name] = factory
+    return factories
 
 
 def _prefix_cli_pattern(ep_name: str, pattern: str) -> Optional[str]:

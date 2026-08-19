@@ -143,7 +143,7 @@ class TestGetDatusService:
         mock_auth.authenticate = AsyncMock(
             side_effect=DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
-                message="Invalid X-Datus-Principal header value: expected a JSON object.",
+                message="Invalid X-Datus-Policy-Context header value: expected a JSON object.",
             )
         )
         mock_cache = MagicMock(spec=DatusServiceCache)
@@ -159,7 +159,7 @@ class TestGetDatusService:
             await get_datus_service(request)
 
         assert exc_info.value.status_code == 400
-        assert "Invalid X-Datus-Principal header value" in exc_info.value.detail
+        assert "Invalid X-Datus-Policy-Context header value" in exc_info.value.detail
         mock_cache.get_or_create.assert_not_called()
 
     async def test_no_fingerprint_when_config_is_none(self):
@@ -220,10 +220,10 @@ class TestGetDatusService:
 
     async def test_factory_loads_config_when_none(self, real_agent_config):
         """Factory in get_datus_service loads config when ctx.config is None."""
-        from datus.api.auth.no_auth_provider import NoAuthProvider
+        from datus.api.auth.header_context_provider import HeaderContextProvider
         from datus.api.services.datus_service import DatusService
 
-        auth_provider = NoAuthProvider()
+        auth_provider = HeaderContextProvider()
         cache = DatusServiceCache()
         deps._auth_provider = auth_provider
         deps._service_cache = cache
@@ -232,7 +232,7 @@ class TestGetDatusService:
         request = MagicMock()
         request.state = MagicMock()
         request.headers = {}
-        # NoAuthProvider returns AppContext with config=None
+        # HeaderContextProvider returns AppContext with config=None
         # Factory should call load_agent_config(datasource="test_ns")
         # This will fail because test_ns config doesn't exist in default paths,
         # but exercises the factory code path (lines 50-56)

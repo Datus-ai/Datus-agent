@@ -1498,6 +1498,8 @@ class TestDBFuncToolMultiConnector:
         config.current_datasource = "db1"
         # Return multiple databases to trigger multi-connector mode
         config.current_db_configs.return_value = {"db1": {}, "db2": {}}
+        config.active_plugin_names.return_value = set()
+        config.policy_context = {}
         return config
 
     @pytest.fixture
@@ -1507,6 +1509,8 @@ class TestDBFuncToolMultiConnector:
         config.current_datasource = "db1"
         # Return single database to trigger single connector mode
         config.current_db_configs.return_value = {"db1": {}}
+        config.active_plugin_names.return_value = set()
+        config.policy_context = {}
         return config
 
     def test_single_connector_mode_backward_compatibility(self):
