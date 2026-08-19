@@ -386,6 +386,35 @@ def test_manifest_resolvers_reject_escaping_paths(tmp_path, bad_path):
         resolve_task_trajectory_path(attempt.save_run_root, attempt.trajectory_run_root, "42")
 
 
+def test_manifest_resolvers_reject_symlink_escapes(tmp_path):
+    attempt = _allocate(tmp_path)
+    task = _task()
+    trajectory = _write_success_files(attempt)
+    finalize_benchmark_attempt(
+        attempt,
+        task=task,
+        workflow=_success_workflow(task),
+        trajectory_path=trajectory,
+        agent_config=_agent_config(),
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "evil.sql").write_text("SELECT 999", encoding="utf-8")
+    (outside / "evil.yaml").write_text("workflow: {}\n", encoding="utf-8")
+    (attempt.save_run_root / "link").symlink_to(outside, target_is_directory=True)
+    (attempt.trajectory_run_root / "link").symlink_to(outside, target_is_directory=True)
+
+    payload = json.loads(attempt.manifest_path.read_text(encoding="utf-8"))
+    payload["outputs"][0]["path"] = "link/evil.sql"
+    payload["trajectory"]["path"] = "link/evil.yaml"
+    attempt.manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(DatusException, match="escapes its run root"):
+        resolve_task_output_path(attempt.save_run_root, "42", "generated_sql")
+    with pytest.raises(DatusException, match="escapes its run root"):
+        resolve_task_trajectory_path(attempt.save_run_root, attempt.trajectory_run_root, "42")
+
+
 def test_internal_evaluators_prefer_manifest_over_stale_flat_files(tmp_path):
     attempt = _allocate(tmp_path)
     task = _task()

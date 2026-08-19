@@ -565,7 +565,13 @@ def resolve_task_output_path(run_root: Path | str, task_id: str, output_name: st
                 message=f"invalid benchmark output path: {raw_path!r}",
             )
         resolved = (root / path).resolve()
-        resolved.relative_to(root.resolve())
+        try:
+            resolved.relative_to(root.resolve())
+        except ValueError as exc:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message=f"benchmark output path escapes its run root: {raw_path!r}",
+            ) from exc
         return resolved
     return None
 
@@ -593,5 +599,11 @@ def resolve_task_trajectory_path(
         )
     root = Path(trajectory_run_root).resolve()
     resolved = (root / path).resolve()
-    resolved.relative_to(root)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"benchmark trajectory path escapes its run root: {raw_path!r}",
+        ) from exc
     return resolved
