@@ -264,22 +264,22 @@ def test_pr_harness_marker_expressions_route_component_tests():
         (8, "4"),
     ],
 )
-def test_impacted_unit_worker_default_uses_half_available_cpus(monkeypatch, cpu_count, expected_workers):
+def test_parallel_worker_default_uses_half_available_cpus(monkeypatch, cpu_count, expected_workers):
     monkeypatch.delenv("IMPACTED_UNIT_PARALLEL_WORKERS", raising=False)
     monkeypatch.setattr(run_pr_tests.os, "cpu_count", lambda: cpu_count)
 
-    assert run_pr_tests._resolve_impacted_unit_parallel_workers() == expected_workers
+    assert run_pr_tests._resolve_parallel_workers() == expected_workers
 
 
-def test_impacted_unit_worker_env_override_takes_precedence(monkeypatch):
+def test_parallel_worker_env_override_takes_precedence(monkeypatch):
     monkeypatch.setenv("IMPACTED_UNIT_PARALLEL_WORKERS", "6")
     monkeypatch.setattr(run_pr_tests.os, "cpu_count", lambda: 16)
 
-    assert run_pr_tests._resolve_impacted_unit_parallel_workers() == "6"
+    assert run_pr_tests._resolve_parallel_workers() == "6"
 
 
-def test_impacted_unit_suite_uses_configured_workers(tmp_path, monkeypatch):
-    monkeypatch.setattr(run_pr_tests, "IMPACTED_UNIT_PARALLEL_WORKERS", "4")
+def test_parallel_suite_uses_configured_workers(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "4")
     command = run_pr_tests._build_pytest_command(
         ["tests/unit_tests/"],
         str(tmp_path / "junit.xml"),
@@ -288,6 +288,59 @@ def test_impacted_unit_suite_uses_configured_workers(tmp_path, monkeypatch):
 
     worker_flag = command.index("-n")
     assert command[worker_flag : worker_flag + 2] == ["-n", "4"]
+    assert "--dist" not in command
+
+
+def test_parallel_suite_emits_dist_mode_after_workers(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "PARALLEL_WORKERS", "4")
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        parallel=True,
+        dist="loadfile",
+    )
+
+    worker_flag = command.index("-n")
+    assert command[worker_flag : worker_flag + 4] == ["-n", "4", "--dist", "loadfile"]
+
+
+def test_serial_suite_ignores_dist_mode(tmp_path):
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        parallel=False,
+        dist="loadfile",
+    )
+
+    assert "-n" not in command
+    assert "--dist" not in command
+
+
+def test_run_tests_runs_acceptance_parallel_with_per_file_distribution(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_pr_tests, "_reset_report_outputs", lambda: None)
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_LOG", str(tmp_path / "pytest-coverage.txt"))
+    monkeypatch.setattr(run_pr_tests, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(run_pr_tests, "DEFAULT_COVERAGE_DB", str(tmp_path / ".coverage"))
+    monkeypatch.setattr(run_pr_tests, "resolve_impacted_unit_tests", lambda base_ref: ["tests/unit_tests/"])
+    monkeypatch.setattr(run_pr_tests, "merge_junit_results", lambda junit_xml_paths: None)
+
+    suite_calls = []
+
+    def fake_suite(targets, junit_xml, log_file, **kwargs):
+        suite_calls.append(kwargs)
+        return 0
+
+    monkeypatch.setattr(run_pr_tests, "_run_pytest_suite", fake_suite)
+
+    exit_code, _ = run_pr_tests.run_tests(base_ref="main")
+
+    assert exit_code == 0
+    acceptance_call = next(call for call in suite_calls if call["suite_name"] == "acceptance")
+    assert acceptance_call["parallel"] is True
+    assert acceptance_call["dist"] == "loadfile"
+    impacted_call = next(call for call in suite_calls if call["suite_name"] == "impacted unit tests")
+    assert impacted_call["parallel"] is True
+    assert impacted_call.get("dist") is None
 
 
 def test_resolve_explicit_compare_ref_prefers_origin_for_branch_name(monkeypatch):

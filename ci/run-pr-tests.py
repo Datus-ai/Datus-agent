@@ -158,15 +158,19 @@ def log(msg: str) -> None:
 TEST_CMD_TIMEOUT = int(os.environ.get("TEST_CMD_TIMEOUT", "3600"))
 
 
-def _resolve_impacted_unit_parallel_workers() -> str:
-    """Use half of the available CPUs unless the runner provides an override."""
+def _resolve_parallel_workers() -> str:
+    """Use half of the available CPUs unless the runner provides an override.
+
+    Shared by every parallel suite; the env var keeps its historical name so
+    existing runner overrides stay effective.
+    """
     configured = os.environ.get("IMPACTED_UNIT_PARALLEL_WORKERS")
     if configured:
         return configured
     return str(max(1, (os.cpu_count() or 1) // 2))
 
 
-IMPACTED_UNIT_PARALLEL_WORKERS = _resolve_impacted_unit_parallel_workers()
+PARALLEL_WORKERS = _resolve_parallel_workers()
 GIT_CMD_TIMEOUT = int(os.environ.get("GIT_CMD_TIMEOUT", "60"))
 DIFF_COVER_TIMEOUT = int(os.environ.get("DIFF_COVER_TIMEOUT", "300"))
 _COMPARE_BRANCH_CACHE: dict[str, str | None] = {}
@@ -346,6 +350,7 @@ def _build_pytest_command(
     emit_reports: bool = True,
     basetemp: str | None = None,
     parallel: bool = False,
+    dist: str | None = None,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -360,10 +365,12 @@ def _build_pytest_command(
         cmd.extend(["-m", mark_expr])
 
     if parallel:
-        # Distribute the suite across a few pytest-xdist workers so the full unit
-        # run stays under TEST_CMD_TIMEOUT; pytest-cov merges per-worker data.
+        # Distribute the suite across pytest-xdist workers so the suites stay
+        # under TEST_CMD_TIMEOUT; pytest-cov merges per-worker data.
         # By default, use half of the available CPUs; runners may override this.
-        cmd.extend(["-n", IMPACTED_UNIT_PARALLEL_WORKERS])
+        cmd.extend(["-n", PARALLEL_WORKERS])
+        if dist:
+            cmd.extend(["--dist", dist])
 
     cmd.append("--cov=datus")
     if append:
@@ -403,6 +410,7 @@ def _run_pytest_suite(
     append: bool = False,
     emit_reports: bool = True,
     parallel: bool = False,
+    dist: str | None = None,
 ) -> int:
     """Run one pytest suite and stream logs to stdout and the CI log file."""
     basetemp = _suite_pytest_basetemp(suite_name)
@@ -415,6 +423,7 @@ def _run_pytest_suite(
         emit_reports=emit_reports,
         basetemp=basetemp,
         parallel=parallel,
+        dist=dist,
     )
     log(f"Running {suite_name}: {' '.join(cmd)}")
     log(f"{suite_name} pytest basetemp: {basetemp}")
@@ -726,6 +735,13 @@ def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
                 suite_name="acceptance",
                 mark_expr=PR_HARNESS_MARK_EXPR,
                 emit_reports=not impacted_targets,
+                parallel=True,
+                # Per-file distribution: tests/integration/tools/test_func_tools_db.py
+                # opens the same on-disk DuckDB database from several test classes,
+                # and DuckDB allows only one process to hold the file lock. loadfile
+                # keeps every test of a file on one worker, so the lock is never
+                # contended across processes.
+                dist="loadfile",
             )
             exit_codes.append(acceptance_rc)
             junit_xml_paths.append(acceptance_xml)
