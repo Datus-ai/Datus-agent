@@ -38,6 +38,10 @@ class SqlTask(BaseModel):
     database_name: str = Field(default="", description="Name of the database for context")
     schema_name: str = Field(default="", description="Schema name for context")
     output_dir: str = Field(default="output", description="Output directory path")
+    artifact_profile: Literal["interactive", "benchmark_v1"] = Field(
+        default="interactive",
+        description="Output artifact profile; benchmark_v1 enables versioned benchmark artifacts",
+    )
     external_knowledge: str = Field(
         default="",
         description="Supplementary description / evidence supplied with the question "
@@ -606,6 +610,10 @@ class OutputInput(BaseInput):
     task: str = Field(..., description="The task description")
     database_name: str = Field(..., description="The name of the database")
     output_dir: str = Field(..., description="The target directory to save the output")
+    artifact_profile: Literal["interactive", "benchmark_v1"] = Field(
+        default="interactive",
+        description="Output artifact profile inherited from the SQL task",
+    )
     gen_sql: str = Field(..., description="The generated SQL")
     sql_result: Optional[str] = Field(None, description="The result of SQL execution")
     row_count: Optional[int] = Field(None, description="The number of rows returned")

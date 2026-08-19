@@ -31,6 +31,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+from datus.utils.benchmark_artifacts import load_task_output_manifest, resolve_task_output_path
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -592,7 +593,25 @@ class CsvPerTaskResultProvider(ResultProvider):
             self.directory = self.base_directory
 
     def fetch(self, task_id: str) -> ResultData:
-        csv_path = self.directory / f"{task_id}.csv"
+        try:
+            manifest = load_task_output_manifest(self.directory, task_id)
+            csv_path = (
+                resolve_task_output_path(self.directory, task_id, "sql_result")
+                if manifest is not None
+                else self.directory / f"{task_id}.csv"
+            )
+        except (OSError, ValueError, json.JSONDecodeError, DatusException) as exc:
+            return ResultData(
+                task_id=task_id,
+                source=str(self.directory),
+                error=f"Invalid task output manifest for {task_id}: {exc}",
+            )
+        if csv_path is None:
+            return ResultData(
+                task_id=task_id,
+                source=str(self.directory),
+                error=f"Task output manifest has no sql_result for {task_id}",
+            )
         source = str(csv_path)
         if not csv_path.exists():
             return ResultData(task_id=task_id, source=source, error=f"Result file not found: {csv_path}")
@@ -1017,7 +1036,27 @@ class AgentResultSqlProvider(SqlProvider):
                 dialect=self.dialect,
             )
 
-        sql_path = self.result_dir / f"{task_id}.sql"
+        try:
+            manifest = load_task_output_manifest(self.result_dir, task_id)
+            sql_path = (
+                resolve_task_output_path(self.result_dir, task_id, "generated_sql")
+                if manifest is not None
+                else self.result_dir / f"{task_id}.sql"
+            )
+        except (OSError, ValueError, json.JSONDecodeError, DatusException) as exc:
+            return SqlData(
+                task_id=task_id,
+                source=str(self.result_dir),
+                error=f"Invalid task output manifest for {task_id}: {exc}",
+                dialect=self.dialect,
+            )
+        if sql_path is None:
+            return SqlData(
+                task_id=task_id,
+                source=str(self.result_dir),
+                error=f"Task output manifest has no generated_sql for {task_id}",
+                dialect=self.dialect,
+            )
         if sql_path.exists():
             try:
                 sql_text = sql_path.read_text(encoding="utf-8")
@@ -1030,6 +1069,16 @@ class AgentResultSqlProvider(SqlProvider):
                 )
             tables = collect_sql_tables(sql_text, self.dialect)
             return SqlData(task_id=task_id, source=str(sql_path), sql=sql_text, tables=tables, dialect=self.dialect)
+
+        if manifest is not None:
+            # The manifest is authoritative for this attempt. Falling back to the flat
+            # legacy JSON here could silently evaluate SQL from a different attempt.
+            return SqlData(
+                task_id=task_id,
+                source=str(sql_path),
+                error=f"Manifest-declared generated_sql file is missing: {sql_path}",
+                dialect=self.dialect,
+            )
 
         json_path = self.result_dir / f"{task_id}.json"
         if json_path.exists():

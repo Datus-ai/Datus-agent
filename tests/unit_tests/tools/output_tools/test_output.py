@@ -5,6 +5,7 @@
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from datus.schemas.node_models import OutputInput
@@ -147,6 +148,34 @@ class TestOutputToolExecute:
         with open(error_file) as f:
             data = json.load(f)
         assert data["finished"] is False
+
+    def test_execute_benchmark_profile_writes_only_canonical_files(self, tmp_path: Path) -> None:
+        """The benchmark profile writes only the canonical SQL and CSV files."""
+        tool = OutputTool()
+        input_data = _make_output_input(tmp_path, file_type="all").model_copy(
+            update={"artifact_profile": "benchmark_v1"}
+        )
+        mock_connector = MagicMock()
+
+        with patch.object(tool, "check_sql", return_value=("SELECT id FROM users", "id\n1")):
+            result = tool.execute(input_data, mock_connector)
+
+        assert result.success is True
+        assert (tmp_path / "task_001.sql").read_text() == "SELECT id FROM users"
+        assert (tmp_path / "task_001.csv").read_text() == "id\n1"
+        assert not (tmp_path / "task_001.json").exists()
+
+    def test_execute_failed_benchmark_profile_defers_manifest_to_runner(self, tmp_path: Path) -> None:
+        """Failed benchmark output returns the error and defers manifest writing to the runner."""
+        tool = OutputTool()
+        input_data = _make_output_input(tmp_path, finished=False, error="SQL failed").model_copy(
+            update={"artifact_profile": "benchmark_v1"}
+        )
+
+        result = tool.execute(input_data, MagicMock())
+
+        assert result.success is False
+        assert not (tmp_path / "task_001.json").exists()
 
     def test_execute_creates_output_dir(self, tmp_path):
         new_dir = tmp_path / "subdir" / "output"

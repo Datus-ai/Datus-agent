@@ -35,6 +35,7 @@ from datus.storage.semantic_model.semantic_modeling_init import init_success_sto
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
+from datus.utils.benchmark_artifacts import allocate_benchmark_attempt, finalize_benchmark_attempt
 from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -189,6 +190,64 @@ class Agent:
         """
         runner = self.create_workflow_runner(check_db=check_db, run_id=run_id)
         return runner.run(sql_task=sql_task, check_storage=check_storage)
+
+    def _run_benchmark_task(
+        self,
+        sql_task: SqlTask,
+        *,
+        run_id: str,
+        check_storage: bool = False,
+        check_db: bool = True,
+    ) -> dict:
+        """Run one benchmark task and always finalize its versioned manifest."""
+        datasource = sql_task.datasource or self.global_config.current_datasource
+        save_run_root = self.global_config.save_run_dir(datasource, run_id)
+        trajectory_run_root = self.global_config.trajectory_run_dir(datasource, run_id)
+        attempt = allocate_benchmark_attempt(
+            save_run_root,
+            trajectory_run_root,
+            run_id=run_id,
+            task_id=sql_task.id,
+        )
+        benchmark_task = sql_task.model_copy(
+            update={
+                "output_dir": str(attempt.output_dir),
+                "artifact_profile": "benchmark_v1",
+                "datasource": datasource,
+            }
+        )
+        runner = self.create_workflow_runner(check_db=check_db, run_id=run_id)
+
+        try:
+            result = runner.run(sql_task=benchmark_task, check_storage=check_storage)
+        except Exception as exc:
+            try:
+                finalize_benchmark_attempt(
+                    attempt,
+                    task=benchmark_task,
+                    workflow=runner.workflow,
+                    trajectory_path=runner.last_run_metadata.get("save_path"),
+                    agent_config=self.global_config,
+                    exception=exc,
+                )
+            except Exception:
+                logger.exception("Failed to finalize benchmark failure manifest for task %s", benchmark_task.id)
+            raise
+
+        manifest_path = finalize_benchmark_attempt(
+            attempt,
+            task=benchmark_task,
+            workflow=runner.workflow,
+            trajectory_path=runner.last_run_metadata.get("save_path"),
+            agent_config=self.global_config,
+        )
+        logger.info(
+            "Benchmark task %s attempt %s manifest saved to %s",
+            benchmark_task.id,
+            attempt.attempt_id,
+            manifest_path,
+        )
+        return result
 
     async def run_stream(
         self,
@@ -867,6 +926,15 @@ class Agent:
             "components": component_results,
         }
 
+    @staticmethod
+    def _ensure_benchmark_run_id(run_id: Optional[str]) -> str:
+        """Return the provided run id, or generate the shared timestamp-based one."""
+        if run_id:
+            return run_id
+        from datetime import datetime
+
+        return datetime.now().strftime("%Y%m%d_%H%M%S")
+
     def benchmark(self, run_id: Optional[str] = None):
         logger.info("Benchmarking begins")
         benchmark_platform = self.args.benchmark
@@ -878,12 +946,7 @@ class Agent:
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
 
-        if not run_id:
-            from datetime import datetime
-
-            # Generate a shared run_id for this benchmark run
-            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
+        run_id = self._ensure_benchmark_run_id(run_id)
         logger.info(f"Benchmark run_id: {run_id}")
         import time
 
@@ -907,6 +970,9 @@ class Agent:
     def do_benchmark(
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
+        # One shared run id per benchmark run: every task's attempt allocation and
+        # trace context must see the same non-empty identifier.
+        run_id = self._ensure_benchmark_run_id(run_id)
         db_manager = self.db_manager
         default_datasource = self.global_config.current_datasource
         self.check_db()
@@ -937,12 +1003,9 @@ class Agent:
             )
             use_tables = None if not benchmark_config.use_tables_key else task_item.get(benchmark_config.use_tables_key)
 
-            # Use hierarchical save directory structure
-            output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
-
             trace_ctx = build_benchmark_trace_context(
                 benchmark=benchmark_platform,
-                run_id=run_id or "",
+                run_id=run_id,
                 task_id=task_id,
                 workflow=getattr(self.args, "workflow", None),
                 context_type=getattr(self.args, "context_type", None),
@@ -954,7 +1017,7 @@ class Agent:
                 },
             )
             with trace_context(trace_ctx, replace=True):
-                result = self.run(
+                result = self._run_benchmark_task(
                     SqlTask(
                         id=task_id,
                         datasource=task_datasource,
@@ -963,7 +1026,6 @@ class Agent:
                         catalog_name=sql_context["catalog_name"],
                         database_name=sql_context["database_name"],
                         schema_name=sql_context["schema_name"],
-                        output_dir=output_dir,
                         current_date=self.args.current_date,
                         tables=use_tables,
                         external_knowledge=(
@@ -973,11 +1035,10 @@ class Agent:
                         ),
                         schema_linking_type="full",
                     ),
-                    check_storage=False,
                     check_db=False,
                     run_id=run_id,
                 )
-            logger.info(f"Finish benchmark with {task_id}, file saved in {output_dir}/{task_id}.csv.")
+            logger.info("Finish benchmark with %s", task_id)
             return task_id, result
 
         max_workers = getattr(self.args, "max_workers", 1) or 1
@@ -1013,6 +1074,8 @@ class Agent:
     def benchmark_semantic_layer(
         self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
+        # One shared run id per benchmark run: attempt allocation rejects empty ids.
+        run_id = self._ensure_benchmark_run_id(run_id)
         task_file = self.args.testing_set
         self._check_benchmark_file(task_file)
 
@@ -1044,11 +1107,8 @@ class Agent:
 
             combined_ext_knowledge = task.get("external_knowledge", "") or ""
 
-            # Use hierarchical save directory structure
-            output_dir = self.global_config.get_save_run_dir(run_id) if run_id else self.global_config.output_dir
-
             subject_path = None
-            self.run(
+            self._run_benchmark_task(
                 SqlTask(
                     id=task_id,
                     database_type=current_db_config.type,
@@ -1056,14 +1116,13 @@ class Agent:
                     database_name=current_db_config.database,
                     schema_name=current_db_config.schema,
                     subject_path=subject_path,
-                    output_dir=output_dir,
                     external_knowledge=combined_ext_knowledge,
                     current_date=self.args.current_date,
                 ),
                 run_id=run_id,
             )
 
-            logger.info(f"Finish benchmark with {task_id}, file saved in {output_dir}/{task_id}.csv.")
+            logger.info("Finish benchmark with %s", task_id)
 
         return {"status": "success", "message": "Benchmark tasks executed successfully"}
 
