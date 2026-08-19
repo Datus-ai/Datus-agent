@@ -5278,12 +5278,25 @@
 <tr>
 <td><code>subagent_id</code></td>
 <td>string?</td>
-<td>按 subagent 过滤。传 <code>chat</code> 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户全部会话。</td>
+<td>按 subagent 过滤。传 <code>chat</code> 表示默认 chat agent,或传任意内置/自定义 subagent id;省略则返回该用户所有 agent 的会话。</td>
+</tr>
+<tr>
+<td><code>offset</code></td>
+<td>int</td>
+<td>跳过的会话数,默认 <code>0</code>,必须 <code>&gt;= 0</code>。</td>
+</tr>
+<tr>
+<td><code>limit</code></td>
+<td>int?</td>
+<td>每页数量,必须 <code>&gt;= 1</code>。省略时使用服务端默认值(<code>api.default_session_page_size</code>,默认 <code>50</code>)。超过 <code>api.max_session_page_size</code>(默认 <code>200</code>)的取值会被截断到上限,而非报错。</td>
 </tr>
 </tbody>
 </table>
-<p><strong>响应</strong>:<code>Result[ChatSessionData]</code>,数组元素为 <code>{ session_id, user_query, created_at, last_updated,
-total_turns, token_count, last_sql_queries, is_active }</code>。</p>
+<p>该接口始终分页:省略 <code>limit</code> 返回的是默认页,而非全部会话。只有所请求的那一页会被以 SQLite 打开,因此占主导的
+单会话开销不再随用户的历史会话总数增长;但枚举会话目录、以及为按 mtime 排序而对每个文件执行 stat,其耗时仍与
+会话总数相关,只是单会话成本远低于前者。可结合 <code>total_count</code>(未分页的总数)与 <code>offset</code> 翻页获取其余会话。</p>
+<p><strong>响应</strong>:<code>Result[ChatSessionData]</code>,含 <code>total_count</code>,数组元素为 <code>{ session_id, user_query, created_at,
+last_updated, total_turns, token_count, last_sql_queries, is_active }</code>。</p>
 <h3 id="delete-apiv1chatsessionssession_id"><code>DELETE /api/v1/chat/sessions/{session_id}</code><a class="headerlink" href="#delete-apiv1chatsessionssession_id" title="Permanent link">&para;</a></h3>
 <p>按 id 删除会话。</p>
 <h3 id="get-apiv1chathistorysession_id"><code>GET /api/v1/chat/history?session_id=...</code><a class="headerlink" href="#get-apiv1chathistorysession_id" title="Permanent link">&para;</a></h3>
