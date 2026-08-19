@@ -926,6 +926,15 @@ class Agent:
             "components": component_results,
         }
 
+    @staticmethod
+    def _ensure_benchmark_run_id(run_id: Optional[str]) -> str:
+        """Return the provided run id, or generate the shared timestamp-based one."""
+        if run_id:
+            return run_id
+        from datetime import datetime
+
+        return datetime.now().strftime("%Y%m%d_%H%M%S")
+
     def benchmark(self, run_id: Optional[str] = None):
         logger.info("Benchmarking begins")
         benchmark_platform = self.args.benchmark
@@ -937,12 +946,7 @@ class Agent:
         target_task_ids = getattr(self.args, "benchmark_task_ids", [])
         target_task_ids = set(target_task_ids) if target_task_ids else None
 
-        if not run_id:
-            from datetime import datetime
-
-            # Generate a shared run_id for this benchmark run
-            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
+        run_id = self._ensure_benchmark_run_id(run_id)
         logger.info(f"Benchmark run_id: {run_id}")
         import time
 
@@ -966,6 +970,9 @@ class Agent:
     def do_benchmark(
         self, benchmark_platform: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
+        # One shared run id per benchmark run: every task's attempt allocation and
+        # trace context must see the same non-empty identifier.
+        run_id = self._ensure_benchmark_run_id(run_id)
         db_manager = self.db_manager
         default_datasource = self.global_config.current_datasource
         self.check_db()
@@ -998,7 +1005,7 @@ class Agent:
 
             trace_ctx = build_benchmark_trace_context(
                 benchmark=benchmark_platform,
-                run_id=run_id or "",
+                run_id=run_id,
                 task_id=task_id,
                 workflow=getattr(self.args, "workflow", None),
                 context_type=getattr(self.args, "context_type", None),
@@ -1067,6 +1074,8 @@ class Agent:
     def benchmark_semantic_layer(
         self, benchmark_path: str, target_task_ids: Optional[Set[str]] = None, run_id: Optional[str] = None
     ):
+        # One shared run id per benchmark run: attempt allocation rejects empty ids.
+        run_id = self._ensure_benchmark_run_id(run_id)
         task_file = self.args.testing_set
         self._check_benchmark_file(task_file)
 
@@ -1110,7 +1119,7 @@ class Agent:
                     external_knowledge=combined_ext_knowledge,
                     current_date=self.args.current_date,
                 ),
-                run_id=run_id or "",
+                run_id=run_id,
             )
 
             logger.info("Finish benchmark with %s", task_id)

@@ -600,7 +600,7 @@ class CsvPerTaskResultProvider(ResultProvider):
                 if manifest is not None
                 else self.directory / f"{task_id}.csv"
             )
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, json.JSONDecodeError, DatusException) as exc:
             return ResultData(
                 task_id=task_id,
                 source=str(self.directory),
@@ -1043,7 +1043,7 @@ class AgentResultSqlProvider(SqlProvider):
                 if manifest is not None
                 else self.result_dir / f"{task_id}.sql"
             )
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, json.JSONDecodeError, DatusException) as exc:
             return SqlData(
                 task_id=task_id,
                 source=str(self.result_dir),
@@ -1069,6 +1069,16 @@ class AgentResultSqlProvider(SqlProvider):
                 )
             tables = collect_sql_tables(sql_text, self.dialect)
             return SqlData(task_id=task_id, source=str(sql_path), sql=sql_text, tables=tables, dialect=self.dialect)
+
+        if manifest is not None:
+            # The manifest is authoritative for this attempt. Falling back to the flat
+            # legacy JSON here could silently evaluate SQL from a different attempt.
+            return SqlData(
+                task_id=task_id,
+                source=str(sql_path),
+                error=f"Manifest-declared generated_sql file is missing: {sql_path}",
+                dialect=self.dialect,
+            )
 
         json_path = self.result_dir / f"{task_id}.json"
         if json_path.exists():

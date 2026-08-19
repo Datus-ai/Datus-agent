@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from datus.utils.benchmark_artifacts import (
     resolve_task_trajectory_path,
 )
 from datus.utils.benchmark_utils import AgentResultSqlProvider, CsvPerTaskResultProvider
+from datus.utils.exceptions import DatusException
 
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "fixtures" / "benchmark_artifacts" / "v1" / "task-output.schema.json"
@@ -297,7 +299,7 @@ def test_attempt_allocation_is_retry_and_concurrency_safe(tmp_path):
 
 
 def test_attempt_requires_run_id_and_missing_manifest_is_explicit(tmp_path):
-    with pytest.raises(ValueError, match="run_id must be non-empty"):
+    with pytest.raises(DatusException, match="run_id must be non-empty"):
         allocate_benchmark_attempt(tmp_path / "save", tmp_path / "trajectory", run_id="", task_id="42")
 
     assert load_task_output_manifest(tmp_path / "save", "42") is None
@@ -336,7 +338,7 @@ def test_retry_updates_manifest_without_overwriting_prior_attempt(tmp_path):
 
 @pytest.mark.parametrize("task_id", ["../42", "task/42", "task\\42", "C:drive", "."])
 def test_attempt_rejects_nonportable_task_ids(tmp_path, task_id):
-    with pytest.raises(ValueError, match="portable path segment"):
+    with pytest.raises(DatusException, match="portable path segment"):
         allocate_benchmark_attempt(tmp_path / "save", tmp_path / "trajectory", run_id="run-1", task_id=task_id)
 
 
@@ -381,6 +383,37 @@ def test_internal_evaluators_prefer_manifest_over_stale_flat_files(tmp_path):
 
     assert result.dataframe["order_id"].tolist() == [1, 2]
     assert sql.sql == "SELECT order_id, amount FROM analytics.orders"
+
+
+def test_sql_provider_reports_missing_canonical_sql_instead_of_legacy_json(tmp_path):
+    attempt = _allocate(tmp_path)
+    task = _task()
+    trajectory = _write_success_files(attempt)
+    finalize_benchmark_attempt(
+        attempt,
+        task=task,
+        workflow=_success_workflow(task),
+        trajectory_path=trajectory,
+        agent_config=_agent_config(),
+    )
+    (attempt.output_dir / "42.sql").unlink()
+    (attempt.save_run_root / "42.json").write_text(
+        json.dumps({"finished": True, "instance_id": "42", "gen_sql": "SELECT 999"}),
+        encoding="utf-8",
+    )
+
+    sql = AgentResultSqlProvider(str(tmp_path), datasource="save", run_id="analytics/run-1").fetch("42")
+
+    assert sql.sql is None
+    assert "generated_sql file is missing" in sql.error
+
+
+def test_ensure_benchmark_run_id_generates_and_preserves_ids():
+    assert Agent._ensure_benchmark_run_id("run-7") == "run-7"
+    for missing in (None, ""):
+        generated = Agent._ensure_benchmark_run_id(missing)
+        # The generated id must satisfy attempt allocation, which rejects empty ids.
+        assert re.fullmatch(r"\d{8}_\d{6}", generated)
 
 
 def test_agent_wrapper_writes_manifest_when_runner_raises_before_output(tmp_path):

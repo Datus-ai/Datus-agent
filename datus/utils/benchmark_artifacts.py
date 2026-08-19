@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -34,30 +35,43 @@ TASK_OUTPUT_MANIFEST = "task-output.json"
 
 
 def _utc_now() -> datetime:
+    """Return the current UTC time as an aware datetime."""
     return datetime.now(timezone.utc)
 
 
 def _rfc3339(value: datetime) -> str:
+    """Render a datetime as an RFC 3339 UTC timestamp with a ``Z`` suffix."""
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _validate_path_segment(value: str, field_name: str) -> str:
+    """Reject identifiers that cannot be used as a single portable path segment."""
     text = str(value)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", text) or text in {".", ".."}:
-        raise ValueError(f"benchmark {field_name} must be a non-empty portable path segment: {value!r}")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"benchmark {field_name} must be a non-empty portable path segment: {value!r}",
+        )
     return text
 
 
 def _relative_posix(path: Path, root: Path) -> str:
+    """Return ``path`` relative to ``root`` as a POSIX string, rejecting escapes."""
     resolved_root = root.resolve()
     resolved_path = path.resolve()
     try:
         relative = resolved_path.relative_to(resolved_root)
     except ValueError as exc:
-        raise ValueError(f"benchmark artifact path is outside its run root: {path}") from exc
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"benchmark artifact path is outside its run root: {path}",
+        ) from exc
     value = relative.as_posix()
     if not value or any(part == ".." for part in relative.parts):
-        raise ValueError(f"invalid benchmark artifact relative path: {value!r}")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"invalid benchmark artifact relative path: {value!r}",
+        )
     return value
 
 
@@ -77,10 +91,12 @@ class BenchmarkAttempt:
 
     @property
     def task_root(self) -> Path:
+        """Directory that holds this task's manifest and attempts."""
         return self.save_run_root / "tasks" / self.task_id
 
     @property
     def manifest_path(self) -> Path:
+        """Path of the task's authoritative ``task-output.json`` manifest."""
         return self.task_root / TASK_OUTPUT_MANIFEST
 
 
@@ -94,9 +110,12 @@ def allocate_benchmark_attempt(
 ) -> BenchmarkAttempt:
     """Atomically allocate ``attempt-N`` so retries never overwrite output."""
     safe_task_id = _validate_path_segment(task_id, "task_id")
-    safe_run_id = str(run_id).strip()
+    safe_run_id = str(run_id).strip() if run_id is not None else ""
     if not safe_run_id:
-        raise ValueError("benchmark run_id must be non-empty")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_REQUIRED,
+            message="benchmark run_id must be non-empty",
+        )
 
     save_root = Path(save_run_root)
     trajectory_root = Path(trajectory_run_root)
@@ -127,6 +146,7 @@ def allocate_benchmark_attempt(
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    """Write JSON via a same-directory temp file and atomic rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temporary_path = Path(temporary_name)
@@ -142,6 +162,7 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
+    """Coerce dataclass-like, pydantic, or mapping values into a plain mapping."""
     if isinstance(value, Mapping):
         return value
     if hasattr(value, "model_dump"):
@@ -153,6 +174,7 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
 
 
 def _node_sequence(workflow: Any) -> list[Any]:
+    """Return workflow nodes in execution order, tolerating partial workflows."""
     if workflow is None:
         return []
     nodes = getattr(workflow, "nodes", {}) or {}
@@ -164,6 +186,7 @@ def _node_sequence(workflow: Any) -> list[Any]:
 
 
 def _normalize_usage_key(key: str) -> str:
+    """Map provider-specific token usage keys onto the contract's canonical names."""
     aliases = {
         "prompt_tokens": "input_tokens",
         "completion_tokens": "output_tokens",
@@ -173,6 +196,7 @@ def _normalize_usage_key(key: str) -> str:
 
 
 def _merge_usage(target: dict[str, int], usage: Any) -> bool:
+    """Accumulate non-negative numeric usage counters into ``target``; report if any merged."""
     if not isinstance(usage, Mapping):
         return False
     found = False
@@ -186,6 +210,7 @@ def _merge_usage(target: dict[str, int], usage: Any) -> bool:
 
 
 def _node_usage(node: Any) -> dict[str, int]:
+    """Extract one node's token usage, preferring per-call assistant usage over snapshots."""
     result = _as_mapping(getattr(node, "result", None))
     usage: defaultdict[str, int] = defaultdict(int)
     token_event_usage: defaultdict[str, int] = defaultdict(int)
@@ -226,6 +251,7 @@ def _node_usage(node: Any) -> dict[str, int]:
 
 
 def _aggregate_usage(workflow: Any) -> dict[str, int]:
+    """Sum per-node usage across the workflow and derive ``total_tokens`` when absent."""
     aggregate: defaultdict[str, int] = defaultdict(int)
     for node in _node_sequence(workflow):
         _merge_usage(aggregate, _node_usage(node))
@@ -235,6 +261,7 @@ def _aggregate_usage(workflow: Any) -> dict[str, int]:
 
 
 def _model_identity(workflow: Any, agent_config: Any) -> Optional[dict[str, Any]]:
+    """Describe the executing model from workflow nodes, falling back to the active config."""
     model_config = None
     for node in reversed(_node_sequence(workflow)):
         node_model = getattr(node, "model", None)
@@ -270,12 +297,14 @@ def _model_identity(workflow: Any, agent_config: Any) -> Optional[dict[str, Any]
 
 
 def _last_sql_context(workflow: Any) -> Any:
+    """Return the most recent SQL context recorded on the workflow, if any."""
     context = getattr(workflow, "context", None)
     sql_contexts = getattr(context, "sql_contexts", None) or []
     return sql_contexts[-1] if sql_contexts else None
 
 
 def _failed_node(workflow: Any) -> Any:
+    """Return the first failed node in execution order, or ``None``."""
     for node in _node_sequence(workflow):
         if str(getattr(node, "status", "")) == "failed":
             return node
@@ -283,6 +312,7 @@ def _failed_node(workflow: Any) -> Any:
 
 
 def _output_completed(workflow: Any) -> bool:
+    """Report whether the workflow's output node completed successfully."""
     for node in reversed(_node_sequence(workflow)):
         if str(getattr(node, "type", "")) != "output":
             continue
@@ -292,6 +322,7 @@ def _output_completed(workflow: Any) -> bool:
 
 
 def _structured_error(workflow: Any, exception: Optional[BaseException], outputs_exist: bool) -> dict[str, Any]:
+    """Build the manifest's structured error from an exception or the failed workflow state."""
     if exception is not None:
         raw_code = getattr(exception, "code", None)
         return {
@@ -340,6 +371,7 @@ def _structured_error(workflow: Any, exception: Optional[BaseException], outputs
 
 
 def _replace_with_hardlink(source: Path, target: Path) -> None:
+    """Atomically point ``target`` at ``source`` via hardlink, copying when linking fails."""
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{os.getpid()}.{time.time_ns()}.tmp")
     try:
@@ -362,6 +394,7 @@ def _publish_legacy_compatibility(
     result_path: Path,
     row_count: int,
 ) -> None:
+    """Refresh the flat legacy alias files so pre-v1 consumers keep working."""
     legacy_sql = attempt.save_run_root / f"{attempt.task_id}.sql"
     legacy_result = attempt.save_run_root / f"{attempt.task_id}.csv"
     legacy_json = attempt.save_run_root / f"{attempt.task_id}.json"
@@ -485,6 +518,7 @@ def finalize_benchmark_attempt(
 
 
 def load_task_output_manifest(run_root: Path | str, task_id: str) -> Optional[dict[str, Any]]:
+    """Load and validate one task's v1 output manifest, or return ``None`` when absent."""
     safe_task_id = _validate_path_segment(task_id, "task_id")
     path = Path(run_root) / "tasks" / safe_task_id / TASK_OUTPUT_MANIFEST
     if not path.is_file():
@@ -492,15 +526,25 @@ def load_task_output_manifest(run_root: Path | str, task_id: str) -> Optional[di
     with path.open(encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):
-        raise ValueError(f"invalid benchmark task output manifest: {path}")
+        raise DatusException(
+            ErrorCode.COMMON_VALIDATION_FAILED,
+            message=f"invalid benchmark task output manifest: {path}",
+        )
     if payload.get("artifact_type") != TASK_OUTPUT_ARTIFACT_TYPE or payload.get("schema_version") != 1:
-        raise ValueError(f"unsupported benchmark task output manifest: {path}")
+        raise DatusException(
+            ErrorCode.COMMON_VALIDATION_FAILED,
+            message=f"unsupported benchmark task output manifest: {path}",
+        )
     if str(payload.get("task_id")) != safe_task_id:
-        raise ValueError(f"benchmark task output manifest identity mismatch: {path}")
+        raise DatusException(
+            ErrorCode.COMMON_VALIDATION_FAILED,
+            message=f"benchmark task output manifest identity mismatch: {path}",
+        )
     return payload
 
 
 def resolve_task_output_path(run_root: Path | str, task_id: str, output_name: str) -> Optional[Path]:
+    """Resolve a manifest-declared save output to an absolute path inside the run root."""
     root = Path(run_root)
     manifest = load_task_output_manifest(root, task_id)
     if manifest is None:
@@ -510,10 +554,16 @@ def resolve_task_output_path(run_root: Path | str, task_id: str, output_name: st
             continue
         raw_path = output.get("path")
         if not isinstance(raw_path, str) or not raw_path or "\\" in raw_path:
-            raise ValueError(f"invalid benchmark output path: {raw_path!r}")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message=f"invalid benchmark output path: {raw_path!r}",
+            )
         path = Path(raw_path)
         if path.is_absolute() or ".." in path.parts:
-            raise ValueError(f"invalid benchmark output path: {raw_path!r}")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message=f"invalid benchmark output path: {raw_path!r}",
+            )
         resolved = (root / path).resolve()
         resolved.relative_to(root.resolve())
         return resolved
@@ -525,15 +575,22 @@ def resolve_task_trajectory_path(
     trajectory_run_root: Path | str,
     task_id: str,
 ) -> Optional[Path]:
+    """Resolve the manifest-referenced trajectory file inside the trajectory run root."""
     manifest = load_task_output_manifest(save_run_root, task_id)
     if manifest is None or not isinstance(manifest.get("trajectory"), Mapping):
         return None
     raw_path = manifest["trajectory"].get("path")
     if not isinstance(raw_path, str) or not raw_path or "\\" in raw_path:
-        raise ValueError(f"invalid benchmark trajectory path: {raw_path!r}")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"invalid benchmark trajectory path: {raw_path!r}",
+        )
     path = Path(raw_path)
     if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"invalid benchmark trajectory path: {raw_path!r}")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"invalid benchmark trajectory path: {raw_path!r}",
+        )
     root = Path(trajectory_run_root).resolve()
     resolved = (root / path).resolve()
     resolved.relative_to(root)
