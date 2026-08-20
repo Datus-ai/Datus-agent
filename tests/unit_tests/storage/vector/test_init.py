@@ -22,7 +22,11 @@ import pytest
 
 import datus.storage.vector as vector_pkg
 from datus.storage.vector import VectorRegistry, _LazyLanceVectorBackend
-from datus.storage.vector.lance_backend import LanceVectorBackend
+
+# ``datus.storage.vector.lance_backend`` is deliberately NOT imported at module
+# level: it pulls in lancedb, and this module exists to certify that importing
+# the vector package does not. Tests that genuinely need the real backend import
+# it inside the test body and take the ``requires_lancedb`` fixture.
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -41,14 +45,19 @@ _IMPORT_PROBE = textwrap.dedent(
 )
 
 
-def _run_import_probe() -> dict[str, str]:
-    """Import the vector package in a fresh interpreter and report what it loaded."""
-    result = subprocess.run(
-        [sys.executable, "-c", _IMPORT_PROBE],
+def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess:
+    """Run *script* in a fresh interpreter rooted at the repo."""
+    return subprocess.run(
+        [sys.executable, "-c", script],
         cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
     )
+
+
+def _run_import_probe() -> dict[str, str]:
+    """Import the vector package in a fresh interpreter and report what it loaded."""
+    result = _run_in_clean_interpreter(_IMPORT_PROBE)
     assert result.returncode == 0, f"import probe failed:\nstdout={result.stdout}\nstderr={result.stderr}"
 
     # Ignore anything the interpreter or logging config may print around the markers.
@@ -64,6 +73,19 @@ def _run_import_probe() -> dict[str, str]:
 @pytest.fixture(scope="module")
 def import_probe() -> dict[str, str]:
     return _run_import_probe()
+
+
+@pytest.fixture(scope="module")
+def requires_lancedb() -> None:
+    """Skip when this host cannot import lancedb.
+
+    The probe has to run out-of-process: on a host without AVX2 the import dies
+    with SIGILL, which cannot be caught in-process — that is the failure mode
+    issue #1308 is about. A subprocess turns it into a return code.
+    """
+    result = _run_in_clean_interpreter("import lancedb")
+    if result.returncode != 0:
+        pytest.skip(f"lancedb is not importable on this host (rc={result.returncode})")
 
 
 class TestLazyLanceImport:
@@ -83,14 +105,16 @@ class TestLanceRegistration:
         assert VectorRegistry.is_registered("lance") is True
         assert "lance" in VectorRegistry.registered_types()
 
-    def test_create_backend_returns_initialized_lance_backend(self, tmp_path):
+    def test_create_backend_returns_initialized_lance_backend(self, requires_lancedb, tmp_path):
+        from datus.storage.vector.lance_backend import LanceVectorBackend
+
         backend = VectorRegistry.create_backend("lance", {"data_dir": str(tmp_path)})
 
         assert type(backend) is LanceVectorBackend
         # ``initialize(config)`` must have reached the real instance, not the proxy.
         assert backend._data_dir == str(tmp_path)
 
-    def test_created_backend_connects_to_a_project_directory(self, tmp_path):
+    def test_created_backend_connects_to_a_project_directory(self, requires_lancedb, tmp_path):
         backend = VectorRegistry.create_backend("lance", {"data_dir": str(tmp_path)})
 
         database = backend.connect("proj")
@@ -98,7 +122,9 @@ class TestLanceRegistration:
         assert database.table_names() == []
         assert (tmp_path / "proj" / "datus_db").is_dir()
 
-    def test_instantiating_the_proxy_yields_the_real_backend(self):
+    def test_instantiating_the_proxy_yields_the_real_backend(self, requires_lancedb):
+        from datus.storage.vector.lance_backend import LanceVectorBackend
+
         backend = _LazyLanceVectorBackend()
 
         assert type(backend) is LanceVectorBackend
@@ -108,7 +134,9 @@ class TestLanceRegistration:
 class TestModuleAttributeAccess:
     """PEP 562 ``__getattr__`` keeps the public ``__all__`` surface intact."""
 
-    def test_lance_vector_backend_attribute_resolves_to_the_real_class(self):
+    def test_lance_vector_backend_attribute_resolves_to_the_real_class(self, requires_lancedb):
+        from datus.storage.vector.lance_backend import LanceVectorBackend
+
         assert vector_pkg.LanceVectorBackend is LanceVectorBackend
 
     def test_lance_vector_backend_is_exported(self):
