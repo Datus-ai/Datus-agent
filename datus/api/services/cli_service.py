@@ -156,11 +156,31 @@ class CLIService:
             # ``switch_context`` so a request about to be refused does not mutate
             # connector state.
             if getattr(self.agent_config, "sql_read_only", False):
-                from datus.utils.sql_utils import classify_read_only_violation, parse_sql_statement_kind
+                from datus.utils.sql_utils import (
+                    READ_ONLY_MULTI_STATEMENT,
+                    READ_ONLY_NON_READ,
+                    READ_ONLY_WRITABLE_PRAGMA,
+                    parse_sql_statement_kind,
+                    validate_read_only_sql,
+                )
 
                 dialect = getattr(self.current_db_connector, "dialect", "") or ""
-                reason, sql_type = classify_read_only_violation(request.sql_query, dialect)
-                if reason:
+                violation, sql_type = validate_read_only_sql(request.sql_query, dialect)
+                if violation:
+                    # The helper returns a code, not prose, so each entry point
+                    # words its own refusal. This route answers an HTTP client
+                    # rather than a model, so it names the setting that caused
+                    # the refusal.
+                    reason = {
+                        READ_ONLY_MULTI_STATEMENT: (
+                            "Multi-statement SQL is not allowed. Please submit one query at a time."
+                        ),
+                        READ_ONLY_NON_READ: (
+                            f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
+                            f"Detected SQL type: {sql_type.value}"
+                        ),
+                        READ_ONLY_WRITABLE_PRAGMA: "Writable PRAGMA statements are not allowed in read-only mode.",
+                    }[violation]
                     # Same structured shape as the DBFuncTool refusal in
                     # ``database._refuse_write_if_read_only`` so an operator can
                     # filter both entry points on one field set — including the
@@ -173,7 +193,7 @@ class CLIService:
                         sql_type=parse_sql_statement_kind(request.sql_query, dialect) or sql_type.value,
                         database=request.database_name or "",
                         source="deployment",
-                        rule=reason,
+                        rule=violation,
                     )
                     return Result(
                         success=False,

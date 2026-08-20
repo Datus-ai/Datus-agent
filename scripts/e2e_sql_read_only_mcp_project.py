@@ -125,7 +125,7 @@ def stage_config(project: Path, dest: Path, *, sql_read_only: bool, standin: str
     so the gate cannot be exercised at all. With a stand-in the probes really
     execute, which upgrades the check from "gate placement" to a full write
     round-trip. The cost is that the connector dialect is sqlite, not the
-    project's; classify_read_only_violation should be checked separately
+    project's; validate_read_only_sql should be checked separately
     against the real dialect.
     """
     raw = yaml.safe_load((project / "conf" / "agent.yml").read_text(encoding="utf-8"))

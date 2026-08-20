@@ -2022,7 +2022,12 @@ class TestDBFuncToolExecuteSql:
 
         assert result.success == 0
         assert "statement-shape rules" in caplog.text
-        assert "Multi-statement" in caplog.text
+        # The violation CODE, not the prose: `validate_read_only_sql` returns a
+        # code so each caller words its own error, which also gives the log a
+        # stable value to aggregate on.
+        assert logged_fields(caplog.text)["rule"] == "multi_statement"
+        # And the caller's own wording still reaches the model.
+        assert "Multi-statement" in (result.error or "")
 
     def test_shallow_copy_can_still_force_read_only(self):
         """Pins the contract datus.validation.llm_runner depends on: it copies a

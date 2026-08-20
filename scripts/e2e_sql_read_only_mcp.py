@@ -79,7 +79,7 @@ CASES = [
 # the whole distinction the verdict table reports. That rules out both obvious
 # alternatives:
 #
-#   "read-only"          too loose -- classify_read_only_violation also says
+#   "read-only"          too loose -- validate_read_only_sql's caller also says
 #                        "Only read-only queries (SELECT, SHOW, ...) are
 #                        allowed", so gate refusals and shape refusals would
 #                        become indistinguishable.
