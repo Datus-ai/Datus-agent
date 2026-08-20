@@ -23,6 +23,18 @@ class _LazyLanceVectorBackend(BaseVectorBackend):
     then calls ``initialize(config)`` on the result. Returning a foreign
     instance from ``__new__`` makes Python skip this proxy's ``__init__``,
     so the real backend is constructed and initialized exactly as before.
+
+    ``BaseVectorBackend``'s abstract methods are deliberately left
+    unimplemented. The abstractness check lives in ``object.__new__``, which
+    this ``__new__`` never reaches, so the proxy itself is never instantiated;
+    the base class is kept only so the registry still holds a
+    ``BaseVectorBackend`` subclass.
+
+    Consequence: ``VectorRegistry.get_backend_class("lance")`` returns this
+    proxy rather than ``LanceVectorBackend``. Calling it still yields a real,
+    usable backend — only ``issubclass``/``__name__`` inspection sees the
+    proxy. Returning the real class is impossible by construction: it would
+    require the very import this proxy exists to defer.
     """
 
     def __new__(cls, *args: Any, **kwargs: Any) -> BaseVectorBackend:

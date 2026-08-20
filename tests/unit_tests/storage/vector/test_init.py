@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Contract tests for ``datus.storage.vector`` package-level backend registration.
+"""Tests for ``datus/storage/vector/__init__.py`` -- backend registration contract.
 
 Protects the fix for issue #1308: importing ``datus.storage.vector`` must not
 import ``lancedb``. lancedb's wheel is built at the x86-64-haswell baseline
