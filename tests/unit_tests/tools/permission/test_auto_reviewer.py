@@ -6,6 +6,7 @@ import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 from datus.tools.permission.auto_reviewer import (
@@ -13,6 +14,7 @@ from datus.tools.permission.auto_reviewer import (
     AutoReviewRequest,
     AutoReviewVerdict,
     LLMAutoReviewer,
+    ReviewDecision,
 )
 from datus.tools.permission.bash_rules import BashCommandRules
 from datus.tools.permission.permission_config import AutoReviewConfig, PermissionConfig
@@ -126,6 +128,86 @@ class TestAutoReviewConfig:
         assert verdict("medium").can_auto_allow(config)
         assert not verdict("high").can_auto_allow(config)
         assert not verdict("medium", confidence=0.5).can_auto_allow(config)
+
+
+class TestVerdictToleratesUnconstrainedOutput:
+    """Validation must be no stricter than the transport can guarantee.
+
+    Only schema-capable adapters constrain decoding; every Claude model routes
+    through ``generate_with_json_output``, which drops the schema kwarg and
+    asks Anthropic for a JSON *object*. The schema is a suggestion there, so a
+    constraint the model can violate is one that fails a usable review closed
+    into a manual prompt.
+    """
+
+    _REQUIRED = {
+        "risk_level": "low",
+        "user_authorization": "high",
+        "decision": "allow",
+        "confidence": 0.97,
+        "rationale": "reads a remote page, no mutation",
+    }
+
+    @pytest.mark.parametrize(
+        "extra_key,extra_value",
+        [
+            # Each observed in ~/.datus/logs — the reviewer answered correctly
+            # and volunteered one more field explaining or qualifying itself.
+            ("requires_confirmation", False),
+            ("user_authorization_reason", "matches trusted user message"),
+            ("confidence_note", ""),
+        ],
+    )
+    def test_volunteered_field_does_not_void_the_verdict(self, extra_key, extra_value):
+        result = AutoReviewVerdict.model_validate({**self._REQUIRED, extra_key: extra_value})
+
+        assert result.decision == ReviewDecision.ALLOW
+        assert result.confidence == 0.97
+        assert result.rationale == "reads a remote page, no mutation"
+
+    def test_volunteered_field_is_dropped_not_retained(self):
+        """Ignored means gone: nothing downstream can read a hallucinated key."""
+        result = AutoReviewVerdict.model_validate({**self._REQUIRED, "requires_confirmation": True})
+
+        assert "requires_confirmation" not in result.model_dump()
+        assert not hasattr(result, "requires_confirmation")
+
+    def test_a_missing_required_field_still_fails(self):
+        """Leniency covers additions only — an incomplete verdict is unusable."""
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({k: v for k, v in self._REQUIRED.items() if k != "decision"})
+
+    def test_an_out_of_range_confidence_still_fails(self):
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({**self._REQUIRED, "confidence": 1.5})
+
+    def test_an_unknown_decision_still_fails(self):
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({**self._REQUIRED, "decision": "definitely"})
+
+    def test_a_long_rationale_survives_for_the_renderer_to_truncate(self):
+        """The display budget is ~70 chars; enforcing it here would fail closed."""
+        result = AutoReviewVerdict.model_validate({**self._REQUIRED, "rationale": "y" * 900})
+
+        assert len(result.rationale) == 900
+
+    def test_a_runaway_rationale_still_fails(self):
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({**self._REQUIRED, "rationale": "y" * 1001})
+
+    def test_emitted_schema_still_forbids_extra_properties(self):
+        """The model must still be *told* not to add fields, and OpenAI's strict
+        json_schema mode rejects a schema without ``additionalProperties``."""
+        schema = AutoReviewVerdict.model_json_schema()
+
+        assert schema["additionalProperties"] is False
+
+    def test_emitted_schema_keeps_the_rationale_length_guidance(self):
+        """The schema is the only steer on the unconstrained path."""
+        rationale = AutoReviewVerdict.model_json_schema()["properties"]["rationale"]
+
+        assert "70 characters" in rationale["description"]
+        assert rationale["maxLength"] == 1000
 
 
 class TestReviewerRequest:
