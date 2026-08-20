@@ -1046,10 +1046,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1336,34 +1332,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成 Dashboard
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../semantic_modeling/" class="md-nav__link">
         
   
@@ -1400,34 +1368,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scheduler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    调度器
   
 
     
@@ -4439,7 +4379,7 @@
 <p>Subagent 是 Datus 中的专用 AI 助手。它与主聊天 agent 共用同一份项目配置，但拥有独立的提示词、工具面、会话，以及可选的范围化上下文。</p>
 <p>Subagent 可以是：</p>
 <ul>
-<li>内置系统 subagent，例如 <code>gen_sql</code>、<code>explore</code>、<code>scheduler</code></li>
+<li>内置系统 subagent，例如 <code>gen_sql</code>、<code>explore</code>、<code>gen_job</code></li>
 <li>在 <code>agent.yml</code> 的 <code>agent.agentic_nodes</code> 下定义的自定义 subagent</li>
 </ul>
 <h2 id="subagent_1">Subagent 包含什么<a class="headerlink" href="#subagent_1" title="Permanent link">&para;</a></h2>
@@ -4452,24 +4392,27 @@
 <li><strong>委派策略</strong>：通过 <code>subagents</code> 字段控制是否可用 <code>task()</code> 委派其他 subagent</li>
 </ul>
 <h2 id="subagent_2">内置 Subagent<a class="headerlink" href="#subagent_2" title="Permanent link">&para;</a></h2>
-<p>当前代码里由 <code>SYS_SUB_AGENTS</code> 定义的内置集合为：</p>
+<p>当前对用户开放的内置集合为：</p>
 <ol>
 <li><code>explore</code>：只读的结构、知识和文件探索</li>
 <li><code>gen_sql</code>：专用 SQL 生成</li>
+<li><code>ask_metrics</code>：使用已有语义指标回答问题</li>
 <li><code>gen_report</code>：结构化报告生成</li>
 <li><code>semantic_modeling</code>：统一的 Dosi 语义模型和指标创作</li>
 <li><code>gen_sql_summary</code>：SQL 摘要生成</li>
 <li><code>gen_table</code>：交互式建表</li>
 <li><code>gen_job</code>：数据管道作业（单库 ETL 和跨库迁移）</li>
 <li><code>gen_skill</code>：skill 创建与优化</li>
-<li><code>gen_dashboard</code>：BI 仪表盘创建与管理</li>
 <li><code>gen_visual_report</code>：在 <code>reports/&lt;slug&gt;/</code> 下产出自包含的可视化报告</li>
-<li><code>scheduler</code>：Airflow 作业生命周期管理</li>
 </ol>
+<p>Airflow 调度及 Superset 等外部 BI 操作不再属于 subagent 类型，而是由主
+agent 直接使用已安装 plugin 及其内置 skill 完成。代码中暂时保留
+<code>SchedulerAgenticNode</code> 和 <code>GenDashboardAgenticNode</code> 的旧实现，但它们不能再
+作为内置或自定义 subagent 被发现和执行。</p>
 <p>详细说明见 <a href="../builtin_subagents/">内置 subagent</a>。</p>
 <h2 id="subagent_3">自定义 Subagent<a class="headerlink" href="#subagent_3" title="Permanent link">&para;</a></h2>
 <p>自定义 subagent 配置在 <code>agent.agentic_nodes</code> 下。</p>
-<p>统一 agent TUI（<code>/agent</code> 或 <code>/subagent</code>）Custom Tab 的向导当前可以创建 <code>gen_sql</code> 风格或 <code>gen_report</code> 风格的自定义 subagent。如果你想把更专用的节点类别名成一个自定义入口，例如 <code>explore</code>、<code>gen_table</code>、<code>gen_skill</code>、<code>gen_dashboard</code>、<code>scheduler</code>，需要直接手工编辑 <code>agent.yml</code>。</p>
+<p>统一 agent TUI（<code>/agent</code> 或 <code>/subagent</code>）Custom Tab 的向导当前可以创建 <code>gen_sql</code> 风格或 <code>gen_report</code> 风格的自定义 subagent。如果你想把仍可用的专用节点类别名成一个自定义入口，例如 <code>explore</code>、<code>gen_table</code>、<code>gen_skill</code>，需要直接手工编辑 <code>agent.yml</code>。指向旧调度或外部 BI 节点类的自定义 alias 会被忽略。</p>
 <p>示例：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
@@ -4576,16 +4519,8 @@
 <td>创建或优化 skill</td>
 </tr>
 <tr>
-<td><code>gen_dashboard</code></td>
-<td>创建或管理 BI 仪表盘</td>
-</tr>
-<tr>
 <td><code>gen_visual_report</code></td>
 <td>在 <code>reports/&lt;slug&gt;/</code> 下产出自包含的可视化报告</td>
-</tr>
-<tr>
-<td><code>scheduler</code></td>
-<td>提交或操作 Airflow 作业</td>
 </tr>
 <tr>
 <td>自定义名称</td>
@@ -4593,6 +4528,8 @@
 </tr>
 </tbody>
 </table>
+<p>Airflow 或外部 BI 任务应让主 agent 直接使用已安装 plugin；不要调用
+<code>task()</code>，也不要创建自定义 subagent alias。</p>
 
 
 

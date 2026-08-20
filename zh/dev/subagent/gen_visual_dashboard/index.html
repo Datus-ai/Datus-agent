@@ -1046,10 +1046,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1184,34 +1180,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成 Dashboard
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../semantic_modeling/" class="md-nav__link">
         
   
@@ -1248,34 +1216,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scheduler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    调度器
   
 
     
@@ -4405,7 +4345,7 @@
 <p><code>gen_visual_dashboard</code> 把一个问题——<em>"做一份门店销售总览"</em>、<em>"看看新用户激活漏斗"</em>——直接变成一份自包含的 <strong>HTML 仪表盘</strong>：一个带筛选器的可交互网页，包含 KPI 卡片、图表、表格，筛选条件一变，SQL 立刻重跑、视图即时刷新。生成完成后会自动在浏览器中打开，由本地的 <code>datus --web</code> 后端提供查询服务。</p>
 <p><img alt="HTML 仪表盘示例——筛选器栏、KPI 卡片、按地区 / 时间维度联动的图表" src="../../assets/gen_visual_dsahboard_preview.png" /></p>
 <p>HTML 仪表盘是一个<strong>活的数据视图</strong>——每次切换日期、地区、产品线等筛选条件，仪表盘都会把 SQL 模板按新参数渲染后真实跑库取数。这跟 <code>gen_visual_report</code> 那种把数据<strong>一次性固化</strong>到页面里的长篇报告不一样：报告适合发邮件、做汇报；仪表盘适合需要反复探索、自助筛选的场景。</p>
-<p>如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 <a href="../gen_dashboard/"><code>gen_dashboard</code></a>。</p>
+<p>如果你要的是接 Superset 等外部 BI 平台的仪表盘，请让主 agent 直接使用已安装的 BI plugin。旧 BI dashboard 节点仅作为<a href="../gen_dashboard/">兼容说明</a>保留。</p>
 <h2 id="_2">快速开始<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p>先确认本地已经通过 <code>--web</code> 启动了 datus（HTML 仪表盘的筛选器需要这个后端处理查询）：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus<span class="w"> </span>--datasource<span class="w"> </span>&lt;你的数据源&gt;<span class="w"> </span>--web

@@ -635,10 +635,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-agentyml" class="md-nav__link">
+  <a href="#3-plugin" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 3：配置 agent.yml
+        步骤 3：安装并配置 plugin
       
     </span>
   </a>
@@ -668,10 +668,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-airflow" class="md-nav__link">
+  <a href="#6-airflow-dag" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 6：提交天级 Airflow 任务
+        步骤 6：发布并运行天级 Airflow DAG
       
     </span>
   </a>
@@ -690,10 +690,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-superset-dashboard" class="md-nav__link">
+  <a href="#8-plugin-superset-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 8：创建 Superset Dashboard
+        步骤 8：通过 plugin 创建 Superset Dashboard
       
     </span>
   </a>
@@ -1214,10 +1214,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1352,34 +1348,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    生成 Dashboard
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../subagent/semantic_modeling/" class="md-nav__link">
         
   
@@ -1416,34 +1384,6 @@
     
   
     指标问答
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../subagent/scheduler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    调度器
   
 
     
@@ -4354,10 +4294,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-agentyml" class="md-nav__link">
+  <a href="#3-plugin" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 3：配置 agent.yml
+        步骤 3：安装并配置 plugin
       
     </span>
   </a>
@@ -4387,10 +4327,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-airflow" class="md-nav__link">
+  <a href="#6-airflow-dag" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 6：提交天级 Airflow 任务
+        步骤 6：发布并运行天级 Airflow DAG
       
     </span>
   </a>
@@ -4409,10 +4349,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-superset-dashboard" class="md-nav__link">
+  <a href="#8-plugin-superset-dashboard" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 8：创建 Superset Dashboard
+        步骤 8：通过 plugin 创建 Superset Dashboard
       
     </span>
   </a>
@@ -4471,6 +4411,9 @@
 工作流：理解数仓分层设计、在本地 DuckDB workbench 文件中交互式建表、
 生成 ETL、产出 marts 数据、提交 Airflow 天级任务，并把结果写入 Superset
 创建仪表盘。</p>
+<p>本文通过 Datus plugin 使用 Airflow 和 Superset。Datus datasource 负责 SQL
+执行与数据传输，plugin 则通过 Airflow 和 Superset API 发现、创建、运行和
+检查资源。</p>
 <p>本地开源 quickstart <strong>不需要</strong> Iceberg、MinIO 或 S3。SaaS Studio tour
 使用托管的 DuckDB + Iceberg lakehouse；对应的 namespace 模型见文末
 「SaaS Studio Tour 变体」。</p>
@@ -4543,10 +4486,32 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 的提示词就能更贴近原始设计。</p>
 <h2 id="2-quickstart">步骤 2：启动本地 quickstart 环境<a class="headerlink" href="#2-quickstart" title="Permanent link">&para;</a></h2>
 <p>下载的 stack 中已经包含本文会用到的本地 demo 服务。</p>
-<p>启动 Superset：</p>
+<p>Superset 中名为 <code>examples</code> 的 Database 使用
+<code>postgres:5432/superset_examples</code> 连接 PostgreSQL。Superset plugin 会根据
+这个不包含凭据的连接标识解析对应的 Datus datasource。启动 Superset 前，
+需要把同一个 endpoint 暴露给主机，并确保 Compose service 名称可以在主机
+上解析：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/superset"</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>cat<span class="w"> </span>&gt;<span class="w"> </span>docker-compose.override.yml<span class="w"> </span><span class="s">&lt;&lt;'YAML'</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="s">services:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="s">  postgres:</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="s">    ports:</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s">      - "5432:5432"</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="s">YAML</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">if</span><span class="w"> </span>grep<span class="w"> </span>-qE<span class="w"> </span><span class="s1">'(^|[[:space:]])postgres([[:space:]]|$)'</span><span class="w"> </span>/etc/hosts<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">   </span>!<span class="w"> </span>grep<span class="w"> </span>-qxE<span class="w"> </span><span class="s1">'[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*'</span><span class="w"> </span>/etc/hosts<span class="p">;</span><span class="w"> </span><span class="k">then</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s1">'Conflicting /etc/hosts entry for postgres; replace it with: 127.0.0.1 postgres'</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">  </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="k">fi</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>grep<span class="w"> </span>-qxE<span class="w"> </span><span class="s1">'[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*'</span><span class="w"> </span>/etc/hosts<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s1">'127.0.0.1 postgres'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>tee<span class="w"> </span>-a<span class="w"> </span>/etc/hosts
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
 </span></code></pre></div>
+<p>主机的 5432 端口必须可用。这个流程使用 <code>postgres:5432</code>，从而让 Datus
+和 Superset 返回相同的连接标识。</p>
 <p>启动 Airflow：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/airflow"</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
@@ -4555,94 +4520,127 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 <ul>
 <li>Superset：<code>http://127.0.0.1:8088</code>，用户名 <code>admin</code>，密码 <code>admin</code></li>
 <li>Airflow：<code>http://127.0.0.1:8080</code>，用户名 <code>admin</code>，密码 <code>admin</code></li>
+<li>PostgreSQL serving database：<code>postgres:5432/superset_examples</code>，用户名/密码
+  为 <code>superset/superset</code></li>
 </ul>
 <p>这套 quickstart 的 Superset compose 已经带了本地演示用的元数据库和管理员默认值。</p>
 <p>Airflow compose 会把 <code>${DACOMP_HOME}</code> 挂载到容器中，并暴露一个名为
 <code>duckdb_dacomp_lever</code> 的 Airflow connection，指向
 <code>/workspace/lever_workbench.duckdb</code>。</p>
-<h2 id="3-agentyml">步骤 3：配置 <code>agent.yml</code><a class="headerlink" href="#3-agentyml" title="Permanent link">&para;</a></h2>
-<p>把下面这段 service 配置合并到 <code>~/.datus/conf/agent.yml</code> 现有的 <code>agent:</code>
+<p>即使这些本地 demo 凭据是公开默认值，也不要把它们直接写进 <code>agent.yml</code>。
+请在每个运行 Datus 的 shell 中导出：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AIRFLOW_PASSWORD</span><span class="o">=</span>admin
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SUPERSET_PASSWORD</span><span class="o">=</span>admin
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SUPERSET_PG_PASSWORD</span><span class="o">=</span>superset
+</span></code></pre></div>
+<h2 id="3-plugin">步骤 3：安装并配置 plugin<a class="headerlink" href="#3-plugin" title="Permanent link">&para;</a></h2>
+<p>把两个已发布 plugin 安装到 Datus 所在的同一个环境中。裸包名默认使用
+pip/PyPI 安装来源，不要添加 <code>pip:</code> 前缀。Superset plugin 内置了后续步骤
+使用的 <code>superset-dashboard-authoring</code> skill：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-airflow-plugin
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-superset-plugin
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>info<span class="w"> </span>airflow
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>datus<span class="w"> </span>plugin<span class="w"> </span>info<span class="w"> </span>superset
+</span></code></pre></div>
+<p>如需用最新发布版本替换已有安装，请添加 <code>--force</code>：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-airflow-plugin<span class="w"> </span>--force
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-superset-plugin<span class="w"> </span>--force
+</span></code></pre></div>
+<p>把下面这段配置合并到 <code>~/.datus/conf/agent.yml</code> 现有的 <code>agent:</code>
 下面。保留已有的 <code>agent.providers</code> 配置；<code>/model</code> 会使用这些凭据。路径会直接使用步骤
 0 里导出的 <code>DACOMP_HOME</code> 和 <code>DATUS_QUICKSTART_STACK</code> 环境变量。</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">lever_duckdb</span><span class="p">:</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="s">"duckdb:///${DACOMP_HOME}/lever_workbench.duckdb"</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">superset_serving</span><span class="p">:</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">127.0.0.1</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5433</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset_examples</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
-</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">    </span><span class="nt">bi_platforms</span><span class="p">:</span>
-</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
-</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8088</span>
-</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
-</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
-</span><span id="__span-4-23"><a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">        </span><span class="nt">dataset_db</span><span class="p">:</span>
-</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">          </span><span class="nt">datasource_ref</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset_serving</span>
-</span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">          </span><span class="nt">bi_database_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">examples</span>
-</span><span id="__span-4-26"><a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>
-</span><span id="__span-4-27"><a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">    </span><span class="nt">schedulers</span><span class="p">:</span>
-</span><span id="__span-4-28"><a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">      </span><span class="nt">airflow_prod</span><span class="p">:</span>
-</span><span id="__span-4-29"><a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">airflow</span>
-</span><span id="__span-4-30"><a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8080/api/v1</span>
-</span><span id="__span-4-31"><a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
-</span><span id="__span-4-32"><a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
-</span><span id="__span-4-33"><a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">        </span><span class="nt">dags_folder</span><span class="p">:</span><span class="w"> </span><span class="s">"${DATUS_QUICKSTART_STACK}/airflow/dags"</span>
-</span><span id="__span-4-34"><a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">        </span><span class="nt">connections</span><span class="p">:</span>
-</span><span id="__span-4-35"><a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="w">          </span><span class="nt">duckdb_dacomp_lever</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DAComp Lever DuckDB</span>
-</span><span id="__span-4-36"><a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>
-</span><span id="__span-4-37"><a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-4-38"><a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span>
-</span><span id="__span-4-39"><a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
-</span><span id="__span-4-40"><a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a>
-</span><span id="__span-4-41"><a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-4-42"><a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a><span class="w">    </span><span class="nt">gen_dashboard</span><span class="p">:</span>
-</span><span id="__span-4-43"><a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a><span class="w">      </span><span class="nt">bi_platform</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-4-44"><a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a><span class="w">    </span><span class="nt">scheduler</span><span class="p">:</span>
-</span><span id="__span-4-45"><a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a><span class="w">      </span><span class="nt">scheduler_service</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">airflow_prod</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">filesystem</span><span class="p">:</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">allow_write</span><span class="p">:</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"${DATUS_QUICKSTART_STACK}/airflow/dags"</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">      </span><span class="nt">lever_duckdb</span><span class="p">:</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="s">"duckdb:///${DACOMP_HOME}/lever_workbench.duckdb"</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">      </span><span class="nt">superset_serving</span><span class="p">:</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres</span>
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset_examples</span>
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
+</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
+</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_PG_PASSWORD}</span>
+</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>
+</span><span id="__span-7-21"><a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-7-22"><a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a><span class="w">    </span><span class="nt">airflow</span><span class="p">:</span>
+</span><span id="__span-7-23"><a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a><span class="w">      </span><span class="nt">local</span><span class="p">:</span>
+</span><span id="__span-7-24"><a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-7-25"><a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8080/api/v1</span>
+</span><span id="__span-7-26"><a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a><span class="w">        </span><span class="nt">api_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span>
+</span><span id="__span-7-27"><a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
+</span><span id="__span-7-28"><a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_PASSWORD}</span>
+</span><span id="__span-7-29"><a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a><span class="w">        </span><span class="nt">verify_ssl</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-7-30"><a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a><span class="w">        </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+</span><span id="__span-7-31"><a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a><span class="w">        </span><span class="nt">dags_folder</span><span class="p">:</span><span class="w"> </span><span class="s">"${DATUS_QUICKSTART_STACK}/airflow/dags"</span>
+</span><span id="__span-7-32"><a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a><span class="w">        </span><span class="nt">dag_id_prefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">daily_lever_</span>
+</span><span id="__span-7-33"><a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a><span class="w">        </span><span class="nt">allow_commands</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dags,tasks,version,health</span>
+</span><span id="__span-7-34"><a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a>
+</span><span id="__span-7-35"><a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a><span class="w">    </span><span class="nt">superset</span><span class="p">:</span>
+</span><span id="__span-7-36"><a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a><span class="w">      </span><span class="nt">local</span><span class="p">:</span>
+</span><span id="__span-7-37"><a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-7-38"><a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:8088</span>
+</span><span id="__span-7-39"><a id="__codelineno-7-39" name="__codelineno-7-39" href="#__codelineno-7-39"></a><span class="w">        </span><span class="nt">auth_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">login</span>
+</span><span id="__span-7-40"><a id="__codelineno-7-40" name="__codelineno-7-40" href="#__codelineno-7-40"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admin</span>
+</span><span id="__span-7-41"><a id="__codelineno-7-41" name="__codelineno-7-41" href="#__codelineno-7-41"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_PASSWORD}</span>
+</span><span id="__span-7-42"><a id="__codelineno-7-42" name="__codelineno-7-42" href="#__codelineno-7-42"></a><span class="w">        </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db</span>
+</span><span id="__span-7-43"><a id="__codelineno-7-43" name="__codelineno-7-43" href="#__codelineno-7-43"></a><span class="w">        </span><span class="nt">verify_ssl</span><span class="p">:</span><span class="w"> </span><span class="s">"true"</span>
+</span><span id="__span-7-44"><a id="__codelineno-7-44" name="__codelineno-7-44" href="#__codelineno-7-44"></a><span class="w">        </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="s">"30"</span>
 </span></code></pre></div>
-<p>然后使用 <code>lever_duckdb</code> datasource 启动 Datus。这个 datasource 指向可写的
-workbench 文件：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">"</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>lever_duckdb
+<p><code>filesystem.allow_write</code> 允许 agent 把 DAG 发布到 Airflow 挂载的主机目录。
+<code>dags_folder</code> 告诉 agent 应把运行副本发布到哪里。DAG 发现、触发、运行状态
+检查和日志读取由主 agent 通过 Airflow plugin 完成。</p>
+<p>先为当前项目启用两个 profile，然后启动聊天会话：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">"</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>airflow<span class="w"> </span>--profile<span class="w"> </span><span class="nb">local</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>superset<span class="w"> </span>--profile<span class="w"> </span><span class="nb">local</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>lever_duckdb
 </span></code></pre></div>
+<p>不要自行运行具体 plugin 命令，让主 agent 验证两个服务：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Using the enabled local profiles, ask the Airflow plugin for its server version and health, then ask the Superset plugin for health and the available databases. Perform read-only checks only and report any connectivity or authentication error.
+</span></code></pre></div>
+<p>始终在启动 Datus 前完成 plugin 配置和启用。plugin skill 和环境上下文会在
+session 启动时准备好；修改 profile 后请重启 session。这里选择的
+<code>lever_duckdb</code> datasource 指向可写的 workbench 文件。</p>
+<p>quickstart 通过 Airflow 的 <code>AIRFLOW_CONN_DUCKDB_DACOMP_LEVER</code> 环境变量注入
+<code>duckdb_dacomp_lever</code>。task 运行时可以通过 <code>BaseHook</code> 读取环境变量 connection，
+但 Airflow REST connection endpoint 不会返回它。步骤 6 会通过实际运行 DAG
+验证这个 connection。</p>
 <p>如果 CLI 提示还没有配置模型，继续之前先在 CLI 内运行：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>/model
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>/model
 </span></code></pre></div>
 <p>选择 provider/model，并按提示填写凭据。<code>/model</code> 会把 provider 凭据写入
 <code>~/.datus/conf/agent.yml</code> 的 <code>agent.providers</code>，并把当前项目使用的
 provider/model 写入 <code>./.datus/config.yml</code>。</p>
-<p>这里的 <code>dags_folder</code> 是 Datus 在主机上写入 DAG 文件的目录。Airflow compose
-会把这个目录挂载到 Airflow 容器内的 <code>/opt/airflow/dags</code>，所以 Datus
-生成的新 DAG 会被 Airflow 自动发现。</p>
 <h2 id="4-staging">步骤 4：创建必要的 staging 表<a class="headerlink" href="#4-staging" title="Permanent link">&para;</a></h2>
 <p>自然语言 agent 任务不要以 <code>CREATE</code>、<code>COPY</code> 这类 SQL 动词开头；CLI 会根据这些
 开头关键字判断是否直接执行 SQL。</p>
 <p>先要求 agent 创建目标 schema：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Please set up the target schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Please set up the target schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
 </span></code></pre></div>
 <p>这条教程只构建一条窄但完整的依赖链：<code>marts.lever__requisition_enhanced</code>。
 字段选择、字段重命名和业务逻辑以 <code>docs/data_contract.yaml</code> 为准。</p>
+<p>先要求 agent 检查物理源表字段，避免把 source-to-target 重命名误判为字段缺失：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Inspect the schemas and sample rows for raw.requisition, raw.user, raw.requisition_posting, and raw.requisition_offer. Before generating SQL, confirm these source-to-target renames from the physical columns: raw.requisition.id to requisition_id, name to requisition_name, creator_id to creator_user_id, owner_id to owner_user_id, and hiring_manager_id to hiring_manager_user_id; raw.user.id to user_id, name to user_name, and external_directory_id to external_directory_user_id. Do not create NULL placeholders for columns that exist in the source tables.
+</span></code></pre></div>
 <p>再要求 agent 根据 <code>lever__requisition_enhanced</code> 和
 <code>intermediate.int_lever__requisition_users</code> 的 <code>source_models</code> 创建必需的
 staging 表。agent 会把任务分发到建表流程：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Read ./docs/data_contract.yaml and create the staging tables needed for marts.lever__requisition_enhanced: staging.stg_lever__requisition from raw.requisition, staging.stg_lever__user from raw.user, staging.stg_lever__requisition_posting from raw.requisition_posting, and staging.stg_lever__requisition_offer from raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>Read ./docs/data_contract.yaml and create the staging tables needed for marts.lever__requisition_enhanced: staging.stg_lever__requisition from raw.requisition, staging.stg_lever__user from raw.user, staging.stg_lever__requisition_posting from raw.requisition_posting, and staging.stg_lever__requisition_offer from raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
 </span></code></pre></div>
 <p>这四张 staging 表就是 requisition enhanced 示例需要的最小 raw-to-staging 输入。</p>
 <h2 id="5-intermediate-marts">步骤 5：生成 intermediate 和 marts 表<a class="headerlink" href="#5-intermediate-marts" title="Permanent link">&para;</a></h2>
 <p>先生成 intermediate 表。它应该按照 <code>docs/data_contract.yaml</code> 中
 <code>int_lever__requisition_users</code> 的定义，把 requisition 字段和 user 字段关联起来。</p>
 <p>创建 intermediate 表：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
 </span></code></pre></div>
 <p>再生成面向分析的 marts 表。契约中定义 <code>marts.lever__requisition_enhanced</code>
 是一张按 <code>requisition_id</code> 一行的表，依赖：</p>
@@ -4652,52 +4650,93 @@ staging 表。agent 会把任务分发到建表流程：</p>
 <li><code>staging.stg_lever__requisition_offer</code></li>
 </ul>
 <p>创建 marts 表：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
 </span></code></pre></div>
 <p>这条链路的基本顺序始终是：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>staging -&gt; intermediate -&gt; marts
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>staging -&gt; intermediate -&gt; marts
 </span></code></pre></div>
-<p>生成完成后，可以直接验证 marts 表：</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">marts</span><span class="p">.</span><span class="n">lever__requisition_enhanced</span><span class="p">;</span>
+<p>生成完成后，验证每一层以及仪表盘所需的维度：</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="s1">'stg_user'</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">model</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="k">row_count</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">staging</span><span class="p">.</span><span class="n">stg_lever__user</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="k">UNION</span><span class="w"> </span><span class="k">ALL</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="k">SELECT</span><span class="w"> </span><span class="s1">'stg_requisition'</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">staging</span><span class="p">.</span><span class="n">stg_lever__requisition</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="k">UNION</span><span class="w"> </span><span class="k">ALL</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="k">SELECT</span><span class="w"> </span><span class="s1">'stg_requisition_posting'</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">staging</span><span class="p">.</span><span class="n">stg_lever__requisition_posting</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="k">UNION</span><span class="w"> </span><span class="k">ALL</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="k">SELECT</span><span class="w"> </span><span class="s1">'stg_requisition_offer'</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">staging</span><span class="p">.</span><span class="n">stg_lever__requisition_offer</span>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="k">UNION</span><span class="w"> </span><span class="k">ALL</span>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="k">SELECT</span><span class="w"> </span><span class="s1">'int_requisition_users'</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">intermediate</span><span class="p">.</span><span class="n">int_lever__requisition_users</span>
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="k">UNION</span><span class="w"> </span><span class="k">ALL</span>
+</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="k">SELECT</span><span class="w"> </span><span class="s1">'marts_requisition_enhanced'</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">marts</span><span class="p">.</span><span class="n">lever__requisition_enhanced</span><span class="p">;</span>
+</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>
+</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="k">SELECT</span>
+</span><span id="__span-17-14"><a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="w">  </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">total_rows</span><span class="p">,</span>
+</span><span id="__span-17-15"><a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="w">  </span><span class="k">COUNT</span><span class="p">(</span><span class="n">status</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rows_with_status</span><span class="p">,</span>
+</span><span id="__span-17-16"><a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a><span class="w">  </span><span class="k">COUNT</span><span class="p">(</span><span class="n">team</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rows_with_team</span><span class="p">,</span>
+</span><span id="__span-17-17"><a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a><span class="w">  </span><span class="k">COUNT</span><span class="p">(</span><span class="k">location</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">rows_with_location</span><span class="p">,</span>
+</span><span id="__span-17-18"><a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a><span class="w">  </span><span class="k">SUM</span><span class="p">(</span><span class="n">count_postings</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">posting_links</span><span class="p">,</span>
+</span><span id="__span-17-19"><a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a><span class="w">  </span><span class="k">SUM</span><span class="p">(</span><span class="n">count_offers</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">offer_links</span>
+</span><span id="__span-17-20"><a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a><span class="k">FROM</span><span class="w"> </span><span class="n">marts</span><span class="p">.</span><span class="n">lever__requisition_enhanced</span><span class="p">;</span>
 </span></code></pre></div>
-<h2 id="6-airflow">步骤 6：提交天级 Airflow 任务<a class="headerlink" href="#6-airflow" title="Permanent link">&para;</a></h2>
-<p>现在可以要求 agent 把 marts 刷新过程提交给 scheduler。quickstart 自带的
-Airflow 已经预置好了 <code>duckdb_dacomp_lever</code> 连接。</p>
-<p>提交一个每天早上 8 点运行的 SQL 任务，刷新同一条从契约生成的链路：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>Submit a daily SQL job named daily_lever_requisition_enhanced that refreshes staging.stg_lever__requisition, staging.stg_lever__user, staging.stg_lever__requisition_posting, staging.stg_lever__requisition_offer, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced at 8am every day using the duckdb_dacomp_lever connection. Use the SQL generated and validated from docs/data_contract.yaml in the previous steps.
+<p>每个 model 都必须非空，<code>rows_with_status</code>、<code>rows_with_team</code>、
+<code>rows_with_location</code>、<code>posting_links</code> 和 <code>offer_links</code> 都必须大于 0。使用
+version 1 quickstart 数据包时，marts 表应有 146 行。如果维度意外全部为
+NULL，请返回前面的 schema 检查，修正源字段映射后再继续。</p>
+<p>保存并验证用于刷新同一条契约生成链路的 SQL；每天早上 8 点的调度将在步骤 6 中创建：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>Collect the exact SQL statements that successfully created the staging, intermediate, and marts schemas and built the four staging tables, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced. Keep them in dependency order and write them to ./jobs/daily_lever_requisition_enhanced.sql. Do not replace validated statements with newly invented SQL. Execute the saved file once against lever_duckdb and confirm it reproduces the same non-zero validation results.
 </span></code></pre></div>
-<p>再手动触发一次做验证：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Trigger daily_lever_requisition_enhanced once now and show me the latest run status
+<h2 id="6-airflow-dag">步骤 6：发布并运行天级 Airflow DAG<a class="headerlink" href="#6-airflow-dag" title="Permanent link">&para;</a></h2>
+<p>Airflow plugin 可以查询 DAG、检查源码和导入错误、触发运行，并读取 run
+状态、task 状态和日志。agent 通过 filesystem 工具发布新 DAG，再使用 plugin
+完成验证和运行。</p>
+<p>对于本地 stack，发布就是把生成的文件写入 allowlist 中、并挂载到
+<code>/opt/airflow/dags</code> 的主机目录。要求 agent 编写、发布并验证 DAG：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>Use the Airflow plugin with profile local and follow its airflow skill. Create ./dags/daily_lever_requisition_enhanced.py for DAG id daily_lever_requisition_enhanced with schedule 0 8 * * *, catchup disabled, and a fixed timezone-aware start date. At runtime, read /workspace/jobs/daily_lever_requisition_enhanced.sql, resolve the duckdb_dacomp_lever Airflow connection with BaseHook, reconstruct the DuckDB SQLAlchemy URL from the connection schema or host, and execute the validated SQL inside a committed transaction. Keep the project source file, then use the filesystem tools to write identical content to the local profile's configured dags_folder. Confirm the two files are identical. Wait until the Airflow plugin reports the DAG, check import errors and DAG details, then trigger it once and wait for completion. After the wait finishes, read the latest run again and show the final dag_run_id and state. If it fails, inspect task states and logs before reporting the error.
 </span></code></pre></div>
+<p>发布和触发操作可能需要确认。同一个 agent prompt 已包含必要的回查；如需重复
+检查，请让主 agent 通过 Airflow plugin 列出匹配 DAG、import errors、DAG 详情
+和最新 run。</p>
 <p>你应该会看到：</p>
 <ul>
-<li><code>${DATUS_QUICKSTART_STACK}/airflow/dags</code> 下生成新的 DAG 文件</li>
-<li>同一份文件会在 Airflow 容器内显示为 <code>/opt/airflow/dags/&lt;dag_id&gt;.py</code></li>
-<li>scheduler 返回 <code>job_id</code></li>
-<li>Airflow UI 中出现对应任务</li>
+<li>维护中的源码位于 <code>$DACOMP_HOME/dags/daily_lever_requisition_enhanced.py</code></li>
+<li><code>${DATUS_QUICKSTART_STACK}/airflow/dags</code> 下出现内容完全相同的运行副本</li>
+<li>同一个文件在 Airflow 容器内显示为
+  <code>/opt/airflow/dags/daily_lever_requisition_enhanced.py</code></li>
+<li>Airflow 返回 <code>dag_id</code>、成功的 <code>dag_run_id</code> 和运行状态</li>
 </ul>
 <h2 id="7-marts-superset-serving-db">步骤 7：把 marts 表同步到 Superset serving DB<a class="headerlink" href="#7-marts-superset-serving-db" title="Permanent link">&para;</a></h2>
 <p>上面的 marts 表是通过 <code>lever_duckdb</code> datasource 生成的。创建仪表盘之前，需要先把它复制到
-<code>dataset_db.datasource_ref</code> 指向的 BI 注册数据库 <code>superset_serving</code>（Postgres）。
+<code>superset_serving</code> Postgres datasource。
 这里的 <code>lever_duckdb</code> 和 <code>superset_serving</code> 都是 <code>agent.yml</code> 里的 Datus
 datasource 名称，不是 DuckDB 或 Postgres 内部真实的 database/catalog 名。</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
 </span></code></pre></div>
-<p>如果 <code>public.lever__requisition_enhanced</code> 还不存在，传输工具会根据源查询结果列自动创建目标表。</p>
-<p>完成后，这张表就位于 Superset 通过 <code>bi_database_name: examples</code> 识别的数据库中。</p>
-<h2 id="8-superset-dashboard">步骤 8：创建 Superset Dashboard<a class="headerlink" href="#8-superset-dashboard" title="Permanent link">&para;</a></h2>
-<p>当表已经存在于 <code>superset_serving</code>，就可以要求 agent 创建仪表盘：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>Please create a requisition operations dashboard in Superset from public.lever__requisition_enhanced. Include KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers.
+<p>如果 <code>public.lever__requisition_enhanced</code> 还不存在，传输工具会根据源查询结果列
+自动创建目标表。version 1 数据包的源表和目标表都应该返回 146 行。</p>
+<p>完成后，这张表就位于 Superset 中注册为 <code>examples</code> 的 PostgreSQL 数据库。
+两边都使用 <code>postgres:5432/superset_examples</code> 标识数据库，因此 plugin 可以
+把它唯一解析到 <code>superset_serving</code> Datus datasource。</p>
+<h2 id="8-plugin-superset-dashboard">步骤 8：通过 plugin 创建 Superset Dashboard<a class="headerlink" href="#8-plugin-superset-dashboard" title="Permanent link">&para;</a></h2>
+<p>当表已经存在于 <code>superset_serving</code>，要求 agent 使用 plugin 的 authoring
+skill：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store only non-sensitive Database, Dataset, Dashboard, and Chart resource request payloads in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets, and redact sensitive fields before writing any payload. Every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
 </span></code></pre></div>
-<p>数据准备是单独的 ETL / scheduler 步骤。仪表盘生成流程期望目标表或
-SQL dataset 已经存在于 BI 已注册的数据库中。</p>
+<p>数据准备是单独的 ETL / 调度步骤。创建仪表盘前，目标表或 SQL dataset
+必须已经存在于 Superset 所识别的数据库中。Superset 的创建、更新和查询
+操作会根据 plugin 权限规则要求确认。</p>
+<p>同一个 agent prompt 会回读新建资源并执行代表性 chart 查询。如需重复验证，请把
+返回的 ID 交给主 agent，让它通过 Superset plugin 检查 Database、table metadata、
+Dashboard、Charts 和 chart data；不要复制本文中的示例 ID。</p>
+<p>仪表盘应该包含 11 个 chart。代表性的 total requisitions chart 查询应返回
+146，分类查询应返回多个分组，Database connection 应标识为
+<code>postgres:5432/superset_examples</code>。</p>
 <h2 id="9">步骤 9：验证端到端结果<a class="headerlink" href="#9" title="Permanent link">&para;</a></h2>
 <p>走完整条链路后，你应该能确认：</p>
 <ul>
 <li><code>lever_workbench.duckdb</code> 中已经有 <code>staging</code>、<code>intermediate</code> 和 <code>marts</code> schema</li>
 <li><code>marts.lever__requisition_enhanced</code> 是从 raw 数据经 staging 和 intermediate 层逐层加工得到的</li>
-<li>Airflow 中能看到日常调度任务</li>
-<li>仪表盘生成流程返回了 Superset dashboard URL</li>
+<li><code>$DACOMP_HOME/jobs</code> 和 <code>$DACOMP_HOME/dags</code> 中保存了已验证 SQL 和维护中的 DAG 源码</li>
+<li>Airflow UI 中能看到成功运行的天级 DAG</li>
+<li>获得 Superset Database、Dataset、Dashboard、Chart ID 以及 dashboard URL</li>
 </ul>
 <h2 id="saas-studio-tour">SaaS Studio Tour 变体<a class="headerlink" href="#saas-studio-tour" title="Permanent link">&para;</a></h2>
 <p>托管的 SaaS tour 使用同一条 Lever 工作流，但不使用本地
@@ -4707,21 +4746,24 @@ SQL dataset 已经存在于 BI 已注册的数据库中。</p>
 <li>每个 workspace 独立可写 namespace：<code>lake.ws_&lt;workspace_id&gt;</code></li>
 <li>SaaS Airflow connection：<code>duckdb_lever_workbench</code></li>
 </ul>
+<p>托管平台会提供受管理的 Airflow/Superset plugin profile 和自己的 DAG 部署
+通道。不要把本地的 <code>filesystem.allow_write</code> 或 Compose DAG 挂载路径带入
+SaaS。plugin 操作仍负责发现、触发和验证托管资源；下面的 namespace 规则
+保持不变。</p>
 <p>每个用户都应该在独立 workspace 中运行 tour。backend 会按当前 workspace
 渲染 seed 进去的 <code>docs/data_contract.yaml</code>，所以输出会写到
 <code>lake.ws_&lt;workspace_id&gt;</code>，源数据继续来自 <code>lake.demo_raw</code>。prompt 和 SQL
 应该使用完整限定名，例如：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>lake.demo_raw.requisition
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>lake.ws_&lt;workspace_id&gt;.stg_lever__requisition
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>lake.ws_&lt;workspace_id&gt;.int_lever__requisition_users
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>lake.ws_&lt;workspace_id&gt;.marts_lever__requisition_enhanced
+<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>lake.demo_raw.requisition
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>lake.ws_&lt;workspace_id&gt;.stg_lever__requisition
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>lake.ws_&lt;workspace_id&gt;.int_lever__requisition_users
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>lake.ws_&lt;workspace_id&gt;.marts_lever__requisition_enhanced
 </span></code></pre></div>
 <p>SaaS tour 中不要使用 <code>raw.*</code>、<code>staging.*</code>、<code>intermediate.*</code>、<code>marts.*</code>
 这类未限定的物理 schema 名。它们只表示逻辑层级；真实可写边界是 workspace
 namespace。</p>
-<p>如果 demo project 或 Airflow DAG 是在 workspace namespace 改造前生成的，
-需要重置或重建 demo project，并重新生成 job，确保 DAG 使用
-<code>lake.ws_&lt;workspace_id&gt;</code>，而不是旧的硬编码 namespace。</p>
+<p>workspace namespace 发生变化时，需要重建 demo project 并重新生成 DAG，
+确保 DAG 使用当前的 <code>lake.ws_&lt;workspace_id&gt;</code> namespace。</p>
 
 
 
