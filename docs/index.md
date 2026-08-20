@@ -77,7 +77,7 @@ The architecture has four layers, matching the diagram above:
 
 ## Getting started
 
-The first run needs no environment preparation: the install bundles the California Schools sample dataset with its datasource pre-registered, so you do not have to connect a database of your own. Linux or macOS:
+The first run needs no environment preparation: the install bundles the California Schools sample dataset with its datasource `california_schools` pre-registered, so you do not have to connect a database of your own. Linux or macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
@@ -86,7 +86,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 Open a new shell and run `datus`, then:
 
 1. `/model` to configure an LLM
-2. `/datasource` to add a datasource
+2. `/datasource` to add your own datasource (skip it to stay on the bundled sample)
 3. `/init` (optional) to scan the current project
 
 Manual install works too: `pip install datus-agent` (Python 3.12+). Configuration has two levels: a global `agent.yml` for the main settings, and a per-project `.datus/config.yml` for overrides such as the active model and default datasource (see the [configuration docs](configuration/introduction.md)).
@@ -101,7 +101,7 @@ Pipeline and migration work can start from the [Data Engineering Quickstart](get
 
 ## Interfaces
 
-All six entry points share one agent backend and one body of context: assets built in the CLI apply equally when an analyst asks from the browser or Slack. The examples below use a datasource named `demo`; create one first with `/datasource`.
+All six entry points share one agent backend and one body of context: assets built in the CLI apply equally when an analyst asks from the browser or Slack. The examples below use a datasource named `demo`; create one first with `/datasource`, or substitute `california_schools` to use the bundled sample.
 
 | Interface | Command | Use Case |
 |-----------|---------|----------|
