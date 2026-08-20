@@ -14,7 +14,7 @@
         <link rel="prev" href="../builtin_subagents/">
       
       
-        <link rel="next" href="../gen_dashboard/">
+        <link rel="next" href="../semantic_modeling/">
       
       
         
@@ -1046,10 +1046,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1358,34 +1354,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Dashboard
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../semantic_modeling/" class="md-nav__link">
         
   
@@ -1422,34 +1390,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scheduler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scheduler
   
 
     
@@ -4498,7 +4438,7 @@
 <li><code>gen_sql</code> (default)</li>
 <li><code>gen_report</code></li>
 </ul>
-<p>If you want advanced aliases such as <code>explore</code>, <code>gen_table</code>, <code>gen_skill</code>, <code>gen_dashboard</code>, or <code>scheduler</code>, edit <code>agent.yml</code> manually.</p>
+<p>If you want advanced aliases such as <code>explore</code>, <code>gen_table</code>, or <code>gen_skill</code>, edit <code>agent.yml</code> manually. Scheduling and external BI operations are handled directly by the main agent through installed plugins and cannot be exposed through a custom subagent alias.</p>
 <h2 id="wizard-fields">Wizard Fields<a class="headerlink" href="#wizard-fields" title="Permanent link">&para;</a></h2>
 <h3 id="step-1-basic-info">Step 1: Basic Info<a class="headerlink" href="#step-1-basic-info" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4626,17 +4566,14 @@
 <p>Example:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">sales_dashboard</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gen_dashboard</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">schema_explorer</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">explore</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">bi_platform</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span><span class="nt">etl_scheduler</span><span class="p">:</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="nt">node_class</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scheduler</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
 </span></code></pre></div>
+<p>Legacy configurations whose <code>node_class</code> is <code>gen_dashboard</code> or <code>scheduler</code>
+are not listed or instantiated. Ask the main agent to use the corresponding
+Superset or Airflow plugin instead.</p>
 <p>See <a href="../introduction/">Subagent Guide</a> and <a href="../builtin_subagents/">Built-in subagents</a> for the supported node classes and runtime behavior.</p>
 
 
@@ -4684,13 +4621,13 @@
         
         
           
-          <a href="../gen_dashboard/" class="md-footer__link md-footer__link--next" aria-label="Next: Generate Dashboard">
+          <a href="../semantic_modeling/" class="md-footer__link md-footer__link--next" aria-label="Next: Semantic Modeling">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Generate Dashboard
+                Semantic Modeling
               </div>
             </div>
             <div class="md-footer__button md-icon">

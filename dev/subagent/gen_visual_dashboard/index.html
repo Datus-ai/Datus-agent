@@ -1046,10 +1046,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1184,34 +1180,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Dashboard
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../semantic_modeling/" class="md-nav__link">
         
   
@@ -1248,34 +1216,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scheduler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scheduler
   
 
     
@@ -4405,7 +4345,7 @@
 <p><code>gen_visual_dashboard</code> turns a question — <em>"build me a store sales overview"</em>, <em>"show the new-user activation funnel"</em> — into a self-contained <strong>HTML dashboard</strong>: an interactive web page with filters, KPI cards, charts, and tables. Change a filter and the SQL re-runs against your database, the view refreshes on the spot. When the run finishes the page opens in your browser, served by a local <code>datus --web</code> backend.</p>
 <p><img alt="Sample HTML dashboard — filter bar, KPI cards, charts cross-linked by region / time" src="../../assets/gen_visual_dsahboard_preview.png" /></p>
 <p>An HTML dashboard is a <strong>live data view</strong> — every change to the date range, region, product line, or any other filter renders the saved SQL template with the new parameters and re-queries the database. That's the key difference from <code>gen_visual_report</code>, which bakes data into the page at build time: reports are for sharing in emails or briefings; dashboards are for the cases where you need to keep exploring or hand the page to someone who'll filter it themselves.</p>
-<p>For interactive BI dashboards on Superset / Grafana, use <a href="../gen_dashboard/"><code>gen_dashboard</code></a> instead.</p>
+<p>For interactive BI dashboards on Superset or another external platform, ask the main agent to use the installed BI plugin directly. The old BI dashboard node is documented only as a <a href="../gen_dashboard/">legacy compatibility path</a>.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>First confirm <code>datus --web</code> is running locally — the dashboard's filters need this backend to answer queries:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--web

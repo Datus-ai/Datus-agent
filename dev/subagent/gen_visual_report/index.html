@@ -1046,10 +1046,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1184,34 +1180,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Dashboard
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../semantic_modeling/" class="md-nav__link">
         
   
@@ -1248,34 +1216,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scheduler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scheduler
   
 
     
@@ -4404,7 +4344,7 @@
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p><code>gen_visual_report</code> turns a question — <em>"how did Q4 revenue do?"</em>, <em>"explain merchant churn in H2"</em> — into a self-contained <strong>HTML report</strong>: a scrollable web page with an executive summary, KPI cards, charts, tables, and narrative paragraphs. In Datus-CLI mode the page opens in your browser automatically; in Datus-SaaS it shows up inline in the chat.</p>
 <p><img alt="Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart" src="../../assets/gen_visual_report_preview.png" /></p>
-<p>An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset / Grafana, use <code>gen_dashboard</code> instead.</p>
+<p>An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset or another external platform, ask the main agent to use the installed BI plugin directly.</p>
 <p>If you'd rather have a plain-text <strong>Markdown report</strong> (no HTML rendering, no charts), use the <code>gen_report</code> agent instead.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>Activate <code>gen_visual_report</code> as your current agent — the legacy <code>/gen_visual_report ...</code> slash invocation was removed in favor of <code>/agent</code>-based selection:</p>

@@ -1046,10 +1046,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1336,34 +1332,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../gen_dashboard/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Generate Dashboard
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../semantic_modeling/" class="md-nav__link">
         
   
@@ -1400,34 +1368,6 @@
     
   
     Ask Metrics
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scheduler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scheduler
   
 
     
@@ -4439,7 +4379,7 @@
 <p>Subagents are specialized AI assistants in Datus. They share the same project configuration as the main chat agent, but run with their own prompt, tool surface, session, and optional scoped context.</p>
 <p>A subagent can be:</p>
 <ul>
-<li>A built-in system subagent such as <code>gen_sql</code>, <code>explore</code>, or <code>scheduler</code></li>
+<li>A built-in system subagent such as <code>gen_sql</code>, <code>explore</code>, or <code>gen_job</code></li>
 <li>A custom subagent defined in <code>agent.agentic_nodes</code> in <code>agent.yml</code></li>
 </ul>
 <h2 id="what-a-subagent-includes">What a Subagent Includes<a class="headerlink" href="#what-a-subagent-includes" title="Permanent link">&para;</a></h2>
@@ -4452,24 +4392,28 @@
 <li><strong>Delegation policy</strong>: optional <code>task()</code> access to other subagents via the <code>subagents</code> field</li>
 </ul>
 <h2 id="built-in-subagents">Built-in Subagents<a class="headerlink" href="#built-in-subagents" title="Permanent link">&para;</a></h2>
-<p>The current built-in set comes from <code>SYS_SUB_AGENTS</code> in code:</p>
+<p>The currently exposed built-in set is:</p>
 <ol>
 <li><code>explore</code>: read-only schema, knowledge, and file exploration</li>
 <li><code>gen_sql</code>: specialized SQL generation</li>
+<li><code>ask_metrics</code>: answer questions using existing semantic metrics</li>
 <li><code>gen_report</code>: structured report generation</li>
 <li><code>semantic_modeling</code>: unified Dosi semantic-model and metric authoring</li>
 <li><code>gen_sql_summary</code>: SQL summary generation</li>
 <li><code>gen_table</code>: interactive table creation</li>
 <li><code>gen_job</code>: data pipeline jobs (single-database ETL AND cross-database migration)</li>
 <li><code>gen_skill</code>: skill creation and optimization</li>
-<li><code>gen_dashboard</code>: BI dashboard creation and management</li>
-<li><code>gen_visual_report</code>: Self-contained visual report under <code>reports/&lt;slug&gt;/</code></li>
-<li><code>scheduler</code>: Airflow job lifecycle management</li>
+<li><code>gen_visual_report</code>: self-contained visual report under <code>reports/&lt;slug&gt;/</code></li>
 </ol>
+<p>Airflow scheduling and external BI operations such as Superset authoring are
+not subagent types. The main agent performs them directly with installed
+plugins and their bundled skills. The legacy <code>SchedulerAgenticNode</code> and
+<code>GenDashboardAgenticNode</code> implementations remain in the codebase temporarily,
+but they are not discoverable or executable as built-in or custom subagents.</p>
 <p>See <a href="../builtin_subagents/">Built-in subagents</a> for details.</p>
 <h2 id="custom-subagents">Custom Subagents<a class="headerlink" href="#custom-subagents" title="Permanent link">&para;</a></h2>
 <p>Custom subagents are configured under <code>agent.agentic_nodes</code>.</p>
-<p>The unified agent TUI (<code>/agent</code> or <code>/subagent</code>) Custom-tab wizard currently creates <code>gen_sql</code>-style or <code>gen_report</code>-style custom subagents. If you want to alias more specialized node classes such as <code>explore</code>, <code>gen_table</code>, <code>gen_skill</code>, <code>gen_dashboard</code>, or <code>scheduler</code>, edit <code>agent.yml</code> manually.</p>
+<p>The unified agent TUI (<code>/agent</code> or <code>/subagent</code>) Custom-tab wizard currently creates <code>gen_sql</code>-style or <code>gen_report</code>-style custom subagents. If you want to alias more specialized available node classes such as <code>explore</code>, <code>gen_table</code>, or <code>gen_skill</code>, edit <code>agent.yml</code> manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.</p>
 <p>Example:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
@@ -4576,16 +4520,8 @@
 <td>Create or optimize skills</td>
 </tr>
 <tr>
-<td><code>gen_dashboard</code></td>
-<td>Create or manage BI dashboards</td>
-</tr>
-<tr>
 <td><code>gen_visual_report</code></td>
 <td>Produce a self-contained visual report under <code>reports/&lt;slug&gt;/</code></td>
-</tr>
-<tr>
-<td><code>scheduler</code></td>
-<td>Submit or operate Airflow jobs</td>
 </tr>
 <tr>
 <td>Custom names</td>
@@ -4593,6 +4529,8 @@
 </tr>
 </tbody>
 </table>
+<p>For Airflow or external BI work, ask the main agent to use the installed
+plugin directly; do not call <code>task()</code> or create a custom subagent alias.</p>
 
 
 
