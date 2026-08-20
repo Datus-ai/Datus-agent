@@ -476,16 +476,19 @@ class OpenAICompatibleModel(LLMBaseModel):
                 else:
                     # Max retries reached or non-retryable error. Surface the
                     # upstream message verbatim — the wrapper code/desc is
-                    # often too generic (300002 = "Invalid request format,
-                    # content, or model response") and operators end up
-                    # grepping litellm tracebacks to figure out what really
-                    # broke. Keep ``str(e)`` on the same line so a single
-                    # CloudWatch entry has everything.
+                    # often too generic (300002 covers both a rejected request
+                    # and an unusable response) and operators end up grepping
+                    # litellm tracebacks to figure out what really broke. Keep
+                    # ``str(e)`` on the same line so a single CloudWatch entry
+                    # has everything, and carry it on the exception too: the
+                    # log is not visible to whoever catches this (the CLI
+                    # prints the exception message, and the permission
+                    # reviewer's fail-closed warning quotes it).
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
                         f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
-                    raise DatusException(error_code)
+                    raise DatusException(error_code, message_args={"error_detail": str(e)})
             except Exception as e:
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
@@ -535,14 +538,13 @@ class OpenAICompatibleModel(LLMBaseModel):
                     continue
                 else:
                     # Max retries reached or non-retryable error — same
-                    # reasoning as the sync ``_with_retry`` path: append
-                    # the upstream message so a single log line carries
-                    # both the wrapper classification and the raw cause.
+                    # reasoning as the sync ``_with_retry`` path: carry the
+                    # upstream message on both the log line and the exception.
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
                         f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
-                    raise DatusException(error_code)
+                    raise DatusException(error_code, message_args={"error_detail": str(e)})
             except Exception as e:
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
@@ -594,11 +596,21 @@ class OpenAICompatibleModel(LLMBaseModel):
             routed_provider = getattr(self.litellm_adapter, "provider", "")
             suppress_top_p = routed_provider == LLMProvider.CLAUDE
 
+            # Some models reject ``temperature`` outright rather than merely
+            # constraining it (the claude-*-5 family: "`temperature` is
+            # deprecated for this model."). Suppression is unconditional there —
+            # ahead of kwargs and model_config alike — because no caller-supplied
+            # value can make such a request valid, and letting one through fails
+            # EVERY call to that model, not just the ones that opted in.
+            suppress_temperature = not self.supports_temperature()
+
             # Add temperature: priority is kwargs > model_config > default (0.7).
             # An explicit ``None`` in kwargs is the caller's "drop this param"
             # signal — kept for symmetry with the top_p path even though
-            # Anthropic accepts ``temperature`` alone.
-            if "temperature" in kwargs:
+            # Anthropic accepts ``temperature`` alone (where it accepts it).
+            if suppress_temperature:
+                pass
+            elif "temperature" in kwargs:
                 if kwargs["temperature"] is not None:
                     params["temperature"] = kwargs["temperature"]
             elif self.model_config.temperature is not None:
@@ -1926,29 +1938,55 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Model specifications loaded from conf/providers.yml (cached)."""
         return _load_model_specs()
 
-    def _lookup_spec(self, field: str) -> Optional[int]:
+    def _lookup_spec_typed(self, field: str, expected_type: type) -> Optional[Any]:
         """Look up ``field`` in ``model_specs`` with exact-then-longest-prefix matching.
 
         Longest-prefix is important when specs declare both a generic family key
         (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
         generic key would otherwise bleed into unrelated slugs that happen to
-        share a short prefix. Returns None when the field is missing —
-        OpenRouter-cache-only entries do not carry ``max_tokens``, so callers
-        must tolerate absence.
+        share a short prefix. Returns None when the field is missing or is not
+        an ``expected_type`` — OpenRouter-cache-only entries do not carry
+        ``max_tokens``, so callers must tolerate absence.
+
+        ``expected_type`` keeps numeric specs and capability flags apart. It
+        matters in one direction only: ``bool`` is a subclass of ``int``, so a
+        flag would satisfy an ``int`` lookup, while a number never satisfies a
+        ``bool`` lookup.
         """
         specs = self.model_specs
+
+        def _typed(spec: Any) -> bool:
+            return isinstance(spec, dict) and isinstance(spec.get(field), expected_type)
+
         exact = specs.get(self.model_name)
-        if isinstance(exact, dict) and isinstance(exact.get(field), int):
+        if _typed(exact):
             return exact[field]
         best_key: Optional[str] = None
         for spec_model, spec in specs.items():
-            if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
+            if not _typed(spec):
                 continue
             if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
                 best_key = spec_model
         if best_key is None:
             return None
         return specs[best_key][field]
+
+    def _lookup_spec(self, field: str) -> Optional[int]:
+        """Numeric spec lookup (``max_tokens``, ``context_length``)."""
+        return self._lookup_spec_typed(field, int)
+
+    def supports_temperature(self) -> bool:
+        """Whether the model accepts a ``temperature`` parameter at all.
+
+        Newer Anthropic models (the claude-*-5 family) reject the request
+        outright with ``"`temperature` is deprecated for this model."``, so
+        sending the non-reasoning default of 0.7 made them unusable for every
+        call. Declared per model via ``model_specs.supports_temperature`` in
+        ``providers.yml``; absent means supported, which keeps every existing
+        model on its current behavior.
+        """
+        flag = self._lookup_spec_typed("supports_temperature", bool)
+        return True if flag is None else bool(flag)
 
     def max_tokens(self) -> Optional[int]:
         """Max tokens from model specs with prefix matching, or None if unavailable."""

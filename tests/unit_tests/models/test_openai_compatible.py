@@ -2277,3 +2277,82 @@ class TestBuildRunConfigInputFilter:
         result = await rc.call_model_input_filter(data)
 
         assert result is data.model_data
+
+
+class TestSupportsTemperature:
+    """``model_specs.supports_temperature: false`` suppresses the parameter.
+
+    Regression: the claude-*-5 family rejects the request outright with
+    "`temperature` is deprecated for this model.", so the non-reasoning default
+    of 0.7 made those models unusable for EVERY call — plain generation and
+    structured output alike.
+    """
+
+    @staticmethod
+    def _mock_resp(content="ok"):
+        resp = MagicMock()
+        resp.choices = [MagicMock()]
+        resp.choices[0].message.content = content
+        resp.choices[0].message.reasoning_content = None
+        resp.choices[0].finish_reason = "stop"
+        resp.model = "m"
+        resp.usage = MagicMock()
+        resp.usage.prompt_tokens = 1
+        resp.usage.completion_tokens = 1
+        resp.usage.total_tokens = 2
+        return resp
+
+    def _generate_kwargs(self, model_name, specs, **gen_kwargs):
+        model = _make_model(_make_model_config(model=model_name))
+        with (
+            patch("datus.models.openai_compatible._load_model_specs", return_value=specs),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=self._mock_resp()) as mock_lit,
+        ):
+            model.generate("prompt", **gen_kwargs)
+        return mock_lit.call_args[1]
+
+    _UNSUPPORTED = {"claude-sonnet-5": {"supports_temperature": False}}
+
+    def test_flag_false_suppresses_the_default(self):
+        assert "temperature" not in self._generate_kwargs("claude-sonnet-5", self._UNSUPPORTED)
+
+    def test_flag_false_suppresses_an_explicit_kwarg(self):
+        """No caller-supplied value can make the request valid, so kwargs lose."""
+        assert "temperature" not in self._generate_kwargs("claude-sonnet-5", self._UNSUPPORTED, temperature=0.5)
+
+    def test_flag_false_suppresses_model_config(self):
+        model = _make_model(_make_model_config(model="claude-sonnet-5", temperature=0.3))
+        with (
+            patch("datus.models.openai_compatible._load_model_specs", return_value=self._UNSUPPORTED),
+            patch("datus.models.openai_compatible.litellm.completion", return_value=self._mock_resp()) as mock_lit,
+        ):
+            model.generate("prompt")
+        assert "temperature" not in mock_lit.call_args[1]
+
+    def test_absent_flag_keeps_the_existing_default(self):
+        kwargs = self._generate_kwargs("claude-sonnet-4-6", {"claude-sonnet-4-6": {"max_tokens": 128000}})
+        assert kwargs["temperature"] == 0.7
+
+    def test_flag_true_keeps_temperature(self):
+        kwargs = self._generate_kwargs("some-model", {"some-model": {"supports_temperature": True}})
+        assert kwargs["temperature"] == 0.7
+
+    def test_flag_does_not_leak_across_model_families(self):
+        """Prefix matching must not let a 5-family entry disable 4.x."""
+        specs = {"claude-sonnet-5": {"supports_temperature": False}}
+        assert self._generate_kwargs("claude-sonnet-4-6", specs)["temperature"] == 0.7
+
+    def test_numeric_spec_is_not_read_as_a_capability_flag(self):
+        """``bool`` is an ``int`` subclass; the reverse must not hold."""
+        model = _make_model(_make_model_config(model="m"))
+        with patch("datus.models.openai_compatible._load_model_specs", return_value={"m": {"supports_temperature": 1}}):
+            assert model.supports_temperature() is True
+
+    def test_real_catalog_marks_the_claude_5_family(self):
+        """The shipped providers.yml must carry the verified entries."""
+        from datus.models.openai_compatible import _load_model_specs
+
+        specs = _load_model_specs()
+        assert specs["claude-sonnet-5"]["supports_temperature"] is False
+        assert specs["claude-opus-5"]["supports_temperature"] is False
+        assert "supports_temperature" not in specs["claude-sonnet-4-6"]

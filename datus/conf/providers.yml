@@ -35,6 +35,8 @@ providers:
       - claude-sonnet-4-6
       - claude-opus-4-6
       - claude-opus-4-7
+      - claude-sonnet-5
+      - claude-opus-5
 
   kimi:
     type: kimi
@@ -312,6 +314,18 @@ model_specs:
     max_tokens: 8192
 
   # Claude Models
+  # The claude-*-5 family rejects ``temperature`` outright
+  # ("`temperature` is deprecated for this model."), so it must never be sent —
+  # not even the non-reasoning default. Verified against claude-sonnet-5 and
+  # claude-opus-5; the 4.x models below still accept it.
+  claude-sonnet-5:
+    context_length: 1000000
+    max_tokens: 128000
+    supports_temperature: false
+  claude-opus-5:
+    context_length: 1000000
+    max_tokens: 128000
+    supports_temperature: false
   claude-opus-4-7:
     context_length: 1000000
     max_tokens: 128000
