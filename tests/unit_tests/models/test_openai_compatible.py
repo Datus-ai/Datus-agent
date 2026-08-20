@@ -2340,6 +2340,14 @@ class TestClaudeTemperatureSuppression:
     def test_other_providers_keep_an_explicit_value(self):
         assert self._generate_kwargs("deepseek", temperature=0.5)["temperature"] == 0.5
 
+    def test_anthropic_routed_provider_is_suppressed_too(self):
+        """``anthropic`` is the documented alias of ``claude`` in
+        :class:`LLMProvider`; a request routed under that spelling reaches the
+        same endpoint and must lose the same knob."""
+        kwargs = self._generate_kwargs("anthropic", _make_model_config(temperature=0.3))
+        assert "temperature" not in kwargs
+        assert "top_p" not in kwargs
+
     def test_claude_5_models_are_selectable_from_the_catalog(self):
         """The fix is unreachable through ``/model`` if the catalog omits them."""
         import yaml
@@ -2350,3 +2358,54 @@ class TestClaudeTemperatureSuppression:
         models = catalog["providers"]["claude"]["models"]
         assert "claude-sonnet-5" in models
         assert "claude-opus-5" in models
+
+
+class TestAgentSamplingParamSuppression:
+    """The Agents-SDK path drops the same knobs the completion path drops.
+
+    Regression: the suppression lived only in ``generate``, so a configured
+    ``temperature``/``top_p`` still reached Anthropic through ``ModelSettings``
+    on every tool call and streaming request — a claude-*-5 tool call 400ed on
+    a parameter the completion path had already learned to drop.
+    """
+
+    def _model_settings(self, provider, **config_kwargs):
+        model = _make_model(_make_model_config(**config_kwargs))
+        model.litellm_adapter.provider = provider
+        with patch("datus.models.openai_compatible.Agent") as MockAgent:
+            MockAgent.return_value = MagicMock()
+            model._build_agent(
+                instruction="test",
+                output_type=str,
+                strict_json_schema=True,
+                connected_servers={},
+                tools=None,
+            )
+        return MockAgent.call_args[1]["model_settings"]
+
+    def test_configured_temperature_is_suppressed_for_claude(self):
+        assert self._model_settings("claude", temperature=0.3).temperature is None
+
+    def test_configured_top_p_is_suppressed_for_claude(self):
+        assert self._model_settings("claude", top_p=0.8).top_p is None
+
+    def test_both_knobs_suppressed_together_for_claude(self):
+        settings = self._model_settings("claude", temperature=0.3, top_p=0.8)
+        assert settings.temperature is None
+        assert settings.top_p is None
+
+    def test_suppressed_for_anthropic_routed_provider(self):
+        settings = self._model_settings("anthropic", temperature=0.3, top_p=0.8)
+        assert settings.temperature is None
+        assert settings.top_p is None
+
+    @pytest.mark.parametrize("model_name", ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-4-6"])
+    def test_suppressed_for_every_claude_model(self, model_name):
+        settings = self._model_settings("claude", model=model_name, temperature=0.3)
+        assert settings.temperature is None
+
+    def test_other_providers_keep_both_knobs(self):
+        """Suppression must not bleed into OpenAI/DeepSeek/Kimi/..."""
+        settings = self._model_settings("openai", temperature=0.3, top_p=0.8)
+        assert settings.temperature == 0.3
+        assert settings.top_p == 0.8

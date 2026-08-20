@@ -549,6 +549,33 @@ class OpenAICompatibleModel(LLMBaseModel):
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
 
+    def _suppresses_sampling_params(self) -> bool:
+        """True when the routed provider rejects ``temperature`` / ``top_p``.
+
+        Neither sampling knob is ever sent to Anthropic:
+          * ``top_p`` — rejected alongside ``temperature`` with HTTP 400 /
+            ``invalid_request_error`` (the claude-sonnet-4.x family enforces
+            this strictly).
+          * ``temperature`` — the claude-*-5 family rejects it outright
+            ("`temperature` is deprecated for this model."), which made those
+            models fail EVERY call.
+
+        Gating on the family rather than a per-model spec means a newly
+        released Claude model works on day one instead of 400ing until the
+        catalog catches up. The gate reads the **routed** provider
+        (``litellm_adapter.provider``), not the model class — operators may
+        configure ``type=openai`` with a Claude model name, in which case
+        ``LiteLLMAdapter`` auto-routes to Anthropic and the suppression must
+        still apply. ``anthropic`` is covered as the documented alias of
+        ``claude`` (see :class:`~datus.utils.constants.LLMProvider`) so a
+        routed provider under either spelling is treated the same.
+
+        Every request path must consult this: ``generate`` for completions and
+        ``_build_agent`` for the Agents-SDK tool / streaming path. Anthropic
+        applies its own defaults for both parameters.
+        """
+        return getattr(self.litellm_adapter, "provider", "") in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC)
+
     def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
         Generate a response from the model with error handling and retry logic.
@@ -582,24 +609,13 @@ class OpenAICompatibleModel(LLMBaseModel):
             if self.default_headers:
                 params["extra_headers"] = self.default_headers
 
-            # Neither sampling knob is ever sent to Anthropic:
-            #   * ``top_p`` — rejected alongside ``temperature`` with HTTP 400 /
-            #     ``invalid_request_error`` (the claude-sonnet-4.x family
-            #     enforces this strictly).
-            #   * ``temperature`` — the claude-*-5 family rejects it outright
-            #     ("`temperature` is deprecated for this model."), which made
-            #     those models fail EVERY call. Gating on the family rather
-            #     than per-model spec means a newly released Claude model works
-            #     on day one instead of 400ing until the catalog catches up.
-            # The gate is the **routed** provider (``litellm_adapter.provider``),
-            # not the model class — operators may configure ``type=openai`` but a
-            # Claude model name, in which case ``LiteLLMAdapter`` auto-routes to
-            # Anthropic and the suppression must still apply.
+            routed_provider = getattr(self.litellm_adapter, "provider", "")
+
+            # Neither sampling knob is ever sent to Anthropic — see
+            # ``_suppresses_sampling_params`` for which providers and why.
             # Suppression is unconditional, ahead of kwargs and model_config
             # alike: no caller-supplied value can make such a request valid.
-            # Anthropic applies its own defaults for both.
-            routed_provider = getattr(self.litellm_adapter, "provider", "")
-            suppress_sampling_params = routed_provider == LLMProvider.CLAUDE
+            suppress_sampling_params = self._suppresses_sampling_params()
             suppress_top_p = suppress_sampling_params
 
             # Add temperature: priority is kwargs > model_config > default (0.7).
@@ -1069,10 +1085,16 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Build ModelSettings with provider-specific configurations
         model_settings_kwargs = {"include_usage": True}
 
-        if self.model_config.temperature is not None:
+        # Same gate the completion path applies (see
+        # ``_suppresses_sampling_params``): a configured value must not reach
+        # Anthropic through the Agents-SDK tool / streaming path either, or a
+        # claude-*-5 tool call 400s on a knob the completion path already drops.
+        suppress_sampling_params = self._suppresses_sampling_params()
+
+        if not suppress_sampling_params and self.model_config.temperature is not None:
             model_settings_kwargs["temperature"] = self.model_config.temperature
 
-        if self.model_config.top_p is not None:
+        if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
         # Apply model_specs.max_tokens as a fallback so streaming/tool calls

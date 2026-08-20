@@ -555,6 +555,11 @@ class ActionRenderer:
             result: List[Text] = [
                 Text.from_markup(f"[dim]  \u23bf  \U0001f527 {label} - {tc.status_mark}{tc.duration_str}[/dim]")
             ]
+            # A reviewed sub-agent call carries the same verdict row as a
+            # main-agent one: without it a subagent could run a gated bash/SQL
+            # action and show only the result, hiding that a review happened.
+            if tc.review_line:
+                result.append(Text.from_markup(f"[dim]          {rich_escape(tc.review_line)}[/dim]"))
             if verbose:
                 for line in tc.args_lines:
                     result.append(Text.from_markup(f"[dim]          {line}[/dim]"))
@@ -794,10 +799,19 @@ class ActionRenderer:
         # Manual SQL/bash execution (input-bar sql>/bash> mode): render the
         # terminal frame as the styled execution block.
         if action.action_type == "manual_exec":
+            from datus.cli.action_display.tool_content import format_review_line
             from datus.cli.manual_exec import render_exec_block
+            from datus.tools.permission.review_registry import PERMISSION_REVIEW_OUTPUT_KEY
 
-            payload = action.output.get("payload") if isinstance(action.output, dict) else None
-            return [render_exec_block(payload)] if payload else []
+            output = action.output if isinstance(action.output, dict) else {}
+            payload = output.get("payload")
+            if not payload:
+                return []
+            # ``bash_mode`` stamps the verdict onto this action's output; render
+            # it inside the block so a manually run command shows what
+            # authorised it, exactly like an agent-run tool call does.
+            review_line = format_review_line(output.get(PERMISSION_REVIEW_OUTPUT_KEY), verbose=verbose)
+            return [render_exec_block(payload, review_line=review_line)]
 
         # Task tool -> render as subagent
         if action.role == ActionRole.TOOL:

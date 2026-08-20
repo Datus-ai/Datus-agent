@@ -2329,8 +2329,14 @@ class TestPermissionPromptContent:
         assert "Permission Request" in event.content
 
 
-class TestBashCommandPermission:
-    """Command-level gating for ``bash_tools.bash`` via _handle_bash_permission."""
+class BashHooksMixin:
+    """Shared ``bash_tools.bash`` gate fixtures for the bash permission suites.
+
+    One copy of the builders instead of one per test class, so a
+    ``PermissionHooks`` constructor change lands in a single place. Every
+    keyword defaults to the value the classes were passing implicitly, so
+    inheriting is behaviour-preserving.
+    """
 
     def _make_hooks(
         self,
@@ -2382,6 +2388,10 @@ class TestBashCommandPermission:
         t = MagicMock()
         t.name = "bash"
         return t
+
+
+class TestBashCommandPermission(BashHooksMixin):
+    """Command-level gating for ``bash_tools.bash`` via _handle_bash_permission."""
 
     @pytest.mark.asyncio
     async def test_allow_rule_bypasses_prompt(self, mock_broker):
@@ -2735,46 +2745,8 @@ class TestBashDangerousProfileWithUserRules:
             await hooks.on_tool_start(self._ctx("touch x"), MagicMock(), self._tool())
 
 
-class TestBashPipelinePermission:
+class TestBashPipelinePermission(BashHooksMixin):
     """Hook-level behavior for pipelines under _handle_bash_permission."""
-
-    def _make_hooks(self, mock_broker, bash_commands=None, non_interactive=False):
-        from datus.tools.permission.bash_rules import BashCommandRules
-
-        registry = ToolRegistry()
-        tool_mock = MagicMock()
-        tool_mock.name = "bash"
-        registry.register_tools("bash_tools", [tool_mock])
-        config = PermissionConfig(
-            default_permission=PermissionLevel.ASK,
-            rules=[PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
-            bash_commands=BashCommandRules(**bash_commands) if bash_commands else None,
-        )
-        manager = PermissionManager(global_config=config)
-        return (
-            PermissionHooks(
-                broker=mock_broker,
-                permission_manager=manager,
-                node_name="chat",
-                tool_registry=registry,
-                non_interactive=non_interactive,
-            ),
-            manager,
-        )
-
-    @staticmethod
-    def _ctx(command):
-        import json
-
-        ctx = MagicMock()
-        ctx.tool_arguments = json.dumps({"command": command})
-        return ctx
-
-    @staticmethod
-    def _tool():
-        t = MagicMock()
-        t.name = "bash"
-        return t
 
     @pytest.mark.asyncio
     async def test_all_allow_pipeline_no_prompt(self, mock_broker):
@@ -2819,47 +2791,8 @@ class TestBashPipelinePermission:
             await hooks.on_tool_start(self._ctx("cat x | frobnicate"), MagicMock(), self._tool())
 
 
-class TestBashChainedCommandPrompt:
+class TestBashChainedCommandPrompt(BashHooksMixin):
     """A chained command must be shown, approved and persisted per sub-command."""
-
-    def _make_hooks(self, mock_broker, bash_commands=None, project_root=None, config_mutable=True):
-        from datus.tools.permission.bash_rules import BashCommandRules
-
-        registry = ToolRegistry()
-        tool_mock = MagicMock()
-        tool_mock.name = "bash"
-        registry.register_tools("bash_tools", [tool_mock])
-        config = PermissionConfig(
-            default_permission=PermissionLevel.ASK,
-            rules=[PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
-            bash_commands=BashCommandRules(**bash_commands) if bash_commands else None,
-        )
-        manager = PermissionManager(global_config=config)
-        return (
-            PermissionHooks(
-                broker=mock_broker,
-                permission_manager=manager,
-                node_name="chat",
-                tool_registry=registry,
-                project_root=project_root,
-                config_mutable=config_mutable,
-            ),
-            manager,
-        )
-
-    @staticmethod
-    def _ctx(command):
-        import json
-
-        ctx = MagicMock()
-        ctx.tool_arguments = json.dumps({"command": command})
-        return ctx
-
-    @staticmethod
-    def _tool():
-        t = MagicMock()
-        t.name = "bash"
-        return t
 
     @pytest.mark.asyncio
     async def test_prompt_body_lists_every_sub_command_needing_approval(self, mock_broker):

@@ -161,7 +161,7 @@ it about 70 characters. Write one clause naming the material effect of THIS
 action. Do not restate the command, and do not state the risk level or decision
 — both are already displayed next to your text. Drop lead-ins ("This command
 performs...") and closing judgements ("...so it is low risk"). Anything longer
-is truncated mid-word and the reader loses the end.
+is middle-truncated and the reader loses its middle section.
 
 These illustrate length and shape for OTHER actions; never reuse their wording,
 describe the action you were actually given:

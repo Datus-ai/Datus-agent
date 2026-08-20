@@ -866,7 +866,11 @@ def evaluate_bash_command(command: str, rules: BashCommandRules) -> BashRuleDeci
                 level=PermissionLevel.ASK,
                 source=BashDecisionSource.SAFETY,
                 matched_pattern=None,
-                reason="Command contains shell metacharacters",
+                # Not every failure here is a metacharacter — an empty segment
+                # (``ls &&``, ``a;; b``) is a malformed chain. This text reaches
+                # the user through the prompt body and the AI reviewer through
+                # ``static_assessment.reason``, so it names the real cause.
+                reason="Command uses a shell construct that cannot be split into sub-commands",
                 bucket=command.strip().split()[0],
                 safety_forced=True,
             ),

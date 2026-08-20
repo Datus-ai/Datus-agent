@@ -6,6 +6,7 @@ import re
 import sys
 import traceback
 from enum import Enum
+from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_log_manager, get_logger
 
@@ -211,7 +212,7 @@ class DatusException(Exception):
         return self.message
 
     @staticmethod
-    def _desc_placeholders(template: str) -> set:
+    def _desc_placeholders(template: str) -> set[str]:
         """Root names of the ``{...}`` fields in ``template``.
 
         ``{detail}`` -> ``detail``; ``{err.args[0]}`` -> ``err``, so a nested
@@ -219,13 +220,13 @@ class DatusException(Exception):
         """
         from string import Formatter
 
-        names = set()
+        names: set[str] = set()
         for _, field_name, _, _ in Formatter().parse(template):
             if field_name:
                 names.add(re.split(r"[.\[]", field_name, maxsplit=1)[0])
         return names
 
-    def build_msg(self, message=None, message_args=None):
+    def build_msg(self, message: Optional[str] = None, message_args: Optional[Dict[str, Any]] = None) -> str:
         if message:
             final_message = message
         elif message_args:

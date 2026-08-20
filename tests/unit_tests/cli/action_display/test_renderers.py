@@ -1421,3 +1421,166 @@ class TestPermissionReviewRow:
         # Three output rows plus the folded remainder, unchanged by the review row.
         assert "l0" in text and "l2" in text
         assert "+5 lines" in text
+
+
+class TestSubagentPermissionReviewRow:
+    """A reviewed sub-agent tool call shows the same verdict as a main-agent one.
+
+    Regression: the row was only wired into ``_render_main_tool``, so a
+    subagent could run a gated bash/SQL action and display just its result —
+    the reader could not tell a review had happened or what it concluded.
+    """
+
+    @staticmethod
+    def _bash_action(review):
+        now = datetime.now()
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={
+                "raw_output": json.dumps({"success": 1, "result": "added 42 packages"}),
+                "permission_review": review,
+            },
+            start_time=now,
+            end_time=now + timedelta(seconds=2.3),
+        )
+
+    @staticmethod
+    def _sql_action(review):
+        now = datetime.now()
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="execute_sql",
+            messages="execute_sql",
+            input_data={"function_name": "execute_sql", "arguments": {"sql": "DELETE FROM staging WHERE id = 1"}},
+            output_data={"success": 1, "result": "1 row affected", "permission_review": review},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.4),
+        )
+
+    def test_compact_bash_shows_the_verdict(self):
+        action = self._bash_action(
+            {"decision": "allow", "risk_level": "low", "confidence": 0.92, "rationale": "reinstalls declared deps"}
+        )
+        text = _plain(_renderer().render_subagent_action(action, verbose=False))
+
+        assert "AI review ✓ passed" in text
+        assert "reinstalls declared deps" in text
+
+    def test_compact_bash_puts_the_verdict_above_the_result(self):
+        action = self._bash_action({"decision": "allow", "rationale": "reversible"})
+        text = _plain(_renderer().render_subagent_action(action, verbose=False))
+
+        assert text.index("AI review") < text.index("added 42 packages")
+
+    def test_compact_sql_shows_the_verdict(self):
+        action = self._sql_action({"decision": "ask", "risk_level": "medium", "rationale": "predicate-bounded delete"})
+        text = _plain(_renderer().render_subagent_action(action, verbose=False))
+
+        assert "AI review ✗ flagged" in text
+        assert "predicate-bounded delete" in text
+
+    def test_verbose_bash_shows_the_untruncated_rationale(self):
+        rationale = "z" * 300
+        action = self._bash_action({"decision": "allow", "risk_level": "low", "rationale": rationale})
+        text = _plain(_renderer().render_subagent_action(action, verbose=True))
+
+        assert rationale in text.replace("\n", "")
+
+    def test_verbose_sql_shows_the_verdict(self):
+        action = self._sql_action({"decision": "allow", "risk_level": "low", "rationale": "bounded"})
+        text = _plain(_renderer().render_subagent_action(action, verbose=True))
+
+        assert "AI review ✓ passed" in text
+
+    def test_unreviewed_subagent_call_renders_no_review_row(self):
+        now = datetime.now()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            depth=1,
+            action_type="bash",
+            messages="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={"raw_output": json.dumps({"success": 1, "result": "ok"})},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.1),
+        )
+        assert "AI review" not in _plain(_renderer().render_subagent_action(action, verbose=False))
+
+
+class TestManualExecPermissionReviewRow:
+    """The manually run bash>/sql> block shows what authorised the command.
+
+    Regression: ``bash_mode`` stamped the verdict onto the action's output and
+    the renderer read only ``output["payload"]``, dropping it.
+    """
+
+    @staticmethod
+    def _action(review):
+        payload = {
+            "kind": "bash",
+            "command": "npm ci",
+            "success": True,
+            "output": "added 42 packages",
+            "meta": "exit 0 in 2.30s",
+        }
+        output_data = {"payload": payload}
+        if review is not None:
+            output_data["permission_review"] = review
+        return _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="manual_exec",
+            messages="bash> npm ci",
+            input_data={"kind": "bash", "command": "npm ci"},
+            output_data=output_data,
+        )
+
+    def test_block_shows_the_verdict(self):
+        action = self._action(
+            {"decision": "allow", "risk_level": "low", "confidence": 0.92, "rationale": "reinstalls declared deps"}
+        )
+        text = _plain(_renderer().render_main_action(action, verbose=False))
+
+        assert "AI review ✓ passed" in text
+        assert "reinstalls declared deps" in text
+        # Still the full execution block, not a bare review line.
+        assert "npm ci" in text and "added 42 packages" in text
+
+    def test_block_names_a_user_override(self):
+        action = self._action({"outcome": "user_approved", "decision": "ask", "risk_level": "high", "rationale": "rm"})
+        text = _plain(_renderer().render_main_action(action, verbose=False))
+
+        assert "AI review ✗ flagged" in text
+        assert "user approved" in text
+
+    def test_verbose_block_shows_the_untruncated_rationale(self):
+        rationale = "w" * 300
+        action = self._action({"decision": "allow", "risk_level": "low", "rationale": rationale})
+        text = _plain(_renderer().render_main_action(action, verbose=True))
+
+        assert rationale in text.replace("\n", "").replace(" ", "")
+
+    def test_unreviewed_block_is_unchanged(self):
+        text = _plain(_renderer().render_main_action(self._action(None), verbose=False))
+
+        assert "AI review" not in text
+        assert "added 42 packages" in text
+
+    def test_payloadless_action_renders_nothing(self):
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.FAILED,
+            action_type="manual_exec",
+            messages="bash> npm ci",
+            input_data={"kind": "bash", "command": "npm ci"},
+            output_data={"payload": None, "permission_review": {"decision": "ask", "rationale": "denied"}},
+        )
+        assert _renderer().render_main_action(action, verbose=False) == []
