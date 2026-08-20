@@ -32,6 +32,9 @@ name EVERY sub-command that needs approval instead of one representative.
 Shell constructs that segmentation cannot model still hit the safety ceiling
 as a whole: ``$()``, backticks, ``${}``, redirection, background ``&``,
 ``|&``, newlines, subshells/braces and compound keywords (``for``/``if``/…).
+Two redirections are exempt because they name no path and so cannot do
+anything the argv could not: fd duplication (``2>&1``, ``>&2``, ``<&0``) and a
+``/dev/null`` target (see ``_BENIGN_REDIRECTION_RE``).
 
 The safety ceiling is a *static* verdict, not a final one: under a profile with
 ``permissions.auto_review`` enabled the shared reviewer in ``auto_reviewer.py``
@@ -91,6 +94,55 @@ logger = get_logger(__name__)
 # function with only ``split_pipeline`` in front of it.
 _SHELL_METACHARS_RE = re.compile(r"[;&<>`\n]|\$\(|\$\{|\|\||&&")
 
+# Redirections that cannot express anything the argv already can't, and so are
+# exempt from the redirection safety ceiling **in the permission layer only**:
+#
+#   * file-descriptor duplication / closing — ``2>&1``, ``>&2``, ``<&0``,
+#     ``2>&-``. These rewire the command's own streams. No path is named, so
+#     nothing can be written anywhere, and no new command can be introduced.
+#   * a ``/dev/null`` target — ``>/dev/null``, ``2>>/dev/null``,
+#     ``&>/dev/null``. The write goes to the null device by definition.
+#
+# ``2>&1`` and ``2>/dev/null`` are among the most common shell idioms there
+# are; forcing a confirmation prompt for them trains users to click through
+# prompts, which costs more safety than the ceiling buys. Every other
+# redirection stays on the ceiling: ``> file`` names an arbitrary path, so an
+# allow rule matched on argv (``ls:*`` says nothing about where output lands)
+# cannot vouch for it.
+#
+# Scope is deliberate. This is applied by ``_evaluate_single_command`` and
+# nowhere else: ``contains_shell_metachars`` itself is unchanged because
+# ``BashTool._segment_allowed`` shares it as the execution-layer whitelist for
+# skills — a separate trust boundary that must keep rejecting every
+# redirection outright.
+_BENIGN_REDIRECTION_RE = re.compile(
+    # 2>&1, >&2, <&0, 2>&-
+    r"\d*[<>]&(?:\d+|-)"
+    # >/dev/null, 2>/dev/null, >>/dev/null, &>/dev/null, &>>/dev/null.
+    # The target must end the token: without the lookahead, ``> /dev/nullx``
+    # would match its ``/dev/null`` prefix and leave a stray ``x`` behind,
+    # exempting a write to a real file.
+    r"|(?:\d*>{1,2}|&>{1,2})\s*/dev/null(?=\s|$)"
+)
+
+
+def _without_benign_redirections(text: str) -> str:
+    """Blank out the redirections listed in ``_BENIGN_REDIRECTION_RE``.
+
+    Substitutes a space rather than an empty string so stripping cannot fuse
+    two tokens into one (``a 2>&1b`` must not become ``a b``).
+    """
+    return _BENIGN_REDIRECTION_RE.sub(" ", text)
+
+
+def _last_nonspace(chars: List[str]) -> str:
+    """Last non-whitespace character accumulated so far, or ``""``."""
+    for ch in reversed(chars):
+        if not ch.isspace():
+            return ch
+    return ""
+
+
 # Shell keywords and grouping constructs. Segmentation splits on operators but
 # does not model compound commands, so ``for f in *; do rm $f; done`` arrives
 # here as three fragments (``for f in *``, ``do rm $f``, ``done``) that must
@@ -128,6 +180,11 @@ def contains_shell_metachars(text: str) -> bool:
     metacharacter is treated just as conservatively as an unquoted one.
     Shared by ``evaluate_bash_command`` (→ forced ASK) and
     ``BashTool._segment_allowed`` (→ reject).
+
+    Deliberately knows nothing about ``_BENIGN_REDIRECTION_RE``: the
+    permission layer strips those forms from its own input before calling this,
+    while the execution-layer whitelist keeps rejecting every redirection. Add
+    the exemption at the call site, never here.
     """
     return bool(_SHELL_METACHARS_RE.search(text))
 
@@ -567,6 +624,18 @@ def _split_top_level(command: str, *, chain: bool) -> Optional[List[str]]:
                 continue
             elif c == "&":
                 if nxt != "&":
+                    if nxt == ">" or _last_nonspace(buf) in "<>":
+                        # The `&` belongs to a redirection, not to job control:
+                        # `2>&1`, `>&2`, `<&0` (preceded by the operator) or
+                        # `&>file` (followed by it). Keep it in the segment and
+                        # let the redirection ceiling judge the whole form —
+                        # bailing here would send `ls 2>&1 | head` to the
+                        # ceiling as one opaque string and hide `head` from the
+                        # per-sub-command prompt. A genuine trailing `&`
+                        # (`sleep 5 &`) still returns None below.
+                        buf.append(c)
+                        i += 1
+                        continue
                     # A lone `&` backgrounds the command — not a sequencer.
                     return None
                 step = 2
@@ -614,9 +683,14 @@ def split_command_chain(command: str) -> Optional[List[str]]:
     background ``&``, an empty segment (``ls &&``, ``;;``, ``| ls``) or
     unbalanced quotes.
 
+    An ``&`` that belongs to a redirection (``2>&1``, ``>&2``, ``<&0``,
+    ``&>file``) is not a background operator and does not stop segmentation;
+    ``sleep 5 &`` still does.
+
     Note that ``None`` is not the only path to the safety ceiling: a segment
-    that still carries ``$()``, backticks, redirection or a newline is caught
-    per-segment by :func:`contains_shell_metachars`.
+    that still carries ``$()``, backticks, a newline or a redirection other
+    than the benign forms in ``_BENIGN_REDIRECTION_RE`` is caught per-segment
+    by :func:`contains_shell_metachars`.
     """
     return _split_top_level(command, chain=True)
 
@@ -707,7 +781,12 @@ def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleD
             bucket=session_bucket_for(argv, None),
             safety_forced=True,
         )
-    if contains_shell_metachars(command):
+    # ``2>&1`` / ``2>/dev/null`` and friends are dropped before the check —
+    # see ``_BENIGN_REDIRECTION_RE`` for which forms and why. Ordering matters:
+    # the wrapper and inline-code ceilings above already fired, so a command
+    # that reaches here cannot smuggle a second command past this exemption
+    # (``sh -c "... 2>&1"`` is stopped by the wrapper rule).
+    if contains_shell_metachars(_without_benign_redirections(command)):
         return BashRuleDecision(
             level=PermissionLevel.ASK,
             source=BashDecisionSource.SAFETY,

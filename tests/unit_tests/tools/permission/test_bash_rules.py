@@ -18,8 +18,11 @@ from datus.tools.permission.bash_rules import (
     BashCommandRules,
     BashDecisionSource,
     command_matches_pattern,
+    contains_shell_metachars,
     evaluate_bash_command,
     session_bucket_for,
+    split_command_chain,
+    split_pipeline,
 )
 from datus.tools.permission.permission_config import PermissionLevel
 
@@ -243,6 +246,150 @@ class TestSafetyCeiling:
     def test_plain_command_is_not_safety_forced(self):
         decision = evaluate_bash_command("cargo build", BashCommandRules())
         assert decision.safety_forced is False
+
+
+class TestBenignRedirectionExemption:
+    """``2>&1`` and a ``/dev/null`` target do not force a confirmation.
+
+    Neither form can express anything the argv already can't: fd duplication
+    rewires the command's own streams and names no path, and a ``/dev/null``
+    target discards by definition. They are also two of the most common shell
+    idioms there are, so prompting for them trains users to click through
+    prompts. Every other redirection still hits the ceiling because it names a
+    path an argv-matched allow rule cannot vouch for.
+    """
+
+    RULES = BashCommandRules(allow=["ls:*", "cat:*", "head:*", "grep:*", "echo:*"])
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls -la 2>&1",
+            "ls -la 1>&2",
+            "ls -la >&2",
+            "cat f <&0",
+            "ls -la 2>&-",
+            "ls -la 2>/dev/null",
+            "ls -la > /dev/null",
+            "ls -la >> /dev/null",
+            "ls -la 2>> /dev/null",
+            "ls -la &>/dev/null",
+            "ls -la &>> /dev/null",
+        ],
+    )
+    def test_benign_redirection_auto_allows(self, command):
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ALLOW
+        assert decision.safety_forced is False
+
+    def test_exempt_redirection_inside_a_chain_is_judged_per_sub_command(self):
+        """The motivating case. Bailing out of segmentation on the ``&`` of
+        ``2>&1`` sent the whole string to the ceiling and hid ``head`` from the
+        per-sub-command prompt."""
+        assert split_command_chain("ls -la /tmp 2>&1 | head -20") == ["ls -la /tmp 2>&1", "head -20"]
+
+        decision = evaluate_bash_command("ls -la /tmp 2>&1 | head -20", self.RULES)
+        assert decision.level == PermissionLevel.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls > out.txt",  # names an arbitrary path
+            "ls >> out.txt",
+            "ls 2> err.txt",
+            "ls &> out.txt",  # both streams, still an arbitrary path
+            "ls < in.txt",  # input redirection is not exempt
+            "ls > /dev/nullx",  # near-miss on the device name
+            "ls > /dev/stdout",  # only /dev/null is exempt
+        ],
+    )
+    def test_other_redirections_still_force_ask(self, command):
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    @pytest.mark.parametrize("command", ["ls &", "sleep 5 &", "ls 2>&1 &", "ls & rm x"])
+    def test_background_ampersand_is_not_mistaken_for_a_redirection(self, command):
+        """The exemption keys on the ``&`` sitting next to ``<``/``>``; a
+        trailing job-control ``&`` must still stop segmentation."""
+        assert split_command_chain(command) is None
+
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.safety_forced is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo $(id) 2>/dev/null",
+            "echo `whoami` 2>&1",
+            "ls\nrm x 2>&1",
+        ],
+    )
+    def test_exemption_does_not_rescue_other_metacharacters(self, command):
+        """Stripping the redirection must not strip anything else with it."""
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    def test_exempt_redirection_does_not_change_a_chain_verdict(self):
+        """A non-allow-listed sub-command still blocks the chain, and the
+        redirection changes nothing about it: the redirected and bare forms of
+        the same chain must be judged identically."""
+        redirected = evaluate_bash_command("ls; rm x 2>/dev/null", self.RULES)
+        bare = evaluate_bash_command("ls; rm x", self.RULES)
+
+        assert redirected.level == PermissionLevel.ASK
+        assert redirected.level == bare.level
+        assert redirected.source == bare.source
+        assert redirected.safety_forced == bare.safety_forced
+
+    def test_wrapper_ceiling_still_beats_the_exemption(self):
+        """Ordering guard: the wrapper rule fires before the redirection check,
+        so a shell wrapper cannot smuggle a command past the exemption."""
+        rules = BashCommandRules(allow=["sh:*", "ls:*"])
+        decision = evaluate_bash_command('sh -c "rm -rf / 2>&1"', rules)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    def test_deny_rule_still_beats_the_exemption(self):
+        rules = BashCommandRules(allow=["ls:*"], deny=["ls:/secret*"])
+        decision = evaluate_bash_command("ls /secret 2>/dev/null", rules)
+        assert decision.level == PermissionLevel.DENY
+
+    def test_dangerous_command_is_unaffected_by_its_redirection(self):
+        """``rm -rf /`` was never safety-forced — no metacharacters. Adding
+        ``2>/dev/null`` used to force it, which made the redirection look like
+        the dangerous part. Both forms now agree; neither auto-allows."""
+        rules = BashCommandRules(allow=["ls:*"])
+        bare = evaluate_bash_command("rm -rf /", rules)
+        redirected = evaluate_bash_command("rm -rf / 2>/dev/null", rules)
+
+        assert bare.level == PermissionLevel.ASK
+        assert redirected.level == PermissionLevel.ASK
+        assert redirected.safety_forced == bare.safety_forced
+
+    def test_anchored_allow_rule_does_not_match_the_redirection_token(self):
+        """Known limitation, pinned deliberately: ``shlex`` keeps ``2>&1`` as an
+        argv token, so an exact (unglobbed) allow rule no longer matches. The
+        command is an ordinary ASK, not a safety-forced one."""
+        rules = BashCommandRules(allow=["git status"])
+        decision = evaluate_bash_command("git status 2>&1", rules)
+
+        assert decision.level == PermissionLevel.ASK
+        assert decision.safety_forced is False
+        assert evaluate_bash_command("git status", rules).level == PermissionLevel.ALLOW
+
+    def test_execution_layer_whitelist_still_rejects_every_redirection(self):
+        """The exemption is permission-layer only. ``BashTool`` shares
+        ``contains_shell_metachars`` as the skills whitelist — a separate trust
+        boundary that must keep rejecting redirection outright."""
+        assert contains_shell_metachars("ls -la 2>&1") is True
+        assert contains_shell_metachars("ls -la 2>/dev/null") is True
+        assert split_pipeline("ls 2>&1") == ["ls 2>&1"]
 
 
 class TestSessionBuckets:
