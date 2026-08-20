@@ -289,6 +289,10 @@ doris_hive:
   database: warehouse
 ```
 
+The catalog has to exist in Doris already — Datus selects a catalog, it never creates one. Create it on
+the Doris side first (`CREATE CATALOG hive_catalog PROPERTIES (...)`, with the metastore URI and storage
+credentials the catalog type needs) and confirm it is listed by `SHOW CATALOGS`.
+
 Within a session, `SWITCH <catalog>` changes the catalog and `USE [<catalog>.]<database>` changes the
 database. Switching catalogs clears the current database, because a database of that name usually does
 not exist under the new catalog; issue a `USE` afterwards to select one.

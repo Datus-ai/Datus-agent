@@ -282,6 +282,10 @@ doris_hive:
   database: warehouse
 ```
 
+该 catalog 必须已经存在于 Doris 中——Datus 只负责选择 catalog，不会创建 catalog。请先在 Doris 侧创建
+（`CREATE CATALOG hive_catalog PROPERTIES (...)`，并按 catalog 类型填入 metastore 地址和存储凭证），
+确认它出现在 `SHOW CATALOGS` 的结果中。
+
 在会话内，`SWITCH <catalog>` 用于切换 catalog，`USE [<catalog>.]<database>` 用于切换数据库。切换 catalog
 会清空当前数据库上下文——同名数据库通常并不存在于新的 catalog 中，切换后需要再执行一次 `USE`。
 
