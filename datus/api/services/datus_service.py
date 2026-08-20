@@ -7,7 +7,7 @@ and a project-scoped ChatTaskManager into a single cached instance.
 import dataclasses
 import hashlib
 import json
-from typing import Any
+from typing import Any, Dict, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
@@ -71,11 +71,14 @@ class DatusService:
         self._chat = None
         self._cli = None
         self._datasource = None
-        self._explorer = None
+        # Keyed by sub-agent name, not a single slot: these two services carry a
+        # scope filter, and DatusServiceCache keys only on project, so one slot
+        # would serve the first caller's scope to every later sub-agent.
+        self._explorers: Dict[Optional[str], Any] = {}
         self._mcp = None
         self._kb = None
         self._visualization = None
-        self._tool = None
+        self._tools: Dict[Optional[str], Any] = {}
         self._success_story = None
         self._dashboard = None
         self._report = None
@@ -160,13 +163,26 @@ class DatusService:
             self._datasource = DatasourceService(agent_config=self._agent_config)
         return self._datasource
 
-    @property
-    def explorer(self):
-        if self._explorer is None:
+    def explorer_for(self, sub_agent_name: Optional[str] = None):
+        """ExplorerService scoped to ``sub_agent_name`` (``None`` = unscoped).
+
+        One instance per name. A single lazy slot would be worse than the
+        unscoped status quo: the first request's sub-agent would be cached and
+        every later request, whatever sub-agent it named, would silently read
+        through that scope. Wrong results, no error.
+        """
+        if sub_agent_name not in self._explorers:
             from datus.api.services.explorer_service import ExplorerService
 
-            self._explorer = ExplorerService(agent_config=self._agent_config)
-        return self._explorer
+            self._explorers[sub_agent_name] = ExplorerService(
+                agent_config=self._agent_config, sub_agent_name=sub_agent_name
+            )
+        return self._explorers[sub_agent_name]
+
+    @property
+    def explorer(self):
+        """The unscoped ExplorerService. Kept so existing callers are unchanged."""
+        return self.explorer_for(None)
 
     @property
     def mcp(self):
@@ -184,13 +200,21 @@ class DatusService:
             self._kb = KbService(agent_config=self._agent_config)
         return self._kb
 
-    @property
-    def tool(self):
-        if self._tool is None:
+    def tool_for(self, sub_agent_name: Optional[str] = None):
+        """ToolService scoped to ``sub_agent_name`` (``None`` = unscoped).
+
+        Per-name for the same reason as :meth:`explorer_for`.
+        """
+        if sub_agent_name not in self._tools:
             from datus.api.services.tool_service import ToolService
 
-            self._tool = ToolService(agent_config=self._agent_config)
-        return self._tool
+            self._tools[sub_agent_name] = ToolService(agent_config=self._agent_config, sub_agent_name=sub_agent_name)
+        return self._tools[sub_agent_name]
+
+    @property
+    def tool(self):
+        """The unscoped ToolService. Kept so existing callers are unchanged."""
+        return self.tool_for(None)
 
     @property
     def success_story(self):

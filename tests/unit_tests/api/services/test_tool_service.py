@@ -142,3 +142,29 @@ class TestToolServiceExecute:
         assert result.success is True
         assert result.data.success == 1
         assert result.data.result == {"key": "value"}
+
+
+class TestToolServiceSubAgentScope:
+    """`ContextSearchTools` has always accepted `sub_agent_name`; `ToolService`
+    just never passed it, so every REST tool call read the whole knowledge base
+    regardless of which sub-agent the caller was scoped to."""
+
+    def test_defaults_to_unscoped(self, mock_agent_config):
+        service = ToolService(mock_agent_config)
+
+        assert service._sub_agent_name is None
+
+    def test_forwards_the_name_to_context_search_tools(self, mock_agent_config):
+        with patch("datus.api.services.tool_service.ContextSearchTools") as mock_tools:
+            service = ToolService(mock_agent_config, sub_agent_name="analyst")
+
+        assert service._sub_agent_name == "analyst"
+        assert mock_tools.call_args.kwargs["sub_agent_name"] == "analyst"
+
+    def test_unscoped_construction_passes_none_explicitly(self, mock_agent_config):
+        """Passing None is the same call shape, so there is no second code path
+        for the default case to drift down."""
+        with patch("datus.api.services.tool_service.ContextSearchTools") as mock_tools:
+            ToolService(mock_agent_config)
+
+        assert mock_tools.call_args.kwargs["sub_agent_name"] is None

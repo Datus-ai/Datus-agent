@@ -37,13 +37,23 @@ class ExplorerService:
     directories, metrics, and reference SQL.
     """
 
-    def __init__(self, agent_config):
+    def __init__(self, agent_config, sub_agent_name: Optional[str] = None):
         """Initialize ExplorerService.
 
         Args:
             agent_config: Agent configuration object
+            sub_agent_name: Restrict the knowledge-base reads to this sub-agent's
+                ``scoped_context``. ``None`` (the default) reads everything,
+                which is the existing single-tenant behaviour.
+
+                Must be the ``agentic_nodes`` key, never an entry's ``id``:
+                ``AgentConfig.sub_agent_config`` is a plain lookup on that
+                mapping, so an ``id`` misses, yields ``{}``, and the scope
+                filter degrades to "no filter" — unrestricted results with a
+                200, not an error. Callers resolve id -> key before this point.
         """
         self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
         self.datasource_id = str(agent_config.current_datasource or "").strip()
         logger.info("ExplorerService initialized")
 
@@ -60,9 +70,12 @@ class ExplorerService:
         from datus.storage.registry import get_subject_tree_store
         from datus.storage.semantic_model.store import SemanticModelRAG
 
-        self.metric_rag = MetricRAG(agent_config, datasource_id=self.datasource_id)
-        self.reference_sql_rag = ReferenceSqlRAG(agent_config, datasource_id=self.datasource_id)
-        self.semantic_model_rag = SemanticModelRAG(agent_config, datasource_id=self.datasource_id)
+        # ``sub_agent_name`` is the second positional parameter of all three;
+        # passing datasource_id by keyword alone silently skipped it, which is
+        # why these reads were unscoped no matter what the caller asked for.
+        self.metric_rag = MetricRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
+        self.reference_sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
+        self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
         self.subject_tree_store = get_subject_tree_store(
             project=agent_config.project_name,
             datasource_id=self.datasource_id,
@@ -298,10 +311,14 @@ class ExplorerService:
                 If successful, error_message is None
                 If failed, semantic_file_path is empty string
         """
-        from datus.storage.semantic_model.store import SemanticModelRAG
-
         try:
-            semantic_rag = SemanticModelRAG(self.agent_config, datasource_id=self.datasource_id)
+            # Reuse the instance built in __init__ rather than constructing a
+            # fresh one: a local build would drop ``sub_agent_name`` and hand
+            # back semantic models from outside the sub-agent's scope, which is
+            # exactly the leak this scoping exists to close.
+            semantic_rag = self.semantic_model_rag
+            if semantic_rag is None:
+                return "", "No datasource is selected; select a datasource first"
             current_db_config = self.agent_config.current_db_config()
 
             # Use provided params or fall back to current DB config
