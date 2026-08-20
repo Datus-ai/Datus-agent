@@ -105,7 +105,7 @@ Must start with one of: `[BugFix]` `[Enhancement]` `[Feature]` `[Refactor]` `[UT
 
 1. **`## Why`** — problem solved; link issues if any
 2. **`## Solution`** — approach, key decisions, tradeoffs
-3. **`## Test Cases`** — added/changed integration/nightly tests; if none, justify
+3. **`## Test Cases`** — added/changed integration/nightly tests; if none, justify. `[BugFix]` PRs also state that the new tests fail on the pre-fix code (see **Bug-fix regression tests**)
 
 When using `gh pr create --body`, copy `.github/PULL_REQUEST_TEMPLATE.md` as the starting point. PRs with empty/missing sections must be revised before review.
 
@@ -162,6 +162,11 @@ Unit tests follow the mapping rule above. The table lists **additional** integra
 ### Test quality (beyond coverage)
 
 Beyond happy paths, exercise: **input format variants** (all valid shapes, not just the common one); **return-type contracts** (every branch returns the same structure); **cross-component contracts** (consume the producer's real output); **adversarial inputs** for regex/SQL/path sandboxes; **recursive/nested structures** at depth ≥ 3; **spec compliance** for standards (`.gitignore`, SQL dialects).
+
+### Bug-fix regression tests
+
+- **Red first**: the tests a `[BugFix]` PR adds must fail on the pre-fix code. Verify by running them with the source change reverted (`git stash push -- datus/` → run → `git stash pop`), and say so in `## Test Cases`.
+- **Assert the property, not the instance**: pin the invariant the bug violated, not the value the fix happens to produce — "no binary source type ever maps to VARBINARY", not "BYTEA maps to STRING" — so the test stays red when the bug returns under a different spelling.
 
 ### No tombstone tests when removing code
 

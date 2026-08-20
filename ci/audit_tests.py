@@ -107,6 +107,8 @@ RULE_TIERS: dict[str, set[str]] = {
     "try_except_skip": {"unit", "integration"},
     "weak_assert": {"unit", "integration"},
     "or_assert": {"unit", "integration"},
+    "regex_literal_containment": {"unit", "integration"},
+    "case_contradictory_containment": {"unit", "integration"},
     "lambda_throw": {"unit", "integration"},
     "duplicate_test_files": {"unit", "integration"},
     # Unit-tier-only (strict hermeticity).
@@ -353,7 +355,58 @@ class _AstChecker(ast.NodeVisitor):
                     suggestion="Assert the exact expected value, e.g. `== 'foo'` or `== 3`.",
                 )
             )
+        self._check_containment_compares(node)
         self.generic_visit(node)
+
+    def _check_containment_compares(self, node: ast.Assert) -> None:
+        """Flag string containments whose truth barely depends on the container.
+
+        Two semantically-vacuous shapes that are structurally normal asserts:
+        a `not in` needle written with regex alternation in mind (`"A|B|C"`
+        matches almost nothing as a literal), and a needle whose letter case
+        contradicts a `.upper()`/`.lower()` container (can never match).
+        """
+        for compare in ast.walk(node.test):
+            if not (isinstance(compare, ast.Compare) and len(compare.ops) == 1):
+                continue
+            op = compare.ops[0]
+            if not isinstance(op, (ast.In, ast.NotIn)):
+                continue
+            needle = compare.left
+            if not (isinstance(needle, ast.Constant) and isinstance(needle.value, str)):
+                continue
+            case_method = _case_contradicting_method(needle.value, compare.comparators[0])
+            if case_method is not None:
+                self._emit(
+                    Issue(
+                        file=self.path,
+                        line=compare.lineno,
+                        severity="P0",
+                        check="case_contradictory_containment",
+                        message=(
+                            f"Needle {needle.value!r} can never appear in a `.{case_method}()` result — "
+                            "the outcome is fixed before the code under test runs (Meszaros: Lying Test)"
+                        ),
+                        quote=self._quote(compare.lineno),
+                        suggestion=f"Match the needle's case to the `.{case_method}()` container, "
+                        "or drop the case conversion.",
+                    )
+                )
+            elif isinstance(op, ast.NotIn) and _is_pseudo_regex_literal(needle.value):
+                self._emit(
+                    Issue(
+                        file=self.path,
+                        line=compare.lineno,
+                        severity="P1",
+                        check="regex_literal_containment",
+                        message=(
+                            f"Needle {needle.value!r} reads like a regex alternation, but `not in` is literal "
+                            "substring containment — the assertion holds for almost any container"
+                        ),
+                        quote=self._quote(compare.lineno),
+                        suggestion="Split into one `assert marker not in ...` per alternative, or use re.search().",
+                    )
+                )
 
     # -- zero_assert_test / fixture / test function tracking
 
@@ -688,6 +741,44 @@ def _is_or_assert(expr: ast.AST) -> bool:
     if _is_tautological(expr):
         return False
     return all(isinstance(v, (ast.Compare, ast.Call)) for v in expr.values)
+
+
+# Explicit regex tokens that cannot occur in a sensible literal needle.
+_REGEX_TOKEN_RE = re.compile(r"\\[bBdDsSwW]|\(\?[:=!<]")
+# Word-ish segments joined by bare pipes: "S3|HDFS|BROKER". Legitimate pipes
+# come with spacing ("| col |", "a | b") or doubled ("a || b"), both excluded.
+_PSEUDO_ALTERNATION_RE = re.compile(r"[\w .()\-/]+(\|[\w .()\-/]+)+")
+
+
+def _is_pseudo_regex_literal(value: str) -> bool:
+    """True when a containment needle was probably written with regex semantics."""
+    if _REGEX_TOKEN_RE.search(value):
+        return True
+    if "\x08" in value:
+        # A regex \b typed in a non-raw string arrives here as a backspace
+        # control character; no legitimate containment needle carries one.
+        return True
+    if "|" not in value or "||" in value or " | " in value:
+        return False
+    return bool(_PSEUDO_ALTERNATION_RE.fullmatch(value))
+
+
+def _case_contradicting_method(needle: str, container: ast.AST) -> str | None:
+    """Return the case method when the needle can never appear in the container.
+
+    ``"broker load" not in notes.upper()``: the container never holds lowercase,
+    so the assertion is decided regardless of ``notes``.
+    """
+    if not (isinstance(container, ast.Call) and isinstance(container.func, ast.Attribute)):
+        return None
+    if container.args or container.keywords:
+        return None
+    method = container.func.attr
+    if method == "upper" and needle != needle.upper():
+        return method
+    if method in {"lower", "casefold"} and needle != needle.lower():
+        return method
+    return None
 
 
 _WEAK_NAMES = {"result", "output", "response", "ret", "data", "value", "x", "y", "obj"}
