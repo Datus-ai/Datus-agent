@@ -93,7 +93,12 @@ services:
       - "5432:5432"
 YAML
 
-grep -qE '(^|[[:space:]])postgres([[:space:]]|$)' /etc/hosts || \
+if grep -qE '(^|[[:space:]])postgres([[:space:]]|$)' /etc/hosts && \
+   ! grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts; then
+  echo 'Conflicting /etc/hosts entry for postgres; replace it with: 127.0.0.1 postgres' >&2
+  exit 1
+fi
+grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts || \
   echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
 
 docker compose up -d
@@ -404,7 +409,7 @@ Once the marts table exists in `superset_serving`, ask the agent to use the
 plugin's authoring skill.
 
 ```text
-Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store every API request body in project-local JSON files; every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
+Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store only non-sensitive Database, Dataset, Dashboard, and Chart resource request payloads in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets, and redact sensitive fields before writing any payload. Every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
 ```
 
 Data preparation is a separate ETL / scheduled-workflow step. Dashboard generation

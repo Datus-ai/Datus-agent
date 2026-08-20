@@ -91,7 +91,12 @@ services:
       - "5432:5432"
 YAML
 
-grep -qE '(^|[[:space:]])postgres([[:space:]]|$)' /etc/hosts || \
+if grep -qE '(^|[[:space:]])postgres([[:space:]]|$)' /etc/hosts && \
+   ! grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts; then
+  echo 'Conflicting /etc/hosts entry for postgres; replace it with: 127.0.0.1 postgres' >&2
+  exit 1
+fi
+grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts || \
   echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
 
 docker compose up -d
@@ -328,7 +333,7 @@ FROM marts.lever__requisition_enhanced;
 version 1 quickstart 数据包时，marts 表应有 146 行。如果维度意外全部为
 NULL，请返回前面的 schema 检查，修正源字段映射后再继续。
 
-提交一个每天早上 8 点运行的 SQL 任务，刷新同一条从契约生成的链路：
+保存并验证用于刷新同一条契约生成链路的 SQL；每天早上 8 点的调度将在步骤 6 中创建：
 
 ```text
 Collect the exact SQL statements that successfully created the staging, intermediate, and marts schemas and built the four staging tables, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced. Keep them in dependency order and write them to ./jobs/daily_lever_requisition_enhanced.sql. Do not replace validated statements with newly invented SQL. Execute the saved file once against lever_duckdb and confirm it reproduces the same non-zero validation results.
@@ -383,7 +388,7 @@ Please copy the source table marts.lever__requisition_enhanced from the lever_du
 skill：
 
 ```text
-Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store every API request body in project-local JSON files; every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
+Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store only non-sensitive Database, Dataset, Dashboard, and Chart resource request payloads in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets, and redact sensitive fields before writing any payload. Every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
 ```
 
 数据准备是单独的 ETL / 调度步骤。创建仪表盘前，目标表或 SQL dataset

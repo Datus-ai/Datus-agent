@@ -25,13 +25,14 @@ The currently exposed built-in set is:
 
 1. `explore`: read-only schema, knowledge, and file exploration
 2. `gen_sql`: specialized SQL generation
-3. `gen_report`: structured report generation
-4. `semantic_modeling`: unified Dosi semantic-model and metric authoring
-5. `gen_sql_summary`: SQL summary generation
-6. `gen_table`: interactive table creation
-7. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
-8. `gen_skill`: skill creation and optimization
-9. `gen_visual_report`: self-contained visual report under `reports/<slug>/`
+3. `ask_metrics`: answer questions using existing semantic metrics
+4. `gen_report`: structured report generation
+5. `semantic_modeling`: unified Dosi semantic-model and metric authoring
+6. `gen_sql_summary`: SQL summary generation
+7. `gen_table`: interactive table creation
+8. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
+9. `gen_skill`: skill creation and optimization
+10. `gen_visual_report`: self-contained visual report under `reports/<slug>/`
 
 Airflow scheduling and external BI operations such as Superset authoring are
 not subagent types. The main agent performs them directly with installed

@@ -25,13 +25,14 @@ Subagent 可以是：
 
 1. `explore`：只读的结构、知识和文件探索
 2. `gen_sql`：专用 SQL 生成
-3. `gen_report`：结构化报告生成
-4. `semantic_modeling`：统一的 Dosi 语义模型和指标创作
-5. `gen_sql_summary`：SQL 摘要生成
-6. `gen_table`：交互式建表
-7. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
-8. `gen_skill`：skill 创建与优化
-9. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
+3. `ask_metrics`：使用已有语义指标回答问题
+4. `gen_report`：结构化报告生成
+5. `semantic_modeling`：统一的 Dosi 语义模型和指标创作
+6. `gen_sql_summary`：SQL 摘要生成
+7. `gen_table`：交互式建表
+8. `gen_job`：数据管道作业（单库 ETL 和跨库迁移）
+9. `gen_skill`：skill 创建与优化
+10. `gen_visual_report`：在 `reports/<slug>/` 下产出自包含的可视化报告
 
 Airflow 调度及 Superset 等外部 BI 操作不再属于 subagent 类型，而是由主
 agent 直接使用已安装 plugin 及其内置 skill 完成。代码中暂时保留
