@@ -238,12 +238,48 @@ doris_data:
   port: 9030
   username: root
   password: your_password
+  catalog: internal      # 可选，默认为 internal
   database: your_database
-  catalog: internal  # 可选，默认为 internal
+  charset: utf8mb4       # 可选，默认为 utf8mb4
+  autocommit: true       # 可选，默认为 true
+  timeout_seconds: 30    # 可选，默认为 30
 ```
 
-Doris 使用 MySQL 协议，`port` 为 FE 查询端口（默认 9030）。内置 catalog 为 `internal`，外部
-catalog（例如 Hive Metastore catalog）可通过同一个 `catalog` 字段选择。
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `host` | `127.0.0.1` | FE 节点地址 |
+| `port` | `9030` | FE 的 MySQL 协议查询端口，不是 FE HTTP 端口（8030） |
+| `username` | 必填 | Doris 用户名 |
+| `password` | 空 | Doris 密码 |
+| `catalog` | `internal` | 连接建立时所在的 catalog |
+| `database` | 无 | 连接建立时所在的数据库 |
+| `charset` | `utf8mb4` | 连接字符集 |
+| `autocommit` | `true` | 自动提交模式 |
+| `timeout_seconds` | `30` | 连接超时时间（秒） |
+
+Doris 使用 MySQL 协议，`port` 为 FE 查询端口（默认 9030）。对象以 `catalog.database.table` 三段式命名：
+Doris 在数据库和表之间没有 schema 这一层，因此不要配置 `schema`，多出来的一层由 `catalog` 承担。
+
+`internal` 是存放 Doris 自管理表的内置 catalog。如果希望连接建立时就位于某个外部 catalog（例如 Hive
+Metastore catalog），直接在 `catalog` 中指定：
+
+```yaml
+doris_hive:
+  type: doris
+  host: localhost
+  port: 9030
+  username: root
+  password: your_password
+  catalog: hive_catalog
+  database: warehouse
+```
+
+该 catalog 必须已经存在于 Doris 中——Datus 只负责选择 catalog，不会创建 catalog。请先在 Doris 侧创建
+（`CREATE CATALOG hive_catalog PROPERTIES (...)`，并按 catalog 类型填入 metastore 地址和存储凭证），
+确认它出现在 `SHOW CATALOGS` 的结果中。
+
+在会话内，`SWITCH <catalog>` 用于切换 catalog，`USE [<catalog>.]<database>` 用于切换数据库。切换 catalog
+会清空当前数据库上下文——同名数据库通常并不存在于新的 catalog 中，切换后需要再执行一次 `USE`。
 
 ### Hologres
 
@@ -346,10 +382,15 @@ agent:
 - HTTP/HTTPS 连接及 SSL 支持
 
 #### Apache Doris
-- MySQL 协议兼容
-- 多 Catalog 发现与上下文切换（`catalog.database.table`）
-- 物化视图发现与 DDL 获取
-- Catalog 感知的元数据和样本数据获取
+- 通过 FE 查询端口兼容 MySQL 协议
+- 多 catalog 支持：`SHOW CATALOGS` 发现，以及 `SWITCH <catalog>`、`USE [catalog.]database` 上下文切换
+- 元数据读取使用 catalog 限定的 `information_schema`，无需切换会话级 catalog，且线程安全
+- `catalog.database.table` 三段式标识符，支持反引号引用；没有 schema 层
+- 通过 `mv_infos()` 发现异步物化视图，并获取其 DDL
+- 元数据区分 Doris 的三种 key 模型（Duplicate Key、Unique Key、Aggregate Key）的 key 列
+- Catalog 感知的样本数据获取，支持 list、CSV、Pandas、Arrow 结果格式
+- 内置 `db-doris-sql` Skill，覆盖表模型、分桶、物化视图，以及 Stream Load、Routine Load 和基于 TVF / catalog 的 `INSERT INTO SELECT` 数据导入
+- 支持作为迁移目标：表结构布局建议、DDL 校验、源类型映射，以及在集群上试运行 `CREATE TABLE`
 
 #### Hologres
 - PostgreSQL wire 协议（PostgreSQL 兼容 SQL 方言）
