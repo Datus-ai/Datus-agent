@@ -314,18 +314,16 @@ model_specs:
     max_tokens: 8192
 
   # Claude Models
-  # The claude-*-5 family rejects ``temperature`` outright
-  # ("`temperature` is deprecated for this model."), so it must never be sent —
-  # not even the non-reasoning default. Verified against claude-sonnet-5 and
-  # claude-opus-5; the 4.x models below still accept it.
+  # ``temperature`` / ``top_p`` are never sent to Anthropic at all (see the
+  # provider gate in ``OpenAICompatibleModel._build_completion_params``), so no
+  # per-model flag is needed here — the claude-*-5 family rejects temperature
+  # outright and the 4.x family rejects it alongside top_p.
   claude-sonnet-5:
     context_length: 1000000
     max_tokens: 128000
-    supports_temperature: false
   claude-opus-5:
     context_length: 1000000
     max_tokens: 128000
-    supports_temperature: false
   claude-opus-4-7:
     context_length: 1000000
     max_tokens: 128000

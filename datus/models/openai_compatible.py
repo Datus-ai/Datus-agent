@@ -582,33 +582,30 @@ class OpenAICompatibleModel(LLMBaseModel):
             if self.default_headers:
                 params["extra_headers"] = self.default_headers
 
-            # Anthropic rejects requests carrying BOTH ``temperature`` and
-            # ``top_p`` with HTTP 400 / ``invalid_request_error`` (the
-            # claude-sonnet-4.x family enforces this strictly). The gate is
-            # the **routed** provider (``litellm_adapter.provider``), not the
-            # model class — operators may configure ``type=openai`` but a
-            # Claude model name, in which case ``LiteLLMAdapter`` auto-routes
-            # to Anthropic; the suppression must still apply or the request
-            # 400s. ``temperature`` wins (mirrors the historical
-            # ``ClaudeModel.generate`` contract); ``top_p`` is dropped
-            # unconditionally for Claude regardless of kwargs / model_config
-            # / non-reasoning default.
+            # Neither sampling knob is ever sent to Anthropic:
+            #   * ``top_p`` — rejected alongside ``temperature`` with HTTP 400 /
+            #     ``invalid_request_error`` (the claude-sonnet-4.x family
+            #     enforces this strictly).
+            #   * ``temperature`` — the claude-*-5 family rejects it outright
+            #     ("`temperature` is deprecated for this model."), which made
+            #     those models fail EVERY call. Gating on the family rather
+            #     than per-model spec means a newly released Claude model works
+            #     on day one instead of 400ing until the catalog catches up.
+            # The gate is the **routed** provider (``litellm_adapter.provider``),
+            # not the model class — operators may configure ``type=openai`` but a
+            # Claude model name, in which case ``LiteLLMAdapter`` auto-routes to
+            # Anthropic and the suppression must still apply.
+            # Suppression is unconditional, ahead of kwargs and model_config
+            # alike: no caller-supplied value can make such a request valid.
+            # Anthropic applies its own defaults for both.
             routed_provider = getattr(self.litellm_adapter, "provider", "")
-            suppress_top_p = routed_provider == LLMProvider.CLAUDE
-
-            # Some models reject ``temperature`` outright rather than merely
-            # constraining it (the claude-*-5 family: "`temperature` is
-            # deprecated for this model."). Suppression is unconditional there —
-            # ahead of kwargs and model_config alike — because no caller-supplied
-            # value can make such a request valid, and letting one through fails
-            # EVERY call to that model, not just the ones that opted in.
-            suppress_temperature = not self.supports_temperature()
+            suppress_sampling_params = routed_provider == LLMProvider.CLAUDE
+            suppress_top_p = suppress_sampling_params
 
             # Add temperature: priority is kwargs > model_config > default (0.7).
             # An explicit ``None`` in kwargs is the caller's "drop this param"
-            # signal — kept for symmetry with the top_p path even though
-            # Anthropic accepts ``temperature`` alone (where it accepts it).
-            if suppress_temperature:
+            # signal, kept symmetric with the top_p path.
+            if suppress_sampling_params:
                 pass
             elif "temperature" in kwargs:
                 if kwargs["temperature"] is not None:
@@ -1938,55 +1935,29 @@ class OpenAICompatibleModel(LLMBaseModel):
         """Model specifications loaded from conf/providers.yml (cached)."""
         return _load_model_specs()
 
-    def _lookup_spec_typed(self, field: str, expected_type: type) -> Optional[Any]:
+    def _lookup_spec(self, field: str) -> Optional[int]:
         """Look up ``field`` in ``model_specs`` with exact-then-longest-prefix matching.
 
         Longest-prefix is important when specs declare both a generic family key
         (e.g. ``gpt-5``) and a more specific variant (e.g. ``gpt-5.3-codex``): the
         generic key would otherwise bleed into unrelated slugs that happen to
-        share a short prefix. Returns None when the field is missing or is not
-        an ``expected_type`` — OpenRouter-cache-only entries do not carry
-        ``max_tokens``, so callers must tolerate absence.
-
-        ``expected_type`` keeps numeric specs and capability flags apart. It
-        matters in one direction only: ``bool`` is a subclass of ``int``, so a
-        flag would satisfy an ``int`` lookup, while a number never satisfies a
-        ``bool`` lookup.
+        share a short prefix. Returns None when the field is missing —
+        OpenRouter-cache-only entries do not carry ``max_tokens``, so callers
+        must tolerate absence.
         """
         specs = self.model_specs
-
-        def _typed(spec: Any) -> bool:
-            return isinstance(spec, dict) and isinstance(spec.get(field), expected_type)
-
         exact = specs.get(self.model_name)
-        if _typed(exact):
+        if isinstance(exact, dict) and isinstance(exact.get(field), int):
             return exact[field]
         best_key: Optional[str] = None
         for spec_model, spec in specs.items():
-            if not _typed(spec):
+            if not isinstance(spec, dict) or not isinstance(spec.get(field), int):
                 continue
             if self.model_name.startswith(spec_model) and (best_key is None or len(spec_model) > len(best_key)):
                 best_key = spec_model
         if best_key is None:
             return None
         return specs[best_key][field]
-
-    def _lookup_spec(self, field: str) -> Optional[int]:
-        """Numeric spec lookup (``max_tokens``, ``context_length``)."""
-        return self._lookup_spec_typed(field, int)
-
-    def supports_temperature(self) -> bool:
-        """Whether the model accepts a ``temperature`` parameter at all.
-
-        Newer Anthropic models (the claude-*-5 family) reject the request
-        outright with ``"`temperature` is deprecated for this model."``, so
-        sending the non-reasoning default of 0.7 made them unusable for every
-        call. Declared per model via ``model_specs.supports_temperature`` in
-        ``providers.yml``; absent means supported, which keeps every existing
-        model on its current behavior.
-        """
-        flag = self._lookup_spec_typed("supports_temperature", bool)
-        return True if flag is None else bool(flag)
 
     def max_tokens(self) -> Optional[int]:
         """Max tokens from model specs with prefix matching, or None if unavailable."""

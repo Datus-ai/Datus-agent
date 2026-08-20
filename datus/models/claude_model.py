@@ -642,7 +642,12 @@ class ClaudeModel(OpenAICompatibleModel):
                 messages=filtered_messages,
                 system=self._build_system_param(system_message),
                 max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
-                temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
+                # ``temperature`` is never forwarded to Anthropic — the
+                # claude-*-5 family rejects it outright ("`temperature` is
+                # deprecated for this model."), so honouring a caller's value
+                # would fail the request rather than tune it. Matches the
+                # provider gate in ``OpenAICompatibleModel``; Anthropic applies
+                # its own default.
             )
 
             if response.content:
@@ -838,7 +843,7 @@ class ClaudeModel(OpenAICompatibleModel):
                         messages=wrap_prompt_cache(messages),
                         tools=tools,
                         max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
-                        temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
+                        # No ``temperature`` — see ``generate`` above.
                     )
                     generation_input = capture_native_trace_content("prompts", _anthropic_trace_input(request_kwargs))
                     active_generation_span = start_native_generation_span(

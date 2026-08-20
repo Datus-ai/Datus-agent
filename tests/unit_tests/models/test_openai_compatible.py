@@ -396,9 +396,9 @@ class TestGenerate:
     # ------------------------------------------------------------------
 
     def test_top_p_suppressed_when_litellm_provider_is_claude_default_path(self):
-        """No kwargs, no model_config — the non-reasoning default would
-        normally set ``top_p=1.0``. Provider routing to Claude must
-        veto that and leave ``top_p`` absent from the payload."""
+        """No kwargs, no model_config — the non-reasoning defaults would
+        normally set ``top_p=1.0`` and ``temperature=0.7``. Provider routing to
+        Claude must veto both and leave them absent from the payload."""
         model = _make_model()
         model.litellm_adapter.provider = "claude"
         mock_resp = self._mock_litellm_response("ok")
@@ -406,8 +406,10 @@ class TestGenerate:
             model.generate("prompt")
         call_kwargs = mock_lit.call_args[1]
         assert "top_p" not in call_kwargs
-        # ``temperature`` is fine alone — Anthropic only complains when both are set.
-        assert call_kwargs.get("temperature") == 0.7
+        # ``temperature`` used to be sent alone (Anthropic only rejected the
+        # pair), but the claude-*-5 family rejects it outright, so neither
+        # sampling knob goes to Anthropic any more.
+        assert "temperature" not in call_kwargs
 
     def test_top_p_suppressed_when_provider_is_claude_kwargs_value(self):
         """An explicit non-None ``top_p`` in kwargs still loses to the
@@ -2279,13 +2281,15 @@ class TestBuildRunConfigInputFilter:
         assert result is data.model_data
 
 
-class TestSupportsTemperature:
-    """``model_specs.supports_temperature: false`` suppresses the parameter.
+class TestClaudeTemperatureSuppression:
+    """``temperature`` is never sent to Anthropic, for the whole Claude family.
 
     Regression: the claude-*-5 family rejects the request outright with
     "`temperature` is deprecated for this model.", so the non-reasoning default
     of 0.7 made those models unusable for EVERY call — plain generation and
-    structured output alike.
+    structured output alike. The gate is the routed provider rather than a
+    per-model flag so a newly released Claude model works on day one instead of
+    400ing until the catalog catches up.
     """
 
     @staticmethod
@@ -2302,57 +2306,47 @@ class TestSupportsTemperature:
         resp.usage.total_tokens = 2
         return resp
 
-    def _generate_kwargs(self, model_name, specs, **gen_kwargs):
-        model = _make_model(_make_model_config(model=model_name))
-        with (
-            patch("datus.models.openai_compatible._load_model_specs", return_value=specs),
-            patch("datus.models.openai_compatible.litellm.completion", return_value=self._mock_resp()) as mock_lit,
-        ):
+    def _generate_kwargs(self, provider, model_config=None, **gen_kwargs):
+        model = _make_model(model_config)
+        model.litellm_adapter.provider = provider
+        with patch("datus.models.openai_compatible.litellm.completion", return_value=self._mock_resp()) as mock_lit:
             model.generate("prompt", **gen_kwargs)
         return mock_lit.call_args[1]
 
-    _UNSUPPORTED = {"claude-sonnet-5": {"supports_temperature": False}}
+    def test_default_is_suppressed_for_claude(self):
+        assert "temperature" not in self._generate_kwargs("claude")
 
-    def test_flag_false_suppresses_the_default(self):
-        assert "temperature" not in self._generate_kwargs("claude-sonnet-5", self._UNSUPPORTED)
-
-    def test_flag_false_suppresses_an_explicit_kwarg(self):
+    def test_explicit_kwarg_is_suppressed_for_claude(self):
         """No caller-supplied value can make the request valid, so kwargs lose."""
-        assert "temperature" not in self._generate_kwargs("claude-sonnet-5", self._UNSUPPORTED, temperature=0.5)
+        assert "temperature" not in self._generate_kwargs("claude", temperature=0.5)
 
-    def test_flag_false_suppresses_model_config(self):
-        model = _make_model(_make_model_config(model="claude-sonnet-5", temperature=0.3))
-        with (
-            patch("datus.models.openai_compatible._load_model_specs", return_value=self._UNSUPPORTED),
-            patch("datus.models.openai_compatible.litellm.completion", return_value=self._mock_resp()) as mock_lit,
-        ):
-            model.generate("prompt")
-        assert "temperature" not in mock_lit.call_args[1]
+    def test_model_config_value_is_suppressed_for_claude(self):
+        kwargs = self._generate_kwargs("claude", _make_model_config(temperature=0.3))
+        assert "temperature" not in kwargs
 
-    def test_absent_flag_keeps_the_existing_default(self):
-        kwargs = self._generate_kwargs("claude-sonnet-4-6", {"claude-sonnet-4-6": {"max_tokens": 128000}})
-        assert kwargs["temperature"] == 0.7
+    @pytest.mark.parametrize(
+        "model_name", ["claude-sonnet-5", "claude-opus-5", "claude-sonnet-4-6", "claude-3-7-sonnet"]
+    )
+    def test_suppressed_for_every_claude_model(self, model_name):
+        """4.x rejects temperature alongside top_p, 5.x rejects it outright —
+        the whole family is treated the same."""
+        kwargs = self._generate_kwargs("claude", _make_model_config(model=model_name))
+        assert "temperature" not in kwargs
 
-    def test_flag_true_keeps_temperature(self):
-        kwargs = self._generate_kwargs("some-model", {"some-model": {"supports_temperature": True}})
-        assert kwargs["temperature"] == 0.7
+    def test_other_providers_keep_the_default(self):
+        """Suppression must not bleed into OpenAI/DeepSeek/Kimi/..."""
+        assert self._generate_kwargs("openai")["temperature"] == 0.7
 
-    def test_flag_does_not_leak_across_model_families(self):
-        """Prefix matching must not let a 5-family entry disable 4.x."""
-        specs = {"claude-sonnet-5": {"supports_temperature": False}}
-        assert self._generate_kwargs("claude-sonnet-4-6", specs)["temperature"] == 0.7
+    def test_other_providers_keep_an_explicit_value(self):
+        assert self._generate_kwargs("deepseek", temperature=0.5)["temperature"] == 0.5
 
-    def test_numeric_spec_is_not_read_as_a_capability_flag(self):
-        """``bool`` is an ``int`` subclass; the reverse must not hold."""
-        model = _make_model(_make_model_config(model="m"))
-        with patch("datus.models.openai_compatible._load_model_specs", return_value={"m": {"supports_temperature": 1}}):
-            assert model.supports_temperature() is True
+    def test_claude_5_models_are_selectable_from_the_catalog(self):
+        """The fix is unreachable through ``/model`` if the catalog omits them."""
+        import yaml
 
-    def test_real_catalog_marks_the_claude_5_family(self):
-        """The shipped providers.yml must carry the verified entries."""
-        from datus.models.openai_compatible import _load_model_specs
+        from datus.utils.resource_utils import read_data_file_text
 
-        specs = _load_model_specs()
-        assert specs["claude-sonnet-5"]["supports_temperature"] is False
-        assert specs["claude-opus-5"]["supports_temperature"] is False
-        assert "supports_temperature" not in specs["claude-sonnet-4-6"]
+        catalog = yaml.safe_load(read_data_file_text("conf/providers.yml"))
+        models = catalog["providers"]["claude"]["models"]
+        assert "claude-sonnet-5" in models
+        assert "claude-opus-5" in models
