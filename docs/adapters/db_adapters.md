@@ -467,7 +467,7 @@ All adapters support:
 - Asynchronous materialized views discovered through `mv_infos()`, with DDL retrieval
 - Key-model-aware column metadata (Duplicate, Unique, and Aggregate key columns)
 - Catalog-aware sample-row retrieval, and list, CSV, Pandas, and Arrow result formats
-- A packaged `db-doris-sql` skill covering table models, distribution, materialized views, and Broker / Stream / Routine Load
+- A packaged `db-doris-sql` skill covering table models, distribution, materialized views, and loading through Stream Load, Routine Load, or `INSERT INTO SELECT` over a TVF or catalog
 - Migration target support: table-layout suggestions, DDL validation, source-type mapping, and a dry-run `CREATE TABLE` against the cluster
 
 #### Hologres

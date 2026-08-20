@@ -450,7 +450,7 @@ agent:
 - 通过 `mv_infos()` 发现异步物化视图，并获取其 DDL
 - 元数据区分 Doris 的三种 key 模型（Duplicate Key、Unique Key、Aggregate Key）的 key 列
 - Catalog 感知的样本数据获取，支持 list、CSV、Pandas、Arrow 结果格式
-- 内置 `db-doris-sql` Skill，覆盖表模型、分桶、物化视图以及 Broker / Stream / Routine Load
+- 内置 `db-doris-sql` Skill，覆盖表模型、分桶、物化视图，以及 Stream Load、Routine Load 和基于 TVF / catalog 的 `INSERT INTO SELECT` 数据导入
 - 支持作为迁移目标：表结构布局建议、DDL 校验、源类型映射，以及在集群上试运行 `CREATE TABLE`
 
 #### Hologres
