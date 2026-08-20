@@ -35,6 +35,8 @@ providers:
       - claude-sonnet-4-6
       - claude-opus-4-6
       - claude-opus-4-7
+      - claude-sonnet-5
+      - claude-opus-5
 
   kimi:
     type: kimi
@@ -312,6 +314,18 @@ model_specs:
     max_tokens: 8192
 
   # Claude Models
+  # ``temperature`` / ``top_p`` are never sent to Anthropic at all — the
+  # provider gate is ``OpenAICompatibleModel._suppresses_sampling_params``,
+  # consulted by both request paths (``generate`` for completions and
+  # ``_build_agent`` for tool/streaming calls) — so no per-model flag is needed
+  # here: the claude-*-5 family rejects temperature outright and the 4.x family
+  # rejects it alongside top_p.
+  claude-sonnet-5:
+    context_length: 1000000
+    max_tokens: 128000
+  claude-opus-5:
+    context_length: 1000000
+    max_tokens: 128000
   claude-opus-4-7:
     context_length: 1000000
     max_tokens: 128000

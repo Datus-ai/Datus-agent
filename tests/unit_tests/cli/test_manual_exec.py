@@ -38,9 +38,9 @@ from datus.cli.manual_exec import (
 )
 
 
-def _render_text(payload) -> str:
+def _render_text(payload, **kwargs) -> str:
     console = Console(file=io.StringIO(), width=200, no_color=True)
-    console.print(render_exec_block(payload))
+    console.print(render_exec_block(payload, **kwargs))
     return console.file.getvalue()
 
 
@@ -292,6 +292,27 @@ class TestRenderExecBlock:
         payload = build_bash_payload("echo", True, "value=[red]not-a-tag[/red]", None, 0.01)
         text = _render_text(payload)
         assert "[red]not-a-tag[/red]" in text
+
+    def test_review_line_renders_under_the_command(self):
+        """A reviewed manual execution shows what authorised it."""
+        payload = build_bash_payload("npm ci", True, "added 42 packages", None, 2.3)
+        text = _render_text(payload, review_line="AI review ✓ passed · low risk · reinstalls declared deps")
+
+        assert "AI review ✓ passed" in text
+        assert "reinstalls declared deps" in text
+        assert text.index("npm ci") < text.index("AI review") < text.index("added 42 packages")
+
+    def test_no_review_line_leaves_the_block_unchanged(self):
+        payload = build_bash_payload("npm ci", True, "added 42 packages", None, 2.3)
+
+        assert _render_text(payload, review_line="") == _render_text(payload)
+
+    def test_review_line_markup_is_not_interpreted(self):
+        """The rationale is model-authored text, so ``[...]`` stays literal."""
+        payload = build_bash_payload("ls", True, "", None, 0.01)
+        text = _render_text(payload, review_line="AI review ✓ passed · reads [red]local[/red] files")
+
+        assert "[red]local[/red]" in text
 
     def test_block_is_framed_like_user_message_in_mode_colour(self):
         """Top/bottom rules (HORIZONTALS) like a user message, coloured per mode."""

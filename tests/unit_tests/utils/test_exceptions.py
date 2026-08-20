@@ -232,6 +232,69 @@ class TestDatusExceptionBuildMsg:
         assert isinstance(ex, DatusException)
 
 
+class TestBuildMsgKeepsUnconsumedArgs:
+    """A description without a matching placeholder must not eat the args.
+
+    Regression: ``ErrorCode.MODEL_INVALID_RESPONSE``'s description carries no
+    ``{error_detail}`` field, so ``desc.format(error_detail=<real cause>)``
+    returned the template unchanged and silently discarded the only diagnostic
+    the caller passed. Two very different model failures (a provider 400 and an
+    empty/unparseable response) became byte-identical in the log.
+    """
+
+    def test_arg_without_placeholder_is_appended(self):
+        ex = DatusException(
+            ErrorCode.MODEL_INVALID_RESPONSE,
+            message_args={"error_detail": "Invalid JSON from Codex: line 1 column 1"},
+        )
+        assert "Invalid JSON from Codex: line 1 column 1" in str(ex)
+        assert ErrorCode.MODEL_INVALID_RESPONSE.desc in str(ex)
+
+    def test_consumed_placeholder_is_not_duplicated(self):
+        ex = DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "username"})
+        assert str(ex).count("username") == 1
+
+    def test_partially_consumed_args_append_only_the_remainder(self):
+        ex = DatusException(
+            ErrorCode.COMMON_FIELD_REQUIRED,
+            message_args={"field_name": "username", "extra_hint": "from the CLI flag"},
+        )
+        assert str(ex).count("username") == 1
+        assert "extra_hint=from the CLI flag" in str(ex)
+
+    def test_missing_placeholder_arg_still_falls_back(self):
+        """A template whose placeholder has no arg keeps the old args= dump."""
+        ex = DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"unrelated": "value"})
+        assert "unrelated" in str(ex)
+
+    def test_explicit_message_still_wins_over_args(self):
+        ex = DatusException(
+            ErrorCode.MODEL_INVALID_RESPONSE,
+            message="Codex generate_with_json_output failed",
+            message_args={"error_detail": "dropped"},
+        )
+        assert "Codex generate_with_json_output failed" in str(ex)
+        assert "dropped" not in str(ex)
+
+    def test_invalid_response_desc_does_not_claim_http_400(self):
+        """The code covers unparseable responses too, so the description must
+        not name a status the failure may not have had."""
+        assert "400" not in ErrorCode.MODEL_INVALID_RESPONSE.desc
+
+    @pytest.mark.parametrize(
+        "template,expected",
+        [
+            ("no fields here", set()),
+            ("{detail}", {"detail"}),
+            ("{err.args[0]} and {other}", {"err", "other"}),
+            ("{items[0]}", {"items"}),
+            ("{a} {a}", {"a"}),
+        ],
+    )
+    def test_placeholder_extraction(self, template, expected):
+        assert DatusException._desc_placeholders(template) == expected
+
+
 class TestSetupExceptionHandler:
     """Tests for setup_exception_handler (lines 178-219)."""
 

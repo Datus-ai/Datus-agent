@@ -196,6 +196,21 @@ class TestBashToolPatternMatching:
         # continues to pass after the bypass fix.
         assert python_tool._is_command_allowed("python scripts/ok.py") is True
 
+    @pytest.mark.parametrize("op", ["&&", "||", ";", "&"])
+    def test_chained_commands_still_rejected(self, python_tool, op):
+        """The restrictive whitelist is a separate trust boundary.
+
+        The permission layer judges ``a && b`` per sub-command, but this
+        execution-layer whitelist deliberately keeps using ``split_pipeline``
+        (pipes only) and must reject every other chaining operator outright,
+        even when both halves match a pattern.
+        """
+        command = f"python scripts/ok.py {op} python scripts/other.py"
+        assert python_tool._is_command_allowed(command) is False
+
+    def test_pure_pipeline_of_allowed_segments_is_still_permitted(self, wildcard_tool):
+        assert wildcard_tool._is_command_allowed("python a.py | python b.py") is True
+
 
 class TestBashToolExecution:
     def test_execute_allowed_command(self, python_tool):

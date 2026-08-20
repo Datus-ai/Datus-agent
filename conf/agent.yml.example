@@ -105,6 +105,9 @@ agent:
   #   # is trimmed to fit ``max_history_bytes`` (the planned action itself is
   #   # never trimmed), and too small a ``max_completion_tokens`` truncates the
   #   # structured verdict, which fails closed into a manual prompt.
+  #   # Every reviewed call reports its verdict on the tool call in the CLI
+  #   # ("AI review ✓ passed · low risk · conf 0.92 · <rationale>"), including
+  #   # ones the reviewer auto-allowed; ctrl+o shows the full rationale.
   #   # auto_review:
   #   #   enabled: true
   #   #   model: openai/gpt-5-mini
@@ -123,15 +126,18 @@ agent:
   #   # omitted). Pattern syntax — no colon = exact command; "prefix:*" =
   #   # prefix match; "prefix:glob" = prefix + first-argument glob. Decision
   #   # order: deny (also matches wrapped commands like ``xargs rm``) →
-  #   # safety ceiling (bash -c / sudo / && / $() / redirection never auto-allow
-  #   # statically) → ask → allow → default (ask). A PURE pipeline (``a | b | c``)
-  #   # is judged per segment: it auto-runs only if every segment is allowed, and
-  #   # any denied segment blocks the whole pipeline. A safety-ceiling ASK is
-  #   # still eligible for ``auto_review`` above, which reads the full command
-  #   # text; only unparseable commands always require a person. Safety-ceiling
-  #   # asks are never offered as project-level grants. The confirmation prompt
-  #   # offers once / session / project scopes; "project" appends the prefix
-  #   # to ``.datus/config.yml``'s ``bash_allow`` list.
+  #   # safety ceiling (bash -c / sudo / $() / redirection / background & /
+  #   # loops & subshells never auto-allow statically) → ask → allow →
+  #   # default (ask). A command chained with ``|``, ``&&``, ``||`` or ``;`` is
+  #   # judged per sub-command: it auto-runs only if every sub-command is
+  #   # allowed, and any denied sub-command blocks the whole chain. A
+  #   # safety-ceiling ASK is still eligible for ``auto_review`` above, which
+  #   # reads the full command text; only unparseable commands always require a
+  #   # person, and safety-ceiling asks are never offered as project grants.
+  #   # The confirmation prompt lists every sub-command that needs approval and
+  #   # offers once / session / project scopes; "project" appends one prefix PER
+  #   # sub-command to ``.datus/config.yml``'s ``bash_allow`` list, so
+  #   # re-running the same chain later does not prompt again.
   #   # bash_commands:
   #   #   allow:
   #   #     - "git status"            # exact: not "git status --short"

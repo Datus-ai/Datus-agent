@@ -1388,3 +1388,72 @@ class TestCodexCacheIdentity:
 
         ms = model._codex_model_settings("chat", _Session())
         assert ms.extra_headers["chatgpt-account-id"] == "acct-42"
+
+
+def _delta_event(text: str):
+    event = MagicMock()
+    event.type = "response.output_text.delta"
+    event.delta = text
+    return event
+
+
+def _completed_event(output_text):
+    event = MagicMock()
+    event.type = "response.completed"
+    event.response.output_text = output_text
+    return event
+
+
+class TestConsumeStreamText:
+    """The terminal event is preferred, but never trusted when it is empty.
+
+    Regression: a ChatGPT-account Codex endpoint streams the full answer over
+    ``response.output_text.delta`` and then reports ``output_text == ""`` on
+    ``response.completed``. Returning that empty value threw away the whole
+    response, which surfaced as a JSONDecodeError from
+    ``generate_with_json_output`` and made every structured call fail.
+    """
+
+    @staticmethod
+    def _consume(events):
+        from datus.models.codex_model import CodexModel
+
+        return CodexModel._consume_stream_text(events)
+
+    def test_empty_completed_falls_back_to_deltas(self):
+        events = [_delta_event('{"ok":'), _delta_event(" true}"), _completed_event("")]
+        assert self._consume(events) == '{"ok": true}'
+
+    def test_missing_output_text_falls_back_to_deltas(self):
+        events = [_delta_event("hello"), _completed_event(None)]
+        assert self._consume(events) == "hello"
+
+    def test_completed_text_wins_when_present(self):
+        """The terminal value stays authoritative — it may be normalized."""
+        events = [_delta_event("partial"), _completed_event("full answer")]
+        assert self._consume(events) == "full answer"
+
+    def test_empty_completed_with_no_deltas_returns_empty(self):
+        assert self._consume([_completed_event("")]) == ""
+
+    def test_stream_without_completed_event_joins_deltas(self):
+        assert self._consume([_delta_event("a"), _delta_event("b")]) == "ab"
+
+    def test_completed_without_response_falls_back_to_deltas(self):
+        event = MagicMock()
+        event.type = "response.completed"
+        event.response = None
+        assert self._consume([_delta_event("kept"), event]) == "kept"
+
+    def test_json_output_survives_an_empty_terminal_event(self, model_config, mock_oauth):
+        """End-to-end: the reviewer's structured call must not raise."""
+        import json
+
+        from datus.models.codex_model import CodexModel
+
+        payload = {"risk_level": "low", "decision": "allow"}
+        events = [_delta_event(json.dumps(payload)), _completed_event("")]
+        model = CodexModel(model_config=model_config)
+        with patch.object(model, "_refresh_client_token"), patch.object(model, "_get_client") as client:
+            client.return_value.responses.create.return_value = events
+            assert model.generate_with_json_output("judge this", output_schema={"type": "object"}) == payload

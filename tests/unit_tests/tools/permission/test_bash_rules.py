@@ -187,19 +187,42 @@ class TestSafetyCeiling:
     @pytest.mark.parametrize(
         "command",
         [
-            "git status && rm -rf /",
-            "ls || rm x",  # logical OR is not a pipeline
-            "ls |& grep foo",  # stderr pipe is not a simple pipeline
-            "ls |",  # trailing empty pipeline segment
+            "ls |& grep foo",  # stderr pipe is not a simple pipe
+            "ls |",  # trailing empty segment
+            "ls & rm x",  # background `&` is not a sequencer
+            "ls &",
+            "ls;; rm x",  # empty segment between `;;`
             "echo hi > /etc/passwd",
             "echo `whoami`",
             "echo $(id)",
             "echo ${HOME}",
-            "ls; rm x",
+            "ls\nrm x",  # newline is not segmented
         ],
     )
     def test_metacharacters_force_ask(self, command):
         rules = BashCommandRules(allow=["git status", "ls:*", "echo:*", "grep:*", "rm:*"])
+        decision = evaluate_bash_command(command, rules)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "for f in *; do echo $f; done",
+            "if ls; then echo ok; fi",
+            "while ls; do echo x; done",
+            "(cd /tmp; ls)",
+            "{ ls; echo done; }",
+        ],
+    )
+    def test_compound_constructs_force_ask(self, command):
+        """Loops/conditionals/subshells are not decomposable into sub-commands.
+
+        Without this guard ``do rm $f`` would be judged — and persisted — as an
+        ordinary ``rm`` command.
+        """
+        rules = BashCommandRules(allow=["ls:*", "echo:*", "cd:*", "rm:*"])
         decision = evaluate_bash_command(command, rules)
         assert decision.level == PermissionLevel.ASK
         assert decision.source == BashDecisionSource.SAFETY
@@ -429,19 +452,130 @@ class TestPipelineEvaluation:
         assert d.safety_forced is True
 
     def test_ask_pipeline_carries_all_non_allow_segments(self):
-        """The hook's project-grant bypass must see EVERY non-allow segment,
+        """The prompt and the grant writers must see EVERY non-allow segment,
         not just the representative one."""
         rules = BashCommandRules(allow=["cat:*"], ask=["docker:*"])
         d = evaluate_bash_command("frobnicate | docker ps | cat x", rules)
-        assert d.segment_ask_patterns == (
-            (BashDecisionSource.DEFAULT, None),
-            (BashDecisionSource.ASK_RULE, "docker:*"),
-        )
+        assert [(s.command, s.source, s.matched_pattern, s.bucket) for s in d.ask_segments] == [
+            ("frobnicate", BashDecisionSource.DEFAULT, None, "frobnicate"),
+            ("docker ps", BashDecisionSource.ASK_RULE, "docker:*", "docker:*"),
+        ]
 
-    def test_single_command_has_no_segment_patterns(self):
+    def test_single_command_carries_itself_as_one_ask_segment(self):
+        """Callers get one code path: a plain ASK still populates ask_segments."""
         rules = BashCommandRules(ask=["docker:*"])
         d = evaluate_bash_command("docker ps", rules)
-        assert d.segment_ask_patterns is None
+        assert len(d.ask_segments) == 1
+        seg = d.ask_segments[0]
+        assert seg.command == "docker ps"
+        assert seg.source == BashDecisionSource.ASK_RULE
+        assert seg.matched_pattern == "docker:*"
+        assert seg.bucket == "docker:*"
+        assert seg.safety_forced is False
+
+    def test_allow_and_deny_decisions_carry_no_ask_segments(self):
+        rules = BashCommandRules(allow=["ls:*"], deny=["rm:*"])
+        assert evaluate_bash_command("ls -la", rules).ask_segments == ()
+        assert evaluate_bash_command("rm -rf x", rules).ask_segments == ()
+
+
+class TestCommandChainSplitting:
+    """split_command_chain: top-level unquoted |, &&, ||, ; segmentation."""
+
+    @pytest.mark.parametrize(
+        "command,expected",
+        [
+            ("git status", ["git status"]),
+            ("a && b", ["a", "b"]),
+            ("a || b", ["a", "b"]),
+            ("a; b", ["a", "b"]),
+            ("a | b", ["a", "b"]),
+            ("a && b || c; d | e", ["a", "b", "c", "d", "e"]),
+            ('git commit -m "fix; bug"', ['git commit -m "fix; bug"']),
+            ("grep 'a && b' file", ["grep 'a && b' file"]),
+            ("echo a\\;b", ["echo a\\;b"]),
+            (r"find . -name '*.py' -exec ls {} \;", [r"find . -name '*.py' -exec ls {} \;"]),
+        ],
+    )
+    def test_segments(self, command, expected):
+        from datus.tools.permission.bash_rules import split_command_chain
+
+        assert split_command_chain(command) == expected
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "a |& b",  # stderr pipe
+            "ls &",  # background
+            "a & b",  # background
+            "ls &&",  # empty trailing segment
+            "; ls",  # empty leading segment
+            "a;; b",  # empty middle segment
+            'echo "unclosed && ls',  # unbalanced quotes
+        ],
+    )
+    def test_unsegmentable_returns_none(self, command):
+        from datus.tools.permission.bash_rules import split_command_chain
+
+        assert split_command_chain(command) is None
+
+    def test_split_pipeline_still_only_splits_pipes(self):
+        """The execution-layer whitelist (BashTool) must not be widened."""
+        from datus.tools.permission.bash_rules import split_pipeline
+
+        assert split_pipeline("a && b") == ["a && b"]
+        assert split_pipeline("a; b") == ["a; b"]
+        assert split_pipeline("a || b") is None
+        assert split_pipeline("a | b | c") == ["a", "b", "c"]
+
+
+class TestChainEvaluation:
+    """Per-sub-command judging for &&, ||, ; chains."""
+
+    @pytest.mark.parametrize("op", ["&&", "||", ";"])
+    def test_all_allow_sub_commands_auto_allow(self, op):
+        rules = BashCommandRules(allow=["git status", "ls:*"])
+        d = evaluate_bash_command(f"git status {op} ls -la", rules)
+        assert d.level == PermissionLevel.ALLOW
+        assert d.source == BashDecisionSource.ALLOW_RULE
+
+    @pytest.mark.parametrize("op", ["&&", "||", ";"])
+    def test_deny_sub_command_blocks_whole_chain(self, op):
+        rules = BashCommandRules(allow=["git status"], deny=["rm:*"])
+        d = evaluate_bash_command(f"git status {op} rm -rf /", rules)
+        assert d.level == PermissionLevel.DENY
+        assert d.matched_pattern == "rm:*"
+
+    def test_ask_chain_lists_every_non_allow_sub_command(self):
+        rules = BashCommandRules(allow=["git fetch"], ask=["npm:*"])
+        d = evaluate_bash_command("git fetch && rm -rf build && npm ci", rules)
+        assert d.level == PermissionLevel.ASK
+        assert [(s.command, s.source) for s in d.ask_segments] == [
+            ("rm -rf build", BashDecisionSource.DEFAULT),
+            ("npm ci", BashDecisionSource.ASK_RULE),
+        ]
+
+    def test_repeated_sub_commands_are_all_reported(self):
+        """Display fidelity: the user sees each occurrence, not a deduped one."""
+        rules = BashCommandRules()
+        d = evaluate_bash_command("rm a; rm b", rules)
+        assert [s.command for s in d.ask_segments] == ["rm a", "rm b"]
+
+    def test_safety_forced_sub_command_still_lists_the_others(self):
+        """The old short-circuit hid sibling sub-commands from the prompt."""
+        rules = BashCommandRules(allow=["git fetch"])
+        d = evaluate_bash_command("git fetch && sudo ls && npm ci", rules)
+        assert d.level == PermissionLevel.ASK
+        assert d.source == BashDecisionSource.SAFETY
+        assert d.safety_forced is True
+        assert [s.command for s in d.ask_segments] == ["sudo ls", "npm ci"]
+        assert [s.safety_forced for s in d.ask_segments] == [True, False]
+
+    def test_mixed_pipe_and_sequence_operators(self):
+        rules = BashCommandRules(allow=["cat:*", "grep:*"])
+        d = evaluate_bash_command("cat log | grep err && frobnicate", rules)
+        assert d.level == PermissionLevel.ASK
+        assert [s.command for s in d.ask_segments] == ["frobnicate"]
 
 
 class TestDatusProfileFlagNormalization:
