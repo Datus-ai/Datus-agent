@@ -126,11 +126,14 @@ def _truncate_middle(text: str, max_len: int = 60) -> str:
     return flat[:keep] + " ... " + flat[-keep:]
 
 
-# Compact-mode budget for the rationale tail of the review line. The verdict
-# prefix is short and fixed-width-ish, so this keeps the whole row near the
-# other compact result rows; the untruncated rationale stays available in
-# verbose mode (ctrl+o).
-_REVIEW_RATIONALE_MAX = 96
+# Compact-mode budget for the rationale tail of the review line, matching the
+# budget the reviewer's system prompt asks for. The verdict prefix costs 46
+# columns ("  └─ AI review ✓ passed · low risk · conf 0.97"), so 70 keeps the
+# whole row inside a 120-column terminal instead of wrapping. A compliant
+# rationale therefore renders in full; only a model that ignored the budget gets
+# the middle-truncation marker, which doubles as the signal that it did. The
+# untruncated text stays available in verbose mode (ctrl+o).
+_REVIEW_RATIONALE_MAX = 70
 
 
 def format_review_line(review: Optional[dict], *, verbose: bool = False) -> str:

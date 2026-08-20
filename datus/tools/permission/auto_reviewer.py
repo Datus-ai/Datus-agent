@@ -49,7 +49,17 @@ class AutoReviewVerdict(BaseModel):
     user_authorization: UserAuthorization
     decision: ReviewDecision
     confidence: float = Field(ge=0.0, le=1.0)
-    rationale: str = Field(min_length=1, max_length=1000)
+    # The system prompt asks for ~70 characters so the verdict fits one CLI
+    # line. This bound is deliberately looser: it is a guard against a runaway
+    # essay, not the style rule. Enforcing the display budget here would turn a
+    # slightly-too-long but perfectly good verdict into a validation failure,
+    # which fails closed into a manual prompt — strictly worse than a truncated
+    # line. Overruns are truncated at render time instead.
+    rationale: str = Field(
+        min_length=1,
+        max_length=200,
+        description="One clause naming the material effect; about 70 characters, rendered on a single line",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -144,7 +154,21 @@ Specific guidance:
 - decision=allow is permitted only for low or medium risk with no explicit security-policy concern.
 - high and critical always use decision=ask. Static hard denies are outside your authority.
 
-Return only JSON matching the supplied schema. Keep rationale to one concise sentence."""
+Return only JSON matching the supplied schema.
+
+The rationale is rendered on a single CLI line beside the verdict, which leaves
+it about 70 characters. Write one clause naming the material effect of THIS
+action. Do not restate the command, and do not state the risk level or decision
+— both are already displayed next to your text. Drop lead-ins ("This command
+performs...") and closing judgements ("...so it is low risk"). Anything longer
+is truncated mid-word and the reader loses the end.
+
+These illustrate length and shape for OTHER actions; never reuse their wording,
+describe the action you were actually given:
+  rm -rf build          -> deletes build/ in the workspace, artifacts regenerable
+  DELETE FROM orders    -> unbounded delete, no predicate, not recoverable
+  npm ci                -> reinstalls declared deps, no source writes
+  cat app.log | grep ERR -> reads a local log, no mutation or egress"""
 
 
 class LLMAutoReviewer(AutoReviewer):

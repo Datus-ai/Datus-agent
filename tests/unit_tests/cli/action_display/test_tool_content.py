@@ -2328,6 +2328,38 @@ class TestReviewLine:
         assert "..." in compact and len(compact) < 200
         assert rationale in verbose
 
+    def test_rationale_within_the_prompted_budget_is_not_truncated(self):
+        """The display budget must not be tighter than what the reviewer is
+        asked for, or every compliant verdict would still show "..."."""
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+
+        rationale = "deletes build/ in the workspace, artifacts regenerable"
+        assert len(rationale) <= _REVIEW_RATIONALE_MAX
+        assert rationale in format_review_line(self._review(rationale=rationale))
+
+    def test_common_row_fits_a_120_column_terminal(self):
+        """Budget rationale: the row the user sees most must not wrap.
+
+        The overwhelming majority of rendered reviews are auto-allowed
+        low/medium verdicts, so that shape is the one held to 120 columns
+        (the renderer prepends a 5-column gutter). A flagged/critical verdict,
+        or one carrying "user approved", is longer and may wrap — those are the
+        rare, high-attention rows where wrapping costs little.
+        """
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+
+        common_prefix = format_review_line(
+            {"decision": "allow", "risk_level": "low", "confidence": 0.97, "rationale": ""}
+        )
+        assert 5 + len(common_prefix) + len(" \u00b7 ") + _REVIEW_RATIONALE_MAX <= 120
+
+    def test_display_budget_matches_what_the_prompt_asks_for(self):
+        """Guard against the two drifting apart on a later edit."""
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+        from datus.tools.permission.auto_reviewer import _REVIEW_SYSTEM_PROMPT
+
+        assert f"about {_REVIEW_RATIONALE_MAX} characters" in _REVIEW_SYSTEM_PROMPT
+
     def test_multiline_rationale_collapses_to_one_line(self):
         line = format_review_line(self._review(rationale="first\nsecond   third"))
         assert "\n" not in line
