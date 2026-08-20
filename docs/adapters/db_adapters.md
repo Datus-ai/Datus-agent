@@ -252,13 +252,50 @@ doris_data:
   port: 9030
   username: root
   password: your_password
+  catalog: internal      # optional, default is internal
   database: your_database
-  catalog: internal  # optional, default is internal
+  charset: utf8mb4       # optional, default is utf8mb4
+  autocommit: true       # optional, default is true
+  timeout_seconds: 30    # optional, default is 30
 ```
 
-Doris speaks the MySQL protocol; `port` is the FE query port (default 9030). The built-in catalog is
-`internal`; external catalogs (for example, Hive Metastore catalogs) can be selected through the same
-`catalog` field.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `host` | `127.0.0.1` | Frontend (FE) host |
+| `port` | `9030` | FE MySQL-protocol query port, not the FE HTTP port (8030) |
+| `username` | required | Doris user |
+| `password` | empty | Doris password |
+| `catalog` | `internal` | Catalog the connection starts in |
+| `database` | none | Database the connection starts in |
+| `charset` | `utf8mb4` | Connection character set |
+| `autocommit` | `true` | Autocommit mode |
+| `timeout_seconds` | `30` | Connection timeout |
+
+Doris speaks the MySQL protocol, so `port` is the FE query port (default 9030). Objects are addressed as
+`catalog.database.table`: Doris has no schema level between database and table, so leave `schema` unset
+and let `catalog` carry the extra level.
+
+`internal` is the built-in catalog holding Doris-managed tables. To start a connection on an external
+catalog — a Hive Metastore catalog, for example — name it in `catalog`:
+
+```yaml
+doris_hive:
+  type: doris
+  host: localhost
+  port: 9030
+  username: root
+  password: your_password
+  catalog: hive_catalog
+  database: warehouse
+```
+
+The catalog has to exist in Doris already — Datus selects a catalog, it never creates one. Create it on
+the Doris side first (`CREATE CATALOG hive_catalog PROPERTIES (...)`, with the metastore URI and storage
+credentials the catalog type needs) and confirm it is listed by `SHOW CATALOGS`.
+
+Within a session, `SWITCH <catalog>` changes the catalog and `USE [<catalog>.]<database>` changes the
+database. Switching catalogs clears the current database, because a database of that name usually does
+not exist under the new catalog; issue a `USE` afterwards to select one.
 
 ### Hologres
 
@@ -423,10 +460,15 @@ All adapters support:
 - HTTP/HTTPS connection with SSL support
 
 #### Apache Doris
-- MySQL protocol compatibility
-- Multi-catalog discovery and context switching (`catalog.database.table`)
-- Materialized view discovery and DDL retrieval
-- Catalog-aware metadata and sample-row retrieval
+- MySQL protocol compatibility on the FE query port
+- Multi-catalog support: `SHOW CATALOGS` discovery, plus `SWITCH <catalog>` and `USE [catalog.]database` context switching
+- Catalog-qualified `information_schema` reads, so metadata queries need no session-level catalog switch and stay thread-safe
+- Three-part identifiers (`catalog.database.table`) with backtick quoting; no schema level
+- Asynchronous materialized views discovered through `mv_infos()`, with DDL retrieval
+- Key-model-aware column metadata (Duplicate, Unique, and Aggregate key columns)
+- Catalog-aware sample-row retrieval, and list, CSV, Pandas, and Arrow result formats
+- A packaged `db-doris-sql` skill covering table models, distribution, materialized views, and loading through Stream Load, Routine Load, or `INSERT INTO SELECT` over a TVF or catalog
+- Migration target support: table-layout suggestions, DDL validation, source-type mapping, and a dry-run `CREATE TABLE` against the cluster
 
 #### Hologres
 - PostgreSQL wire protocol (PostgreSQL-compatible SQL dialect)
