@@ -60,8 +60,6 @@ NODE_CLASS_MAP = {
     "gen_table": NodeType.TYPE_GEN_TABLE,
     "gen_job": NodeType.TYPE_GEN_JOB,
     "gen_skill": NodeType.TYPE_GEN_SKILL,
-    "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
-    "scheduler": NodeType.TYPE_SCHEDULER,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -191,24 +189,6 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Inspects source and target schemas, generates DDL, writes data, validates results. "
         "Prompt: describe what you want to build or migrate; specify source/target databases "
         "and tables. Returns JSON with {response, tokens_used}."
-    ),
-    "gen_dashboard": (
-        "Create, update, and manage BI dashboards on the configured BI platform "
-        "(Superset, Grafana, or any future adapter). Builds BI assets on top of "
-        "tables or SQL datasets that already exist in a BI-registered database. "
-        "Data preparation belongs to a separate gen_job or scheduler step before "
-        "calling gen_dashboard. Prompt: provide the BI platform, serving table "
-        "or SQL dataset, dimensions, time range, chart type, and dashboard title. "
-        "Also supports read-only ops (list/get dashboards, list charts and "
-        "datasets). Returns JSON with {response, dashboard_result, tokens_used}."
-    ),
-    "scheduler": (
-        "Submit, monitor, update, and troubleshoot scheduled jobs on Airflow. "
-        "Handles the full lifecycle: submit SQL/SparkSQL jobs with cron schedules, "
-        "monitor job status and run history, view run logs, troubleshoot failures, "
-        "update job SQL/config, pause/resume/delete jobs, trigger manual runs. "
-        "Prompt: describe what scheduler operation you need. "
-        "Returns JSON with {response, scheduler_result, tokens_used}."
     ),
 }
 
@@ -601,26 +581,6 @@ class SubAgentTaskTool:
                 is_subagent=True,
                 session_id=session_id,
             )
-        elif subagent_type == "gen_dashboard":
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            return GenDashboardAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                node_id=f"task_gen_dashboard_{uuid.uuid4().hex[:8]}",
-                is_subagent=True,
-                session_id=session_id,
-            )
-        elif subagent_type == "scheduler":
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            return SchedulerAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                node_id=f"task_scheduler_{uuid.uuid4().hex[:8]}",
-                is_subagent=True,
-                session_id=session_id,
-            )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
 
@@ -663,8 +623,6 @@ class SubAgentTaskTool:
             "ask_metrics": (NodeType.TYPE_ASK_METRICS, "ask_metrics"),
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
             "gen_job": (NodeType.TYPE_GEN_JOB, "gen_job"),
-            "gen_dashboard": (NodeType.TYPE_GEN_DASHBOARD, "gen_dashboard"),
-            "scheduler": (NodeType.TYPE_SCHEDULER, "scheduler"),
         }
         if subagent_type in builtin_type_map:
             return builtin_type_map[subagent_type]
@@ -1191,24 +1149,6 @@ class SubAgentTaskTool:
                 user_message=prompt,
             )
 
-        from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-        if isinstance(node, GenDashboardAgenticNode):
-            from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
-
-            return GenDashboardNodeInput(
-                user_message=prompt,
-            )
-
-        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-        if isinstance(node, SchedulerAgenticNode):
-            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-            return SchedulerNodeInput(
-                user_message=prompt,
-            )
-
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
         if isinstance(node, GenReportAgenticNode):
@@ -1382,21 +1322,7 @@ class SubAgentTaskTool:
                 }
             )
 
-        # Dashboard result: has 'dashboard_result' key
-        dashboard_result = output.get("dashboard_result")
-        if dashboard_result is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "dashboard_result": dashboard_result,
-                    "tokens_used": tokens,
-                }
-            )
-
-        # Visual dashboard result (new artifact-based subagent). The
-        # legacy ``dashboard_result`` envelope above is from
-        # ``gen_dashboard_agentic_node.py``; the new
-        # ``GenVisualDashboardNodeResult`` carries the documented fields
+        # Visual dashboard results carry the documented fields
         # (``dashboard_slug``, ``app_jsx_path``, ``render_file_count``,
         # ``template_count``) flat at the top level. Without this branch
         # the conversion falls through to the generic envelope and drops
@@ -1415,17 +1341,6 @@ class SubAgentTaskTool:
                     "app_jsx_path": output.get("app_jsx_path"),
                     "render_file_count": output.get("render_file_count", 0),
                     "template_count": output.get("template_count", 0),
-                    "tokens_used": tokens,
-                }
-            )
-
-        # Scheduler result: has 'scheduler_result' key
-        scheduler_result = output.get("scheduler_result")
-        if scheduler_result is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "scheduler_result": scheduler_result,
                     "tokens_used": tokens,
                 }
             )
@@ -1466,8 +1381,11 @@ class SubAgentTaskTool:
             "",
             "Delegate work to a specialized subagent when the requested deliverable belongs to that "
             "subagent's owning workflow or platform. Task complexity is not the deciding factor: "
-            "a simple scheduled job, dashboard, persisted table, semantic model, metric definition, "
-            "or skill should still be handled by its specialized subagent. Use your own tools "
+            "a persisted table, semantic model, metric definition, visual artifact, or skill should "
+            "still be handled by its specialized subagent. Scheduling and external BI platform "
+            "operations are the exception: execute installed plugin commands and bundled skills "
+            "directly in the main agent; these plugin-backed operations are not delegatable types. "
+            "Use your own tools "
             "(list_tables, describe_table, execute_sql, etc.) for read-only answers, explanations, "
             "or lightweight investigations that do not create or update an artifact owned by another "
             "platform/workflow.",
@@ -1491,7 +1409,9 @@ class SubAgentTaskTool:
             [
                 "",
                 "Guidelines:",
-                "- First classify the deliverable and its owning workflow/platform; delegate when it matches a subagent",
+                "- First classify the deliverable and its owning workflow/platform; delegate when it matches an "
+                "available subagent",
+                "- Handle scheduling and external BI operations directly with installed plugins, not task()",
                 "- For read-only answers, explanations, and lightweight investigations, handle directly with your own tools",
                 '- For complex questions requiring deep exploration, call multiple task(type="explore") '
                 "in PARALLEL, each with a direction-specific prompt (schema+sample, knowledge, file)",

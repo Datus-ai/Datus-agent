@@ -151,4 +151,4 @@ Use another subagent when the task is not answerable through existing semantic m
 | Generate or fix SQL over raw tables | [gen_sql](builtin_subagents.md#gen_sql) |
 | Explore schemas, samples, or reference context | [explore](builtin_subagents.md#explore) |
 | Build a visual report artifact | [gen_visual_report](gen_visual_report.md) |
-| Create a dashboard in BI tools | [gen_dashboard](gen_dashboard.md) |
+| Create a dashboard in an external BI tool | Ask the main agent to use the installed BI plugin directly |
