@@ -1510,7 +1510,7 @@ class DatusCLI:
         """Return system agents supported by the active adapter."""
         from datus.agent.node.semantic_authoring import is_semantic_modeling_available
 
-        available = set(SYS_SUB_AGENTS)
+        available = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
         if not is_semantic_modeling_available(self.agent_config):
             available.discard("semantic_modeling")
         return available

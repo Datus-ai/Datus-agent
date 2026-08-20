@@ -149,4 +149,4 @@ agent:
 | 生成或修复原始表 SQL | [gen_sql](builtin_subagents.zh.md#gen_sql) |
 | 探索 schema、样本或参考上下文 | [explore](builtin_subagents.zh.md#explore) |
 | 构建可视化报告 artifact | [gen_visual_report](gen_visual_report.zh.md) |
-| 在 BI 工具中创建 dashboard | [gen_dashboard](gen_dashboard.zh.md) |
+| 在外部 BI 工具中创建 dashboard | 让主 agent 直接使用已安装的 BI plugin |

@@ -15,9 +15,10 @@ This document covers the core subagents:
 7. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
 8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
 9. **[gen_skill](#gen_skill)** — Skill creation and optimization
-10. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-11. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
-12. **[scheduler](#scheduler)** — Airflow job lifecycle management
+10. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+
+Airflow scheduling and external BI authoring are handled directly by the main
+agent through installed plugins. They are not built-in or custom subagents.
 
 ## Configuration
 
@@ -60,19 +61,10 @@ agent:
     gen_skill:
       max_turns: 30     # Optional: defaults to 30
 
-    gen_dashboard:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
-      bi_platform: superset  # Optional: explicit platform (auto-detected when only one BI platform is configured)
-
     gen_visual_report:
       model: claude            # Optional: defaults to configured model
       max_turns: 30            # Optional: defaults to 30
       report_dist: ~/report_dist  # Optional: local dist path for offline HTML compilation
-
-    scheduler:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
 ```
 
 **Optional configuration parameters:**
@@ -805,226 +797,16 @@ Or let the chat agent delegate via `task(type="gen_skill")`.
 
 ---
 
-## gen_dashboard
+## Plugin-backed Platform Operations
 
-### Overview
+Airflow scheduling and external BI authoring (for example Superset) run in the
+main agent through installed plugins and their bundled skills. They are not
+available through the `task()` tool, slash commands, the agent API, or custom
+aliases.
 
-The gen_dashboard subagent creates, updates, and manages BI dashboards on Superset and Grafana. It is invoked by the chat agent via `task(type="gen_dashboard")` and uses BI tools from `BIFuncTool` to build dashboard assets on existing serving tables or SQL datasets.
-
-### Key Features
-
-- **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.services.bi_platforms`
-- **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
-- **Existing serving data only**: data preparation is handled separately by `gen_job` / `scheduler`; gen_dashboard builds BI dataset / chart / dashboard assets
-- **Skill-guided workflows**: Platform skills (`superset-dashboard`, `grafana-dashboard`) provide step-by-step workflow guidance; `bi-validation` runs automatically after creation
-
-### Configuration
-
-```yaml
-agent:
-  services:
-    datasources:
-      serving_pg:
-        type: postgresql
-        host: 127.0.0.1
-        port: 5433
-        database: superset_examples
-        schema: bi_public
-        username: "${SERVING_WRITE_USER}"
-        password: "${SERVING_WRITE_PASSWORD}"
-
-    bi_platforms:
-      superset:
-        type: superset
-        api_base_url: "http://localhost:8088"
-        username: "${SUPERSET_USER}"
-        password: "${SUPERSET_PASSWORD}"
-        dataset_db:
-          datasource_ref: serving_pg
-          bi_database_name: examples
-
-  agentic_nodes:
-    gen_dashboard:
-      model: claude           # Optional: defaults to configured model
-      max_turns: 30           # Optional: defaults to 30
-      bi_platform: superset   # Optional: auto-detected when only one BI platform is configured
-```
-
-**Requirements:**
-- `agent.services.bi_platforms` section in `agent.yml` with platform credentials
-- `datus-bi-superset` or `datus-bi-grafana` package installed
-
-### How It Works
-
-```mermaid
-graph LR
-    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
-    C --> D[BIFuncTool.available_tools]
-    D --> E[LLM Function Calling]
-    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    E -->|Grafana| G[create_dashboard → create_chart]
-    F --> H[ValidationHook.on_end]
-    G --> H
-```
-
-### Available Tools
-
-Tools are exposed dynamically based on which Mixins the platform adapter implements:
-
-| Tool | Required Capability | Description |
-|------|--------------------|----|
-| `list_dashboards` | All adapters | List and search dashboards |
-| `get_dashboard` | All adapters | Get dashboard details |
-| `list_charts` | All adapters | List charts in a dashboard |
-| `get_chart` | All adapters | Get details for a specific chart or panel |
-| `get_chart_data` | Supported adapters | Get chart query result rows for numeric validation |
-| `list_datasets` | All adapters | List datasets/datasources |
-| `create_dashboard` | `DashboardWriteMixin` | Create a new dashboard |
-| `update_dashboard` | `DashboardWriteMixin` | Update dashboard title/description |
-| `delete_dashboard` | `DashboardWriteMixin` | Delete a dashboard |
-| `create_chart` | `ChartWriteMixin` | Create a chart or panel |
-| `update_chart` | `ChartWriteMixin` | Update chart configuration |
-| `add_chart_to_dashboard` | `ChartWriteMixin` | Add chart to a dashboard |
-| `delete_chart` | `ChartWriteMixin` | Delete a chart |
-| `create_dataset` | `DatasetWriteMixin` | Register a dataset |
-| `list_bi_databases` | `DatasetWriteMixin` | List BI platform database connections |
-| `delete_dataset` | `DatasetWriteMixin` | Delete a dataset |
-| `get_bi_serving_target` | `dataset_db` configured | Return serving DB contract for orchestrator hand-off |
-
-### Output Format
-
-```json
-{
-  "response": "Created sales dashboard with 3 revenue trend charts.",
-  "dashboard_result": {
-    "dashboard_id": 42,
-    "url": "http://localhost:8088/superset/dashboard/42/"
-  },
-  "tokens_used": 3210
-}
-```
-
-### Usage
-
-The gen_dashboard subagent is invoked automatically by the chat agent via `task(type="gen_dashboard")`, or launched manually:
-
-```bash
-/gen_dashboard Create a sales dashboard with revenue trends by region
-```
-
-You can also create a custom subagent using the `gen_dashboard` node class:
-
-```yaml
-agent:
-  agentic_nodes:
-    sales_dashboard:
-      node_class: gen_dashboard
-      bi_platform: superset
-      max_turns: 30
-```
-
----
-
-## scheduler
-
-### Overview
-
-The scheduler subagent submits, monitors, updates, and troubleshoots scheduled jobs on Apache Airflow. It is invoked by the chat agent via `task(type="scheduler")` and provides the full Airflow job lifecycle through LLM function calling.
-
-### Key Features
-
-- **Full job lifecycle**: Submit, trigger, pause, resume, update, and delete Airflow DAG jobs
-- **SQL and SparkSQL support**: Submit both SQL and SparkSQL job types
-- **SQL file management**: Create or update job SQL files with filesystem tools before submission
-- **Monitoring**: List job runs, fetch run logs, and troubleshoot failures
-- **Connection discovery**: List available Airflow connections for job configuration
-
-### Configuration
-
-```yaml
-agent:
-  services:
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: "${AIRFLOW_URL}"
-        username: "${AIRFLOW_USER}"
-        password: "${AIRFLOW_PASSWORD}"
-        dags_folder: "${AIRFLOW_DAGS_DIR}"
-
-  agentic_nodes:
-    scheduler:
-      model: claude                  # Optional: defaults to configured model
-      max_turns: 30                  # Optional: defaults to 30
-      scheduler_service: airflow_prod
-```
-
-**Requirements:**
-- `agent.services.schedulers` section in `agent.yml` with Airflow credentials
-- `datus-scheduler-airflow` package installed (`datus-scheduler-core` is pulled in transitively)
-
-### How It Works
-
-```mermaid
-graph LR
-    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
-    B --> C[LLM Function Calling]
-    C --> D[write_file / edit_file]
-    D --> E[submit_sql_job / submit_sparksql_job]
-    C --> F[trigger_scheduler_job]
-    C --> G[pause_job / resume_job]
-    C --> H[list_job_runs / get_run_log]
-```
-
-### Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `submit_sql_job` | Submit a scheduled SQL job from a `.sql` file with cron expression |
-| `submit_sparksql_job` | Submit a scheduled SparkSQL job from a `.sql` file |
-| `read_file` / `write_file` / `edit_file` | Read, create, or update SQL files used by scheduled jobs |
-| `trigger_scheduler_job` | Manually trigger an existing job run |
-| `pause_job` | Pause a scheduled job |
-| `resume_job` | Resume a paused job |
-| `delete_job` | Delete a scheduled job |
-| `update_job` | Update job schedule or configuration |
-| `get_scheduler_job` | Get job details and current status |
-| `list_scheduler_jobs` | List all scheduled jobs |
-| `list_scheduler_connections` | List available Airflow connections |
-| `list_job_runs` | List recent runs for a job |
-| `get_run_log` | Fetch logs for a specific job run |
-
-### Output Format
-
-```json
-{
-  "response": "Submitted daily SQL job 'daily_revenue' scheduled at 8:00 AM every day.",
-  "scheduler_result": {
-    "job_id": "daily_revenue_dag",
-    "status": "active",
-    "schedule": "0 8 * * *"
-  },
-  "tokens_used": 1580
-}
-```
-
-### Usage
-
-The scheduler subagent is invoked automatically by the chat agent via `task(type="scheduler")`, or launched manually:
-
-```bash
-/scheduler Submit /opt/sql/daily_revenue.sql as a daily job at 8am using the postgres_prod connection
-```
-
-You can also create a custom subagent using the `scheduler` node class:
-
-```yaml
-agent:
-  agentic_nodes:
-    etl_scheduler:
-      node_class: scheduler
-      max_turns: 30
-```
+The legacy node implementations remain in the codebase temporarily for
+compatibility only. See [BI Dashboard Node (Legacy)](gen_dashboard.md) and
+[Scheduler Node (Legacy)](scheduler.md) for migration guidance.
 
 ---
 
@@ -1041,9 +823,7 @@ agent:
 | `gen_table` | Create tables interactively | DDL + execution result | Database | DDL confirmation, CTAS or natural-language schema creation |
 | `gen_job` | Data pipeline jobs (intra-DB ETL + cross-DB transfer) | Job / transfer result | Source + target databases | DDL/DML execution, cross-dialect type mapping via MigrationTargetMixin, `transfer_query_result`, lightweight reconciliation when source != target |
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
-| `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, existing serving data, multi-platform |
 | `gen_visual_report` | Self-contained visual report (narrative, pre-baked queries) | `reports/<slug>/` (executable SQL + executed results + report components) | Project root | Modular section-by-section edits, generate from metrics or your own SQL, CLI auto-opens the report in your browser |
-| `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)
