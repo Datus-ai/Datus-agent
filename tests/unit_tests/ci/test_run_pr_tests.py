@@ -316,6 +316,27 @@ def test_serial_suite_ignores_dist_mode(tmp_path):
     assert "--dist" not in command
 
 
+def test_emit_reports_produces_only_cobertura_xml(tmp_path):
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+    )
+
+    cov_reports = [arg for arg in command if arg.startswith("--cov-report")]
+    assert cov_reports == [f"--cov-report=xml:{run_pr_tests.DEFAULT_COVERAGE_XML}"]
+
+
+def test_suppressed_reports_disable_cov_output(tmp_path):
+    command = run_pr_tests._build_pytest_command(
+        ["tests/unit_tests/"],
+        str(tmp_path / "junit.xml"),
+        emit_reports=False,
+    )
+
+    cov_reports = [arg for arg in command if arg.startswith("--cov-report")]
+    assert cov_reports == ["--cov-report="]
+
+
 def test_run_tests_runs_acceptance_parallel_with_per_file_distribution(tmp_path, monkeypatch):
     monkeypatch.setattr(run_pr_tests, "_reset_report_outputs", lambda: None)
     monkeypatch.setattr(run_pr_tests, "DEFAULT_PYTEST_LOG", str(tmp_path / "pytest-coverage.txt"))

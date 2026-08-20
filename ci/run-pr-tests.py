@@ -15,7 +15,6 @@ Outputs (written to GITHUB_OUTPUT if available, otherwise stdout):
 
 Generated files (all written to ci/ directory):
     ci/coverage.xml             - Cobertura coverage report
-    ci/htmlcov/                 - Full HTML coverage report
     ci/test-results.xml         - Combined JUnit test results
     ci/test-results-*.xml       - Per-suite JUnit results for acceptance / impacted unit suites
     ci/diff-cover.json          - Diff coverage data
@@ -377,13 +376,7 @@ def _build_pytest_command(
         cmd.append("--cov-append")
 
     if emit_reports:
-        cmd.extend(
-            [
-                f"--cov-report=xml:{DEFAULT_COVERAGE_XML}",
-                f"--cov-report=html:{DEFAULT_COVERAGE_HTML}",
-                "--cov-report=term-missing",
-            ]
-        )
+        cmd.append(f"--cov-report=xml:{DEFAULT_COVERAGE_XML}")
     else:
         cmd.append("--cov-report=")
 
