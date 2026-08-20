@@ -743,8 +743,11 @@ def _is_or_assert(expr: ast.AST) -> bool:
     return all(isinstance(v, (ast.Compare, ast.Call)) for v in expr.values)
 
 
-# Explicit regex tokens that cannot occur in a sensible literal needle.
-_REGEX_TOKEN_RE = re.compile(r"\\[bBdDsSwW]|\(\?[:=!<]")
+# Regex escape and group tokens that suggest a needle was written as a pattern.
+_REGEX_ESCAPE_RE = re.compile(r"\\[bBdDsSwW]")
+_REGEX_GROUP_RE = re.compile(r"\(\?[:=!<]")
+# Windows drive-letter or UNC prefix — backslash sequences after these are paths.
+_WINDOWS_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 # Word-ish segments joined by bare pipes: "S3|HDFS|BROKER". Legitimate pipes
 # come with spacing ("| col |", "a | b") or doubled ("a || b"), both excluded.
 _PSEUDO_ALTERNATION_RE = re.compile(r"[\w .()\-/]+(\|[\w .()\-/]+)+")
@@ -752,12 +755,19 @@ _PSEUDO_ALTERNATION_RE = re.compile(r"[\w .()\-/]+(\|[\w .()\-/]+)+")
 
 def _is_pseudo_regex_literal(value: str) -> bool:
     """True when a containment needle was probably written with regex semantics."""
-    if _REGEX_TOKEN_RE.search(value):
-        return True
     if "\x08" in value:
         # A regex \b typed in a non-raw string arrives here as a backspace
         # control character; no legitimate containment needle carries one.
         return True
+    if _REGEX_GROUP_RE.search(value):
+        return True
+    if not _WINDOWS_PATH_RE.match(value):
+        escapes = _REGEX_ESCAPE_RE.findall(value)
+        # A lone escape mid-string is indistinguishable from a Windows path
+        # fragment ("src\build"), so regex intent needs a boundary position
+        # or a second token.
+        if escapes and (len(escapes) >= 2 or _REGEX_ESCAPE_RE.match(value)):
+            return True
     if "|" not in value or "||" in value or " | " in value:
         return False
     return bool(_PSEUDO_ALTERNATION_RE.fullmatch(value))

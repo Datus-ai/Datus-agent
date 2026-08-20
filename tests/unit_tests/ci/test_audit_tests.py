@@ -166,7 +166,63 @@ def test_no_word_boundary_needle():
 
         issues = audit_tests.scan_file(test_file, required_packages=set())
 
-        assert any(issue.check == "regex_literal_containment" for issue in issues)
+        flagged = [issue for issue in issues if issue.check == "regex_literal_containment"]
+        assert len(flagged) == 1
+        assert flagged[0].severity == "P1"
+        assert flagged[0].line == 4
+    finally:
+        audit_tests.configure_repo_root(original_root)
+
+
+def test_audit_flags_multi_escape_and_group_regex_needles(tmp_path):
+    audit_tests = _load_audit_tests()
+    original_root = audit_tests.REPO_ROOT
+    try:
+        test_file = tmp_path / "tests" / "unit_tests" / "test_regex_shapes.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            r"""
+def test_regex_shaped_needles():
+    rendered = render()
+    assert r"DROP\s+TABLE\s+users" not in rendered
+    assert "suffix(?:_v2)" not in rendered
+""",
+            encoding="utf-8",
+        )
+        audit_tests.configure_repo_root(tmp_path)
+
+        issues = audit_tests.scan_file(test_file, required_packages=set())
+
+        flagged = [issue for issue in issues if issue.check == "regex_literal_containment"]
+        assert [issue.line for issue in flagged] == [4, 5]
+        assert {issue.severity for issue in flagged} == {"P1"}
+    finally:
+        audit_tests.configure_repo_root(original_root)
+
+
+def test_audit_does_not_flag_windows_path_needles(tmp_path):
+    """Backslash sequences in path literals are not regex intent."""
+    audit_tests = _load_audit_tests()
+    original_root = audit_tests.REPO_ROOT
+    try:
+        test_file = tmp_path / "tests" / "unit_tests" / "test_windows_paths.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            r"""
+def test_path_needles_are_literal():
+    output = render()
+    assert r"C:\build" not in output
+    assert r"D:/state\dump" not in output
+    assert r"\\server\share\logs" not in output
+    assert r"src\build" not in output
+""",
+            encoding="utf-8",
+        )
+        audit_tests.configure_repo_root(tmp_path)
+
+        issues = audit_tests.scan_file(test_file, required_packages=set())
+
+        assert all(issue.check != "regex_literal_containment" for issue in issues)
     finally:
         audit_tests.configure_repo_root(original_root)
 

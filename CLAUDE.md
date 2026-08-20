@@ -165,7 +165,7 @@ Beyond happy paths, exercise: **input format variants** (all valid shapes, not j
 
 ### Bug-fix regression tests
 
-- **Red first**: the tests a `[BugFix]` PR adds must fail on the pre-fix code. Verify by running them with the source change reverted (`git stash push -- datus/` → run → `git stash pop`), and say so in `## Test Cases`.
+- **Red first**: the tests a `[BugFix]` PR adds must fail on the pre-fix code. Verify by running them with the implementation change reverted — `git stash push -- <changed source paths>` → run → `git stash pop`, or a worktree at the pre-fix commit — and say so in `## Test Cases`.
 - **Assert the property, not the instance**: pin the invariant the bug violated, not the value the fix happens to produce — "no binary source type ever maps to VARBINARY", not "BYTEA maps to STRING" — so the test stays red when the bug returns under a different spelling.
 
 ### No tombstone tests when removing code
