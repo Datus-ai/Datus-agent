@@ -309,6 +309,16 @@ class TestBenignRedirectionExemption:
         assert decision.source == BashDecisionSource.SAFETY
         assert decision.safety_forced is True
 
+    @pytest.mark.parametrize("command", ["& ls", "  & ls"])
+    def test_leading_ampersand_is_not_mistaken_for_a_redirection(self, command):
+        """There is no preceding operator, so segmentation must still bail.
+
+        Regression: the check was written ``_last_nonspace(buf) in "<>"``, and
+        ``"" in "<>"`` is True in Python — an empty string is a substring of
+        every string — so a leading ``&`` read as a redirection.
+        """
+        assert split_command_chain(command) is None
+
     @pytest.mark.parametrize("command", ["ls &", "sleep 5 &", "ls 2>&1 &", "ls & rm x"])
     def test_background_ampersand_is_not_mistaken_for_a_redirection(self, command):
         """The exemption keys on the ``&`` sitting next to ``<``/``>``; a

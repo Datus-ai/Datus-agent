@@ -624,7 +624,10 @@ def _split_top_level(command: str, *, chain: bool) -> Optional[List[str]]:
                 continue
             elif c == "&":
                 if nxt != "&":
-                    if nxt == ">" or _last_nonspace(buf) in "<>":
+                    # Tuple membership, not ``in "<>"``: ``_last_nonspace``
+                    # returns "" for a leading `&` and "" is a substring of
+                    # every string, which would read `& ls` as a redirection.
+                    if nxt == ">" or _last_nonspace(buf) in ("<", ">"):
                         # The `&` belongs to a redirection, not to job control:
                         # `2>&1`, `>&2`, `<&0` (preceded by the operator) or
                         # `&>file` (followed by it). Keep it in the segment and
