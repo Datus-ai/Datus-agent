@@ -4,7 +4,7 @@ API routes for Explorer endpoints.
 
 from fastapi import APIRouter
 
-from datus.api.deps import ServiceDep
+from datus.api.deps import ServiceDep, SubAgentDep
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
@@ -36,9 +36,10 @@ router = APIRouter(prefix="/api/v1", tags=["explorer"])
 )
 async def get_subject_list(
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[SubjectListData]:
     """Get subject tree."""
-    return await svc.explorer.get_subject_list()
+    return await svc.explorer_for(sub_agent).get_subject_list()
 
 
 @router.post(
@@ -92,9 +93,10 @@ async def delete_subject(
 async def get_metric(
     request: SubjectPathInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[MetricInfo]:
     """Get metric info."""
-    return await svc.explorer.get_metric(request.subject_path)
+    return await svc.explorer_for(sub_agent).get_metric(request.subject_path)
 
 
 @router.post(
@@ -106,9 +108,10 @@ async def get_metric(
 async def get_metric_dimensions(
     request: SubjectPathInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[MetricDimensionsData]:
     """List a metric's queryable dimensions."""
-    return await svc.explorer.get_metric_dimensions(request)
+    return await svc.explorer_for(sub_agent).get_metric_dimensions(request)
 
 
 @router.post(
@@ -120,9 +123,10 @@ async def get_metric_dimensions(
 async def preview_metric(
     request: MetricPreviewInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[MetricPreviewData]:
     """Compile a saved metric to SQL for preview."""
-    return await svc.explorer.preview_metric(request)
+    return await svc.explorer_for(sub_agent).preview_metric(request)
 
 
 @router.post(
@@ -134,9 +138,10 @@ async def preview_metric(
 async def get_reference_sql(
     request: SubjectPathInput,
     svc: ServiceDep,
+    sub_agent: SubAgentDep,
 ) -> Result[ReferenceSQLInfo]:
     """Get reference SQL."""
-    return await svc.explorer.get_reference_sql(request.subject_path)
+    return await svc.explorer_for(sub_agent).get_reference_sql(request.subject_path)
 
 
 @router.post(

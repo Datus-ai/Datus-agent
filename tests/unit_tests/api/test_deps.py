@@ -245,3 +245,59 @@ class TestGetDatusService:
             assert "Failed to load agent config" in str(e)
         finally:
             await cache.shutdown()
+
+
+class TestGetScopedSubAgent:
+    """The gate that keeps an unrecognised sub-agent name from becoming an
+    unscoped read.
+
+    A service built from a name that matches no `agentic_nodes` key has no
+    scope filter at all, so the request would succeed and return everything.
+    Rejecting here — before any route body runs — means nothing unscoped is
+    built or cached from a caller's identifier mistake.
+    """
+
+    @staticmethod
+    def _request(sub_agent_name):
+        request = MagicMock()
+        request.state.app_context = AppContext(sub_agent_name=sub_agent_name)
+        return request
+
+    @staticmethod
+    def _svc(known=("analyst",)):
+        svc = MagicMock()
+        svc.has_sub_agent.side_effect = lambda name: name in known
+        return svc
+
+    def test_unscoped_request_passes_through(self):
+        """No name is not an unknown name — it is the single-tenant default."""
+        svc = self._svc()
+
+        assert deps.get_scoped_sub_agent(self._request(None), svc) is None
+        svc.has_sub_agent.assert_not_called()
+
+    def test_known_name_is_returned(self):
+        assert deps.get_scoped_sub_agent(self._request("analyst"), self._svc()) == "analyst"
+
+    def test_unknown_name_is_rejected_with_400(self):
+        with pytest.raises(HTTPException) as excinfo:
+            deps.get_scoped_sub_agent(self._request("no_such_sub_agent"), self._svc())
+
+        assert excinfo.value.status_code == 400
+
+    def test_rejection_names_the_offending_value(self):
+        """The caller needs to know which identifier was wrong."""
+        with pytest.raises(HTTPException) as excinfo:
+            deps.get_scoped_sub_agent(self._request("typo_analyst"), self._svc())
+
+        assert "typo_analyst" in str(excinfo.value.detail)
+
+    def test_rejection_does_not_enumerate_configured_sub_agents(self):
+        """Listing the other sub-agents to a consumer scoped to one of them is a
+        disclosure in its own right."""
+        with pytest.raises(HTTPException) as excinfo:
+            deps.get_scoped_sub_agent(self._request("nope"), self._svc(known=("analyst", "auditor")))
+
+        detail = str(excinfo.value.detail)
+        assert "analyst" not in detail
+        assert "auditor" not in detail
