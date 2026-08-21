@@ -47,14 +47,41 @@ _IMPORT_PROBE = textwrap.dedent(
 )
 
 
+# Bounds a hung probe so it fails loudly instead of hanging the job: the PR gate
+# (ci/run-pr-tests.py) passes no --timeout, so nothing else would stop it. The
+# probes measure ~1s; the bound is deliberately loose because the point is to
+# turn an unbounded hang into a diagnosable failure, not to police duration, and
+# a tight bound would flake under the parallel acceptance suite. Still an order
+# of magnitude below the merge queue's --timeout=120.
+_PROBE_TIMEOUT_SECONDS = 30
+
+
+def _decode(stream: bytes | str | None) -> str:
+    """Normalize captured output to text.
+
+    ``subprocess`` leaves the partial output on ``TimeoutExpired`` undecoded even
+    when the call passed ``text=True``, so the timeout path can hand us bytes.
+    """
+    if stream is None:
+        return ""
+    return stream.decode("utf-8", errors="replace") if isinstance(stream, bytes) else stream
+
+
 def _run_in_clean_interpreter(script: str) -> subprocess.CompletedProcess:
     """Run *script* in a fresh interpreter rooted at the repo."""
-    return subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-    )
+    try:
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(_REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"clean-interpreter probe exceeded {_PROBE_TIMEOUT_SECONDS}s\n"
+            f"script={script!r}\nstdout={_decode(exc.stdout)}\nstderr={_decode(exc.stderr)}"
+        )
 
 
 def _run_import_probe() -> dict[str, str]:
