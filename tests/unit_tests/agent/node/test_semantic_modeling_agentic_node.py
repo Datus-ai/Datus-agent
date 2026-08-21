@@ -17,13 +17,9 @@ from tests.unit_tests.mock_llm_model import build_simple_response
 
 
 @pytest.fixture(autouse=True)
-def _stub_osi_schema_validation(monkeypatch):
-    monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
-    monkeypatch.setattr(
-        semantic_authoring,
-        "validate_osi_authoring_document",
-        lambda document, *, semantic_adapter: None,
-    )
+def _accept_any_authoring_document(monkeypatch):
+    """These drive the node, not the validator, which is covered on its own."""
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", lambda document, **kwargs: None)
     monkeypatch.setattr(
         semantic_authoring,
         "render_required_authoring_skill",

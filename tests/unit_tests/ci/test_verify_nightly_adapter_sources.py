@@ -240,7 +240,6 @@ def test_verify_semantic_adapter_imports_requires_shared_contract(monkeypatch):
     modules = {
         "datus_semantic_core.models": SimpleNamespace(),
         "datus_semantic_metricflow": SimpleNamespace(),
-        "datus_semantic_osi": SimpleNamespace(),
         "datus_semantic_dosi": SimpleNamespace(),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
