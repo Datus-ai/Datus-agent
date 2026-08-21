@@ -6,7 +6,7 @@ import asyncio
 import threading
 import time
 import uuid
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.cli_models import (
@@ -30,6 +30,7 @@ from datus.schemas.action_history import (
     ActionRole,
     ActionStatus,
 )
+import datus.tools.func_tool as func_tool_mod
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
@@ -99,7 +100,12 @@ class CLIService:
         with self._sql_tasks_lock:
             self._sql_tasks.pop(task_id, None)
 
-    def _execute_sql_sync(self, request: ExecuteSQLInput, task_id: str) -> Result[ExecuteSQLData]:
+    def _execute_sql_sync(
+        self,
+        request: ExecuteSQLInput,
+        task_id: str,
+        policy_context: Optional[Dict[str, Any]] = None,
+    ) -> Result[ExecuteSQLData]:
         """Synchronous SQL execution logic (runs in a thread)."""
         try:
             if not self.current_db_connector:
@@ -132,11 +138,23 @@ class CLIService:
             )
             actions.add_action(sql_action)
 
-            # Execute the query
+            # Execute the query through the enforced-read path.
+            #
+            # Hand-written SQL from the IDE is the widest read surface there is
+            # — a member types `SELECT * FROM orders` and the connector would
+            # happily answer. Going straight to `connector.execute` here left
+            # every row policy in place and this one door open, which is worse
+            # than having no policy at all because the project reads as
+            # protected. Same entry point the agent's own tools use, so the two
+            # cannot drift.
             start_time = time.time()
-            result = self.current_db_connector.execute(
-                input_params={"sql_query": request.sql_query},
+            db_tool = func_tool_mod.DBFuncTool(agent_config=self.agent_config, sub_agent_name="cli_sql")
+            result = db_tool.execute_read_enforced(
+                request.sql_query,
+                self.current_db_connector,
+                datasource=self.current_datasource or "",
                 result_format=request.result_format,
+                policy_context=policy_context or {},
             )
             end_time = time.time()
             exec_time = end_time - start_time
@@ -233,7 +251,11 @@ class CLIService:
                 errorMessage=str(e),
             )
 
-    async def execute_sql(self, request: ExecuteSQLInput) -> Result[ExecuteSQLData]:
+    async def execute_sql(
+        self,
+        request: ExecuteSQLInput,
+        policy_context: Optional[Dict[str, Any]] = None,
+    ) -> Result[ExecuteSQLData]:
         """Execute SQL query asynchronously with cancellation support.
 
         If ``request.execute_task_id`` is provided, it is used as-is and returned
@@ -244,7 +266,7 @@ class CLIService:
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
-                return await asyncio.to_thread(self._execute_sql_sync, request, task_id)
+                return await asyncio.to_thread(self._execute_sql_sync, request, task_id, policy_context)
             except asyncio.CancelledError:
                 logger.info(f"SQL execution task cancelled: {task_id}")
                 return Result(
