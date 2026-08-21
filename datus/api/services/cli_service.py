@@ -155,6 +155,14 @@ class CLIService:
             # takes effect without rebuilding the service. Placed before
             # ``switch_context`` so a request about to be refused does not mutate
             # connector state.
+            #
+            # Still needed after the statement-type dispatch below, and this is
+            # the reason: that dispatch sends identified single writes straight
+            # to ``current_db_connector.execute`` and only reads through
+            # ``execute_read_enforced``. So a write never reaches DBFuncTool and
+            # never meets the tool-layer read-only gate — this check is the only
+            # thing standing in front of it. Refusing here also means the write
+            # branch is simply unreachable on a hardened deployment.
             if getattr(self.agent_config, "sql_read_only", False):
                 from datus.utils.sql_utils import (
                     READ_ONLY_MULTI_STATEMENT,
