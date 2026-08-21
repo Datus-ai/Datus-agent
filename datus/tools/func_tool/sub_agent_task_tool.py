@@ -898,6 +898,7 @@ class SubAgentTaskTool:
                             final_output = action.output
                     elif action.status == ActionStatus.SUCCESS and action.output:
                         final_output = action.output
+                        subagent_status = ActionStatus.SUCCESS
             except Exception as e:
                 # Surface the failure as an envelope (not a re-raise) so the
                 # parent agent can resume the partial subagent session via
