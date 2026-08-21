@@ -103,10 +103,41 @@ class ExplorerService:
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         try:
-            return SemanticTools(self.agent_config).adapter
+            return SemanticTools(self.agent_config, self.sub_agent_name).adapter
         except Exception as e:  # noqa: BLE001 - adapter is optional; fall back to KB
             logger.warning(f"Semantic adapter unavailable: {e}")
             return None
+
+    def _metric_is_in_scope(self, subject_path: List[str]) -> bool:
+        """Whether this service's sub-agent may see the metric at ``subject_path``.
+
+        Unscoped services see everything, so this is only a real check when a
+        sub-agent is set.
+
+        Needed because the semantic adapter reads the YAML source of truth,
+        which knows nothing about ``scoped_context``. Handing it a metric name
+        straight from the request would answer with a metric the caller is not
+        scoped to, even though the KB row for it is filtered out everywhere
+        else. Resolve the name through the scoped ``MetricRAG`` first, so the
+        adapter is only ever asked about metrics the caller may see.
+        """
+        if not self.sub_agent_name:
+            return True
+        if not subject_path or self.subject_tree_store is None or self.metric_rag is None:
+            return False
+        parent_path = subject_path[:-1]
+        metric_name = subject_path[-1]
+        if not parent_path:
+            return False
+        parent_node = self.subject_tree_store.get_node_by_path(parent_path)
+        if not parent_node:
+            return False
+        rows = self.metric_rag.storage.list_entries(
+            parent_node["node_id"],
+            name=metric_name,
+            extra_conditions=self.metric_rag._sub_agent_conditions(),
+        )
+        return bool(rows)
 
     def _semantic_mutation_rejection(self) -> Optional["Result[dict]"]:
         """Reject semantic writes for legacy query-only projects."""
@@ -390,7 +421,13 @@ class ExplorerService:
                     # Then, add metrics as children if they exist
                     if node_id:
                         try:
-                            metrics = self.metric_rag.storage.list_entries(node_id)
+                            # Scoped: `list_entries` applies no sub-agent filter
+                            # of its own, so reading it bare would list every
+                            # metric under the node regardless of the caller's
+                            # scope -- on the very route this scoping exists for.
+                            metrics = self.metric_rag.storage.list_entries(
+                                node_id, extra_conditions=self.metric_rag._sub_agent_conditions()
+                            )
                             for metric in metrics:
                                 metric_name = metric.get("name", "")
                                 if metric_name:
@@ -406,7 +443,9 @@ class ExplorerService:
 
                         # Add reference SQLs as children if they exist
                         try:
-                            ref_sqls = self.reference_sql_rag.reference_sql_storage.list_entries(node_id)
+                            ref_sqls = self.reference_sql_rag.reference_sql_storage.list_entries(
+                                node_id, extra_conditions=self.reference_sql_rag._sub_agent_conditions()
+                            )
                             for ref_sql in ref_sqls:
                                 sql_name = ref_sql.get("name", "")
                                 if sql_name:
@@ -419,6 +458,18 @@ class ExplorerService:
                                     child_nodes.append(sql_node)
                         except Exception as ex:
                             logger.debug(f"No reference SQL found for node {node_id}: {ex}")
+
+                    # A scoped caller should not learn the shape of the tree
+                    # outside its scope. Once the entry lists above are filtered,
+                    # a directory with no surviving children holds nothing this
+                    # caller may see, so listing its name would leak the
+                    # taxonomy of another sub-agent's knowledge base.
+                    #
+                    # Only when scoped: unscoped callers are the project's own
+                    # owners, and empty directories are real structure they
+                    # created and expect to see.
+                    if self.sub_agent_name and not child_nodes:
+                        continue
 
                     # Create directory SubjectNode
                     subject_node = SubjectNode(
@@ -770,6 +821,13 @@ class ExplorerService:
                     errorMessage="Subject path cannot be empty",
                 )
 
+            if not self._metric_is_in_scope(request.subject_path):
+                return Result[MetricDimensionsData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage=f"Metric not found: {'/'.join(request.subject_path)}",
+                )
+
             metric_name = request.subject_path[-1]
 
             from datus.tools.func_tool.semantic_tools import (
@@ -778,8 +836,11 @@ class ExplorerService:
             )
 
             runtime_db_context = self._semantic_runtime_db_context(request)
+            # `sub_agent_name` is the second POSITIONAL parameter here too, so
+            # the keyword-only call skipped it and built an unscoped instance.
             tools = SemanticTools(
                 self.agent_config,
+                self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
             )
             adapter = tools.adapter
@@ -840,13 +901,23 @@ class ExplorerService:
                     errorMessage="Subject path cannot be empty",
                 )
 
+            if not self._metric_is_in_scope(request.subject_path):
+                return Result[MetricPreviewData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage=f"Metric not found: {'/'.join(request.subject_path)}",
+                )
+
             metric_name = request.subject_path[-1]
 
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
             runtime_db_context = self._semantic_runtime_db_context(request)
+            # `sub_agent_name` is the second POSITIONAL parameter here too, so
+            # the keyword-only call skipped it and built an unscoped instance.
             tools = SemanticTools(
                 self.agent_config,
+                self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
             )
             if tools.adapter is None:
@@ -980,7 +1051,12 @@ class ExplorerService:
                 )
 
             # Get reference SQL entries
-            sql_entries = self.reference_sql_rag.reference_sql_storage.list_entries(node_id, name=sql_name)
+            # Scoped, for the same reason as get_subject_list: without the
+            # sub-agent conditions this returns the SQL body of any reference
+            # SQL the caller can name, in or out of scope.
+            sql_entries = self.reference_sql_rag.reference_sql_storage.list_entries(
+                node_id, name=sql_name, extra_conditions=self.reference_sql_rag._sub_agent_conditions()
+            )
 
             if not sql_entries or len(sql_entries) == 0:
                 return Result[ReferenceSQLInfo](

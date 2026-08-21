@@ -1227,7 +1227,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         return True
 
     def list_entries(
-        self, node_id: int, name: Optional[str] = None, limit: Optional[int] = None
+        self,
+        node_id: int,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        extra_conditions: Optional[List] = None,
     ) -> List[Dict[str, Any]]:
         """Get storage entries by subject node ID and entry name.
 
@@ -1239,6 +1243,10 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             node_id: Subject node ID (parent node in the subject tree)
             name: Entry name (e.g., metric name or SQL name)
             limit: Maximum number of results to return (default: None)
+            extra_conditions: Additional filter conditions, ANDed with the rest.
+                Callers reading on behalf of a scoped sub-agent must pass that
+                RAG's ``_sub_agent_conditions()``; this method applies no scope
+                of its own, so omitting them returns every entry under the node.
 
         Returns:
             List of entries matching the criteria, enriched with subject_path
@@ -1267,6 +1275,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             if name:
                 conditions.append(eq(NAME_COLUMN_NAME, name))
+
+            if extra_conditions:
+                conditions.extend(extra_conditions)
 
             where_clause = None if len(conditions) == 0 else and_(*conditions)
             # Execute search
