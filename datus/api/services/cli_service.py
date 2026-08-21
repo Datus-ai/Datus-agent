@@ -33,10 +33,56 @@ from datus.schemas.action_history import (
 )
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
-from datus.utils.sql_utils import validate_read_only_sql
+from datus.utils.sql_utils import (
+    SQLType,
+    _first_statement,
+    parse_sql_type,
+    strip_sql_comments,
+)
 from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
+
+#: Statement types the console may send straight to the connector.
+#:
+#: Deliberately an allow-list of *identified* writes. ``UNKNOWN`` is absent:
+#: anything the parser could not place must fall to the enforced path, where it
+#: is refused — the alternative is that a syntax the dialect accepts but sqlglot
+#: does not becomes an unfiltered read.
+_WRITE_SQL_TYPES = frozenset(
+    {
+        SQLType.INSERT,
+        SQLType.UPDATE,
+        SQLType.DELETE,
+        SQLType.MERGE,
+        SQLType.DDL,
+        SQLType.CONTENT_SET,
+    }
+)
+
+
+def _write_reads_data(sql: str, dialect: str) -> bool:
+    """Whether a write statement carries a query inside it.
+
+    ``CREATE TABLE ... AS SELECT`` and ``INSERT ... SELECT`` read rows a policy
+    would have filtered and land them somewhere no policy covers. The read
+    policy plugin cannot see this — it hooks reads, and this is a write — so the
+    check lives here.
+
+    Unparseable means yes. On a project with policies the cost of being wrong in
+    that direction is a refused statement; the other direction is a silent copy
+    of the rows the policy exists to withhold.
+    """
+    try:
+        import sqlglot
+
+        parsed = sqlglot.parse_one(sql, read=dialect)
+    except Exception:
+        return True
+    if parsed is None:
+        return True
+    return bool(list(parsed.find_all(sqlglot.exp.Select)))
+
 
 
 class CLIService:
@@ -140,31 +186,59 @@ class CLIService:
             )
             actions.add_action(sql_action)
 
-            # Reads go through the enforced path; everything else keeps the
-            # connector's own dispatch.
+            # Reads — and anything we cannot positively identify as a single
+            # write — go through the enforced path.
             #
-            # Hand-written SQL from the IDE is the widest read surface there is
-            # — a member types `SELECT * FROM orders` and the connector would
-            # happily answer, while every other read path on the project is
-            # filtered. But the console is also where people write DDL and DML,
-            # and the enforced path admits only SELECT / SHOW / DESCRIBE /
-            # EXPLAIN, so routing everything through it would quietly turn the
-            # console read-only. Row policies constrain reads by definition, so
-            # the split costs nothing.
+            # Hand-written SQL from the IDE is the widest read surface there is,
+            # so the console cannot be the one door a row policy does not cover.
+            # But the console is also where people write DDL and DML, and the
+            # enforced path admits only SELECT / SHOW / DESCRIBE / EXPLAIN, so
+            # sending everything through it would turn the console read-only.
+            #
+            # The split is on the *statement type*, never on "did the read-only
+            # validator object": that predicate is true for multi-statement
+            # input and for anything sqlglot cannot parse, so routing on it
+            # hands an attacker two one-token bypasses — `SELECT 1; SELECT *
+            # FROM orders` and a deliberate typo both stop being filtered.
+            # Multi-statement therefore reaches the enforced path and is
+            # rejected there, which is the same answer it gave before any of
+            # this existed.
             start_time = time.time()
-            violation, _sql_type = validate_read_only_sql(request.sql_query, self.current_db_connector.dialect)
-            if violation is None:
+            cleaned = strip_sql_comments(request.sql_query).strip().rstrip(";").strip()
+            sql_type = parse_sql_type(request.sql_query, self.current_db_connector.dialect)
+            single = bool(cleaned) and _first_statement(cleaned) == cleaned
+            is_write = sql_type in _WRITE_SQL_TYPES and single
+
+            if is_write and policy_context:
+                # A write can carry a read: `CREATE TABLE mine AS SELECT * FROM
+                # orders` copies the rows a policy just filtered into a table no
+                # policy covers. The plugin cannot help — it hooks reads only —
+                # so on a project that has policies at all, a write that embeds
+                # a query is refused here.
+                reads = _write_reads_data(request.sql_query, self.current_db_connector.dialect)
+                if reads:
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                        errorMessage=(
+                            "This project has row-level policies, so a write statement that "
+                            "reads from a query is not allowed here — it would copy filtered "
+                            "rows into a table no policy covers."
+                        ),
+                    )
+
+            if is_write:
+                result = self.current_db_connector.execute(
+                    input_params={"sql_query": request.sql_query},
+                    result_format=request.result_format,
+                )
+            else:
                 result = self._db_tool().execute_read_enforced(
                     request.sql_query,
                     self.current_db_connector,
                     datasource=self.current_datasource or "",
                     result_format=request.result_format,
                     policy_context=policy_context,
-                )
-            else:
-                result = self.current_db_connector.execute(
-                    input_params={"sql_query": request.sql_query},
-                    result_format=request.result_format,
                 )
             end_time = time.time()
             exec_time = end_time - start_time
