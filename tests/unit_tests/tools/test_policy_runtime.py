@@ -225,3 +225,60 @@ def test_db_rejects_empty_policy_rewrite(monkeypatch):
     assert not result.success
     assert "Only read-only queries" in result.error
     db.execute_query.assert_not_called()
+
+
+class TestDenialExplanation:
+    """SaaS knows why a caller was denied; the plugin does not.
+
+    A plugin can only report that context validation failed. "Policy context
+    denies all data reads" is true and useless: the reader cannot tell a gap in
+    their own profile from a misconfigured policy, and has nothing to ask for.
+    Datus-backend attaches the reason to the context under a key the plugins
+    ignore, and it is appended here.
+    """
+
+    DENIED = {
+        "row_filter": {"access_mode": "denied"},
+        "x_saas_denial": "you have no value for store_ids, which this project's row policies filter by.",
+    }
+
+    def test_validate_context_appends_it(self, monkeypatch):
+        rt = runtime_with(FakeRuntime(allowed=False, reason="Policy context denies all data reads"), monkeypatch)
+
+        decision = rt.validate_context(self.DENIED)
+
+        assert decision.allowed is False
+        assert "denies all data reads" in decision.reason
+        assert "store_ids" in decision.reason
+
+    def test_before_sql_read_appends_it(self, monkeypatch):
+        rt = runtime_with(FakeRuntime(allowed=False, reason="Policy context denies all data reads"), monkeypatch)
+
+        decision = rt.before_sql_read(
+            "SELECT * FROM orders", datasource="w", dialect="postgres", policy_context=self.DENIED
+        )
+
+        assert decision.allowed is False
+        assert "store_ids" in decision.reason
+
+    def test_without_the_key_the_reason_is_untouched(self, monkeypatch):
+        rt = runtime_with(FakeRuntime(allowed=False, reason="Policy context denies all data reads"), monkeypatch)
+
+        decision = rt.validate_context({"row_filter": {"access_mode": "denied"}})
+
+        assert decision.reason == "Policy context denies all data reads"
+
+    @pytest.mark.parametrize("junk", [None, "", "   ", 42, {"a": 1}])
+    def test_a_malformed_key_is_ignored(self, monkeypatch, junk):
+        """It arrives over the wire; it must not be able to break a refusal."""
+        rt = runtime_with(FakeRuntime(allowed=False, reason="denied"), monkeypatch)
+
+        decision = rt.validate_context({"row_filter": {"access_mode": "denied"}, "x_saas_denial": junk})
+
+        assert decision.allowed is False
+        assert decision.reason == "denied"
+
+    def test_an_allowed_context_is_unaffected(self, monkeypatch):
+        rt = runtime_with(FakeRuntime(), monkeypatch)
+
+        assert rt.validate_context(self.DENIED).allowed is True
