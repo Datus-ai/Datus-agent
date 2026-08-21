@@ -21,12 +21,14 @@ from pathlib import Path
 import pytest
 
 import datus.storage.vector as vector_pkg
-from datus.storage.vector import VectorRegistry, _LazyLanceVectorBackend
+from datus.storage.vector import VectorRegistry
 
-# ``datus.storage.vector.lance_backend`` is deliberately NOT imported at module
-# level: it pulls in lancedb, and this module exists to certify that importing
-# the vector package does not. Tests that genuinely need the real backend import
-# it inside the test body and take the ``requires_lancedb`` fixture.
+# Nothing from this package beyond ``VectorRegistry`` is imported at module
+# level. ``lance_backend`` pulls in lancedb, and this module exists to certify
+# that importing the vector package does not; ``_LazyLanceVectorBackend`` is the
+# symbol under test, so importing it here would turn a red assertion into a
+# collection error when these tests are run against pre-fix code. Both are
+# imported inside the test bodies that need them.
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -123,6 +125,7 @@ class TestLanceRegistration:
         assert (tmp_path / "proj" / "datus_db").is_dir()
 
     def test_instantiating_the_proxy_yields_the_real_backend(self, requires_lancedb):
+        from datus.storage.vector import _LazyLanceVectorBackend
         from datus.storage.vector.lance_backend import LanceVectorBackend
 
         backend = _LazyLanceVectorBackend()
