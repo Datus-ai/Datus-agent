@@ -55,27 +55,28 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
-from typing import NamedTuple
 from uuid import uuid4
 
 import yaml
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from pydantic import BaseModel, ConfigDict
 
 MISSING = "datus_readonly_probe_missing"
 
 
-class Probe(NamedTuple):
+class Probe(BaseModel):
     """One statement to run under both flag settings.
 
-    A NamedTuple rather than a bare tuple so the third field is self-describing
-    at every use site -- `is_a_read` flips the whole verdict, and a positional
-    bool is exactly the field a reader guesses wrong. Not a Pydantic model:
-    these are literals built in this file, there is no untrusted input to
-    validate, and a standalone operator script should not grow a dependency to
-    name three fields.
+    A model rather than a bare tuple so the third field is self-describing at
+    every use site -- `is_a_read` flips the whole verdict, and a positional bool
+    is exactly the field a reader guesses wrong. Frozen because these are
+    constants: a probe rewritten mid-run would silently change what the verdict
+    table claims was tested.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     label: str
     sql: str
@@ -83,16 +84,16 @@ class Probe(NamedTuple):
 
 
 CASES = [
-    Probe("SELECT", "SELECT 1", True),
-    Probe("SHOW", "SHOW DATABASES", True),
-    Probe("EXPLAIN", "EXPLAIN SELECT 1", True),
-    Probe("INSERT", f"INSERT INTO {MISSING} (v) VALUES ('x')", False),
-    Probe("UPDATE", f"UPDATE {MISSING} SET v = 'x'", False),
-    Probe("DELETE", f"DELETE FROM {MISSING}", False),
-    Probe("CREATE TABLE (CTAS)", f"CREATE TABLE {MISSING}_2 AS SELECT * FROM {MISSING}", False),
-    Probe("DROP TABLE", f"DROP TABLE {MISSING}", False),
-    Probe("TRUNCATE", f"TRUNCATE TABLE {MISSING}", False),
-    Probe("multi-statement", f"SELECT 1; DROP TABLE {MISSING}", False),
+    Probe(label="SELECT", sql="SELECT 1", is_a_read=True),
+    Probe(label="SHOW", sql="SHOW DATABASES", is_a_read=True),
+    Probe(label="EXPLAIN", sql="EXPLAIN SELECT 1", is_a_read=True),
+    Probe(label="INSERT", sql=f"INSERT INTO {MISSING} (v) VALUES ('x')", is_a_read=False),
+    Probe(label="UPDATE", sql=f"UPDATE {MISSING} SET v = 'x'", is_a_read=False),
+    Probe(label="DELETE", sql=f"DELETE FROM {MISSING}", is_a_read=False),
+    Probe(label="CREATE TABLE (CTAS)", sql=f"CREATE TABLE {MISSING}_2 AS SELECT * FROM {MISSING}", is_a_read=False),
+    Probe(label="DROP TABLE", sql=f"DROP TABLE {MISSING}", is_a_read=False),
+    Probe(label="TRUNCATE", sql=f"TRUNCATE TABLE {MISSING}", is_a_read=False),
+    Probe(label="multi-statement", sql=f"SELECT 1; DROP TABLE {MISSING}", is_a_read=False),
 ]
 
 # Substring identifying a refusal that came from the read-only gate specifically,
@@ -255,15 +256,15 @@ def create_probe_ddl(dialect: str, table: str) -> str:
 def live_cases(dml: str, drop_me: str, ctas: str) -> list[Probe]:
     """Probes for --live-writes, all scoped to this run's own scratch tables."""
     return [
-        Probe("SELECT", f"SELECT COUNT(*) FROM {dml}", True),
-        Probe("EXPLAIN", f"EXPLAIN SELECT * FROM {dml}", True),
-        Probe("INSERT", f"INSERT INTO {dml} (id, v) VALUES (99, 'written')", False),
-        Probe("UPDATE", f"UPDATE {dml} SET v = 'mutated' WHERE id = 1", False),
-        Probe("DELETE", f"DELETE FROM {dml} WHERE id = 2", False),
-        Probe("CREATE TABLE (CTAS)", f"CREATE TABLE {ctas} AS SELECT * FROM {dml}", False),
-        Probe("TRUNCATE", f"TRUNCATE TABLE {dml}", False),
-        Probe("DROP TABLE", f"DROP TABLE {drop_me}", False),
-        Probe("multi-statement", f"SELECT 1; DROP TABLE {dml}", False),
+        Probe(label="SELECT", sql=f"SELECT COUNT(*) FROM {dml}", is_a_read=True),
+        Probe(label="EXPLAIN", sql=f"EXPLAIN SELECT * FROM {dml}", is_a_read=True),
+        Probe(label="INSERT", sql=f"INSERT INTO {dml} (id, v) VALUES (99, 'written')", is_a_read=False),
+        Probe(label="UPDATE", sql=f"UPDATE {dml} SET v = 'mutated' WHERE id = 1", is_a_read=False),
+        Probe(label="DELETE", sql=f"DELETE FROM {dml} WHERE id = 2", is_a_read=False),
+        Probe(label="CREATE TABLE (CTAS)", sql=f"CREATE TABLE {ctas} AS SELECT * FROM {dml}", is_a_read=False),
+        Probe(label="TRUNCATE", sql=f"TRUNCATE TABLE {dml}", is_a_read=False),
+        Probe(label="DROP TABLE", sql=f"DROP TABLE {drop_me}", is_a_read=False),
+        Probe(label="multi-statement", sql=f"SELECT 1; DROP TABLE {dml}", is_a_read=False),
     ]
 
 
@@ -328,9 +329,9 @@ async def run_matrix(cfg: Path, datasource: str) -> dict[str, tuple[bool, str]]:
     """
     results: dict[str, tuple[bool, str]] = {}
     async with McpSession(cfg, datasource) as sess:
-        for label, sql, _ in CASES:
-            ok, err, _ = await sess.sql(sql)
-            results[label] = (ok, err)
+        for case in CASES:
+            ok, err, _ = await sess.sql(case.sql)
+            results[case.label] = (ok, err)
     return results
 
 
@@ -482,9 +483,9 @@ async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, d
             # 2. flag-off matrix -- the negative control: these really execute
             print("2. running probes with sql_read_only: false (writes execute) ...")
             off: dict[str, tuple[bool, str]] = {}
-            for label, statement, _ in cases:
-                ok, err, _ = await sess.sql(statement)
-                off[label] = (ok, err)
+            for case in cases:
+                ok, err, _ = await sess.sql(case.sql)
+                off[case.label] = (ok, err)
 
             # 3. restore what the flag-off run destroyed, so both runs start level
             print("3. restoring scratch tables ...")
@@ -498,9 +499,9 @@ async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, d
         print("4. running probes with sql_read_only: true  (must all be refused) ...")
         async with McpSession(cfg_on, datasource, dry_run=dry_run) as sess:
             on: dict[str, tuple[bool, str]] = {}
-            for label, statement, _ in cases:
-                ok, err, _ = await sess.sql(statement)
-                on[label] = (ok, err)
+            for case in cases:
+                ok, err, _ = await sess.sql(case.sql)
+                on[case.label] = (ok, err)
 
             # 5. the decisive check -- reads still work under the flag, so this
             #    integrity verification runs inside the hardened session.
@@ -519,12 +520,13 @@ async def run_live(cfg_on: Path, cfg_off: Path, datasource: str, dialect: str, d
         hdr = f"{'statement':<22} {'flag off':<14} {'flag on':<14} verdict"
         print(hdr)
         print("-" * len(hdr))
-        for label, _, is_read in cases:
+        for case in cases:
+            label = case.label
             off_ok, off_err = off[label]
             on_ok, on_err = on[label]
             gated = GATE_MARKER in on_err.lower()
 
-            if is_read:
+            if case.is_a_read:
                 good = not gated
                 verdict = "read not blocked" if good else "READ WRONGLY BLOCKED"
             elif off_err and off_err == on_err:
@@ -704,7 +706,8 @@ async def main() -> int:
     print("-" * len(hdr))
 
     failures = []
-    for label, _, is_read in CASES:
+    for case in CASES:
+        label = case.label
 
         def where(entry: tuple[bool, str]) -> str:
             ok, err = entry
@@ -714,7 +717,7 @@ async def main() -> int:
 
         off_where, on_where = where(off[label]), where(on[label])
 
-        if is_read:
+        if case.is_a_read:
             good = on_where != "GATE"
             verdict = "read not blocked" if good else "READ WRONGLY BLOCKED"
         elif off_where == "GATE":
