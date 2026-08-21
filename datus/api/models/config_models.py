@@ -19,6 +19,10 @@ class ErrorCode(str, Enum):
     CONFIGURATION_GET_FAILED = "CONFIGURATION_GET_FAILED"
     MCP_SERVER_ERROR = "MCP_SERVER_ERROR"
     SQL_EXECUTION_ERROR = "SQL_EXECUTION_ERROR"
+    # Refused by the deployment-wide read-only posture (``agent.sql_read_only``);
+    # never attempted against the database. Distinct from SQL_EXECUTION_ERROR so
+    # callers can tell "policy says no, do not retry" from "the engine errored".
+    SQL_READ_ONLY = "SQL_READ_ONLY"
     TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"
     DATABASE_CONNECTION_ERROR = "DATABASE_CONNECTION_ERROR"
     CONTEXT_COMMAND_ERROR = "CONTEXT_COMMAND_ERROR"

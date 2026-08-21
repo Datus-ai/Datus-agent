@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import jinja2
 from agents import Tool
+from jinja2.sandbox import SandboxedEnvironment
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.reference_template.store import ReferenceTemplateRAG
@@ -16,6 +17,18 @@ from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
+
+# Reference templates are user-authored ``.j2`` bodies loaded from the template
+# store and rendered in-process, and ``render_reference_template`` is exposed as
+# an MCP tool — so the template body is untrusted input reachable by any client.
+# A bare ``jinja2.Template`` would let it walk into Python internals; the sandbox
+# blocks unsafe attribute traversal.
+#
+# ``StrictUndefined`` is preserved: the ``UndefinedError`` handler below turns a
+# missing variable into an actionable "you're missing these params" message that
+# the model retries against. No loader is attached — reference templates are
+# self-contained strings and never supported ``{% import %}``/``{% extends %}``.
+_JINJA_ENV = SandboxedEnvironment(undefined=jinja2.StrictUndefined)
 
 
 @mcp_tool_class(
@@ -221,10 +234,27 @@ class ReferenceTemplateTools:
 
             provided_params = list(params_dict.keys())
 
-            # Render the template using Jinja2 with strict undefined checking
+            # Render the template in the Jinja2 sandbox with strict undefined checking
             try:
-                jinja_template = jinja2.Template(template_content, undefined=jinja2.StrictUndefined)
+                jinja_template = _JINJA_ENV.from_string(template_content)
                 rendered_sql = jinja_template.render(**params_dict)
+            except jinja2.exceptions.SecurityError as e:
+                # Sandbox refusal: the template body reached for a restricted
+                # attribute. SecurityError subclasses TemplateRuntimeError, so
+                # neither the UndefinedError nor the TemplateSyntaxError handler
+                # below catches it — without this branch it would fall through to
+                # the broad ``except Exception`` and surface an opaque message.
+                # Logged at error level because a template trying to escape the
+                # sandbox is an authoring-integrity signal, not a user mistake,
+                # and it is never reported as a retryable parameter problem.
+                logger.error(
+                    f"Reference template `{'/'.join(subject_path)}/{name}` rejected by the Jinja2 sandbox: {e}"
+                )
+                return FuncToolResult(
+                    success=0,
+                    error=f"Template '{template_name}' was rejected by the template sandbox: {e}. "
+                    f"The template body accesses restricted attributes and cannot be rendered.",
+                )
             except jinja2.UndefinedError as e:
                 # Provide detailed error message to help model retry with correct params
                 missing = sorted(set(expected_params) - set(provided_params))

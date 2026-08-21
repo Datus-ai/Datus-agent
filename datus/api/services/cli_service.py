@@ -143,6 +143,72 @@ class CLIService:
                     errorMessage="No database connection available",
                 )
 
+            # Deployment-wide read-only posture. This route reaches the connector
+            # directly (see ``.execute`` below) and never touches DBFuncTool, so
+            # the ``execute_sql`` tool gate does not cover it — without this check
+            # a hardened deployment would still expose arbitrary SQL here. The
+            # rules come from the same helper the tool path uses so the two
+            # entry points cannot disagree.
+            #
+            # Read per request rather than snapshotted: CLIService is built from
+            # the shared service-level config, so a host hardening it at runtime
+            # takes effect without rebuilding the service. Placed before
+            # ``switch_context`` so a request about to be refused does not mutate
+            # connector state.
+            #
+            # Still needed after the statement-type dispatch below, and this is
+            # the reason: that dispatch sends identified single writes straight
+            # to ``current_db_connector.execute`` and only reads through
+            # ``execute_read_enforced``. So a write never reaches DBFuncTool and
+            # never meets the tool-layer read-only gate — this check is the only
+            # thing standing in front of it. Refusing here also means the write
+            # branch is simply unreachable on a hardened deployment.
+            if getattr(self.agent_config, "sql_read_only", False):
+                from datus.utils.sql_utils import (
+                    READ_ONLY_MULTI_STATEMENT,
+                    READ_ONLY_NON_READ,
+                    READ_ONLY_WRITABLE_PRAGMA,
+                    parse_sql_statement_kind,
+                    validate_read_only_sql,
+                )
+
+                dialect = getattr(self.current_db_connector, "dialect", "") or ""
+                violation, sql_type = validate_read_only_sql(request.sql_query, dialect)
+                if violation:
+                    # The helper returns a code, not prose, so each entry point
+                    # words its own refusal. This route answers an HTTP client
+                    # rather than a model, so it names the setting that caused
+                    # the refusal.
+                    reason = {
+                        READ_ONLY_MULTI_STATEMENT: (
+                            "Multi-statement SQL is not allowed. Please submit one query at a time."
+                        ),
+                        READ_ONLY_NON_READ: (
+                            f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
+                            f"Detected SQL type: {sql_type.value}"
+                        ),
+                        READ_ONLY_WRITABLE_PRAGMA: "Writable PRAGMA statements are not allowed in read-only mode.",
+                    }[violation]
+                    # Same structured shape as the DBFuncTool refusal in
+                    # ``database._refuse_write_if_read_only`` so an operator can
+                    # filter both entry points on one field set — including the
+                    # finer statement kind, since ``ddl`` alone cannot tell them
+                    # whether a caller tried to CREATE or to DROP. ``source`` is
+                    # always "deployment" here: this route has no per-agent
+                    # read-only posture to distinguish it from.
+                    logger.warning(
+                        "POST /sql/execute rejected by read-only policy",
+                        sql_type=parse_sql_statement_kind(request.sql_query, dialect) or sql_type.value,
+                        database=request.database_name or "",
+                        source="deployment",
+                        rule=violation,
+                    )
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_READ_ONLY,
+                        errorMessage=(f"This deployment is read-only (agent.sql_read_only). {reason}"),
+                    )
+
             # Switch to the requested database/catalog context before executing.
             if request.database_name:
                 catalog = getattr(self.current_db_connector, "catalog_name", "") or ""

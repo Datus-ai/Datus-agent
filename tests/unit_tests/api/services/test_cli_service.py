@@ -485,3 +485,121 @@ class TestCLIServiceInitializeConnection:
         # CLI context should have been updated during init with the default DB
         assert cli_svc.current_db_name == "california_schools"
         assert cli_svc.cli_context.current_db_name == "california_schools"
+
+
+@pytest.fixture
+def writable_cli_svc(mutable_real_agent_config):
+    """CLIService over a per-test writable SQLite copy, so a refused write and an
+    allowed write are distinguishable (``real_agent_config`` opens the DB
+    read-only, which would mask the gate under test)."""
+    chat_svc = ChatService(mutable_real_agent_config, ChatTaskManager(), "test-proj")
+    return CLIService(agent_config=mutable_real_agent_config, chat_service=chat_svc)
+
+
+class TestCLIServiceReadOnlyDeployment:
+    """``agent.sql_read_only`` on POST /sql/execute.
+
+    This route reaches the connector directly and never constructs a
+    ``DBFuncTool``, so it needs its own gate — the ``execute_sql`` tool check
+    does not cover it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_select_is_allowed(self, writable_cli_svc, mutable_real_agent_config):
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO schools (CDSCode) VALUES ('x')",
+            "UPDATE schools SET City = 'x'",
+            "DELETE FROM schools",
+            "CREATE TABLE t_new (id INT)",
+            "DROP TABLE schools",
+            "TRUNCATE TABLE schools",
+        ],
+    )
+    async def test_writes_and_ddl_are_refused(self, writable_cli_svc, mutable_real_agent_config, sql):
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query=sql))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+
+    @pytest.mark.asyncio
+    async def test_multi_statement_with_read_prefix_is_refused(self, writable_cli_svc, mutable_real_agent_config):
+        """The regression that classifying by statement type alone would miss:
+        ``parse_sql_type`` only inspects the FIRST statement, so this reads as a
+        harmless SELECT unless multi-statement input is rejected separately.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1; DROP TABLE schools"))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+        assert "Multi-statement" in result.errorMessage
+
+        # And the table is still there.
+        survived = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
+        assert survived.success is True
+
+    @pytest.mark.asyncio
+    async def test_writable_pragma_is_refused(self, writable_cli_svc, mutable_real_agent_config):
+        """``PRAGMA journal_mode=WAL`` classifies as METADATA_SHOW but writes."""
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="PRAGMA journal_mode=WAL"))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sql", ["SET foo = 1", "%%not sql at all%%"])
+    async def test_content_set_and_unparseable_are_refused(self, writable_cli_svc, mutable_real_agent_config, sql):
+        """Fail-closed: anything not positively classified as a read is refused."""
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query=sql))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+
+    @pytest.mark.asyncio
+    async def test_writes_succeed_when_the_flag_is_off(self, writable_cli_svc):
+        """Default posture is unchanged — the gate is opt-in."""
+        result = await writable_cli_svc.execute_sql(
+            ExecuteSQLInput(sql_query="CREATE TABLE t_default_posture (id INT)")
+        )
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_flag_is_read_per_request_not_snapshotted(self, writable_cli_svc, mutable_real_agent_config):
+        """CLIService is built from the shared service-level config, so hardening
+        it at runtime must take effect without rebuilding the service.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        before = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="CREATE TABLE t_before (id INT)"))
+        assert before.success is True
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        after = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="CREATE TABLE t_after (id INT)"))
+        assert after.success is False
+        assert after.errorCode == ErrorCode.SQL_READ_ONLY

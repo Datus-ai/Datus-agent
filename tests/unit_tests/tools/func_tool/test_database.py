@@ -2,6 +2,7 @@
 Test cases for DBFuncTool compressor model_name initialization and execute_ddl.
 """
 
+import re
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -9,6 +10,41 @@ import pytest
 
 from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.exceptions import DatusException
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def logged_fields(text: str) -> dict:
+    """Structured field/value pairs from captured log output.
+
+    Normalizes away the two things that vary with how structlog happens to be
+    rendering — ANSI colour codes, and ``key=value`` vs ``'key': 'value'`` — so
+    a test can assert the field it cares about exactly, instead of hedging with
+    ``assert a in text or b in text``.
+    """
+    plain = _ANSI.sub("", text)
+    fields = dict(re.findall(r"(\w+)=(\S+)", plain))
+    fields.update(re.findall(r"'(\w+)': '([^']*)'", plain))
+    return fields
+
+
+def _mock_agent_config(**attrs) -> Mock:
+    """A ``Mock`` AgentConfig with the hardening switches pinned off.
+
+    A bare ``Mock()`` returns a truthy ``Mock`` for EVERY attribute, so it
+    silently opts into any boolean security flag ``DBFuncTool`` reads off the
+    config — today that is ``sql_read_only``, which would flip these tools into
+    rejecting mode and fail write-path tests for a reason that has nothing to do
+    with what they assert. (``_coerce_bool`` does not rescue this: a ``Mock``
+    misses its ``None``/``bool``/``str`` branches and falls through to
+    ``bool(value)``.) Pin the switches once here so the next flag does not
+    re-break the same eleven tests.
+    """
+    config = Mock()
+    config.sql_read_only = False
+    for key, value in attrs.items():
+        setattr(config, key, value)
+    return config
 
 
 class TestDBFuncToolCompressorModelName:
@@ -20,7 +56,7 @@ class TestDBFuncToolCompressorModelName:
         mock_connector.dialect = "sqlite"
         mock_connector.get_databases.return_value = []
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "claude-sonnet-4"
 
         with (
@@ -52,7 +88,7 @@ class TestDBFuncToolCompressorModelName:
         mock_connector.dialect = "sqlite"
         mock_connector.get_databases.return_value = []
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-4o"
         mock_config.project_name = "project"
 
@@ -351,7 +387,7 @@ class TestDBFuncToolExecuteWrite:
         sql_file = tmp_path / "insert.sql"
         sql_file.write_text("INSERT INTO users VALUES (1)", encoding="utf-8")
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.project_root = str(tmp_path)
 
@@ -914,7 +950,7 @@ class TestGetConnectorRouting:
         mock_db_manager.get_conn.side_effect = lambda ns, db="": mock_target if ns == "greenplum" else mock_source
         mock_db_manager.first_conn.return_value = mock_source
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "duckdb"
         # Must have >1 database so DBFuncTool enters true multi-connector mode
@@ -955,7 +991,7 @@ class TestGetConnectorRouting:
         mock_db_manager.get_conn.return_value = mock_source
         mock_db_manager.first_conn.return_value = mock_source
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "duckdb"
         mock_config.current_db_configs.return_value = {"duckdb": Mock(), "greenplum": Mock()}
@@ -994,7 +1030,7 @@ class TestGetConnectorRouting:
         mock_db_manager.get_conn.side_effect = _get_conn
         mock_db_manager.first_conn.return_value = mock_connector
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "default_db"
         mock_config.current_db_configs.return_value = {"default_db": Mock(), "other_db": Mock()}
@@ -1022,7 +1058,7 @@ class TestGetConnectorRouting:
         mock_db_manager.get_conn.return_value = mock_connector
         mock_db_manager.first_conn.return_value = mock_connector
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "default_db"
         mock_config.current_db_configs.return_value = {"default_db": Mock(), "other_db": Mock()}
@@ -1052,7 +1088,7 @@ class TestGetConnectorRouting:
         mock_db_manager.get_conn.return_value = conn
         mock_db_manager.first_conn.return_value = conn
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "pg"
         mock_config.current_db_configs.return_value = {"pg": Mock(), "other": Mock()}
@@ -1083,7 +1119,7 @@ class TestGetConnectorRouting:
         mock_db_manager.first_conn.return_value = mock_source
         mock_db_manager.get_conn.return_value = mock_source
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "source_db"
         # Not a glob datasource → list_databases asks the connector.
@@ -1123,7 +1159,7 @@ class TestGetConnectorRouting:
         mock_db_manager.first_conn.return_value = Mock(dialect="duckdb")
         mock_db_manager.get_conn.side_effect = _gc
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.current_datasource = "source_db"
         mock_config.current_db_config.return_value.path_pattern = ""
@@ -1816,6 +1852,220 @@ class TestDBFuncToolExecuteSql:
         mock_connector.execute_insert.assert_not_called()
         mock_connector.execute_ddl.assert_not_called()
 
+    # ------------------------------------------------------------------ #
+    # Deployment-wide ``agent.sql_read_only``                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _build(connector, **kwargs):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector, **kwargs)
+
+    @staticmethod
+    def _connector():
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = []
+        connector.execute_insert.return_value = Mock(success=True, row_count=1)
+        return connector
+
+    def test_config_read_only_rejects_writes_when_caller_did_not_ask(self):
+        """The deployment switch must reach callers that never pass read_only —
+        which is 19 of the 24 DBFuncTool construction sites, plus the MCP server.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        result = tool.execute_sql("INSERT INTO users VALUES (1)")
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        connector.execute_insert.assert_not_called()
+
+    def test_config_read_only_still_allows_select(self):
+        connector = self._connector()
+        connector.execute_query.return_value = Mock(success=True, sql_return=[{"a": 1}])
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+        tool.compressor.compress = Mock(return_value={"original_rows": 1, "compressed_data": "a\n1"})
+
+        assert tool.execute_sql("SELECT * FROM users").success == 1
+
+    def test_instance_flag_wins_when_config_is_writable(self):
+        """OR semantics, direction 1: the config may not relax a caller that
+        already asked for read-only (Explore, ask_report, the validator copy).
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False), read_only=True)
+
+        assert tool.read_only is True
+        assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 0
+        connector.execute_insert.assert_not_called()
+
+    def test_config_flag_wins_when_instance_is_writable(self):
+        """OR semantics, direction 2."""
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True), read_only=False)
+
+        assert tool.read_only is True
+
+    def test_no_agent_config_is_not_read_only(self):
+        connector = self._connector()
+        tool = self._build(connector)
+
+        assert tool.read_only is False
+        assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 1
+
+    def test_config_without_the_attribute_is_not_read_only(self):
+        """Old / duck-typed config objects predating the switch must not break."""
+
+        class LegacyConfig:
+            def active_model(self):
+                return Mock(model="gpt-4")
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=LegacyConfig())
+
+        assert tool.read_only is False
+
+    def test_string_false_is_not_read_only(self):
+        """Proves ``_coerce_bool``, not ``bool()``: ``bool("false")`` is True and
+        would wedge a duck-typed config into permanent read-only.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only="false"))
+
+        assert tool.read_only is False
+
+    def test_config_hardened_after_construction_is_honoured(self):
+        """The API hands nodes a per-request config clone, so the flag is
+        resolved per access rather than snapshotted in __init__.
+        """
+        connector = self._connector()
+        config = _mock_agent_config(sql_read_only=False)
+        tool = self._build(connector, agent_config=config)
+        assert tool.read_only is False
+
+        config.sql_read_only = True
+
+        assert tool.read_only is True
+        assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 0
+
+    def test_refusal_is_logged_with_its_source(self, caplog):
+        """A refusal is the event an operator wants to see -- on a deployment
+        running third-party content it means that content just tried to write.
+        Successful reads are already logged in read_query, so a silent refusal
+        would record the benign path and drop the notable one.
+        """
+        import logging
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("INSERT INTO users VALUES (1)")
+
+        assert "rejected by read-only policy" in caplog.text
+        # `source` separates a hardened deployment from a read-only agent doing
+        # its job -- "investigate this" vs "working as intended".
+        assert "deployment" in caplog.text
+
+    def test_refusal_log_attributes_agent_read_only_separately(self, caplog):
+        import logging
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False), read_only=True)
+
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("INSERT INTO users VALUES (1)")
+
+        assert "rejected by read-only policy" in caplog.text
+        assert "agent" in caplog.text
+
+    def test_ddl_refusal_logs_the_specific_keyword(self, caplog):
+        """`ddl` alone cannot tell an operator whether third-party content tried
+        to CREATE a table or DROP one, and those warrant different responses.
+        """
+        import logging
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("DROP TABLE users")
+        assert logged_fields(caplog.text)["sql_type"] == "drop"
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            tool.execute_sql("CREATE TABLE t (id INT)")
+        assert logged_fields(caplog.text)["sql_type"] == "create"
+
+    def test_multi_statement_refusal_is_logged(self, caplog):
+        """The sneakiest input in the set must not be the one with no audit
+        trail. ``parse_sql_type`` reads only the first statement, so this
+        arrives as a SELECT and is refused by the multi-statement rule rather
+        than by the read-only gate -- a different code path, which is exactly
+        how it went unlogged.
+        """
+        import logging
+
+        connector = self._connector()
+        connector.execute_query.return_value = Mock(success=True, sql_return=[])
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        with caplog.at_level(logging.WARNING):
+            result = tool.execute_sql("SELECT 1; DROP TABLE users")
+
+        assert result.success == 0
+        assert "statement-shape rules" in caplog.text
+        # The violation CODE, not the prose: `validate_read_only_sql` returns a
+        # code so each caller words its own error, which also gives the log a
+        # stable value to aggregate on.
+        assert logged_fields(caplog.text)["rule"] == "multi_statement"
+        # And the caller's own wording still reaches the model.
+        assert "Multi-statement" in (result.error or "")
+
+    def test_shallow_copy_can_still_force_read_only(self):
+        """Pins the contract datus.validation.llm_runner depends on: it copies a
+        write-capable tool and flips ``.read_only`` to True on the copy.
+        """
+        import copy as _copy
+
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False))
+        read_only_tool = _copy.copy(tool)
+        read_only_tool.read_only = True
+
+        assert read_only_tool.read_only is True
+        assert tool.read_only is False
+
+    def test_assignment_can_tighten_but_not_relax(self):
+        """The setter mirrors ``AgentConfig.harden_sql_read_only``: a caller may
+        harden an instance, but may not hand a write-capable view of a read-only
+        deployment to anything downstream.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False))
+
+        tool.read_only = True
+        assert tool.read_only is True
+
+        tool.read_only = False
+        assert tool.read_only is True
+
+    def test_deployment_read_only_cannot_be_relaxed_by_assignment(self):
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        tool.read_only = False
+
+        assert tool.read_only is True
+        assert tool.execute_sql("INSERT INTO users VALUES (1)").success == 0
+
     def test_min_max_rows_forwarded_to_write(self):
         mock_connector = Mock()
         mock_connector.dialect = "sqlite"
@@ -1868,7 +2118,7 @@ class TestDBFuncToolExecuteSql:
         sql_file = tmp_path / "insert.sql"
         sql_file.write_text("INSERT INTO users VALUES (1)", encoding="utf-8")
 
-        mock_config = Mock()
+        mock_config = _mock_agent_config()
         mock_config.active_model.return_value.model = "gpt-5.4"
         mock_config.project_root = str(tmp_path)
 
@@ -1898,6 +2148,91 @@ class TestDBFuncToolExecuteSql:
         assert "read_query" not in tool_names
         assert "execute_ddl" not in tool_names
         assert "execute_write" not in tool_names
+
+
+class TestDBFuncToolWritePathsHonorReadOnly:
+    """Every write entry point, not just ``execute_sql``.
+
+    ``execute_sql`` dispatches to ``execute_write``/``execute_ddl`` and gates
+    before it does, but all three are callable directly, and gen_job mounts
+    ``transfer_query_result`` as a tool of its own. A deployment-wide read-only
+    posture that only covered the dispatcher would leave those reachable.
+    """
+
+    @staticmethod
+    def _build(connector, **kwargs):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector, **kwargs)
+
+    @staticmethod
+    def _connector():
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = []
+        connector.execute_insert.return_value = Mock(success=True, row_count=1)
+        connector.execute_ddl.return_value = Mock(success=True)
+        return connector
+
+    def test_execute_ddl_is_refused(self):
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        result = tool.execute_ddl("CREATE TABLE t (a int)")
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        connector.execute_ddl.assert_not_called()
+
+    def test_execute_write_is_refused(self):
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+
+        result = tool.execute_write("INSERT INTO users VALUES (1)")
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        connector.execute_insert.assert_not_called()
+
+    def test_transfer_query_result_is_refused(self):
+        """``source_sql`` is read-only, but the transfer WRITES to the target
+        datasource — CREATE TABLE / TRUNCATE / INSERT — without ever going
+        through ``execute_sql``.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=True))
+        tool._get_connector = Mock(side_effect=AssertionError("must refuse before touching a connector"))
+
+        result = tool.transfer_query_result(
+            source_sql="SELECT * FROM users",
+            target_table="copy_of_users",
+            target_datasource="warehouse",
+        )
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+
+    def test_read_only_agent_is_refused_too(self):
+        """The gate is the effective posture, so a read-only agent on a writable
+        deployment is covered by the same check.
+        """
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False), read_only=True)
+
+        assert tool.execute_ddl("CREATE TABLE t (a int)").success == 0
+        assert tool.execute_write("INSERT INTO users VALUES (1)").success == 0
+
+    def test_write_paths_still_work_by_default(self):
+        """The gate is opt-in — the default posture is unchanged."""
+        connector = self._connector()
+        tool = self._build(connector, agent_config=_mock_agent_config(sql_read_only=False))
+
+        assert tool.execute_ddl("CREATE TABLE t (a int)").success == 1
+        connector.execute_ddl.assert_called_once()
 
 
 class TestDBFuncToolExecuteReadEnforced:
@@ -2103,7 +2438,11 @@ class TestExecuteSqlWriteLaundering:
         ):
             rag.return_value.schema_store.table_size.return_value = 0
             sem.return_value.get_size.return_value = 0
-            config = Mock()
+            # `_mock_agent_config`, not a bare `Mock()`: a bare Mock answers
+            # every attribute with a truthy Mock, so `sql_read_only` would read
+            # as on and these write-path assertions would fail for a reason
+            # unrelated to what they test.
+            config = _mock_agent_config()
             config.active_model.return_value.model = "gpt-4o"
             config.policy_context = policy_context
             tool = DBFuncTool(connector, agent_config=config)
@@ -2158,3 +2497,65 @@ class TestExecuteSqlWriteLaundering:
 
         assert result.success == 1
         connector.execute_ddl.assert_called_once()
+
+
+class TestMcpFactoriesHonorDeploymentReadOnly:
+    """``create_dynamic`` / ``create_static`` are the MCP server's construction
+    path (``mcp_server._create_context`` and ``_init_tools`` loop over the tool
+    registry and call them generically). Neither can pass ``read_only``, so this
+    is the path the deployment switch has to cover on its own — testing
+    ``__init__`` alone would miss it entirely.
+    """
+
+    @staticmethod
+    def _config(**attrs):
+        config = _mock_agent_config(**attrs)
+        config.project_name = "proj"
+        return config
+
+    def _build(self, factory, config):
+        manager = Mock()
+        manager.get_conn.return_value = Mock(dialect="sqlite")
+        with (
+            patch("datus.tools.func_tool.database.db_manager_instance", return_value=manager),
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.TableSemanticProfileRAG"),
+            patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return factory(config)
+
+    def test_create_dynamic_inherits_deployment_read_only(self):
+        """``.read_only`` reports the posture the write paths will enforce, not
+        the constructor argument — the factory passes no ``read_only`` at all,
+        so anything reading the attribute would otherwise be told this MCP tool
+        is writable on a hardened deployment."""
+        tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=True))
+
+        assert tool.read_only is True
+        assert tool._read_only is False  # nothing passed it; the config supplied it
+
+    def test_create_static_inherits_deployment_read_only(self):
+        tool = self._build(DBFuncTool.create_static, self._config(sql_read_only=True))
+
+        assert tool.read_only is True
+
+    def test_create_dynamic_rejects_writes_end_to_end(self):
+        """The property is only meaningful if execute_sql actually refuses."""
+        tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=True))
+        connector = Mock()
+        connector.dialect = "sqlite"
+        tool._get_connector = Mock(return_value=connector)
+
+        result = tool.execute_sql("INSERT INTO users VALUES (1)")
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        connector.execute_insert.assert_not_called()
+
+    def test_create_dynamic_stays_writable_by_default(self):
+        tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=False))
+
+        assert tool.read_only is False

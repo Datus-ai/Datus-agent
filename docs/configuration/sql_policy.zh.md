@@ -77,3 +77,45 @@ X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}
 datus sql-policy check --sql "SELECT * FROM orders" \
   --policy-context '{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'
 ```
+
+## 只读硬开关（`agent.sql_read_only`）
+
+`agent.sql_read_only` 是另一套更简单的机制，不要与上面的 policy plugin 混淆。
+
+```yaml
+agent:
+  sql_read_only: true   # 默认 false
+```
+
+置为 `true` 后，该配置服务的所有 SQL 入口都不允许执行非只读语句：
+
+- `DBFuncTool.execute_sql`（暴露给 agentic node 与 MCP server 的工具）会硬拒绝 SELECT / SHOW / DESCRIBE / EXPLAIN 之外的任何语句。这与权限档位无关，在 `PermissionHooks` 被完全绕过的路径上同样生效（LLM validator 以 `hooks=None` 运行，MCP server 的工具实例根本不经过 hooks）。
+- 该工具的其它写入口同样拒绝，而不只是 `execute_sql` 这个分发入口：`execute_write`、`execute_ddl`、`transfer_query_result`。最后一个尤其关键——它从一个数据源读、向**另一个**数据源写（`CREATE TABLE` / `TRUNCATE` / `INSERT`），由 `gen_job` 单独挂载为工具，且完全不经过 `execute_sql`。
+- `POST /sql/execute` 拒绝任何不是**单条**只读语句的输入。多语句（`SELECT 1; DROP TABLE t`）、可写 `PRAGMA`、`USE` / `SET`，以及解析器无法归类的语句一律拒绝——判定是 fail-closed 的。需要切换数据库时请使用请求体的 `database_name` 字段，而不是 `USE`。
+
+`DBFuncTool.read_only` 返回的是**生效后**的姿态，因此构造时没有传 `read_only` 的实例——MCP server 的 `create_dynamic` / `create_static` 工厂正是这样构造的——在加固过的部署上读出来仍是 `True`。
+
+与 policy plugin 的区别：
+
+| | `agent.sql_read_only` | policy plugin |
+|---|---|---|
+| 需要 plugin | 否 | 是 |
+| 需要请求上下文 | 否 | 是——每请求的 `policy_context` |
+| 行为 | 直接拒绝该语句 | 按请求上下文重写或拒绝 |
+| 粒度 | 全局、非黑即白 | 行 / 表 / 列，按调用方 |
+| 覆盖 `POST /sql/execute` | 是 | 否（仅只读工具） |
+
+该开关只能收紧：它以只读属性加一个单向的 `AgentConfig.harden_sql_read_only()` 暴露——每请求的配置副本可以自行加固，但下游任何代码都无法把 `true` 改回去；同时它也绝不会放松本就以只读运行的组件（Explore、`ask_report`、LLM validator）。
+
+适用场景：进程需要针对自有数据源运行第三方作者的 agent 内容（skill、subagent、reference template）。两套机制可以叠加使用——`sql_read_only` 限定「允许执行哪一类语句」，policy plugin 限定「某个调用方能读到什么」。
+
+### 如何验证一个部署
+
+自动化覆盖位于 `tests/unit_tests/tools/func_tool/test_database.py`、`tests/integration/tools/test_func_tools_db.py` 与 `tests/integration/tools/test_mcp_server.py`。
+
+另有两个手工脚本，通过 MCP 端到端探测真实服务。两者都不在 CI 中运行，都会打印判定表格并在失败时以非零码退出：
+
+| 脚本 | 检查内容 |
+|---|---|
+| `scripts/e2e_sql_read_only_mcp.py` | 自包含。搭建一次性 SQLite 工作区，跑「开关打开 / 关闭」对照矩阵，报告开关拒绝了哪些语句。无需参数。 |
+| `scripts/e2e_sql_read_only_mcp_project.py` | 指向真实的打包项目（`--project`）。`--sqlite-standin` 用一次性 SQLite 替换数据源，使开关关闭时写入真正执行；`--endpoint` 探测已在运行的服务；`--live-writes` 会写入**真实**数据源（仅限本次运行自建的临时表），`--dry-run` 只打印语句不执行。 |

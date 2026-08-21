@@ -643,3 +643,89 @@ class TestMCPToolExecution:
         """Test calling list_subject_tree tool."""
         result = await server.mcp.call_tool("list_subject_tree", {})
         assert result is not None
+
+
+@pytest.mark.nightly
+class TestMCPServerHonorsSqlReadOnly:
+    """``agent.sql_read_only`` over the MCP tool surface.
+
+    This is the path the switch exists for: the MCP server builds its tools with
+    ``create_static``/``create_dynamic``, which pass an ``AgentConfig`` but never
+    a ``read_only`` flag, and its tool instances never see ``PermissionHooks`` at
+    all. Any client holding an API key reaches ``execute_sql`` directly, so the
+    deployment posture has to be enforced by the tool itself.
+    """
+
+    @pytest.fixture
+    def server(self):
+        server = create_server(datasource="ssb_sqlite", config_path=CONFIG_PATH)
+        yield server
+        server.close()
+
+    @staticmethod
+    async def _call_execute_sql(server, sql):
+        """In-process FastMCP dispatch returns ``(content_blocks, structured)``;
+        take the structured payload. ``parse_tool_result`` above is for
+        ``ClientSession`` results and does not apply here."""
+        _, structured = await server.mcp.call_tool("execute_sql", {"sql": sql})
+        return structured
+
+    @pytest.mark.asyncio
+    async def test_static_tools_report_read_only_when_the_config_is_hardened(self, server):
+        """The factories pass no ``read_only``, so the tool has to take it from
+        the config — otherwise anything asking whether this MCP tool is
+        read-only would be told it is writable."""
+        assert server.db_tool.read_only is False
+
+        server.agent_config.harden_sql_read_only()
+
+        assert server.db_tool.read_only is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO customer (c_custkey) VALUES (999999)",
+            "UPDATE customer SET c_name = 'x'",
+            "DELETE FROM customer",
+            "DROP TABLE customer",
+            "CREATE TABLE mcp_readonly_probe (id INT)",
+        ],
+    )
+    async def test_execute_sql_over_mcp_refuses_writes(self, server, sql):
+        server.agent_config.harden_sql_read_only()
+
+        payload = await self._call_execute_sql(server, sql)
+
+        assert payload["success"] == 0
+        assert "read-only" in str(payload.get("error", "")).lower()
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_over_mcp_refuses_a_write_smuggled_behind_a_read(self, server):
+        """``parse_sql_type`` classifies only the FIRST statement, so this
+        routes to the read path — where the shared statement-shape check
+        refuses it for being multi-statement rather than for being a write.
+        Different message, same outcome: the DROP never runs."""
+        server.agent_config.harden_sql_read_only()
+
+        payload = await self._call_execute_sql(server, "SELECT 1; DROP TABLE customer")
+
+        assert payload["success"] == 0
+        assert "multi-statement" in str(payload.get("error", "")).lower()
+
+        survived = await self._call_execute_sql(server, "SELECT COUNT(*) AS cnt FROM customer")
+        assert survived["success"] == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_over_mcp_still_reads(self, server):
+        """The gate must not cost the server its actual job."""
+        server.agent_config.harden_sql_read_only()
+
+        payload = await self._call_execute_sql(server, "SELECT COUNT(*) AS cnt FROM customer")
+
+        assert payload["success"] == 1
+
+    @pytest.mark.asyncio
+    async def test_writes_are_not_blocked_by_default(self, server):
+        """The switch is opt-in; an unhardened server keeps its behaviour."""
+        assert server.db_tool.read_only is False
