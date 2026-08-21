@@ -2083,3 +2083,78 @@ class TestDBFuncToolGuardEstimatedRows:
         tool = self._make_tool(connector)
 
         assert tool.guard_estimated_rows("SELECT 1", connector) is None
+
+
+class TestExecuteSqlWriteLaundering:
+    """A write that carries a read must not run while a policy context exists.
+
+    `execute_sql` routes reads through `execute_read_enforced`, where the plugin
+    rewrites them — but DML and DDL went straight to the connector. So a caller
+    restricted to two stores could ask chat for
+    `CREATE TABLE mine AS SELECT * FROM orders` and end up owning every row the
+    policy withholds, in a table no policy covers. Found end-to-end, not by any
+    unit test: the console path had the same hole and was fixed on its own.
+    """
+
+    def _tool(self, connector, policy_context):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as sem,
+        ):
+            rag.return_value.schema_store.table_size.return_value = 0
+            sem.return_value.get_size.return_value = 0
+            config = Mock()
+            config.active_model.return_value.model = "gpt-4o"
+            config.policy_context = policy_context
+            tool = DBFuncTool(connector, agent_config=config)
+        return tool
+
+    def _connector(self):
+        c = Mock()
+        c.dialect = "postgresql"
+        c.get_databases.return_value = []
+        c.execute_ddl.return_value = Mock(success=True)
+        c.execute_insert.return_value = Mock(success=True, row_count=1)
+        return c
+
+    SCOPED = {"row_filter": {"access_mode": "scoped", "store_ids": ["S001"]}}
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "CREATE TABLE mine AS SELECT * FROM orders",
+            "INSERT INTO mine SELECT * FROM orders",
+            # sqlglot cannot parse this and returns an opaque Command.
+            "CREATE TABLE mine AS TABLE orders",
+            "COPY orders TO '/tmp/orders.csv'",
+        ],
+    )
+    def test_a_write_that_reads_is_refused(self, sql):
+        connector = self._connector()
+        tool = self._tool(connector, self.SCOPED)
+
+        result = tool.execute_sql(sql)
+
+        assert result.success == 0
+        assert "row-level policies" in result.error
+        connector.execute_ddl.assert_not_called()
+        connector.execute_insert.assert_not_called()
+
+    def test_a_plain_write_still_runs(self):
+        """Enabling a policy must not turn the agent read-only."""
+        connector = self._connector()
+        tool = self._tool(connector, self.SCOPED)
+
+        result = tool.execute_sql("CREATE TABLE plain_t (id int)")
+
+        assert result.success == 1
+        connector.execute_ddl.assert_called_once()
+
+    def test_without_policies_the_same_write_is_allowed(self):
+        connector = self._connector()
+        tool = self._tool(connector, {})
+
+        result = tool.execute_sql("CREATE TABLE mine AS SELECT * FROM orders")
+
+        assert result.success == 1
+        connector.execute_ddl.assert_called_once()

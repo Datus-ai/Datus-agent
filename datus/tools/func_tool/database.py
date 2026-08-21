@@ -1464,7 +1464,11 @@ class DBFuncTool:
             FuncToolResult: compressed rows for read-only queries, or execution
             metadata for writes/DDL. On failure success=0 with an error message.
         """
-        from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_type
+        from datus.utils.sql_utils import (
+            looks_like_sql_file_ref,
+            parse_sql_type,
+            write_statement_reads_data,
+        )
 
         try:
             # Resolve a ``.sql`` file path up front so type detection inspects the
@@ -1494,6 +1498,28 @@ class DBFuncTool:
                         "statements are allowed through execute_sql."
                     ),
                 )
+            # A write can carry a read. `CREATE TABLE mine AS SELECT * FROM
+            # orders` is approved as a write, runs on the raw connector, and
+            # lands every row the policy just withheld in a table no policy
+            # covers — the person who may only SELECT two stores now owns all
+            # four. The plugin cannot see it: it hooks reads, and this is a
+            # write. So on a project that has a policy context at all, a write
+            # that embeds a query is refused before it is dispatched.
+            #
+            # The permission prompt is not this check. It asks whether the
+            # *user* consents to a write; consenting to a write they are
+            # allowed to make is not consent to read rows they are not.
+            if self.policy_context and write_statement_reads_data(sql, connector.dialect):
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "This project has row-level policies, so a write statement that "
+                        "reads from a query is not allowed — it would copy filtered rows "
+                        "into a table no policy covers. Create views and derived tables "
+                        "on the database side instead."
+                    ),
+                )
+
             if sql_type in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE):
                 return self.execute_write(
                     sql,

@@ -36,8 +36,8 @@ from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import (
     SQLType,
     is_single_statement,
-    parse_dialect,
     parse_sql_type,
+    write_statement_reads_data,
 )
 from datus.utils.time_utils import now_utc_iso
 
@@ -59,44 +59,6 @@ _WRITE_SQL_TYPES = frozenset(
         SQLType.CONTENT_SET,
     }
 )
-
-
-def _write_reads_data(sql: str, dialect: str) -> bool:
-    """Whether a write statement carries a query inside it.
-
-    ``CREATE TABLE ... AS SELECT`` and ``INSERT ... SELECT`` read rows a policy
-    would have filtered and land them somewhere no policy covers. The read
-    policy plugin cannot see this — it hooks reads, and this is a write — so the
-    check lives here.
-
-    Anything the parser did not actually understand means yes. On a project with
-    policies the cost of being wrong in that direction is a refused statement;
-    the other direction is a silent copy of the rows the policy exists to
-    withhold.
-    """
-    try:
-        import sqlglot
-
-        # `parse_dialect`, not the connector's own name: a connector reports
-        # `postgresql` while sqlglot only knows `postgres`, and handing it the
-        # raw value raises — which this function reads as "yes, it contains a
-        # read" and refuses every write, plain `CREATE TABLE` included.
-        parsed = sqlglot.parse_one(sql, read=parse_dialect(dialect), error_level=sqlglot.ErrorLevel.IGNORE)
-    except Exception:
-        return True
-    if parsed is None:
-        return True
-
-    # IGNORE does not raise on syntax sqlglot cannot place — it hands back an
-    # opaque `Command` whose body was never parsed, so `find_all(Select)` is
-    # empty for reasons that have nothing to do with the statement. Postgres'
-    # `CREATE TABLE mine AS TABLE orders` lands here and is a full CTAS.
-    # `COPY` is parsed but its source is a table reference rather than a
-    # Select, and `COPY ... TO '/path'` / `TO PROGRAM` is a real export.
-    if isinstance(parsed, (sqlglot.exp.Command, sqlglot.exp.Copy)):
-        return True
-
-    return bool(list(parsed.find_all(sqlglot.exp.Select)))
 
 
 class CLIService:
@@ -227,7 +189,7 @@ class CLIService:
                 # policy covers. The plugin cannot help — it hooks reads only —
                 # so on a project that has policies at all, a write that embeds
                 # a query is refused here.
-                reads = _write_reads_data(request.sql_query, self.current_db_connector.dialect)
+                reads = write_statement_reads_data(request.sql_query, self.current_db_connector.dialect)
                 if reads:
                     return Result(
                         success=False,

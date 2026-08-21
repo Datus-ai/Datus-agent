@@ -224,6 +224,6 @@ def test_read_detection_uses_a_dialect_sqlglot_knows(sql, reads):
     read" — so every write was refused on a policy-enabled project, plain
     `CREATE TABLE` included. Caught end-to-end, not by any unit test.
     """
-    from datus.api.services.cli_service import _write_reads_data
+    from datus.utils.sql_utils import write_statement_reads_data
 
-    assert _write_reads_data(sql, "postgresql") is reads
+    assert write_statement_reads_data(sql, "postgresql") is reads
