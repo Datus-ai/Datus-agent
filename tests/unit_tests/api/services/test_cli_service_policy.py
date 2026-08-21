@@ -165,6 +165,12 @@ def test_unparseable_sql_does_not_reach_the_connector(monkeypatch):
     [
         "CREATE TABLE mine AS SELECT * FROM orders",
         "INSERT INTO mine SELECT * FROM orders",
+        # Legal Postgres, equivalent to the CTAS above, but sqlglot cannot
+        # parse it and hands back an opaque `Command` with no Select inside.
+        "CREATE TABLE mine AS TABLE orders",
+        # Parsed, but its source is a table reference rather than a Select —
+        # and `TO '/path'` / `TO PROGRAM` on a self-hosted PG is a real export.
+        "COPY orders TO '/tmp/orders.csv'",
     ],
 )
 def test_a_write_that_reads_is_refused_when_policies_exist(monkeypatch, sql):
@@ -204,6 +210,11 @@ def test_the_same_write_is_allowed_without_policies(monkeypatch):
         ("DELETE FROM mine WHERE id = 1", False),
         ("CREATE TABLE mine AS SELECT * FROM orders", True),
         ("INSERT INTO mine SELECT * FROM orders", True),
+        # `error_level=IGNORE` stops sqlglot raising on syntax it cannot place
+        # and returns a `Command` instead, so "no Select inside" says nothing
+        # about the statement. Both of these are full copies of `orders`.
+        ("CREATE TABLE mine AS TABLE orders", True),
+        ("COPY orders TO STDOUT", True),
     ],
 )
 def test_read_detection_uses_a_dialect_sqlglot_knows(sql, reads):

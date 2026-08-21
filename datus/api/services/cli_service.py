@@ -35,10 +35,9 @@ from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import (
     SQLType,
-    _first_statement,
+    is_single_statement,
     parse_dialect,
     parse_sql_type,
-    strip_sql_comments,
 )
 from datus.utils.time_utils import now_utc_iso
 
@@ -70,9 +69,10 @@ def _write_reads_data(sql: str, dialect: str) -> bool:
     policy plugin cannot see this — it hooks reads, and this is a write — so the
     check lives here.
 
-    Unparseable means yes. On a project with policies the cost of being wrong in
-    that direction is a refused statement; the other direction is a silent copy
-    of the rows the policy exists to withhold.
+    Anything the parser did not actually understand means yes. On a project with
+    policies the cost of being wrong in that direction is a refused statement;
+    the other direction is a silent copy of the rows the policy exists to
+    withhold.
     """
     try:
         import sqlglot
@@ -86,6 +86,16 @@ def _write_reads_data(sql: str, dialect: str) -> bool:
         return True
     if parsed is None:
         return True
+
+    # IGNORE does not raise on syntax sqlglot cannot place — it hands back an
+    # opaque `Command` whose body was never parsed, so `find_all(Select)` is
+    # empty for reasons that have nothing to do with the statement. Postgres'
+    # `CREATE TABLE mine AS TABLE orders` lands here and is a full CTAS.
+    # `COPY` is parsed but its source is a table reference rather than a
+    # Select, and `COPY ... TO '/path'` / `TO PROGRAM` is a real export.
+    if isinstance(parsed, (sqlglot.exp.Command, sqlglot.exp.Copy)):
+        return True
+
     return bool(list(parsed.find_all(sqlglot.exp.Select)))
 
 
@@ -208,10 +218,8 @@ class CLIService:
             # rejected there, which is the same answer it gave before any of
             # this existed.
             start_time = time.time()
-            cleaned = strip_sql_comments(request.sql_query).strip().rstrip(";").strip()
             sql_type = parse_sql_type(request.sql_query, self.current_db_connector.dialect)
-            single = bool(cleaned) and _first_statement(cleaned) == cleaned
-            is_write = sql_type in _WRITE_SQL_TYPES and single
+            is_write = sql_type in _WRITE_SQL_TYPES and is_single_statement(request.sql_query)
 
             if is_write and policy_context:
                 # A write can carry a read: `CREATE TABLE mine AS SELECT * FROM
@@ -227,7 +235,8 @@ class CLIService:
                         errorMessage=(
                             "This project has row-level policies, so a write statement that "
                             "reads from a query is not allowed here — it would copy filtered "
-                            "rows into a table no policy covers."
+                            "rows into a table no policy covers. Create views and derived "
+                            "tables on the database side instead."
                         ),
                     )
 

@@ -754,6 +754,19 @@ READ_ONLY_NON_READ = "non_read"
 READ_ONLY_WRITABLE_PRAGMA = "writable_pragma"
 
 
+def is_single_statement(sql: str) -> bool:
+    """Whether the input is exactly one statement.
+
+    A trailing semicolon and surrounding comments do not make it two. Callers
+    that route on statement type need this separately from
+    :func:`validate_read_only_sql`, which folds it into one violation code.
+    """
+    normalized = strip_sql_comments(sql).strip().rstrip(";").strip()
+    if not normalized:
+        return False
+    return _first_statement(normalized) == normalized
+
+
 def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLType]:
     """Classify one SQL statement and identify read-only safety violations.
 
@@ -764,7 +777,7 @@ def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLTy
     """
     cleaned = strip_sql_comments(sql).strip()
     normalized_sql = cleaned.rstrip(";").strip()
-    if normalized_sql and _first_statement(normalized_sql) != normalized_sql:
+    if normalized_sql and not is_single_statement(normalized_sql):
         return READ_ONLY_MULTI_STATEMENT, SQLType.UNKNOWN
 
     sql_type = parse_sql_type(sql, dialect)
