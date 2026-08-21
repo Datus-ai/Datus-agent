@@ -683,24 +683,26 @@ class TestDescribeTableConstraintPassthrough:
         tool._table_semantic_profiles = Mock()
         tool.has_semantic_models = True
         tool._semantic_storage = Mock()
-        tool._table_semantic_profiles.get_profile.return_value = {
-            "format": "osi",
-            "physical_table_fq_name": "main.orders",
-            "semantic_model_name": "shop",
-            "dataset_name": "orders",
-            "data_source_name": "",
-            "description": "Orders dataset",
-            "ai_context_json": "",
-            "columns_json": (
-                "["
-                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
-                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
-                "]"
-            ),
-            "relationships_json": "[]",
-            "custom_extensions_json": "",
-            "yaml_path": "/tmp/orders.yml",
-        }
+        tool._table_semantic_profiles.list_datasets.return_value = [
+            {
+                "format": "osi",
+                "physical_table_fq_name": "main.orders",
+                "semantic_model_name": "shop",
+                "dataset_name": "orders",
+                "data_source_name": "",
+                "description": "Orders dataset",
+                "ai_context_json": "",
+                "columns_json": (
+                    "["
+                    '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
+                    '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
+                    "]"
+                ),
+                "relationships_json": "[]",
+                "custom_extensions_json": "",
+                "yaml_path": "/tmp/orders.yml",
+            }
+        ]
 
         result = tool.describe_table("orders")
 
@@ -728,25 +730,27 @@ class TestDescribeTableSemanticProfile:
         tool._table_semantic_profiles = Mock()
         tool.has_semantic_models = True
         tool._semantic_storage = Mock()
-        tool._table_semantic_profiles.get_profile.return_value = {
-            "format": "osi",
-            "physical_table_fq_name": "main.orders",
-            "semantic_model_name": "shop",
-            "dataset_name": "orders",
-            "data_source_name": "",
-            "description": "Orders dataset",
-            "ai_context_json": '{"synonyms": ["purchases"]}',
-            "columns_json": (
-                "["
-                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
-                '{"name":"order_date","expr":"order_date","role":"time_dimension","description":"Order date"},'
-                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
-                "]"
-            ),
-            "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
-            "custom_extensions_json": "",
-            "yaml_path": "/tmp/orders.yml",
-        }
+        tool._table_semantic_profiles.list_datasets.return_value = [
+            {
+                "format": "osi",
+                "physical_table_fq_name": "main.orders",
+                "semantic_model_name": "shop",
+                "dataset_name": "orders",
+                "data_source_name": "",
+                "description": "Orders dataset",
+                "ai_context_json": '{"synonyms": ["purchases"]}',
+                "columns_json": (
+                    "["
+                    '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
+                    '{"name":"order_date","expr":"order_date","role":"time_dimension","description":"Order date"},'
+                    '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
+                    "]"
+                ),
+                "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
+                "custom_extensions_json": "",
+                "yaml_path": "/tmp/orders.yml",
+            }
+        ]
 
         result = tool.describe_table("orders")
 
@@ -786,22 +790,24 @@ class TestDescribeTableSemanticProfile:
 
         tool = DBFuncTool(mock_connector)
         tool._table_semantic_profiles = Mock()
-        tool._table_semantic_profiles.get_profile.return_value = {
-            "table_name": "orders",
-            "semantic_model_name": "orders_source",
-            "dataset_name": "",
-            "data_source_name": "orders_source",
-            "description": "Orders data source",
-            "ai_context_json": '{"synonyms": ["sales orders"]}',
-            "columns_json": (
-                "["
-                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
-                '{"name":"order_date","expr":"order_date","role":"time_dimension","description":"Order date"},'
-                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount","agg":"sum"}'
-                "]"
-            ),
-            "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
-        }
+        tool._table_semantic_profiles.list_datasets.return_value = [
+            {
+                "table_name": "orders",
+                "semantic_model_name": "orders_source",
+                "dataset_name": "",
+                "data_source_name": "orders_source",
+                "description": "Orders data source",
+                "ai_context_json": '{"synonyms": ["sales orders"]}',
+                "columns_json": (
+                    "["
+                    '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
+                    '{"name":"order_date","expr":"order_date","role":"time_dimension","description":"Order date"},'
+                    '{"name":"amount","expr":"amount","role":"measure","description":"Order amount","agg":"sum"}'
+                    "]"
+                ),
+                "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
+            }
+        ]
 
         result = tool.describe_table("orders")
 
@@ -821,6 +827,165 @@ class TestDescribeTableSemanticProfile:
         assert columns["amount"]["comment"] == "Order amount"
         assert "is_measure" not in columns["amount"]
         assert "is_entity_key" not in columns["order_id"]
+
+
+class TestDescribeTableMultipleDatasets:
+    """One physical table may be modelled by several semantic models.
+
+    The primary dataset alone supplies the meaning; the rest are navigation.
+    Merging them would assert a join graph that exists in neither model, since
+    OSI relationships reference dataset names local to their own model.
+    """
+
+    def _make_tool(self, datasets):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.get_schema.return_value = [
+            {"name": "order_id", "type": "INTEGER", "comment": ""},
+            {"name": "amount", "type": "DOUBLE", "comment": ""},
+        ]
+        tool = DBFuncTool(mock_connector)
+        tool._table_semantic_profiles = Mock()
+        tool._table_semantic_profiles.list_datasets.return_value = datasets
+        return tool
+
+    @staticmethod
+    def _dataset(model, *, description, column_description, relationship_to):
+        return {
+            "table_name": "orders",
+            "semantic_model_name": model,
+            "dataset_name": "orders",
+            "data_source_name": "",
+            "description": description,
+            "ai_context_json": "",
+            "columns_json": ('[{"name":"amount","expr":"amount","role":"measure","description":"%s"}]')
+            % column_description,
+            "relationships_json": ('[{"name":"orders_to_%s","to_dataset":"%s"}]') % (relationship_to, relationship_to),
+            "yaml_path": f"/tmp/{model}.yml",
+        }
+
+    def _two_datasets(self):
+        return [
+            self._dataset(
+                "fulfillment",
+                description="Orders being shipped",
+                column_description="Shipped amount",
+                relationship_to="shipments",
+            ),
+            self._dataset(
+                "sales",
+                description="Orders booked",
+                column_description="Booked amount",
+                relationship_to="customers",
+            ),
+        ]
+
+    def test_single_dataset_output_carries_no_disambiguation_keys(self):
+        """The common case must stay byte-identical for existing consumers."""
+        tool = self._make_tool([self._two_datasets()[0]])
+
+        table = tool.describe_table("orders").result["table"]
+
+        assert "alternatives" not in table
+        assert "semantic_model" not in table
+
+    def test_primary_dataset_alone_supplies_meaning(self):
+        tool = self._make_tool(self._two_datasets())
+
+        result = tool.describe_table("orders").result
+
+        assert result["table"]["description"] == "Orders being shipped"
+        assert result["table"]["semantic_model"] == "fulfillment"
+        columns = {col["name"]: col for col in result["columns"]}
+        assert columns["amount"]["semantic_description"] == "Shipped amount"
+
+    def test_relationships_are_never_merged_across_models(self):
+        tool = self._make_tool(self._two_datasets())
+
+        relationships = tool.describe_table("orders").result["semantic"]["relationships"]
+
+        assert relationships == [{"name": "orders_to_shipments", "to_dataset": "shipments"}]
+
+    def test_other_models_are_surfaced_as_navigation(self):
+        tool = self._make_tool(self._two_datasets())
+
+        alternatives = tool.describe_table("orders").result["table"]["alternatives"]
+
+        assert alternatives == [
+            {
+                "semantic_model": "sales",
+                "dataset": "orders",
+                "description": "Orders booked",
+                "yaml_path": "/tmp/sales.yml",
+            }
+        ]
+
+    def test_semantic_model_argument_is_passed_down_to_storage(self):
+        tool = self._make_tool(self._two_datasets()[1:])
+
+        tool.describe_table("orders", semantic_model="sales")
+
+        assert tool._table_semantic_profiles.list_datasets.call_args.kwargs["semantic_model"] == "sales"
+
+
+class TestSearchTableWithSharedTable:
+    """A table modelled by two semantic models must not break table discovery.
+
+    The pre-profile lookup raises in exactly that case, and search_table had no
+    inner guard, so a single shared table failed the entire search.
+    """
+
+    def _make_tool(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        tool = DBFuncTool(mock_connector)
+        tool.has_schema = True
+        tool.schema_rag = Mock()
+        tool.schema_rag.search_similar.return_value = (Mock(num_rows=1), None)
+        tool._metadata_search_rows = Mock(
+            return_value=[
+                {
+                    "catalog_name": "",
+                    "database_name": "shop",
+                    "schema_name": "",
+                    "table_name": "orders",
+                    "identifier": "shop.orders",
+                    "description": "raw metadata description",
+                }
+            ]
+        )
+        tool._sample_rows_by_identifier = Mock(return_value={})
+        tool._search_table_result_row = lambda row, _samples: row
+        return tool
+
+    def test_search_survives_a_table_owned_by_two_models(self):
+        tool = self._make_tool()
+        tool._table_semantic_profiles = Mock()
+        tool._table_semantic_profiles.list_datasets.return_value = [
+            {"semantic_model_name": "fulfillment", "dataset_name": "orders", "description": "Orders being shipped"},
+            {"semantic_model_name": "sales", "dataset_name": "orders", "description": "Orders booked"},
+        ]
+
+        result = tool.search_table("orders")
+
+        assert result.success == 1
+        assert result.result["metadata"][0]["description"] == "Orders being shipped"
+
+    def test_raising_legacy_lookup_does_not_fail_the_search(self):
+        tool = self._make_tool()
+        tool._table_semantic_profiles = None
+        tool.has_semantic_models = True
+        tool._semantic_storage = Mock()
+        tool._semantic_storage.get_semantic_model.side_effect = RuntimeError(
+            "Table `orders` belongs to multiple semantic models"
+        )
+
+        result = tool.search_table("orders")
+
+        assert result.success == 1
+        assert result.result["metadata"][0]["description"] == "raw metadata description"
 
 
 class TestExecuteDDLDatabaseParam:

@@ -27,7 +27,7 @@
 ```python
 # 在 agent 对话或工作流中
 # 搜索相关指标
-search_semantic_objects(query="daily active users", kinds=["metric"])
+search_metrics(query_text="daily active users")
 
 # 执行指标查询
 query_metrics(
@@ -39,7 +39,7 @@ query_metrics(
 ```
 
 **指标优先策略**：当用户查询涉及 KPI（例如 "按平台展示 DAU"）时，agent 将：
-1. 使用 `search_semantic_objects` 搜索匹配的指标
+1. 使用 `search_metrics` 搜索匹配的指标
 2. 如果找到，通过 `query_metrics` 执行（首选）
 3. 仅当不存在指标时才回退到临时 SQL 生成
 

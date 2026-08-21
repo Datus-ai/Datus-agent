@@ -302,22 +302,41 @@ class TestSearchSemanticObjects:
         result = tools.search_semantic_objects("amount column", kinds=["column"])
 
         assert result.success == 1
-        semantic_rag.storage.search_objects.assert_called_once_with(
-            query_text="amount column",
-            kinds=["column"],
-            top_n=5,
-        )
+        called = semantic_rag.storage.search_objects.call_args.kwargs
+        assert called["query_text"] == "amount column"
+        assert called["kinds"] == ["column"]
+        assert called["top_n"] == 5
 
     def test_null_kinds_normalized(self, build_tools):
         tools, _, _, semantic_rag = build_tools(semantic_cfg={"size": 1, "search_return": []})
 
         tools.search_semantic_objects("test", kinds="null")
 
-        semantic_rag.storage.search_objects.assert_called_once_with(
-            query_text="test",
-            kinds=None,
-            top_n=5,
-        )
+        called = semantic_rag.storage.search_objects.call_args.kwargs
+        assert called["query_text"] == "test"
+        assert called["kinds"] is None
+
+    def test_search_is_scoped_to_the_current_datasource(self, build_tools):
+        """The physical table is shared across a project, so an unscoped search
+        reaches other datasources' semantic objects."""
+        tools, _, _, semantic_rag = build_tools(semantic_cfg={"size": 1, "search_return": []})
+        semantic_rag._sub_agent_conditions.return_value = ["datasource_id = 'shop'"]
+
+        tools.search_semantic_objects("orders")
+
+        called = semantic_rag.storage.search_objects.call_args.kwargs
+        assert called["extra_conditions"] == ["datasource_id = 'shop'"]
+
+    def test_metric_kind_is_rejected_instead_of_returning_empty(self, build_tools):
+        """This store excludes metrics, so an empty success reads as "no such
+        metric" and sends the caller down the wrong path."""
+        tools, _, _, semantic_rag = build_tools(semantic_cfg={"size": 1, "search_return": []})
+
+        result = tools.search_semantic_objects("daily active users", kinds=["metric"])
+
+        assert result.success == 0
+        assert "search_metrics" in result.error
+        semantic_rag.storage.search_objects.assert_not_called()
 
     def test_exception_returns_failure(self, build_tools):
         tools, _, _, semantic_rag = build_tools(

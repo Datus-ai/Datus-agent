@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _PROFILE_TABLE_FIELDS = ["catalog_name", "database_name", "schema_name", "table_name"]
+_DATASET_ORDER_FIELDS = ("semantic_model_name", "dataset_name")
 
 
 class TableSemanticProfileStorage(BaseEmbeddingStore):
@@ -145,20 +146,39 @@ class TableSemanticProfileRAG:
             self.upsert_batch(rows)
         self.create_indices()
 
-    def get_profile(
+    def list_datasets(
         self,
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
         table_name: str = "",
+        semantic_model: str = "",
         select_fields: Optional[List[str]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        if not table_name:
-            logger.warning("get_profile called without table_name")
-            return None
+    ) -> List[Dict[str, Any]]:
+        """Return every semantic dataset bound to one physical table, primary first.
 
+        One physical table may be modelled by several semantic models, so the
+        full set is returned instead of an arbitrary winner.
+
+        Ordering is a lexicographic sort on ``(semantic_model_name,
+        dataset_name)``. It deliberately uses no relevance score: this is a
+        scalar point lookup, so neither backend produces a distance column, and
+        neither guarantees row order without an explicit sort — LanceDB scans
+        without a query vector and PostgreSQL returns heap order.
+
+        ``semantic_model`` filters rather than re-ranks: a caller that already
+        knows the model wants that model or nothing.
+        """
+        if not table_name:
+            logger.warning("list_datasets called without table_name")
+            return []
+
+        query_fields = self._with_order_fields(select_fields)
         base_conds = self._sub_agent_conditions()
-        table_conds = [eq("table_name", table_name)] + base_conds
+        if semantic_model:
+            base_conds = [*base_conds, eq("semantic_model_name", semantic_model)]
+
+        table_conds = [eq("table_name", table_name), *base_conds]
         if catalog_name:
             table_conds.append(eq("catalog_name", catalog_name))
         if database_name:
@@ -166,11 +186,14 @@ class TableSemanticProfileRAG:
         if schema_name:
             table_conds.append(eq("schema_name", schema_name))
 
-        rows = self.storage._search_all(where=And(table_conds), select_fields=select_fields).to_pylist()
+        rows = self.storage._search_all(where=And(table_conds), select_fields=query_fields).to_pylist()
 
         if not rows and (catalog_name or database_name or schema_name):
-            broad_conds = [eq("table_name", table_name)] + base_conds
-            broad_rows = self.storage._search_all(where=And(broad_conds), select_fields=select_fields).to_pylist()
+            broad_conds = [eq("table_name", table_name), *base_conds]
+            broad_rows = self.storage._search_all(where=And(broad_conds), select_fields=query_fields).to_pylist()
+            # A lone namespace-compatible hit is an unqualified reference to this
+            # table. Several hits mean the coordinates cannot tell them apart, so
+            # nothing is returned rather than a guess.
             rows = (
                 broad_rows
                 if len(broad_rows) == 1
@@ -184,16 +207,56 @@ class TableSemanticProfileRAG:
             )
 
         if not rows and table_name.lower() != table_name:
-            lower_conds = [eq("table_name", table_name.lower())] + base_conds
+            lower_conds = [eq("table_name", table_name.lower()), *base_conds]
             if catalog_name:
                 lower_conds.append(eq("catalog_name", catalog_name))
             if database_name:
                 lower_conds.append(eq("database_name", database_name))
             if schema_name:
                 lower_conds.append(eq("schema_name", schema_name))
-            rows = self.storage._search_all(where=And(lower_conds), select_fields=select_fields).to_pylist()
+            rows = self.storage._search_all(where=And(lower_conds), select_fields=query_fields).to_pylist()
 
+        rows.sort(key=self._dataset_sort_key)
+        return self._project(rows, select_fields)
+
+    def get_profile(
+        self,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_name: str = "",
+        semantic_model: str = "",
+        select_fields: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the primary semantic dataset for one physical table, if any."""
+        rows = self.list_datasets(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_name=table_name,
+            semantic_model=semantic_model,
+            select_fields=select_fields,
+        )
         return rows[0] if rows else None
+
+    @staticmethod
+    def _dataset_sort_key(row: Dict[str, Any]) -> tuple:
+        return tuple(str(row.get(name) or "") for name in _DATASET_ORDER_FIELDS)
+
+    @staticmethod
+    def _with_order_fields(select_fields: Optional[List[str]]) -> Optional[List[str]]:
+        """Widen a projection so the sort keys are always readable."""
+        if not select_fields:
+            return None
+        missing = [name for name in _DATASET_ORDER_FIELDS if name not in select_fields]
+        return [*select_fields, *missing] if missing else list(select_fields)
+
+    @staticmethod
+    def _project(rows: List[Dict[str, Any]], select_fields: Optional[List[str]]) -> List[Dict[str, Any]]:
+        """Narrow rows back to what the caller asked for."""
+        if not select_fields:
+            return rows
+        return [{name: row.get(name) for name in select_fields} for row in rows]
 
     @staticmethod
     def _namespace_compatible(

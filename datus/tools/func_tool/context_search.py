@@ -401,29 +401,45 @@ class ContextSearchTools:
         top_n: int = 5,
     ) -> FuncToolResult:
         """
-        Search for semantic objects (metrics, columns, tables) using unified storage.
+        Search modelled tables and columns by description, using the semantic object store.
 
         Args:
             query_text: Natural language query describing what you're looking for
-            kinds: List of object kinds to filter by. Options: ["metric", "column", "table", "entity"]
-                   If None, searches all kinds
+            kinds: List of object kinds to filter by. Options: ["table", "column"].
+                   If None, searches all kinds. Metrics are not in this store — use
+                   `search_metrics` for those.
             top_n: Maximum number of results to return (default 5)
 
         Returns:
-            FuncToolResult with list of matching objects containing:
-                - kind: Type of object ("metric", "column", "table", "entity")
+            FuncToolResult with list of matching objects, most relevant first, each containing:
+                - kind: Type of object ("table" or "column")
                 - name: Object name
                 - description: Detailed description
-                - _distance: Similarity score (lower is better)
-                - Additional fields specific to object kind (e.g., available_dimensions for metrics)
+                - table_name: The table the object belongs to
         """
         # Normalize null values from LLM
         kinds = normalize_null(kinds)
+        requested_kinds = [kinds] if isinstance(kinds, str) else list(kinds or [])
+        if any(str(kind).strip().lower() == "metric" for kind in requested_kinds):
+            # This store deliberately excludes metrics, so a metric kind used to
+            # return an empty success — which reads as "no such metric" rather
+            # than "wrong tool" and sends the caller down the wrong path.
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "search_semantic_objects covers modelled tables and columns only; "
+                    "metrics are stored separately. Use search_metrics instead."
+                ),
+                result=None,
+            )
         try:
             results = self.semantic_rag.storage.search_objects(
                 query_text=query_text,
                 kinds=kinds,
                 top_n=top_n,
+                # Without this the search reaches every datasource in the
+                # project, since the physical table is shared across them.
+                extra_conditions=self.semantic_rag._sub_agent_conditions(),
             )
 
             logger.debug(f"search_semantic_objects results: {results}")

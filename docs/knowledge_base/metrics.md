@@ -27,7 +27,7 @@ Once metrics are defined, query them directly using MetricFlow tools:
 ```python
 # In agent conversation or workflow
 # Search for relevant metrics
-search_semantic_objects(query="daily active users", kinds=["metric"])
+search_metrics(query_text="daily active users")
 
 # Execute metric query
 query_metrics(
@@ -39,7 +39,7 @@ query_metrics(
 ```
 
 **Metrics-First Strategy**: When user queries involve KPIs (e.g., "show me DAU by platform"), the agent will:
-1. Search for matching metrics using `search_semantic_objects`
+1. Search for matching metrics using `search_metrics`
 2. Execute via `query_metrics` if found (preferred)
 3. Fall back to ad-hoc SQL generation only if no metric exists
 

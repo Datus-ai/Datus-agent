@@ -67,6 +67,89 @@ def test_get_profile_lowercase_fallback_runs_after_ambiguous_broad_lookup():
     assert result == expected
 
 
+def test_list_datasets_returns_every_model_for_one_table():
+    rows = [
+        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+    ]
+    rag = _rag_with_rows(rows)
+
+    result = rag.list_datasets(table_name="orders")
+
+    assert [row["semantic_model_name"] for row in result] == ["fulfillment", "sales"]
+
+
+def test_list_datasets_order_does_not_depend_on_storage_row_order():
+    """Neither backend guarantees row order for a scalar scan, so the sort has
+    to come from the data: LanceDB scans without a query vector and PostgreSQL
+    returns heap order, which shifts after UPDATE/VACUUM."""
+    forward = [
+        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+    ]
+    reversed_rows = list(reversed(forward))
+
+    first = _rag_with_rows(forward).list_datasets(table_name="orders")
+    second = _rag_with_rows(reversed_rows).list_datasets(table_name="orders")
+
+    assert first == second
+    assert [row["semantic_model_name"] for row in first] == ["fulfillment", "sales"]
+
+
+def test_list_datasets_breaks_ties_on_dataset_name():
+    rows = [
+        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders_returned"},
+        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders_all"},
+    ]
+    rag = _rag_with_rows(rows)
+
+    result = rag.list_datasets(table_name="orders")
+
+    assert [row["dataset_name"] for row in result] == ["orders_all", "orders_returned"]
+
+
+def test_list_datasets_filters_on_semantic_model_instead_of_reranking():
+    rag = _rag_with_rows([{"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"}])
+
+    result = rag.list_datasets(table_name="orders", semantic_model="fulfillment")
+
+    assert [row["semantic_model_name"] for row in result] == ["fulfillment"]
+    where = rag.storage._search_all.call_args.kwargs["where"]
+    assert "fulfillment" in str(where)
+
+
+def test_list_datasets_without_table_name_returns_empty():
+    rag = _rag_with_rows([{"table_name": "orders"}])
+
+    assert rag.list_datasets(table_name="") == []
+    rag.storage._search_all.assert_not_called()
+
+
+def test_list_datasets_projects_back_to_requested_fields():
+    """Sort keys are read even when the caller did not ask for them."""
+    rows = [
+        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+    ]
+    rag = _rag_with_rows(rows)
+
+    result = rag.list_datasets(table_name="orders", select_fields=["table_name"])
+
+    assert result == [{"table_name": "orders"}, {"table_name": "orders"}]
+    queried = rag.storage._search_all.call_args.kwargs["select_fields"]
+    assert set(queried) == {"table_name", "semantic_model_name", "dataset_name"}
+
+
+def test_get_profile_returns_the_primary_dataset():
+    rows = [
+        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+    ]
+    rag = _rag_with_rows(rows)
+
+    assert rag.get_profile(table_name="orders")["semantic_model_name"] == "fulfillment"
+
+
 def _artifact_rag():
     rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
     rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(mode="vector"), kb_search_mode="vector")

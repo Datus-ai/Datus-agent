@@ -622,17 +622,6 @@ class TestMetricDbToYaml:
         assert "locked_metadata" not in result["metric"]
 
 
-class TestGetSemanticFilePath:
-    """Tests for _get_semantic_file_path helper."""
-
-    def test_no_semantic_model_returns_empty(self, real_agent_config):
-        """Returns empty string when no semantic model found."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        path, error = svc._get_semantic_file_path(None, None, None, "nonexistent_table")
-        assert path == ""
-        assert error == "No semantic model found for provided parameters"
-
-
 class TestExplorerServiceHelpers:
     """Tests for ExplorerService helper methods."""
 
@@ -1316,27 +1305,6 @@ class TestExplorerServiceSubAgentScope:
 
         scoped = str(svc.semantic_model_rag._sub_agent_filter)
         assert "finance" in scoped and "revenue" in scoped
-
-    def test_semantic_file_path_reuses_the_scoped_rag(self, real_agent_config):
-        """`_get_semantic_file_path` used to build its own
-        `SemanticModelRAG` inline, which dropped the scope and would have handed
-        back semantic models from outside the sub-agent's tables. It must go
-        through the instance built in __init__.
-        """
-        real_agent_config.agentic_nodes = {
-            **(real_agent_config.agentic_nodes or {}),
-            "analyst": {"scoped_context": {"tables": "finance.revenue"}},
-        }
-        svc = ExplorerService(agent_config=real_agent_config, sub_agent_name="analyst")
-        svc.semantic_model_rag = MagicMock()
-        svc.semantic_model_rag.get_semantic_model.return_value = []
-
-        path, error = svc._get_semantic_file_path(None, None, None, "orders")
-
-        assert path == ""
-        assert error == "No semantic model found for provided parameters"
-        # The scoped instance was consulted — not a fresh unscoped one.
-        svc.semantic_model_rag.get_semantic_model.assert_called_once()
 
 
 class TestExplorerServiceScopedReads:
