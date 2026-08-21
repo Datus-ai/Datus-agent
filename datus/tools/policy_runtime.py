@@ -10,11 +10,33 @@ the meaning of ``policy_context`` and the concrete read transformations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Optional
 
 from datus.plugins.registry import collect_plugin_policy_runtime_factories
 from datus.utils.exceptions import DatusException, ErrorCode
+
+#: Sibling key on ``policy_context`` carrying *why* SaaS denied this caller.
+#:
+#: Written by Datus-backend when it assembles the context; policy plugins read
+#: only ``row_filter`` and ignore it. See ``saas_provider._DENIAL_KEY``.
+_DENIAL_KEY = "x_saas_denial"
+
+
+def _explain(context: Dict[str, Any], reason: Optional[str]) -> Optional[str]:
+    """Append SaaS' explanation to a plugin's refusal.
+
+    A plugin can only report that context validation failed. It does not know
+    whose attributes are missing — or that attributes are involved at all — so
+    the person reading "Policy context denies all data reads" has nothing to
+    act on and no way to tell a gap in their own profile from a broken policy.
+    SaaS decides ``access_mode`` precisely so the refusal can be explained;
+    this is where that explanation reaches the caller.
+    """
+    detail = context.get(_DENIAL_KEY)
+    if not isinstance(detail, str) or not detail.strip():
+        return reason
+    return f"{(reason or 'Policy denied the query').rstrip('. ')}: {detail.strip()}"
 
 
 @dataclass(frozen=True)
@@ -84,7 +106,7 @@ class PolicyRuntime:
             raw = self._invoke(plugin_name, "validate_context", hook, context)
             decision = self._validation_decision(plugin_name, raw)
             if not decision.allowed:
-                return decision
+                return replace(decision, reason=_explain(context, decision.reason))
         return PolicyValidationResult(allowed=True)
 
     def before_sql_read(
@@ -113,7 +135,7 @@ class PolicyRuntime:
             )
             decision = self._sql_decision(plugin_name, raw, current_sql)
             if not decision.allowed:
-                return decision
+                return replace(decision, reason=_explain(context, decision.reason))
             current_sql = decision.sql if decision.sql is not None else current_sql
             applied.extend(decision.applied_policies)
         return SqlReadDecision(allowed=True, sql=current_sql, applied_policies=applied)
@@ -146,7 +168,7 @@ class PolicyRuntime:
             )
             decision = self._result_decision(plugin_name, raw, current_result)
             if not decision.allowed:
-                return decision
+                return replace(decision, reason=_explain(context, decision.reason))
             current_result = decision.result
             applied.extend(decision.applied_policies)
         return ReadResultDecision(allowed=True, result=current_result, applied_policies=applied)
