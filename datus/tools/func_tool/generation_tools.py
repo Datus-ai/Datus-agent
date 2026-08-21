@@ -995,12 +995,6 @@ class GenerationTools:
             or "",
         }
 
-    @staticmethod
-    def _dataset_table_name(dataset: Any) -> str:
-        source = getattr(dataset, "source", None)
-        table = getattr(source, "table", None) or getattr(dataset, "name", "")
-        return str(table).split(".")[-1]
-
     def _dataset_db_parts(self, dataset: Any, default_db_parts: dict[str, str]) -> dict[str, str]:
         """Hierarchy for one dataset: a qualified source table overrides the
         connection defaults, so same-named tables in different databases keep
@@ -1303,47 +1297,6 @@ class GenerationTools:
         except Exception as e:
             logger.error(f"Error syncing OSI semantic objects to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
-
-    @staticmethod
-    def _osi_column_object(
-        *,
-        table_name: str,
-        table_fq_name: str,
-        semantic_model_name: str,
-        name: str,
-        description: str,
-        expr: str,
-        column_type: str,
-        yaml_path: str,
-        db_parts: dict[str, str],
-        is_dimension: bool = False,
-        is_entity_key: bool = False,
-        time_granularity: str = "",
-    ) -> dict:
-        return {
-            "id": f"column:{semantic_model_name}:{table_fq_name}.{name}",
-            "kind": "column",
-            "name": name,
-            "fq_name": f"{table_fq_name}.{name}",
-            "table_name": table_name,
-            "description": description,
-            "is_dimension": is_dimension,
-            "is_measure": False,
-            "is_entity_key": is_entity_key,
-            "is_deprecated": False,
-            "yaml_path": yaml_path,
-            "updated_at": datetime.now().replace(microsecond=0),
-            **db_parts,
-            "semantic_model_name": semantic_model_name,
-            "expr": expr,
-            "column_type": column_type,
-            "agg": "",
-            "create_metric": False,
-            "agg_time_dimension": "",
-            "is_partition": False,
-            "time_granularity": time_granularity,
-            "entity": name if is_entity_key else "",
-        }
 
     def _build_osi_metric_objects(
         self,
