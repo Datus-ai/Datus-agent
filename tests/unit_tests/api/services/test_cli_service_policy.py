@@ -5,6 +5,7 @@ so a project with a row filter on ``orders`` still answered a hand-written
 ``SELECT * FROM orders`` with every row.
 """
 
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -37,6 +38,7 @@ def _service(monkeypatch, connector, db_tool):
     svc.current_db_connector = connector
     svc.current_datasource = "warehouse"
     svc._db_tool_cache = db_tool
+    svc._db_tool_lock = threading.Lock()
     svc._sql_tasks = {}
     svc._sql_tasks_lock = MagicMock()
     svc._sql_tasks_lock.__enter__ = lambda *_: None
@@ -53,12 +55,14 @@ def test_a_read_goes_through_the_enforced_path(monkeypatch):
     )
     svc = _service(monkeypatch, connector, db_tool)
 
-    svc._execute_sql_sync(
+    result = svc._execute_sql_sync(
         ExecuteSQLInput(sql_query="SELECT * FROM orders"),
         "task-1",
         {"row_filter": {"access_mode": "scoped", "store_ids": ["S001"]}},
     )
 
+    # Not just "it was called": the enforced path has to be a working path.
+    assert result.success is True
     db_tool.execute_read_enforced.assert_called_once()
     kwargs = db_tool.execute_read_enforced.call_args.kwargs
     # The caller's context, not the service's: DatusService is cached per
@@ -158,6 +162,7 @@ def test_unparseable_sql_does_not_reach_the_connector(monkeypatch):
     svc._execute_sql_sync(ExecuteSQLInput(sql_query="SELEKT * FROM orders"), "t", {})
 
     assert connector.executed == []
+    db_tool.execute_read_enforced.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -171,6 +176,13 @@ def test_unparseable_sql_does_not_reach_the_connector(monkeypatch):
         # Parsed, but its source is a table reference rather than a Select —
         # and `TO '/path'` / `TO PROGRAM` on a self-hosted PG is a real export.
         "COPY orders TO '/tmp/orders.csv'",
+        # No Select node anywhere in these trees, and every one of them reads
+        # `orders`. MERGE's whole purpose is to read a source table.
+        "UPDATE mine SET amount = orders.amount FROM orders WHERE mine.id = orders.id",
+        "DELETE FROM mine USING orders WHERE mine.id = orders.id",
+        "MERGE INTO mine USING orders ON mine.id = orders.id WHEN MATCHED THEN UPDATE SET amount = 1",
+        # RETURNING hands the rows straight back to the caller.
+        "DELETE FROM orders WHERE amount > 0 RETURNING *",
     ],
 )
 def test_a_write_that_reads_is_refused_when_policies_exist(monkeypatch, sql):
@@ -215,6 +227,19 @@ def test_the_same_write_is_allowed_without_policies(monkeypatch):
         # about the statement. Both of these are full copies of `orders`.
         ("CREATE TABLE mine AS TABLE orders", True),
         ("COPY orders TO STDOUT", True),
+        # A source table with no subquery: the arg key differs per node
+        # (`from_` on Update, `using` on Delete/Merge)…
+        ("UPDATE mine SET a = orders.a FROM orders WHERE mine.id = orders.id", True),
+        ("DELETE FROM mine USING orders WHERE mine.id = orders.id", True),
+        ("MERGE INTO mine USING orders ON mine.id = orders.id WHEN MATCHED THEN UPDATE SET a = 1", True),
+        # …and `Delete.using` is present-but-empty on a plain DELETE, so a
+        # `is not None` test refused every `DELETE ... WHERE`.
+        ("DELETE FROM mine WHERE id = 1", False),
+        ("UPDATE mine SET a = 1 WHERE id = 2", False),
+        # Rows leaving through RETURNING are read by definition.
+        ("DELETE FROM orders RETURNING *", True),
+        ("UPDATE orders SET a = 1 RETURNING *", True),
+        ("INSERT INTO mine VALUES (1) RETURNING *", True),
     ],
 )
 def test_read_detection_uses_a_dialect_sqlglot_knows(sql, reads):

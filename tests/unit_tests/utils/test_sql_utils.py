@@ -17,6 +17,7 @@ from datus.utils.sql_utils import (
     _metadata_pattern,
     extract_table_names,
     format_sql_to_pretty,
+    is_single_statement,
     looks_like_sql_file_ref,
     metadata_identifier,
     normalize_sql,
@@ -1868,3 +1869,43 @@ class TestTableNameFieldOrder:
         assert parsed["table_name"] == "*"
         for field in order[:-2]:
             assert parsed[field] == ""
+
+
+class TestStripSqlCommentsRespectsLiterals:
+    """A comment marker inside a string literal is not a comment.
+
+    The regex version cut `SELECT 'a--b' FROM t` down to `SELECT 'a` — and
+    `execute_ddl` / `execute_write` run the *stripped* text, so the truncation
+    reached the database rather than staying a parsing detail.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 'a--b' FROM t",
+            "SELECT 'a/*b*/c' FROM t",
+            'SELECT "col--x" FROM t',
+            "SELECT 'it''s--ok' FROM t",
+            "INSERT INTO t VALUES ('x;y')",
+            "SELECT $$a--b$$",
+            "COMMENT ON TABLE t IS 'a/*b*/c'",
+        ],
+    )
+    def test_markers_inside_literals_survive(self, sql):
+        assert strip_sql_comments(sql) == sql
+
+    @pytest.mark.parametrize(
+        "sql,expected",
+        [
+            ("SELECT 1 -- trailing\nFROM t", "SELECT 1  \nFROM t"),
+            ("SELECT /* mid */ 1", "SELECT   1"),
+            ("SELECT 1 -- unterminated", "SELECT 1  "),
+            ("SELECT /* unterminated 1", "SELECT  "),
+        ],
+    )
+    def test_real_comments_are_still_removed(self, sql, expected):
+        assert strip_sql_comments(sql) == expected
+
+    def test_a_semicolon_in_a_literal_is_not_a_second_statement(self):
+        assert is_single_statement("SELECT 'a;b' FROM t") is True
+        assert is_single_statement("SELECT 1; SELECT 2") is False

@@ -93,7 +93,11 @@ class CLIService:
 
         # Initialize database connection
         self.current_db_connector = None
-        self._db_tool_cache = None
+        self._db_tool_cache: Optional[func_tool_mod.DBFuncTool] = None
+        # `_execute_sql_sync` runs under `asyncio.to_thread`, so two clicks on
+        # Run can reach the lazy build below at the same time and each pay for
+        # a DBManager and three RAG indexes.
+        self._db_tool_lock = threading.Lock()
         if self.agent_config:
             self._initialize_connection()
 
@@ -191,15 +195,25 @@ class CLIService:
                 # a query is refused here.
                 reads = write_statement_reads_data(request.sql_query, self.current_db_connector.dialect)
                 if reads:
+                    message = (
+                        "This project has row-level policies, so a write statement that "
+                        "reads from a query is not allowed here — it would copy filtered "
+                        "rows into a table no policy covers. Create views and derived "
+                        "tables on the database side instead."
+                    )
+                    # Every other exit from here closes the action it opened;
+                    # returning without doing so leaves it PROCESSING forever
+                    # and the refusal never reaches the history.
+                    actions.update_action_by_id(
+                        sql_action.action_id,
+                        status=ActionStatus.FAILED,
+                        output={"error": message},
+                        messages=f"SQL execution refused: {message}",
+                    )
                     return Result(
                         success=False,
                         errorCode=ErrorCode.SQL_EXECUTION_ERROR,
-                        errorMessage=(
-                            "This project has row-level policies, so a write statement that "
-                            "reads from a query is not allowed here — it would copy filtered "
-                            "rows into a table no policy covers. Create views and derived "
-                            "tables on the database side instead."
-                        ),
+                        errorMessage=message,
                     )
 
             if is_write:
@@ -310,7 +324,7 @@ class CLIService:
                 errorMessage=str(e),
             )
 
-    def _db_tool(self):
+    def _db_tool(self) -> "func_tool_mod.DBFuncTool":
         """The tool that owns the enforced-read path, built once.
 
         Its constructor stands up a DBManager and three RAG indexes and sizes
@@ -319,7 +333,10 @@ class CLIService:
         policy context is the only per-request part and travels as an argument.
         """
         if self._db_tool_cache is None:
-            self._db_tool_cache = func_tool_mod.DBFuncTool(agent_config=self.agent_config)
+            with self._db_tool_lock:
+                # Re-check: the other thread may have finished while we waited.
+                if self._db_tool_cache is None:
+                    self._db_tool_cache = func_tool_mod.DBFuncTool(agent_config=self.agent_config)
         return self._db_tool_cache
 
     async def execute_sql(

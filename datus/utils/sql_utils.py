@@ -403,10 +403,63 @@ def _metadata_pattern() -> re.Pattern:
 
 
 def strip_sql_comments(sql: str) -> str:
-    """Remove /* ... */ and -- ... comments (simple but effective)."""
-    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
-    sql = re.sub(r"--.*?$", " ", sql, flags=re.MULTILINE)
-    return sql
+    """Remove ``/* ... */`` and ``-- ...`` comments.
+
+    Scanned rather than regexed, because a comment marker inside a string
+    literal is not a comment: ``re.sub`` on ``SELECT 'a--b' FROM t`` cuts the
+    statement down to ``SELECT 'a`` and hands that to whoever asked. Several
+    callers execute the stripped text, so the truncation reaches the database.
+    """
+    out: List[str] = []
+    i = 0
+    length = len(sql)
+    while i < length:
+        ch = sql[i]
+
+        # A quoted run is copied through whole; nothing inside it is a marker.
+        closer = {"'": "'", '"': '"', "`": "`", "[": "]"}.get(ch)
+        if closer:
+            out.append(ch)
+            i += 1
+            while i < length:
+                out.append(sql[i])
+                if sql[i] == closer:
+                    # A doubled quote is an escaped one, not the end.
+                    if i + 1 < length and sql[i + 1] == closer and closer != "]":
+                        out.append(sql[i + 1])
+                        i += 2
+                        continue
+                    if closer == "]" or not _is_escaped(sql, i):
+                        i += 1
+                        break
+                i += 1
+            continue
+
+        if ch == "$":
+            tag = _match_dollar_tag(sql, i)
+            if tag:
+                end = sql.find(tag, i + len(tag))
+                stop = length if end == -1 else end + len(tag)
+                out.append(sql[i:stop])
+                i = stop
+                continue
+
+        if sql.startswith("--", i):
+            end = sql.find("\n", i)
+            i = length if end == -1 else end
+            out.append(" ")
+            continue
+
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            i = length if end == -1 else end + 2
+            out.append(" ")
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
 
 
 def _is_escaped(text: str, index: int) -> bool:
@@ -755,41 +808,66 @@ READ_ONLY_WRITABLE_PRAGMA = "writable_pragma"
 
 
 def write_statement_reads_data(sql: str, dialect: str) -> bool:
-    """Whether a write statement carries a query inside it.
+    """Whether a write statement reads rows a row policy would have filtered.
 
-    ``CREATE TABLE ... AS SELECT`` and ``INSERT ... SELECT`` read rows a policy
-    would have filtered and land them somewhere no policy covers. The read
-    policy plugin cannot see this — it hooks reads, and these are writes — so
-    every surface that can run a write has to ask before running it.
+    ``CREATE TABLE ... AS SELECT`` is the obvious shape, but it is not the only
+    one: ``UPDATE ... FROM``, ``DELETE ... USING`` and ``MERGE ... USING`` all
+    name a source table with no ``Select`` node anywhere in the tree, and
+    ``RETURNING`` hands the rows straight back to the caller. Each reads rows a
+    policy would have withheld and puts them somewhere it does not cover. The
+    read policy plugin cannot see any of it — it hooks reads, and these are
+    writes — so every surface that can run a write has to ask before running it.
 
-    Anything the parser did not actually understand means yes. On a project with
-    policies the cost of being wrong in that direction is a refused statement;
-    the other direction is a silent copy of the rows the policy exists to
-    withhold.
+    Anything the parser did not actually understand counts as yes. On a project
+    with policies the cost of being wrong in that direction is a refused
+    statement; the other direction is a silent copy of the rows the policy
+    exists to withhold.
     """
-    try:
-        import sqlglot
+    import sqlglot
+    from sqlglot import exp
 
+    try:
+        # RAISE, not IGNORE. IGNORE does not raise on syntax it cannot place —
+        # it returns an opaque `Command` whose body was never parsed, so
+        # "no Select inside" says nothing about the statement. Every unparsed
+        # shape has to reach the `except` and be refused.
+        #
         # `parse_dialect`, not the connector's own name: a connector reports
-        # `postgresql` while sqlglot only knows `postgres`, and handing it the
-        # raw value raises — which this function reads as "yes, it contains a
-        # read" and refuses every write, plain `CREATE TABLE` included.
-        parsed = sqlglot.parse_one(sql, read=parse_dialect(dialect), error_level=sqlglot.ErrorLevel.IGNORE)
+        # `postgresql` while sqlglot only knows `postgres`, and handing over the
+        # raw value raises for every statement — which this function reads as
+        # "contains a read" and refuses every write, plain `CREATE TABLE`
+        # included.
+        parsed = sqlglot.parse_one(sql, read=parse_dialect(dialect), error_level=sqlglot.ErrorLevel.RAISE)
     except Exception:
         return True
-    if parsed is None:
+    if parsed is None or isinstance(parsed, exp.Command):
         return True
 
-    # IGNORE does not raise on syntax sqlglot cannot place — it hands back an
-    # opaque `Command` whose body was never parsed, so `find_all(Select)` is
-    # empty for reasons that have nothing to do with the statement. Postgres'
-    # `CREATE TABLE mine AS TABLE orders` lands here and is a full CTAS.
-    # `COPY` is parsed but its source is a table reference rather than a
-    # Select, and `COPY ... TO '/path'` / `TO PROGRAM` is a real export.
-    if isinstance(parsed, (sqlglot.exp.Command, sqlglot.exp.Copy)):
+    # `COPY` parses, but its source is a table reference rather than a Select,
+    # and `COPY ... TO '/path'` / `TO PROGRAM` on a self-hosted server is a real
+    # export.
+    if isinstance(parsed, exp.Copy):
         return True
 
-    return bool(list(parsed.find_all(sqlglot.exp.Select)))
+    # Rows leaving through RETURNING are read by definition.
+    if parsed.args.get("returning") or list(parsed.find_all(exp.Returning)):
+        return True
+
+    if list(parsed.find_all(exp.Select)):
+        return True
+
+    # A source table named without a subquery: `UPDATE t SET .. FROM src`,
+    # `DELETE FROM t USING src`, `MERGE INTO t USING src`. Each reads `src`
+    # while the tree holds no Select at all.
+    #
+    # The key differs per node — Update calls it `from_` — and `Delete.using`
+    # is present but empty on a plain DELETE, so this tests truthiness rather
+    # than `is not None`, which refused every `DELETE ... WHERE`.
+    source_key = {exp.Update: "from_", exp.Delete: "using", exp.Merge: "using"}.get(type(parsed))
+    if source_key and parsed.args.get(source_key):
+        return True
+
+    return False
 
 
 def is_single_statement(sql: str) -> bool:
