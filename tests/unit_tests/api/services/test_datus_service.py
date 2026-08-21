@@ -10,6 +10,7 @@ from datus.api.services.datus_service import DatusService
 from datus.api.services.explorer_service import ExplorerService
 from datus.api.services.kb_service import KbService
 from datus.api.services.mcp_service import MCPService
+from datus.utils.exceptions import DatusException
 
 
 class TestDatusServiceInit:
@@ -318,13 +319,51 @@ class TestSubAgentScopedServices:
         assert analyst is not None and auditor is not None
         assert str(analyst) != str(auditor)
 
-    def test_an_unknown_name_fails_open_not_closed(self, real_agent_config):
-        """Documents the sharp edge the callers must respect: `sub_agent_config`
-        is a plain dict lookup, so a name that is not an `agentic_nodes` key —
-        an entry's `id`, say — yields {} and the filter degrades to None. That
-        is 200-with-everything, not an error, which is why the id -> key
-        resolution has to happen before this boundary.
+    def test_an_unknown_name_is_refused(self, real_agent_config):
+        """The failure mode this must never have: `sub_agent_config` is a plain
+        dict lookup, so a name that is not an `agentic_nodes` key — an entry's
+        `id`, a typo, a name left over from a rename — resolves to {} and the
+        filter degrades to None. Building that service would answer 200 with
+        everything, turning an identifier mistake into a scope bypass. Fail
+        closed.
         """
         svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
 
-        assert svc.explorer_for("no_such_sub_agent").semantic_model_rag._sub_agent_filter is None
+        with pytest.raises(DatusException) as excinfo:
+            svc.explorer_for("no_such_sub_agent")
+
+        assert "no_such_sub_agent" in str(excinfo.value)
+
+    def test_an_unknown_name_is_refused_for_tools_too(self, real_agent_config):
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        with pytest.raises(DatusException):
+            svc.tool_for("no_such_sub_agent")
+
+    def test_a_refused_name_is_not_cached(self, real_agent_config):
+        """A rejected name must leave no slot behind — otherwise a later lookup
+        could find a service that was never supposed to exist."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        with pytest.raises(DatusException):
+            svc.explorer_for("no_such_sub_agent")
+
+        assert "no_such_sub_agent" not in svc._explorers
+
+    def test_the_error_does_not_enumerate_other_sub_agents(self, real_agent_config):
+        """On a deployment that publishes one sub-agent to a consumer, naming
+        the others in an error is a disclosure in its own right."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        with pytest.raises(DatusException) as excinfo:
+            svc.explorer_for("no_such_sub_agent")
+
+        message = str(excinfo.value)
+        assert "analyst" not in message
+        assert "auditor" not in message
+
+    def test_has_sub_agent_distinguishes_configured_names(self, real_agent_config):
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        assert svc.has_sub_agent("analyst") is True
+        assert svc.has_sub_agent("no_such_sub_agent") is False

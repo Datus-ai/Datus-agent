@@ -31,7 +31,10 @@ class AppContext:
     # cached DatusService. The AuthProvider fills it from whatever transport
     # convention that host uses, so Agent needs no knowledge of the header.
     #
-    # Must be the ``agentic_nodes`` key, not an entry's ``id``: an ``id`` misses
-    # the lookup and degrades to no filter at all, returning 200 with
-    # unrestricted results. Providers resolve id -> key before setting this.
+    # Must be the ``agentic_nodes`` key, not an entry's ``id`` — only a key
+    # resolves to a scope. A value that resolves to nothing is refused with 400
+    # by ``deps.get_scoped_sub_agent`` before any scoped service is built, so a
+    # provider that sets an ``id`` here gets an error rather than an unfiltered
+    # read. Providers should still resolve id -> key so callers see a working
+    # request rather than a rejected one.
     sub_agent_name: Optional[str] = None

@@ -26,7 +26,7 @@ class ToolService:
         "search_semantic_objects",
     }
 
-    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None):
+    def __init__(self, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> None:
         """Build the tool registry, optionally scoped to one sub-agent.
 
         ``sub_agent_name`` must be the ``agentic_nodes`` key, never a config

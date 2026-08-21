@@ -4,7 +4,7 @@ Explorer service for catalog and subject tree management.
 
 import asyncio
 import os
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
@@ -27,6 +27,9 @@ from datus.api.models.explorer_models import (
 )
 from datus.utils.loggings import get_logger
 
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig
+
 logger = get_logger(__name__)
 
 
@@ -37,7 +40,7 @@ class ExplorerService:
     directories, metrics, and reference SQL.
     """
 
-    def __init__(self, agent_config, sub_agent_name: Optional[str] = None):
+    def __init__(self, agent_config: "AgentConfig", sub_agent_name: Optional[str] = None) -> None:
         """Initialize ExplorerService.
 
         Args:
