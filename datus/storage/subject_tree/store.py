@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
-from datus_storage_base.conditions import and_, in_, like
+from datus_storage_base.conditions import Node, and_, in_, like
 from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 
 from datus.storage import BaseEmbeddingStore
@@ -1231,7 +1231,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         node_id: int,
         name: Optional[str] = None,
         limit: Optional[int] = None,
-        extra_conditions: Optional[List] = None,
+        extra_conditions: Optional[List[Node]] = None,
     ) -> List[Dict[str, Any]]:
         """Get storage entries by subject node ID and entry name.
 
