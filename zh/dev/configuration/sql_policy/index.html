@@ -3038,6 +3038,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#agentsql_read_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        只读硬开关（agent.sql_read_only）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="只读硬开关（agent.sql_read_only）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        如何验证一个部署
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4205,6 +4233,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#agentsql_read_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        只读硬开关（agent.sql_read_only）
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="只读硬开关（agent.sql_read_only）">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        如何验证一个部署
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4305,6 +4361,78 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>sql-policy<span class="w"> </span>check<span class="w"> </span>--sql<span class="w"> </span><span class="s2">"SELECT * FROM orders"</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--policy-context<span class="w"> </span><span class="s1">'{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'</span>
 </span></code></pre></div>
+<h2 id="agentsql_read_only">只读硬开关（<code>agent.sql_read_only</code>）<a class="headerlink" href="#agentsql_read_only" title="Permanent link">&para;</a></h2>
+<p><code>agent.sql_read_only</code> 是另一套更简单的机制，不要与上面的 policy plugin 混淆。</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># 默认 false</span>
+</span></code></pre></div>
+<p>置为 <code>true</code> 后，该配置服务的所有 SQL 入口都不允许执行非只读语句：</p>
+<ul>
+<li><code>DBFuncTool.execute_sql</code>（暴露给 agentic node 与 MCP server 的工具）会硬拒绝 SELECT / SHOW / DESCRIBE / EXPLAIN 之外的任何语句。这与权限档位无关，在 <code>PermissionHooks</code> 被完全绕过的路径上同样生效（LLM validator 以 <code>hooks=None</code> 运行，MCP server 的工具实例根本不经过 hooks）。</li>
+<li>该工具的其它写入口同样拒绝，而不只是 <code>execute_sql</code> 这个分发入口：<code>execute_write</code>、<code>execute_ddl</code>、<code>transfer_query_result</code>。最后一个尤其关键——它从一个数据源读、向<strong>另一个</strong>数据源写（<code>CREATE TABLE</code> / <code>TRUNCATE</code> / <code>INSERT</code>），由 <code>gen_job</code> 单独挂载为工具，且完全不经过 <code>execute_sql</code>。</li>
+<li><code>POST /sql/execute</code> 拒绝任何不是<strong>单条</strong>只读语句的输入。多语句（<code>SELECT 1; DROP TABLE t</code>）、可写 <code>PRAGMA</code>、<code>USE</code> / <code>SET</code>，以及解析器无法归类的语句一律拒绝——判定是 fail-closed 的。需要切换数据库时请使用请求体的 <code>database_name</code> 字段，而不是 <code>USE</code>。</li>
+</ul>
+<p><code>DBFuncTool.read_only</code> 返回的是<strong>生效后</strong>的姿态，因此构造时没有传 <code>read_only</code> 的实例——MCP server 的 <code>create_dynamic</code> / <code>create_static</code> 工厂正是这样构造的——在加固过的部署上读出来仍是 <code>True</code>。</p>
+<p>与 policy plugin 的区别：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>agent.sql_read_only</code></th>
+<th>policy plugin</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>需要 plugin</td>
+<td>否</td>
+<td>是</td>
+</tr>
+<tr>
+<td>需要请求上下文</td>
+<td>否</td>
+<td>是——每请求的 <code>policy_context</code></td>
+</tr>
+<tr>
+<td>行为</td>
+<td>直接拒绝该语句</td>
+<td>按请求上下文重写或拒绝</td>
+</tr>
+<tr>
+<td>粒度</td>
+<td>全局、非黑即白</td>
+<td>行 / 表 / 列，按调用方</td>
+</tr>
+<tr>
+<td>覆盖 <code>POST /sql/execute</code></td>
+<td>是</td>
+<td>否（仅只读工具）</td>
+</tr>
+</tbody>
+</table>
+<p>该开关只能收紧：它以只读属性加一个单向的 <code>AgentConfig.harden_sql_read_only()</code> 暴露——每请求的配置副本可以自行加固，但下游任何代码都无法把 <code>true</code> 改回去；同时它也绝不会放松本就以只读运行的组件（Explore、<code>ask_report</code>、LLM validator）。</p>
+<p>适用场景：进程需要针对自有数据源运行第三方作者的 agent 内容（skill、subagent、reference template）。两套机制可以叠加使用——<code>sql_read_only</code> 限定「允许执行哪一类语句」，policy plugin 限定「某个调用方能读到什么」。</p>
+<h3 id="_4">如何验证一个部署<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<p>自动化覆盖位于 <code>tests/unit_tests/tools/func_tool/test_database.py</code>、<code>tests/integration/tools/test_func_tools_db.py</code> 与 <code>tests/integration/tools/test_mcp_server.py</code>。</p>
+<p>另有两个手工脚本，通过 MCP 端到端探测真实服务。两者都不在 CI 中运行，都会打印判定表格并在失败时以非零码退出：</p>
+<table>
+<thead>
+<tr>
+<th>脚本</th>
+<th>检查内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/e2e_sql_read_only_mcp.py</code></td>
+<td>自包含。搭建一次性 SQLite 工作区，跑「开关打开 / 关闭」对照矩阵，报告开关拒绝了哪些语句。无需参数。</td>
+</tr>
+<tr>
+<td><code>scripts/e2e_sql_read_only_mcp_project.py</code></td>
+<td>指向真实的打包项目（<code>--project</code>）。<code>--sqlite-standin</code> 用一次性 SQLite 替换数据源，使开关关闭时写入真正执行；<code>--endpoint</code> 探测已在运行的服务；<code>--live-writes</code> 会写入<strong>真实</strong>数据源（仅限本次运行自建的临时表），<code>--dry-run</code> 只打印语句不执行。</td>
+</tr>
+</tbody>
+</table>
 
 
 
