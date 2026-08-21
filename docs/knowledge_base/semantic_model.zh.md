@@ -60,6 +60,12 @@ datus-agent bootstrap-kb \
     --components semantic_model \
     --semantic_yaml path/to/semantic_model.yaml
 
+# 将已授权的 YAML 重新投影进知识库（不调用 LLM）
+datus-agent bootstrap-kb \
+    --datasource <your_datasource> \
+    --components semantic_model \
+    --kb_update_strategy sync-yaml
+
 # 刷新已有 YAML 中的观测 profile 描述
 datus-agent bootstrap-kb \
     --datasource <your_datasource> \
@@ -77,7 +83,11 @@ datus-agent bootstrap-kb \
 | `--components` | ✅ | 要初始化的组件 | `semantic_model` |
 | `--success_story` | ⚠️ | 包含历史 SQLs 的 CSV 文件。从 SQL 历史生成和 `refresh-profile` 都需要。 | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件。从 YAML 导入和 `refresh-profile` 都需要。 | `semantic_model.yaml` |
-| `--kb_update_strategy` | ❌ | 更新策略。默认是 `check`；`refresh-profile` 仅支持 `semantic_model` 组件。 | `check`/`overwrite`/`incremental`/`refresh-profile` |
+| `--kb_update_strategy` | ❌ | 更新策略。默认是 `check`；`refresh-profile` 与 `sync-yaml` 仅支持 `semantic_model` 组件。 | `check`/`overwrite`/`incremental`/`refresh-profile`/`sync-yaml` |
+
+`sync-yaml` 把已授权的语义 YAML 重新投影进知识库。`subject/semantic_models/<datasource>/` 下的 YAML 是唯一真相源，
+该策略逐个文件将其重放进存储——不调用 LLM、不访问数仓，可安全重复执行。传 `--semantic_yaml` 可只同步单个文件或
+子目录；不传则同步当前 datasource 的全部文件。手工改完 YAML 后，或升级导致存储结构变化需要重建投影时使用。
 
 `refresh-profile` 会原地更新已有 Dosi/OSI 语义模型 YAML（MetricFlow YAML 会被拒绝）。它会根据 `--success_story` 中的历史 SQL
 重新做有界、只读的数据 profile，替换表和字段 description 中生成的 `Observed profile:` 片段，并把更新后的 YAML

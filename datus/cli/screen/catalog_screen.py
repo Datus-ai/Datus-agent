@@ -25,8 +25,8 @@ from textual.worker import get_current_worker
 from datus.cli.cli_styles import HEADER_BOLD_CYAN, TABLE_BORDER_STYLE
 from datus.cli.screen.base_widgets import FocusableStatic
 from datus.cli.screen.context_screen import ContextScreen
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.capabilities import supports_namespace
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -266,9 +266,9 @@ class CatalogScreen(ContextScreen):
         self.db_connector: BaseSqlConnector = context_data.get("db_connector")
 
         self.semantic_storage: SemanticModelRAG = SemanticModelRAG(self._agent_config)
-        self.table_semantic_profiles: Optional[TableSemanticProfileRAG] = None
+        self.semantic_datasets: Optional[SemanticDatasetRAG] = None
         try:
-            self.table_semantic_profiles = TableSemanticProfileRAG(self._agent_config)
+            self.semantic_datasets = SemanticDatasetRAG(self._agent_config)
         except Exception as exc:
             logger.debug(f"Failed to initialize table semantic profile storage for catalog screen: {exc}")
 
@@ -333,7 +333,7 @@ class CatalogScreen(ContextScreen):
         self.clear_cache()
         self._agent_config = None
         self.semantic_storage = None
-        self.table_semantic_profiles = None
+        self.semantic_datasets = None
         self.db_connector = None
 
     def _build_catalog_tree(self) -> None:
@@ -577,12 +577,8 @@ class CatalogScreen(ContextScreen):
         table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
 
         table.add_row("Semantic Model Name", semantic_record.get("semantic_model_name", "") or "[dim]N/A[/dim]")
-        if semantic_record.get("format"):
-            table.add_row("Format", semantic_record.get("format", "") or "[dim]N/A[/dim]")
         if semantic_record.get("dataset_name"):
             table.add_row("Dataset", semantic_record.get("dataset_name", "") or "[dim]N/A[/dim]")
-        if semantic_record.get("data_source_name"):
-            table.add_row("Data Source", semantic_record.get("data_source_name", "") or "[dim]N/A[/dim]")
         table.add_row("Description", semantic_record.get("description", "") or "[dim]N/A[/dim]")
         table.add_row("AI Context", self._create_nested_table_for_json(semantic_record.get("ai_context")))
         table.add_row("Identifiers", self._create_nested_table_for_json(semantic_record.get("identifiers")))
@@ -757,24 +753,13 @@ class CatalogScreen(ContextScreen):
         schema_name: str = "",
         table_name: str = "",
     ) -> Optional[Dict[str, Any]]:
-        if not self.table_semantic_profiles:
+        if not self.semantic_datasets:
             return None
-        return self.table_semantic_profiles.get_profile(
+        return self.semantic_datasets.get_table_projection(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
             table_name=table_name,
-            select_fields=[
-                "format",
-                "table_name",
-                "semantic_model_name",
-                "dataset_name",
-                "data_source_name",
-                "description",
-                "ai_context_json",
-                "columns_json",
-                "relationships_json",
-            ],
         )
 
     @staticmethod
@@ -790,31 +775,53 @@ class CatalogScreen(ContextScreen):
         except (TypeError, ValueError):
             return default
 
-    def _semantic_record_from_table_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
-        columns = self._decode_profile_json(profile.get("columns_json"), [])
-        relationships = self._decode_profile_json(profile.get("relationships_json"), [])
-        ai_context = self._decode_profile_json(profile.get("ai_context_json"), None)
+    def _semantic_record_from_table_profile(self, projection: Dict[str, Any]) -> Dict[str, Any]:
+        ai_context = self._decode_profile_json(projection.get("ai_context_json"), None)
 
         identifiers = []
         dimensions = []
-        if isinstance(columns, list):
-            for column in columns:
-                if not isinstance(column, dict):
-                    continue
-                role = str(column.get("role") or "").lower()
-                if role in {"primary_key", "identifier", "entity"}:
-                    identifiers.append(column)
-                elif role in {"dimension", "time_dimension"}:
-                    dimensions.append(column)
+        for field in projection.get("fields") or []:
+            if not isinstance(field, dict):
+                continue
+            entry = {
+                key: value
+                for key, value in {
+                    "name": field.get("name", ""),
+                    "expr": field.get("expr", ""),
+                    "type": field.get("field_type", ""),
+                    "time_granularity": field.get("time_granularity", ""),
+                    "description": field.get("description", ""),
+                    "ai_context": self._decode_profile_json(field.get("ai_context_json"), None),
+                }.items()
+                if value not in (None, "", [], {})
+            }
+            if field.get("is_primary_key"):
+                identifiers.append(entry)
+            elif field.get("is_dimension"):
+                dimensions.append(entry)
+
+        relationships = [
+            {
+                key: value
+                for key, value in {
+                    "name": relationship.get("name", ""),
+                    "from": relationship.get("from_dataset", ""),
+                    "to": relationship.get("to_dataset", ""),
+                    "from_columns": self._decode_profile_json(relationship.get("from_columns_json"), []),
+                    "to_columns": self._decode_profile_json(relationship.get("to_columns_json"), []),
+                    "type": relationship.get("rel_type", ""),
+                }.items()
+                if value not in (None, "", [], {})
+            }
+            for relationship in projection.get("relationships") or []
+        ]
 
         return {
             "_source": "table_semantic_profile",
-            "table_name": profile.get("table_name", ""),
-            "format": profile.get("format", ""),
-            "semantic_model_name": profile.get("semantic_model_name", ""),
-            "dataset_name": profile.get("dataset_name", ""),
-            "data_source_name": profile.get("data_source_name", ""),
-            "description": profile.get("description", ""),
+            "table_name": projection.get("source_table", ""),
+            "semantic_model_name": projection.get("semantic_model_name", ""),
+            "dataset_name": projection.get("dataset_name", ""),
+            "description": projection.get("description", ""),
             "ai_context": ai_context,
             "identifiers": identifiers,
             "dimensions": dimensions,
@@ -1173,7 +1180,7 @@ class CatalogScreen(ContextScreen):
         message: Optional[str] = None
         message_style = "dim"
 
-        if self.table_semantic_profiles:
+        if self.semantic_datasets:
             try:
                 profile_record = self._fetch_table_semantic_profile_record(
                     catalog_name=catalog_name,

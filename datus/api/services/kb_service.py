@@ -20,13 +20,13 @@ from datus.storage.reference_sql import ReferenceSqlRAG
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
     refresh_success_story_semantic_model_profile,
 )
 from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -217,10 +217,10 @@ class KbService:
 
         subject_tree = request.subject_tree
         try:
-            if strategy == "refresh-profile" and component != KbComponent.SEMANTIC_MODEL:
+            if strategy in {"refresh-profile", "sync-yaml"} and component != KbComponent.SEMANTIC_MODEL:
                 return {
                     "status": "failed",
-                    "message": "strategy=refresh-profile is only supported with semantic_model",
+                    "message": f"strategy={strategy} is only supported with semantic_model",
                 }
 
             if component == KbComponent.METADATA:
@@ -324,17 +324,28 @@ class KbService:
     ) -> dict:
         rag = SemanticModelRAG(config)
         if strategy == "check":
-            profile_rag = TableSemanticProfileRAG(config)
+            profile_rag = SemanticDatasetRAG(config)
             return {
                 "status": "success",
                 "message": (
                     "semantic_model check completed, "
                     f"semantic_object_count={rag.get_size()}, "
-                    f"table_semantic_profile_count={profile_rag.get_size()}"
+                    f"semantic_dataset_count={profile_rag.get_size()}"
                 ),
             }
+        if strategy == "sync-yaml":
+            from datus.storage.semantic_model.semantic_model_init import sync_semantic_yaml_tree
+
+            successful, message, synced = sync_semantic_yaml_tree(config, args.semantic_yaml or "")
+            if successful:
+                return {
+                    "status": "success",
+                    "message": f"{message}, semantic_dataset_count={SemanticDatasetRAG(config).get_size()}",
+                }
+            return {"status": "failed", "message": message, "synced": synced}
+
         if strategy == "refresh-profile":
-            profile_rag = TableSemanticProfileRAG(config)
+            profile_rag = SemanticDatasetRAG(config)
             successful, error_message, changed = refresh_success_story_semantic_model_profile(
                 config,
                 args.semantic_yaml,
@@ -348,7 +359,7 @@ class KbService:
                         "semantic_model profile refresh completed, "
                         f"changed_description_count={changed}, "
                         f"semantic_object_count={rag.get_size()}, "
-                        f"table_semantic_profile_count={profile_rag.get_size()}"
+                        f"semantic_dataset_count={profile_rag.get_size()}"
                     ),
                     "error": error_message,
                 }
@@ -611,7 +622,11 @@ class KbService:
         requested_semantic = list(
             dict.fromkeys(component for component in components if component in semantic_components)
         )
-        normalize_authoring = bool(requested_semantic) and request.strategy not in {"check", "refresh-profile"}
+        normalize_authoring = bool(requested_semantic) and request.strategy not in {
+            "check",
+            "refresh-profile",
+            "sync-yaml",
+        }
         if not normalize_authoring:
             return [(component, [component], None) for component in components]
 

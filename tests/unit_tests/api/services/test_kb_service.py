@@ -431,7 +431,7 @@ class TestKbServiceInitSemanticAndMetrics:
         )
         with (
             patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_profile,
             patch("datus.api.services.kb_service.init_success_story_semantic_model") as mock_init,
         ):
             mock_rag.return_value.get_size.return_value = 4
@@ -440,7 +440,7 @@ class TestKbServiceInitSemanticAndMetrics:
 
         assert result["status"] == "success"
         assert "semantic_object_count=4" in result["message"]
-        assert "table_semantic_profile_count=2" in result["message"]
+        assert "semantic_dataset_count=2" in result["message"]
         mock_init.assert_not_called()
 
     def test_init_semantic_modeling_forwards_unified_options(self, real_agent_config):
@@ -489,7 +489,7 @@ class TestKbServiceInitSemanticAndMetrics:
 
         with (
             patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG"),
+            patch("datus.api.services.kb_service.SemanticDatasetRAG"),
             patch(
                 "datus.api.services.kb_service.init_success_story_semantic_model",
                 return_value=(True, ""),
@@ -515,7 +515,7 @@ class TestKbServiceInitSemanticAndMetrics:
 
         with (
             patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile_cls,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_profile_cls,
             patch(
                 "datus.api.services.kb_service.refresh_success_story_semantic_model_profile",
                 return_value=(True, "", 4),

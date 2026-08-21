@@ -14,6 +14,7 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model_async,
     refresh_semantic_yaml_profile_descriptions,
     reject_non_dosi_semantic_yaml,
+    sync_semantic_yaml_tree,
 )
 
 
@@ -217,3 +218,68 @@ def test_profile_description_refresh_rejects_non_dosi_project(tmp_path):
 
     assert result[0] is False
     assert "query-only" in result[1]
+
+
+def _write_model(path, name: str) -> None:
+    path.write_text(
+        f"version: 0.2.0.dev0\nsemantic_model:\n  - name: {name}\n"
+        f"    datasets:\n      - name: {name}\n        source: public.{name}\n",
+        encoding="utf-8",
+    )
+
+
+def test_sync_semantic_yaml_tree_projects_every_file_under_the_directory(tmp_path):
+    _write_model(tmp_path / "sales.yml", "sales")
+    _write_model(tmp_path / "fulfillment.yaml", "fulfillment")
+    config = _config("dosi")
+    tools = MagicMock()
+    tools.sync_osi_to_db.return_value = {"success": True}
+
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools", return_value=tools):
+        successful, message, synced = sync_semantic_yaml_tree(config, str(tmp_path))
+
+    assert successful is True
+    assert synced == 2
+    assert "2 semantic YAML file(s)" in message
+    synced_paths = sorted(call.args[0] for call in tools.sync_osi_to_db.call_args_list)
+    assert [path.rsplit("/", 1)[-1] for path in synced_paths] == ["fulfillment.yaml", "sales.yml"]
+
+
+def test_sync_semantic_yaml_tree_skips_the_metrics_fragment_directory(tmp_path):
+    _write_model(tmp_path / "sales.yml", "sales")
+    fragments = tmp_path / "metrics"
+    fragments.mkdir()
+    _write_model(fragments / "revenue.yml", "revenue")
+    config = _config("dosi")
+    tools = MagicMock()
+    tools.sync_osi_to_db.return_value = {"success": True}
+
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools", return_value=tools):
+        _, _, synced = sync_semantic_yaml_tree(config, str(tmp_path))
+
+    assert synced == 1
+
+
+def test_sync_semantic_yaml_tree_reports_failures_without_stopping(tmp_path):
+    """One unreadable model must not cost the others their refresh."""
+    _write_model(tmp_path / "sales.yml", "sales")
+    _write_model(tmp_path / "broken.yml", "broken")
+    config = _config("dosi")
+    tools = MagicMock()
+    tools.sync_osi_to_db.side_effect = [{"success": False, "error": "bad model"}, {"success": True}]
+
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools", return_value=tools):
+        successful, message, synced = sync_semantic_yaml_tree(config, str(tmp_path))
+
+    assert successful is False
+    assert synced == 1
+    assert "broken.yml: bad model" in message
+    assert tools.sync_osi_to_db.call_count == 2
+
+
+def test_sync_semantic_yaml_tree_rejects_a_missing_path(tmp_path):
+    successful, message, synced = sync_semantic_yaml_tree(_config("dosi"), str(tmp_path / "absent"))
+
+    assert successful is False
+    assert synced == 0
+    assert "not found" in message

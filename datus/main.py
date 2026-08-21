@@ -182,11 +182,13 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--kb_update_strategy",
         type=str,
-        choices=["check", "overwrite", "incremental", "refresh-profile"],
+        choices=["check", "overwrite", "incremental", "refresh-profile", "sync-yaml"],
         default="check",
         help=(
             "Knowledge base update strategy: check (verify paths and data), overwrite (careful!), "
-            "incremental, or refresh-profile (semantic_model only; update profile descriptions in an existing YAML). "
+            "incremental, refresh-profile (semantic_model only; update profile descriptions in an existing YAML), "
+            "or sync-yaml (semantic_model only; re-project authored YAML into the knowledge base with no LLM "
+            "call, defaulting to every file of the active datasource). "
             "For semantic_modeling, overwrite and incremental are compatibility aliases that fully reconcile each "
             "selected YAML without clearing sibling artifacts."
         ),

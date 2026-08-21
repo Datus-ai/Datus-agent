@@ -1143,12 +1143,12 @@ class TestOsiSync:
                     {
                         "success": True,
                         "semantic_objects": [{"id": "table:shop:orders"}],
-                        "table_semantic_profiles": [],
+                        "semantic_dataset_rows": [],
                     },
                     {
                         "success": True,
                         "semantic_objects": [{"id": "table:shop:customers"}],
-                        "table_semantic_profiles": [],
+                        "semantic_dataset_rows": [],
                     },
                 ],
             ) as sync_mock,
@@ -1176,9 +1176,9 @@ class TestOsiSync:
         semantic_snapshot = [{"id": "table:shop:old_orders", "yaml_path": str(semantic_file)}]
         profile_snapshot = [{"id": "profile:shop:old_orders", "yaml_path": str(semantic_file)}]
         metric_snapshot = [{"id": "metric:old_metric", "name": "old_metric", "yaml_path": str(metric_file)}]
-        generation_tools.table_semantic_profile_rag = Mock()
+        generation_tools.semantic_dataset_rag = Mock()
         generation_tools.semantic_rag.list_artifact_rows.return_value = semantic_snapshot
-        generation_tools.table_semantic_profile_rag.list_artifact_rows.return_value = profile_snapshot
+        generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = profile_snapshot
         generation_tools.metric_rag.list_artifact_rows.return_value = metric_snapshot
         generation_tools.metric_rag.delete_artifact_rows_except.side_effect = RuntimeError("metric delete failed")
         metric = SimpleNamespace(
@@ -1195,7 +1195,7 @@ class TestOsiSync:
         prepared_semantic = {
             "success": True,
             "semantic_objects": [{"id": "table:shop:orders", "yaml_path": str(semantic_file)}],
-            "table_semantic_profiles": [{"id": "profile:shop:orders", "yaml_path": str(semantic_file)}],
+            "semantic_dataset_rows": [{"id": "profile:shop:orders", "yaml_path": str(semantic_file)}],
         }
 
         with (
@@ -1213,7 +1213,7 @@ class TestOsiSync:
         generation_tools.semantic_rag.restore_artifact_rows.assert_called_once_with(
             str(semantic_file), semantic_snapshot
         )
-        generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once_with(
+        generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once_with(
             str(semantic_file), profile_snapshot
         )
         generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(str(metric_file), metric_snapshot)
@@ -1240,7 +1240,7 @@ class TestOsiSync:
         prepared_semantic = {
             "success": True,
             "semantic_objects": [{"id": "table:shop:orders", "yaml_path": str(semantic_file)}],
-            "table_semantic_profiles": [],
+            "semantic_dataset_rows": [],
         }
 
         with (
@@ -1300,7 +1300,7 @@ class TestOsiSync:
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""
         )
-        generation_tools.table_semantic_profile_rag = Mock()
+        generation_tools.semantic_dataset_rag = Mock()
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text(
             "version: 0.2.0.dev0\n"
@@ -1382,19 +1382,30 @@ class TestOsiSync:
         assert objects[4]["name"] == "amount"
         assert objects[4]["is_dimension"] is False
         assert objects[4]["is_measure"] is False
-        generation_tools.table_semantic_profile_rag.delete_artifact_rows.assert_not_called()
-        generation_tools.table_semantic_profile_rag.delete_artifact_rows_except.assert_called_once()
-        generation_tools.table_semantic_profile_rag.upsert_batch.assert_called_once()
-        profiles = generation_tools.table_semantic_profile_rag.upsert_batch.call_args.args[0]
-        assert profiles[0]["format"] == "osi"
-        assert profiles[0]["dataset_name"] == "orders"
-        assert profiles[0]["description"] == "Orders table"
-        assert "order-level analytics" in profiles[0]["ai_context_json"]
-        assert '"name": "customer_segment"' in profiles[0]["columns_json"]
-        assert '"name": "amount", "role": "field"' in profiles[0]["columns_json"]
-        assert '"from_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
-        assert '"to_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
-        assert result["table_semantic_profiles"] == 1
+        generation_tools.semantic_dataset_rag.delete_artifact_rows.assert_not_called()
+        generation_tools.semantic_dataset_rag.delete_artifact_rows_except.assert_called_once()
+        generation_tools.semantic_dataset_rag.upsert_batch.assert_called_once()
+        rows = generation_tools.semantic_dataset_rag.upsert_batch.call_args.args[0]
+        by_kind: dict[str, list] = {}
+        for row in rows:
+            by_kind.setdefault(row["kind"], []).append(row)
+
+        dataset_row = by_kind["dataset"][0]
+        assert dataset_row["dataset_name"] == "orders"
+        assert dataset_row["source_table"] == "orders"
+        assert dataset_row["source_query"] == ""
+        assert dataset_row["description"] == "Orders table"
+        assert "order-level analytics" in dataset_row["ai_context_json"]
+
+        fields = {row["name"]: row for row in by_kind["field"]}
+        assert fields["customer_segment"]["is_dimension"] is True
+        assert fields["amount"]["is_dimension"] is False
+        assert fields["order_id"]["is_primary_key"] is True
+
+        relationship = by_kind["relationship"][0]
+        assert '["customer_id", "store_id"]' in relationship["from_columns_json"]
+        assert '["customer_id", "store_id"]' in relationship["to_columns_json"]
+        assert result["semantic_dataset_rows"] == len(rows)
 
     def test_load_osi_document_selects_only_artifact_model(self, generation_tools, tmp_path):
         (tmp_path / "sales.yml").write_text(
@@ -1459,7 +1470,7 @@ class TestOsiSync:
             catalog="", database="shop", schema=""
         )
         generation_tools.agent_config.db_type = "snowflake"
-        generation_tools.table_semantic_profile_rag = Mock()
+        generation_tools.semantic_dataset_rag = Mock()
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text(
             "version: 0.2.0.dev0\n"
@@ -1520,8 +1531,8 @@ class TestOsiSync:
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""
         )
-        generation_tools.table_semantic_profile_rag = Mock()
-        generation_tools.table_semantic_profile_rag.upsert_batch.side_effect = RuntimeError("profile sync failed")
+        generation_tools.semantic_dataset_rag = Mock()
+        generation_tools.semantic_dataset_rag.upsert_batch.side_effect = RuntimeError("profile sync failed")
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text(
             "version: 0.2.0.dev0\n"
@@ -1549,7 +1560,7 @@ class TestOsiSync:
         assert result["success"] is False
         assert "profile sync failed" in result["error"]
         generation_tools.semantic_rag.restore_artifact_rows.assert_called_once()
-        generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once()
+        generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once()
 
     def test_sync_osi_to_db_reconciles_semantic_and_metric_rows_together(self, generation_tools, tmp_path):
         osi_file = tmp_path / "shop.yml"
@@ -1573,7 +1584,7 @@ class TestOsiSync:
                 return_value={
                     "success": True,
                     "semantic_objects": semantic_rows,
-                    "table_semantic_profiles": [],
+                    "semantic_dataset_rows": [],
                     "synced_items": ["table:orders"],
                 },
             ) as prepare_semantic,
@@ -1596,8 +1607,8 @@ class TestOsiSync:
         osi_file = tmp_path / "model.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
         doc = SimpleNamespace()
-        generation_tools.table_semantic_profile_rag = Mock()
-        generation_tools.table_semantic_profile_rag.list_artifact_rows.return_value = [{"id": "profile:model:old"}]
+        generation_tools.semantic_dataset_rag = Mock()
+        generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = [{"id": "profile:model:old"}]
         generation_tools.metric_rag.list_artifact_rows.return_value = [{"id": "metric:old", "name": "old"}]
         with (
             patch.object(generation_tools, "_load_osi_document", return_value=doc),
@@ -1608,7 +1619,7 @@ class TestOsiSync:
                 return_value={
                     "success": True,
                     "semantic_objects": [{"id": "table:model:orders"}],
-                    "table_semantic_profiles": [],
+                    "semantic_dataset_rows": [],
                     "synced_items": [],
                 },
             ),
@@ -1621,9 +1632,7 @@ class TestOsiSync:
         assert result["deleted_metric_names"] == ["old"]
         generation_tools.metric_rag.upsert_batch.assert_not_called()
         generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once_with(str(osi_file), [])
-        generation_tools.table_semantic_profile_rag.delete_artifact_rows_except.assert_called_once_with(
-            str(osi_file), []
-        )
+        generation_tools.semantic_dataset_rag.delete_artifact_rows_except.assert_called_once_with(str(osi_file), [])
 
     def test_sync_osi_to_db_reconciles_empty_metrics_without_semantic_sync(self, generation_tools, tmp_path):
         osi_file = tmp_path / "model.yml"
@@ -1649,9 +1658,9 @@ class TestOsiSync:
         semantic_rows = [{"id": "table:model:orders"}]
         profile_rows = [{"id": "profile:model:orders"}]
         metric_rows = [{"id": "metric:new", "name": "new"}]
-        generation_tools.table_semantic_profile_rag = Mock()
+        generation_tools.semantic_dataset_rag = Mock()
         generation_tools.semantic_rag.list_artifact_rows.return_value = [{"id": "table:old"}]
-        generation_tools.table_semantic_profile_rag.list_artifact_rows.return_value = [{"id": "profile:old"}]
+        generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = [{"id": "profile:old"}]
         generation_tools.metric_rag.list_artifact_rows.return_value = [{"id": "metric:old", "name": "old"}]
         generation_tools.metric_rag.create_indices.side_effect = RuntimeError("metric index failed")
         with (
@@ -1663,7 +1672,7 @@ class TestOsiSync:
                 return_value={
                     "success": True,
                     "semantic_objects": semantic_rows,
-                    "table_semantic_profiles": profile_rows,
+                    "semantic_dataset_rows": profile_rows,
                     "synced_items": [],
                 },
             ),
@@ -1676,7 +1685,7 @@ class TestOsiSync:
         generation_tools.semantic_rag.restore_artifact_rows.assert_called_once_with(
             str(osi_file), [{"id": "table:old"}]
         )
-        generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once_with(
+        generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once_with(
             str(osi_file), [{"id": "profile:old"}]
         )
         generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(

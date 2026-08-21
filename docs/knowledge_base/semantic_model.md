@@ -59,6 +59,12 @@ datus-agent bootstrap-kb \
     --components semantic_model \
     --semantic_yaml path/to/semantic_model.yaml
 
+# Re-project authored YAML into the knowledge base (no LLM call)
+datus-agent bootstrap-kb \
+    --datasource <your_datasource> \
+    --components semantic_model \
+    --kb_update_strategy sync-yaml
+
 # Refresh observed profile descriptions in an existing YAML
 datus-agent bootstrap-kb \
     --datasource <your_datasource> \
@@ -76,9 +82,15 @@ datus-agent bootstrap-kb \
 | `--components` | ✅ | Components to initialize | `semantic_model` |
 | `--success_story` | ⚠️ | CSV file with historical SQLs. Required for generation from SQL history and for `refresh-profile`. | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | Semantic model YAML file. Required for YAML import and for `refresh-profile`. | `semantic_model.yaml` |
-| `--kb_update_strategy` | ❌ | Update strategy. Defaults to `check`; `refresh-profile` is semantic-model only. | `check`/`overwrite`/`incremental`/`refresh-profile` |
+| `--kb_update_strategy` | ❌ | Update strategy. Defaults to `check`; `refresh-profile` and `sync-yaml` are semantic-model only. | `check`/`overwrite`/`incremental`/`refresh-profile`/`sync-yaml` |
 
 When `semantic_model` is combined with `metrics` or `semantic_modeling`, bootstrap executes one full `semantic_modeling` run rather than separate legacy generators.
+
+`sync-yaml` re-projects authored semantic YAML into the knowledge base. The YAML files under
+`subject/semantic_models/<datasource>/` are the source of truth, and this replays them into storage one file at a
+time — no LLM call, no warehouse access, and safe to repeat. Pass `--semantic_yaml` to sync a single file or
+subdirectory; omit it to sync everything for the active datasource. Use it after editing YAML by hand, or to
+rebuild the projection after an upgrade changes the storage layout.
 
 `refresh-profile` updates an existing Dosi/OSI semantic YAML in place (MetricFlow YAML is rejected). It re-runs bounded, read-only data
 profiling guided by the historical SQLs in `--success_story`, replaces the generated `Observed profile:` suffixes in

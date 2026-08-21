@@ -1149,7 +1149,7 @@ class TestBootstrapKbSemanticModel:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.SemanticDatasetRAG", return_value=mock_profile_rag),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)) as mock_init,
         ):
             result = agent.bootstrap_kb()
@@ -1168,7 +1168,7 @@ class TestBootstrapKbSemanticModel:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG"),
+            patch("datus.agent.agent.SemanticDatasetRAG"),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(False, "error msg")),
         ):
             result = agent.bootstrap_kb()
@@ -1186,14 +1186,14 @@ class TestBootstrapKbSemanticModel:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.SemanticDatasetRAG", return_value=mock_profile_rag),
             patch("datus.agent.agent.init_success_story_semantic_model") as mock_init,
         ):
             result = agent.bootstrap_kb()
 
         assert result["status"] == "success"
         assert "semantic_object_count=7" in result["message"]
-        assert "table_semantic_profile_count=3" in result["message"]
+        assert "semantic_dataset_count=3" in result["message"]
         mock_init.assert_not_called()
 
     def test_semantic_model_overwrite_cancelled_when_dir_exists(self, tmp_path):
@@ -1247,7 +1247,7 @@ class TestBootstrapKbSemanticModel:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.SemanticDatasetRAG", return_value=mock_profile_rag),
             patch("datus.agent.agent.init_semantic_yaml_semantic_model", return_value=(True, None)),
             patch("datus.agent.agent.safe_rmtree") as mock_safe_rmtree,
         ):
@@ -1291,7 +1291,7 @@ class TestBootstrapKbSemanticModel:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.SemanticDatasetRAG", return_value=mock_profile_rag),
             patch(
                 "datus.agent.agent.refresh_success_story_semantic_model_profile",
                 return_value=(True, "", 3),
@@ -1467,7 +1467,7 @@ class TestBootstrapKbMetrics:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_semantic_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.SemanticDatasetRAG", return_value=mock_profile_rag),
             patch("datus.agent.agent.MetricRAG", return_value=mock_metric_rag),
         ):
             result = agent.bootstrap_kb()
@@ -1488,7 +1488,7 @@ class TestBootstrapKbMetrics:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_semantic_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.SemanticDatasetRAG", return_value=mock_profile_rag),
             patch("datus.agent.agent.MetricRAG", return_value=mock_metric_rag),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)),
             patch("datus.agent.agent.init_success_story_metrics", return_value=(False, "metrics failed", {})),
@@ -1509,7 +1509,7 @@ class TestBootstrapKbMetrics:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_semantic_rag),
-            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=MagicMock()),
+            patch("datus.agent.agent.SemanticDatasetRAG", return_value=MagicMock()),
             patch("datus.agent.agent.MetricRAG", return_value=mock_metric_rag),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)),
             patch(

@@ -26,14 +26,15 @@ from datus.storage.schema_metadata import SchemaWithValueRAG, create_metadata_ra
 from datus.storage.schema_metadata.benchmark_init import init_snowflake_schema
 from datus.storage.schema_metadata.benchmark_init_bird import init_dev_schema
 from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.storage.semantic_model.semantic_model_init import (
     init_semantic_yaml_semantic_model,
     init_success_story_semantic_model,
     refresh_success_story_semantic_model_profile,
+    sync_semantic_yaml_tree,
 )
 from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_artifacts import allocate_benchmark_attempt, finalize_benchmark_attempt
 from datus.utils.benchmark_utils import load_benchmark_tasks
@@ -476,7 +477,7 @@ class Agent:
         semantic_authoring_requested = (
             bool(requested_semantic_components)
             and not uses_legacy_import
-            and (kb_update_strategy not in {"check", "refresh-profile"})
+            and (kb_update_strategy not in {"check", "refresh-profile", "sync-yaml"})
         )
         if semantic_authoring_requested:
             from datus.agent.node.semantic_authoring import is_semantic_modeling_available
@@ -490,11 +491,15 @@ class Agent:
         )
         semantic_execution_component = requested_semantic_components[0] if semantic_authoring_requested else None
         semantic_execution_result = None
-        if kb_update_strategy == "refresh-profile" and set(selected_components) != {"semantic_model"}:
-            return {
-                "status": "failed",
-                "message": "kb_update_strategy=refresh-profile is only supported with --components semantic_model",
-            }
+        for semantic_only_strategy in ("refresh-profile", "sync-yaml"):
+            if kb_update_strategy == semantic_only_strategy and set(selected_components) != {"semantic_model"}:
+                return {
+                    "status": "failed",
+                    "message": (
+                        f"kb_update_strategy={semantic_only_strategy} is only supported with "
+                        "--components semantic_model"
+                    ),
+                }
         benchmark_platform = self.args.benchmark
         pool_size = 4 if not self.args.pool_size else self.args.pool_size
         dir_path = self.global_config.rag_storage_path()
@@ -680,22 +685,43 @@ class Agent:
             elif component == "semantic_model":
                 if kb_update_strategy == "check":
                     temp_rag = SemanticModelRAG(self.global_config)
-                    profile_rag = TableSemanticProfileRAG(self.global_config)
+                    profile_rag = SemanticDatasetRAG(self.global_config)
                     result = {
                         "status": "success",
                         "message": (
                             "semantic_model check completed, "
                             f"semantic_object_count={temp_rag.get_size()}, "
-                            f"table_semantic_profile_count={profile_rag.get_size()}"
+                            f"semantic_dataset_count={profile_rag.get_size()}"
                         ),
                     }
                     results[component] = result
                     continue
 
+                if kb_update_strategy == "sync-yaml":
+                    # Plain YAML -> KB refresh: no LLM, no warehouse access.
+                    # Doubles as the rebuild path after a storage format change,
+                    # since sync_osi_to_db replaces one artifact at a time.
+                    self.global_config.check_init_storage_config("semantic_model")
+                    successful, message, synced = sync_semantic_yaml_tree(
+                        self.global_config,
+                        self.args.semantic_yaml or "",
+                    )
+                    results[component] = (
+                        {
+                            "status": "success",
+                            "message": (
+                                f"{message}, semantic_dataset_count={SemanticDatasetRAG(self.global_config).get_size()}"
+                            ),
+                        }
+                        if successful
+                        else {"status": "failed", "message": message, "synced": synced}
+                    )
+                    continue
+
                 if kb_update_strategy == "refresh-profile":
                     self.global_config.check_init_storage_config("semantic_model")
                     temp_rag = SemanticModelRAG(self.global_config)
-                    profile_rag = TableSemanticProfileRAG(self.global_config)
+                    profile_rag = SemanticDatasetRAG(self.global_config)
                     successful, error_message, changed = refresh_success_story_semantic_model_profile(
                         self.global_config,
                         self.args.semantic_yaml,
@@ -708,7 +734,7 @@ class Agent:
                                 "semantic_model profile refresh completed, "
                                 f"changed_description_count={changed}, "
                                 f"semantic_object_count={temp_rag.get_size()}, "
-                                f"table_semantic_profile_count={profile_rag.get_size()}"
+                                f"semantic_dataset_count={profile_rag.get_size()}"
                             ),
                             "error": error_message,
                         }
@@ -737,7 +763,7 @@ class Agent:
                 temp_rag = SemanticModelRAG(self.global_config)
                 if kb_update_strategy == "overwrite" and (uses_adapter or uses_semantic_yaml):
                     temp_rag.truncate()
-                    TableSemanticProfileRAG(self.global_config).truncate()
+                    SemanticDatasetRAG(self.global_config).truncate()
 
                 # Initialize semantic model
                 if uses_adapter:

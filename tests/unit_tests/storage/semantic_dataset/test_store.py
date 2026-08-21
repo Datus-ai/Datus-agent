@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 
 
 class _Rows:
@@ -13,64 +13,64 @@ class _Rows:
 
 
 def _rag_with_rows(*row_sets):
-    rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag = SemanticDatasetRAG.__new__(SemanticDatasetRAG)
     rag.storage = Mock()
     rag._sub_agent_conditions = lambda: []
     rag.storage._search_all.side_effect = [_Rows(rows) for rows in row_sets]
     return rag
 
 
-def test_get_profile_uses_unique_namespace_fallback_only():
-    expected = {"table_name": "orders", "database_name": "shop"}
+def test_list_datasets_uses_unique_namespace_fallback_only():
+    expected = {"source_table": "orders", "database_name": "shop"}
     rag = _rag_with_rows([], [expected])
 
-    result = rag.get_profile(database_name="shop", table_name="orders")
+    result = rag.list_datasets(database_name="shop", table_name="orders")
 
-    assert result == expected
+    assert result == [expected]
 
 
-def test_get_profile_rejects_ambiguous_namespace_fallback():
+def test_list_datasets_rejects_ambiguous_namespace_fallback():
     rag = _rag_with_rows(
         [],
         [
-            {"table_name": "orders", "database_name": "shop"},
-            {"table_name": "orders", "database_name": "archive"},
+            {"source_table": "orders", "database_name": "shop"},
+            {"source_table": "orders", "database_name": "archive"},
         ],
     )
 
-    result = rag.get_profile(database_name="shop", table_name="orders")
+    result = rag.list_datasets(database_name="shop", table_name="orders")
 
-    assert result is None
-
-
-def test_get_profile_rejects_unique_fallback_with_conflicting_namespace():
-    rag = _rag_with_rows([], [{"table_name": "orders", "database_name": "archive"}])
-
-    result = rag.get_profile(database_name="shop", table_name="orders")
-
-    assert result is None
+    assert result == []
 
 
-def test_get_profile_lowercase_fallback_runs_after_ambiguous_broad_lookup():
-    expected = {"table_name": "orders", "database_name": "shop"}
+def test_list_datasets_rejects_unique_fallback_with_conflicting_namespace():
+    rag = _rag_with_rows([], [{"source_table": "orders", "database_name": "archive"}])
+
+    result = rag.list_datasets(database_name="shop", table_name="orders")
+
+    assert result == []
+
+
+def test_list_datasets_lowercase_fallback_runs_after_ambiguous_broad_lookup():
+    expected = {"source_table": "orders", "database_name": "shop"}
     rag = _rag_with_rows(
         [],
         [
-            {"table_name": "Orders", "database_name": "shop"},
-            {"table_name": "Orders", "database_name": "archive"},
+            {"source_table": "Orders", "database_name": "shop"},
+            {"source_table": "Orders", "database_name": "archive"},
         ],
         [expected],
     )
 
-    result = rag.get_profile(database_name="shop", table_name="Orders")
+    result = rag.list_datasets(database_name="shop", table_name="Orders")
 
-    assert result == expected
+    assert result == [expected]
 
 
 def test_list_datasets_returns_every_model_for_one_table():
     rows = [
-        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
-        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
     ]
     rag = _rag_with_rows(rows)
 
@@ -84,8 +84,8 @@ def test_list_datasets_order_does_not_depend_on_storage_row_order():
     to come from the data: LanceDB scans without a query vector and PostgreSQL
     returns heap order, which shifts after UPDATE/VACUUM."""
     forward = [
-        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
-        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
     ]
     reversed_rows = list(reversed(forward))
 
@@ -98,8 +98,8 @@ def test_list_datasets_order_does_not_depend_on_storage_row_order():
 
 def test_list_datasets_breaks_ties_on_dataset_name():
     rows = [
-        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders_returned"},
-        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders_all"},
+        {"source_table": "orders", "semantic_model_name": "sales", "dataset_name": "orders_returned"},
+        {"source_table": "orders", "semantic_model_name": "sales", "dataset_name": "orders_all"},
     ]
     rag = _rag_with_rows(rows)
 
@@ -109,7 +109,7 @@ def test_list_datasets_breaks_ties_on_dataset_name():
 
 
 def test_list_datasets_filters_on_semantic_model_instead_of_reranking():
-    rag = _rag_with_rows([{"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"}])
+    rag = _rag_with_rows([{"source_table": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"}])
 
     result = rag.list_datasets(table_name="orders", semantic_model="fulfillment")
 
@@ -119,7 +119,7 @@ def test_list_datasets_filters_on_semantic_model_instead_of_reranking():
 
 
 def test_list_datasets_without_table_name_returns_empty():
-    rag = _rag_with_rows([{"table_name": "orders"}])
+    rag = _rag_with_rows([{"source_table": "orders"}])
 
     assert rag.list_datasets(table_name="") == []
     rag.storage._search_all.assert_not_called()
@@ -128,30 +128,30 @@ def test_list_datasets_without_table_name_returns_empty():
 def test_list_datasets_projects_back_to_requested_fields():
     """Sort keys are read even when the caller did not ask for them."""
     rows = [
-        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
-        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
     ]
     rag = _rag_with_rows(rows)
 
-    result = rag.list_datasets(table_name="orders", select_fields=["table_name"])
+    result = rag.list_datasets(table_name="orders", select_fields=["source_table"])
 
-    assert result == [{"table_name": "orders"}, {"table_name": "orders"}]
+    assert result == [{"source_table": "orders"}, {"source_table": "orders"}]
     queried = rag.storage._search_all.call_args.kwargs["select_fields"]
-    assert set(queried) == {"table_name", "semantic_model_name", "dataset_name"}
+    assert set(queried) == {"source_table", "semantic_model_name", "dataset_name"}
 
 
-def test_get_profile_returns_the_primary_dataset():
+def test_list_datasets_puts_the_primary_dataset_first():
     rows = [
-        {"table_name": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
-        {"table_name": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
+        {"source_table": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
     ]
     rag = _rag_with_rows(rows)
 
-    assert rag.get_profile(table_name="orders")["semantic_model_name"] == "fulfillment"
+    assert rag.list_datasets(table_name="orders")[0]["semantic_model_name"] == "fulfillment"
 
 
 def _artifact_rag():
-    rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag = SemanticDatasetRAG.__new__(SemanticDatasetRAG)
     rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(mode="vector"), kb_search_mode="vector")
     rag.datasource_id = "test_datasource"
     rag.storage = Mock()
@@ -180,7 +180,7 @@ def test_delete_artifact_rows_uses_sub_agent_scope():
 
 
 def test_delete_artifact_rows_except_deletes_all_when_keep_ids_empty():
-    rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag = SemanticDatasetRAG.__new__(SemanticDatasetRAG)
     rag.delete_artifact_rows = Mock()
 
     rag.delete_artifact_rows_except("semantic/orders.yml", ["", None])
@@ -201,27 +201,27 @@ def test_delete_artifact_rows_except_keeps_current_ids():
 def test_delete_artifact_rows_refreshes_metadata_documents_for_deleted_tables():
     rag = _artifact_rag()
     rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(mode="fts"), kb_search_mode="fts")
-    deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "table_name": "orders"}]
+    deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "source_table": "orders"}]
     rag.storage._search_all.return_value = _Rows(deleted_rows)
 
     with patch("datus.storage.kb_retrieval.MetadataFtsRAG") as metadata_cls:
         rag.delete_artifact_rows("semantic/orders.yml")
 
     metadata_cls.assert_called_once_with(rag.agent_config, datasource_id=rag.datasource_id)
-    metadata_cls.return_value.refresh_tables.assert_called_once_with(deleted_rows)
+    metadata_cls.return_value.refresh_tables.assert_called_once_with([{**deleted_rows[0], "table_name": "orders"}])
 
 
 def test_truncate_refreshes_metadata_documents_for_deleted_tables():
     rag = _artifact_rag()
     rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(mode="fts"), kb_search_mode="fts")
-    deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "table_name": "orders"}]
+    deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "source_table": "orders"}]
     rag.storage._search_all.return_value = _Rows(deleted_rows)
 
     with patch("datus.storage.kb_retrieval.MetadataFtsRAG") as metadata_cls:
         rag.truncate()
 
     rag.storage.delete_datasource_rows.assert_called_once_with("test_datasource")
-    metadata_cls.return_value.refresh_tables.assert_called_once_with(deleted_rows)
+    metadata_cls.return_value.refresh_tables.assert_called_once_with([{**deleted_rows[0], "table_name": "orders"}])
 
 
 def test_list_artifact_rows_handles_empty_and_non_empty_paths():
@@ -236,7 +236,7 @@ def test_list_artifact_rows_handles_empty_and_non_empty_paths():
 
 
 def test_restore_artifact_rows_handles_empty_and_non_empty_paths():
-    rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag = SemanticDatasetRAG.__new__(SemanticDatasetRAG)
     rag.delete_artifact_rows = Mock()
     rag.upsert_batch = Mock()
     rag.create_indices = Mock()
