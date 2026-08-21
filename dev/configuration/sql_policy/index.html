@@ -3038,6 +3038,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#hard-read-only-switch-agentsql_read_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hard Read-Only Switch (agent.sql_read_only)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hard Read-Only Switch (agent.sql_read_only)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#verifying-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verifying a deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4205,6 +4233,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#hard-read-only-switch-agentsql_read_only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hard Read-Only Switch (agent.sql_read_only)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hard Read-Only Switch (agent.sql_read_only)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#verifying-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verifying a deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4305,6 +4361,78 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>sql-policy<span class="w"> </span>check<span class="w"> </span>--sql<span class="w"> </span><span class="s2">"SELECT * FROM orders"</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--policy-context<span class="w"> </span><span class="s1">'{"row_filter":{"access_mode":"scoped","store_ids":[1,2]}}'</span>
 </span></code></pre></div>
+<h2 id="hard-read-only-switch-agentsql_read_only">Hard Read-Only Switch (<code>agent.sql_read_only</code>)<a class="headerlink" href="#hard-read-only-switch-agentsql_read_only" title="Permanent link">&para;</a></h2>
+<p><code>agent.sql_read_only</code> is a separate, simpler mechanism. Do not confuse it with the policy plugins above.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">sql_read_only</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">   </span><span class="c1"># default: false</span>
+</span></code></pre></div>
+<p>When <code>true</code>, no SQL entry point served by this configuration may run a non-read statement:</p>
+<ul>
+<li><code>DBFuncTool.execute_sql</code> — the tool exposed to agentic nodes and to the MCP server — hard-rejects anything that is not SELECT / SHOW / DESCRIBE / EXPLAIN. This holds regardless of the permission profile, and applies even where <code>PermissionHooks</code> are bypassed entirely (LLM validators run with <code>hooks=None</code>, and the MCP server's tool instances never see hooks at all).</li>
+<li>The tool's other write paths refuse too, not just the <code>execute_sql</code> dispatcher: <code>execute_write</code>, <code>execute_ddl</code>, and <code>transfer_query_result</code>. The last one matters most — it reads from one datasource and <strong>writes</strong> to another (<code>CREATE TABLE</code> / <code>TRUNCATE</code> / <code>INSERT</code>), <code>gen_job</code> mounts it as a tool of its own, and it never passes through <code>execute_sql</code>.</li>
+<li><code>POST /sql/execute</code> refuses anything that is not a <em>single</em> read statement. Multi-statement input (<code>SELECT 1; DROP TABLE t</code>), writable <code>PRAGMA</code>s, <code>USE</code> / <code>SET</code>, and statements the parser cannot classify are all rejected — the check is fail-closed. Use the request's <code>database_name</code> field instead of <code>USE</code> to target a database.</li>
+</ul>
+<p><code>DBFuncTool.read_only</code> reports the <em>effective</em> posture, so a tool built with no <code>read_only</code> argument — which is how the MCP server's <code>create_dynamic</code> / <code>create_static</code> factories build theirs — still reads <code>True</code> on a hardened deployment.</p>
+<p>How it differs from the policy plugins:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>agent.sql_read_only</code></th>
+<th>policy plugins</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Needs a plugin</td>
+<td>No</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Needs request context</td>
+<td>No</td>
+<td>Yes — <code>policy_context</code> per request</td>
+</tr>
+<tr>
+<td>What it does</td>
+<td>Refuses the statement outright</td>
+<td>Rewrites or denies per request context</td>
+</tr>
+<tr>
+<td>Granularity</td>
+<td>All-or-nothing, deployment-wide</td>
+<td>Row / table / column, per caller</td>
+</tr>
+<tr>
+<td>Covers <code>POST /sql/execute</code></td>
+<td>Yes</td>
+<td>No (read tools only)</td>
+</tr>
+</tbody>
+</table>
+<p>The switch can only tighten. It is exposed as a read-only property plus a one-way <code>AgentConfig.harden_sql_read_only()</code>: a per-request configuration clone may harden itself, but nothing downstream can turn a <code>true</code> back off — and it never relaxes a component that already runs read-only (Explore, <code>ask_report</code>, the LLM validators).</p>
+<p>Use it when the process runs third-party-authored agent content — skills, subagents, reference templates — against datasources it owns. The two mechanisms compose: <code>sql_read_only</code> bounds what kind of statement may run at all; a policy plugin bounds what a given caller may read.</p>
+<h3 id="verifying-a-deployment">Verifying a deployment<a class="headerlink" href="#verifying-a-deployment" title="Permanent link">&para;</a></h3>
+<p>Automated coverage lives in <code>tests/unit_tests/tools/func_tool/test_database.py</code>, <code>tests/integration/tools/test_func_tools_db.py</code> and <code>tests/integration/tools/test_mcp_server.py</code>.</p>
+<p>Two manual scripts probe a real server end to end over MCP. Neither runs in CI; both print a verdict table and exit non-zero on failure:</p>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>What it checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/e2e_sql_read_only_mcp.py</code></td>
+<td>Self-contained. Stages a throwaway SQLite workspace, runs the flag-on / flag-off matrix, and reports which statements the switch refused. No arguments.</td>
+</tr>
+<tr>
+<td><code>scripts/e2e_sql_read_only_mcp_project.py</code></td>
+<td>Points at a real packaged project (<code>--project</code>). <code>--sqlite-standin</code> substitutes a throwaway SQLite datasource so writes really execute when the flag is off; <code>--endpoint</code> probes an already-running server; <code>--live-writes</code> writes to the <strong>real</strong> datasource (scratch tables only) and <code>--dry-run</code> prints the statements without running them.</td>
+</tr>
+</tbody>
+</table>
 
 
 
