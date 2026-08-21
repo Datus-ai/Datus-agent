@@ -194,3 +194,25 @@ def test_the_same_write_is_allowed_without_policies(monkeypatch):
     svc._execute_sql_sync(ExecuteSQLInput(sql_query="CREATE TABLE mine AS SELECT * FROM orders"), "t", {})
 
     assert connector.executed == ["CREATE TABLE mine AS SELECT * FROM orders"]
+
+
+@pytest.mark.parametrize(
+    "sql,reads",
+    [
+        ("CREATE TABLE plain_t (id int)", False),
+        ("SET search_path TO other", False),
+        ("DELETE FROM mine WHERE id = 1", False),
+        ("CREATE TABLE mine AS SELECT * FROM orders", True),
+        ("INSERT INTO mine SELECT * FROM orders", True),
+    ],
+)
+def test_read_detection_uses_a_dialect_sqlglot_knows(sql, reads):
+    """Connectors report `postgresql`; sqlglot only knows `postgres`.
+
+    Handing the raw name over raises, which this helper reads as "contains a
+    read" — so every write was refused on a policy-enabled project, plain
+    `CREATE TABLE` included. Caught end-to-end, not by any unit test.
+    """
+    from datus.api.services.cli_service import _write_reads_data
+
+    assert _write_reads_data(sql, "postgresql") is reads

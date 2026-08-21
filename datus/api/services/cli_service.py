@@ -36,6 +36,7 @@ from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import (
     SQLType,
     _first_statement,
+    parse_dialect,
     parse_sql_type,
     strip_sql_comments,
 )
@@ -76,13 +77,16 @@ def _write_reads_data(sql: str, dialect: str) -> bool:
     try:
         import sqlglot
 
-        parsed = sqlglot.parse_one(sql, read=dialect)
+        # `parse_dialect`, not the connector's own name: a connector reports
+        # `postgresql` while sqlglot only knows `postgres`, and handing it the
+        # raw value raises — which this function reads as "yes, it contains a
+        # read" and refuses every write, plain `CREATE TABLE` included.
+        parsed = sqlglot.parse_one(sql, read=parse_dialect(dialect), error_level=sqlglot.ErrorLevel.IGNORE)
     except Exception:
         return True
     if parsed is None:
         return True
     return bool(list(parsed.find_all(sqlglot.exp.Select)))
-
 
 
 class CLIService:
