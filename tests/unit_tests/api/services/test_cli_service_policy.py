@@ -227,15 +227,21 @@ def test_the_same_write_is_allowed_without_policies(monkeypatch):
         # about the statement. Both of these are full copies of `orders`.
         ("CREATE TABLE mine AS TABLE orders", True),
         ("COPY orders TO STDOUT", True),
-        # A source table with no subquery: the arg key differs per node
-        # (`from_` on Update, `using` on Delete/Merge)…
+        # A source table with no subquery. Detected by counting tables, not by
+        # reading a named argument: the argument moved between sqlglot
+        # releases, so keying on `Update.args["from_"]` passed locally and let
+        # the first of these straight through on CI.
         ("UPDATE mine SET a = orders.a FROM orders WHERE mine.id = orders.id", True),
         ("DELETE FROM mine USING orders WHERE mine.id = orders.id", True),
         ("MERGE INTO mine USING orders ON mine.id = orders.id WHEN MATCHED THEN UPDATE SET a = 1", True),
-        # …and `Delete.using` is present-but-empty on a plain DELETE, so a
-        # `is not None` test refused every `DELETE ... WHERE`.
+        # One target table is not a read, however many columns it sets.
         ("DELETE FROM mine WHERE id = 1", False),
         ("UPDATE mine SET a = 1 WHERE id = 2", False),
+        ("UPDATE mine SET a = 1, b = 2 WHERE id = 3", False),
+        # DDL naming two tables reads no rows — the count rule is scoped to
+        # DML so these stay allowed.
+        ("ALTER TABLE mine RENAME TO mine_old", False),
+        ("CREATE TABLE mine (LIKE orders)", False),
         # Rows leaving through RETURNING are read by definition.
         ("DELETE FROM orders RETURNING *", True),
         ("UPDATE orders SET a = 1 RETURNING *", True),

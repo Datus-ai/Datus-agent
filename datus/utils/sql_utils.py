@@ -860,12 +860,20 @@ def write_statement_reads_data(sql: str, dialect: str) -> bool:
     # `DELETE FROM t USING src`, `MERGE INTO t USING src`. Each reads `src`
     # while the tree holds no Select at all.
     #
-    # The key differs per node — Update calls it `from_` — and `Delete.using`
-    # is present but empty on a plain DELETE, so this tests truthiness rather
-    # than `is not None`, which refused every `DELETE ... WHERE`.
-    source_key = {exp.Update: "from_", exp.Delete: "using", exp.Merge: "using"}.get(type(parsed))
-    if source_key and parsed.args.get(source_key):
-        return True
+    # Counted rather than read off a named argument. The argument differs per
+    # node and *between sqlglot releases* — an earlier version of this keyed on
+    # `Update.args["from_"]`, which passed locally on 30.1 and missed the same
+    # statement on CI. `exp.Table` is the one part of the shape that does not
+    # move. One DML statement has exactly one target table; a second table in
+    # the tree is something being read.
+    #
+    # Scoped to the DML family on purpose: DDL routinely names two tables
+    # without reading a row (`ALTER TABLE a RENAME TO b`, `CREATE TABLE a
+    # (LIKE b)`), and the DDL that does read — CTAS — carries a Select and is
+    # caught above.
+    if isinstance(parsed, (exp.Update, exp.Delete, exp.Merge)):
+        if len({table.sql() for table in parsed.find_all(exp.Table)}) > 1:
+            return True
 
     return False
 
