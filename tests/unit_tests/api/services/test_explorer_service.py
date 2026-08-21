@@ -966,6 +966,13 @@ class TestExplorerServiceOSIAuthoring:
         "        source: jeff_shop.raw_orders\n"
         "        primary_key: [id]\n"
         "        fields:\n"
+        # Dosi will not resolve a column that no dataset declares, so the key
+        # column is a field in its own right rather than only a primary_key.
+        "          - name: id\n"
+        "            expression:\n"
+        "              dialects:\n"
+        "                - dialect: STARROCKS\n"
+        "                  expression: id\n"
         "          - name: order_total\n"
         "            expression:\n"
         "              dialects:\n"
@@ -984,20 +991,20 @@ class TestExplorerServiceOSIAuthoring:
     )
 
     def _osi_adapter(self, tmp_path):
-        # datus-semantic-osi is a guaranteed test dependency (dependency-groups
-        # dev in pyproject), so these run in CI rather than silently skipping.
-        from datus_semantic_osi.adapter import DatusOSIAdapter
-        from datus_semantic_osi.config import DatusOSIConfig
+        # Dosi is the only supported adapter for this OSI-shaped YAML; it is a
+        # test dependency, so these run in CI rather than silently skipping.
+        from datus_semantic_dosi.adapter import DosiAdapter
+        from datus_semantic_dosi.config import DosiConfig
 
         model_dir = tmp_path / "jeff_shop_live"
         model_dir.mkdir()
         (model_dir / "jeff_shop_live.yml").write_text(self.SAMPLE)
-        config = DatusOSIConfig(
+        config = DosiConfig(
             datasource="ds",
             semantic_models_path=str(tmp_path),
             db_config={"type": "starrocks"},
         )
-        return DatusOSIAdapter(config)
+        return DosiAdapter(config)
 
     def _wire(self, svc, monkeypatch, adapter, *, adapter_type="osi"):
         from types import SimpleNamespace
