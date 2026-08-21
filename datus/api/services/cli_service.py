@@ -8,6 +8,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+import datus.tools.func_tool as func_tool_mod
 from datus.api.models.base_models import Result
 from datus.api.models.cli_models import (
     ContextResultData,
@@ -30,9 +31,9 @@ from datus.schemas.action_history import (
     ActionRole,
     ActionStatus,
 )
-import datus.tools.func_tool as func_tool_mod
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import validate_read_only_sql
 from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
@@ -70,6 +71,7 @@ class CLIService:
 
         # Initialize database connection
         self.current_db_connector = None
+        self._db_tool_cache = None
         if self.agent_config:
             self._initialize_connection()
 
@@ -138,24 +140,32 @@ class CLIService:
             )
             actions.add_action(sql_action)
 
-            # Execute the query through the enforced-read path.
+            # Reads go through the enforced path; everything else keeps the
+            # connector's own dispatch.
             #
             # Hand-written SQL from the IDE is the widest read surface there is
             # — a member types `SELECT * FROM orders` and the connector would
-            # happily answer. Going straight to `connector.execute` here left
-            # every row policy in place and this one door open, which is worse
-            # than having no policy at all because the project reads as
-            # protected. Same entry point the agent's own tools use, so the two
-            # cannot drift.
+            # happily answer, while every other read path on the project is
+            # filtered. But the console is also where people write DDL and DML,
+            # and the enforced path admits only SELECT / SHOW / DESCRIBE /
+            # EXPLAIN, so routing everything through it would quietly turn the
+            # console read-only. Row policies constrain reads by definition, so
+            # the split costs nothing.
             start_time = time.time()
-            db_tool = func_tool_mod.DBFuncTool(agent_config=self.agent_config, sub_agent_name="cli_sql")
-            result = db_tool.execute_read_enforced(
-                request.sql_query,
-                self.current_db_connector,
-                datasource=self.current_datasource or "",
-                result_format=request.result_format,
-                policy_context=policy_context or {},
-            )
+            violation, _sql_type = validate_read_only_sql(request.sql_query, self.current_db_connector.dialect)
+            if violation is None:
+                result = self._db_tool().execute_read_enforced(
+                    request.sql_query,
+                    self.current_db_connector,
+                    datasource=self.current_datasource or "",
+                    result_format=request.result_format,
+                    policy_context=policy_context,
+                )
+            else:
+                result = self.current_db_connector.execute(
+                    input_params={"sql_query": request.sql_query},
+                    result_format=request.result_format,
+                )
             end_time = time.time()
             exec_time = end_time - start_time
 
@@ -250,6 +260,18 @@ class CLIService:
                 errorCode=ErrorCode.SQL_EXECUTION_ERROR,
                 errorMessage=str(e),
             )
+
+    def _db_tool(self):
+        """The tool that owns the enforced-read path, built once.
+
+        Its constructor stands up a DBManager and three RAG indexes and sizes
+        two of them — far too much to pay per click on Run. ``CLIService`` is
+        already cached per project, so this rides along with it; the caller's
+        policy context is the only per-request part and travels as an argument.
+        """
+        if self._db_tool_cache is None:
+            self._db_tool_cache = func_tool_mod.DBFuncTool(agent_config=self.agent_config)
+        return self._db_tool_cache
 
     async def execute_sql(
         self,
