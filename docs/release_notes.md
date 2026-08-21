@@ -2,6 +2,18 @@
 
 ## 0.3
 
+### Unreleased
+
+**Enhancements**
+
+- **Dataset-Keyed Semantic Projection** - The knowledge base now stores one row per authored dataset, field and relationship, keyed by `(semantic_model, dataset)` rather than by physical table. A table modelled by several semantic models keeps each view intact: `describe_table` reports the primary one and lists the others under `table.alternatives`, and passing `semantic_model` reads a specific one. Relationships are never merged across models, since their endpoints are dataset names local to their own model. A query-backed dataset no longer occupies the slot of a real table that shares its name.
+- **`sync-yaml` Knowledge-Base Refresh** - `bootstrap-kb --components semantic_model --kb_update_strategy sync-yaml` re-projects the authored YAML under `subject/semantic_models/<datasource>/` into the knowledge base. It makes no LLM call and no warehouse access, and is safe to repeat. The same strategy is available through `POST /api/v1/kb/bootstrap`. Omit `--semantic_yaml` to sync every file of the active datasource, or pass a file or subdirectory to sync just that.
+- **Read-Only Catalog Semantics** - The catalog screen's semantic panel is read-only. Its OSI path was already blocked, while the fallback silently discarded edits. `semantic_modeling` is the only editor that validates a change against the OSI spec before writing it back, which keeps the YAML the single source of truth.
+
+**Upgrade Notes**
+
+- **Re-Project Semantic YAML After Upgrading** - The semantic projection changed shape, so the knowledge base starts empty for it. Run `datus-agent bootstrap-kb --components semantic_model --kb_update_strategy sync-yaml` once per datasource. Until then `describe_table` returns physical schema only and logs how to restore it. Running `semantic_modeling` does **not** substitute: it reconciles only the one YAML it edits, so models it does not touch stay unprojected.
+
 ### 0.3.9
 
 **New Features**

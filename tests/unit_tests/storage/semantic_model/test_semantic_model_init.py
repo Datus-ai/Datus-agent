@@ -14,6 +14,7 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model_async,
     refresh_semantic_yaml_profile_descriptions,
     reject_non_dosi_semantic_yaml,
+    semantic_yaml_files,
     sync_semantic_yaml_tree,
 )
 
@@ -27,7 +28,7 @@ def _config(adapter: str = "dosi") -> MagicMock:
 @pytest.mark.asyncio
 async def test_success_story_semantic_model_routes_to_datasets_only_semantic_modeling():
     config = MagicMock()
-    unified = AsyncMock(return_value=(True, "", {"semantic_object_count": 3}))
+    unified = AsyncMock(return_value=(True, "", {"semantic_dataset_count": 3}))
 
     with patch(
         "datus.storage.semantic_model.semantic_modeling_init.init_success_story_semantic_modeling_async",
@@ -283,3 +284,15 @@ def test_sync_semantic_yaml_tree_rejects_a_missing_path(tmp_path):
     assert successful is False
     assert synced == 0
     assert "not found" in message
+
+
+def test_semantic_yaml_files_skips_the_metrics_fragment_directory(tmp_path):
+    """The staleness hint reuses this, so both must agree on what counts."""
+    _write_model(tmp_path / "sales.yml", "sales")
+    fragments = tmp_path / "metrics"
+    fragments.mkdir()
+    _write_model(fragments / "revenue.yml", "revenue")
+
+    found = semantic_yaml_files(tmp_path)
+
+    assert [path.name for path in found] == ["sales.yml"]

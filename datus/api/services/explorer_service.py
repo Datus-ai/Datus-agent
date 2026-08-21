@@ -61,7 +61,6 @@ class ExplorerService:
 
         self.metric_rag = None
         self.reference_sql_rag = None
-        self.semantic_model_rag = None
         self.subject_tree_store = None
         if not self.datasource_id:
             logger.info("ExplorerService initialized without datasource; subject tree is empty until one is selected")
@@ -70,14 +69,12 @@ class ExplorerService:
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
         from datus.storage.registry import get_subject_tree_store
-        from datus.storage.semantic_model.store import SemanticModelRAG
 
         # ``sub_agent_name`` is the second positional parameter of all three;
         # passing datasource_id by keyword alone silently skipped it, which is
         # why these reads were unscoped no matter what the caller asked for.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
         self.reference_sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
-        self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
         self.subject_tree_store = get_subject_tree_store(
             project=agent_config.project_name,
             datasource_id=self.datasource_id,

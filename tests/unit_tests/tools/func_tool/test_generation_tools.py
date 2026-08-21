@@ -65,7 +65,7 @@ def mock_agent_config():
 def generation_tools(mock_agent_config):
     with (
         patch("datus.tools.func_tool.generation_tools.MetricRAG") as mock_metric_rag_cls,
-        patch("datus.tools.func_tool.generation_tools.SemanticModelRAG") as mock_semantic_rag_cls,
+        patch("datus.tools.func_tool.generation_tools.SemanticDatasetRAG") as mock_semantic_rag_cls,
     ):
         mock_metric_rag = Mock()
         mock_semantic_rag = Mock()
@@ -76,7 +76,7 @@ def generation_tools(mock_agent_config):
 
         tool = GenerationTools(agent_config=mock_agent_config)
         tool.metric_rag = mock_metric_rag
-        tool.semantic_rag = mock_semantic_rag
+        tool.semantic_dataset_rag = mock_semantic_rag
         return tool
 
 
@@ -143,8 +143,10 @@ class TestCheckSemanticObjectExists:
 
     def test_table_found(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = [
+            {"id": "t1", "name": "orders", "kind": "dataset", "dataset_name": "orders", "source_table": "orders"}
+        ]
 
         with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("orders", kind="table")
@@ -155,8 +157,10 @@ class TestCheckSemanticObjectExists:
 
     def test_accepts_prompt_documented_name_argument(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = [
+            {"id": "t1", "name": "orders", "kind": "dataset", "dataset_name": "orders", "source_table": "orders"}
+        ]
 
         with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists(name="orders", kind="table")
@@ -166,8 +170,10 @@ class TestCheckSemanticObjectExists:
 
     def test_accepts_legacy_object_name_argument(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = [
+            {"id": "t1", "name": "orders", "kind": "dataset", "dataset_name": "orders", "source_table": "orders"}
+        ]
 
         with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists(object_name="orders", kind="table")
@@ -183,8 +189,8 @@ class TestCheckSemanticObjectExists:
 
     def test_table_not_found(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_all.return_value = []
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = []
 
         with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("unknown_table", kind="table")
@@ -216,9 +222,9 @@ class TestCheckSemanticObjectExists:
 
     def test_column_found_with_table_context(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_objects.return_value = [
-            {"id": "c1", "name": "amount", "table_name": "orders", "kind": "column"}
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = [
+            {"id": "c1", "name": "amount", "dataset_name": "orders", "kind": "field"}
         ]
 
         result = generation_tools.check_semantic_object_exists("orders.amount", kind="column", table_context="orders")
@@ -228,8 +234,8 @@ class TestCheckSemanticObjectExists:
 
     def test_column_not_found(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_objects.return_value = []
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = []
 
         result = generation_tools.check_semantic_object_exists("orders.nonexistent", kind="column")
 
@@ -238,9 +244,9 @@ class TestCheckSemanticObjectExists:
 
     def test_column_name_match_without_table(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_objects.return_value = [
-            {"id": "c1", "name": "amount", "table_name": "orders", "kind": "column"}
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = [
+            {"id": "c1", "name": "amount", "dataset_name": "orders", "kind": "field"}
         ]
 
         result = generation_tools.check_semantic_object_exists("amount", kind="column")
@@ -250,8 +256,10 @@ class TestCheckSemanticObjectExists:
 
     def test_dotted_name_extracts_target(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = [
+            {"id": "t1", "name": "orders", "kind": "dataset", "dataset_name": "orders", "source_table": "orders"}
+        ]
 
         with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("public.orders", kind="table")
@@ -260,8 +268,8 @@ class TestCheckSemanticObjectExists:
 
     def test_legacy_wrapper(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_all.return_value = []
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = []
 
         with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_model_exists("orders")
@@ -1173,11 +1181,11 @@ class TestOsiSync:
         )
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text("datasets:\n  - name: orders\n")
-        semantic_snapshot = [{"id": "table:shop:old_orders", "yaml_path": str(semantic_file)}]
+        semantic_snapshot = [{"id": "profile:shop:old_orders", "yaml_path": str(semantic_file)}]
         profile_snapshot = [{"id": "profile:shop:old_orders", "yaml_path": str(semantic_file)}]
         metric_snapshot = [{"id": "metric:old_metric", "name": "old_metric", "yaml_path": str(metric_file)}]
         generation_tools.semantic_dataset_rag = Mock()
-        generation_tools.semantic_rag.list_artifact_rows.return_value = semantic_snapshot
+        generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = semantic_snapshot
         generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = profile_snapshot
         generation_tools.metric_rag.list_artifact_rows.return_value = metric_snapshot
         generation_tools.metric_rag.delete_artifact_rows_except.side_effect = RuntimeError("metric delete failed")
@@ -1210,7 +1218,7 @@ class TestOsiSync:
 
         assert result["success"] is False
         assert "metric delete failed" in result["error"]
-        generation_tools.semantic_rag.restore_artifact_rows.assert_called_once_with(
+        generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once_with(
             str(semantic_file), semantic_snapshot
         )
         generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once_with(
@@ -1225,7 +1233,7 @@ class TestOsiSync:
         )
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text("datasets:\n  - name: orders\n")
-        generation_tools.semantic_rag.upsert_batch.side_effect = RuntimeError("semantic write failed")
+        generation_tools.semantic_dataset_rag.upsert_batch.side_effect = RuntimeError("semantic write failed")
         metric = SimpleNamespace(
             name="order_count",
             description="Number of orders",
@@ -1239,8 +1247,7 @@ class TestOsiSync:
         doc = SimpleNamespace(name="shop", datasets=[], relationships=[], metrics=[metric])
         prepared_semantic = {
             "success": True,
-            "semantic_objects": [{"id": "table:shop:orders", "yaml_path": str(semantic_file)}],
-            "semantic_dataset_rows": [],
+            "semantic_dataset_rows": [{"id": "dataset:shop:orders", "yaml_path": str(semantic_file)}],
         }
 
         with (
@@ -1369,19 +1376,18 @@ class TestOsiSync:
             result = generation_tools._sync_osi_semantic_objects_to_db(str(semantic_file))
 
         assert result["success"] is True
-        generation_tools.semantic_rag.delete_artifact_rows.assert_not_called()
-        generation_tools.semantic_rag.delete_artifact_rows_except.assert_called_once()
-        generation_tools.semantic_rag.upsert_batch.assert_called_once()
-        objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
-        assert [obj["kind"] for obj in objects] == ["table", "column", "column", "column", "column"]
+        generation_tools.semantic_dataset_rag.delete_artifact_rows.assert_not_called()
+        generation_tools.semantic_dataset_rag.delete_artifact_rows_except.assert_called_once()
+        generation_tools.semantic_dataset_rag.upsert_batch.assert_called_once()
+        objects = generation_tools.semantic_dataset_rag.upsert_batch.call_args.args[0]
+        assert [obj["kind"] for obj in objects] == ["dataset", "field", "field", "field", "field", "relationship"]
         assert objects[0]["name"] == "orders"
         assert objects[1]["name"] == "order_id"
-        assert objects[1]["is_entity_key"] is True
+        assert objects[1]["is_primary_key"] is True
         assert objects[3]["name"] == "customer_segment"
         assert objects[3]["is_dimension"] is True
         assert objects[4]["name"] == "amount"
         assert objects[4]["is_dimension"] is False
-        assert objects[4]["is_measure"] is False
         generation_tools.semantic_dataset_rag.delete_artifact_rows.assert_not_called()
         generation_tools.semantic_dataset_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.semantic_dataset_rag.upsert_batch.assert_called_once()
@@ -1510,22 +1516,19 @@ class TestOsiSync:
             result = generation_tools._sync_osi_semantic_objects_to_db(str(semantic_file))
 
         assert result["success"] is True
-        objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
-        table_ids = [obj["id"] for obj in objects if obj["kind"] == "table"]
-        assert table_ids == [
-            "table:shop:db1.public.orders",
-            "table:shop:db2.sales.orders",
-        ]
-        column_ids = [obj["id"] for obj in objects if obj["kind"] == "column"]
-        assert column_ids == [
-            "column:shop:db1.public.orders.order_id",
-            "column:shop:db2.sales.orders.order_id",
-        ]
-        tables_by_id = {obj["id"]: obj for obj in objects if obj["kind"] == "table"}
-        assert tables_by_id["table:shop:db1.public.orders"]["database_name"] == "db1"
-        assert tables_by_id["table:shop:db1.public.orders"]["schema_name"] == "public"
-        assert tables_by_id["table:shop:db2.sales.orders"]["database_name"] == "db2"
-        assert tables_by_id["table:shop:db2.sales.orders"]["schema_name"] == "sales"
+        objects = generation_tools.semantic_dataset_rag.upsert_batch.call_args.args[0]
+        dataset_ids = [obj["id"] for obj in objects if obj["kind"] == "dataset"]
+        assert dataset_ids == ["dataset:shop:orders_db1", "dataset:shop:orders_db2"]
+        field_ids = [obj["id"] for obj in objects if obj["kind"] == "field"]
+        assert field_ids == ["field:shop:orders_db1.order_id", "field:shop:orders_db2.order_id"]
+        # Both datasets bind a table called "orders"; their coordinates are what
+        # tell the two physical tables apart.
+        datasets_by_id = {obj["id"]: obj for obj in objects if obj["kind"] == "dataset"}
+        assert datasets_by_id["dataset:shop:orders_db1"]["source_table"] == "orders"
+        assert datasets_by_id["dataset:shop:orders_db1"]["database_name"] == "db1"
+        assert datasets_by_id["dataset:shop:orders_db1"]["schema_name"] == "public"
+        assert datasets_by_id["dataset:shop:orders_db2"]["database_name"] == "db2"
+        assert datasets_by_id["dataset:shop:orders_db2"]["schema_name"] == "sales"
 
     def test__sync_osi_semantic_objects_to_db_fails_when_table_profile_sync_fails(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
@@ -1559,14 +1562,14 @@ class TestOsiSync:
 
         assert result["success"] is False
         assert "profile sync failed" in result["error"]
-        generation_tools.semantic_rag.restore_artifact_rows.assert_called_once()
+        generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once()
         generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once()
 
     def test_sync_osi_to_db_reconciles_semantic_and_metric_rows_together(self, generation_tools, tmp_path):
         osi_file = tmp_path / "shop.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
         doc = SimpleNamespace()
-        semantic_rows = [{"id": "table:shop:orders"}]
+        semantic_rows = [{"id": "dataset:shop:orders"}]
         metric_rows = [{"id": "metric:order_count", "name": "order_count", "sql": ""}]
         generation_tools.metric_rag.list_artifact_rows.return_value = [
             {
@@ -1583,8 +1586,7 @@ class TestOsiSync:
                 "_sync_osi_semantic_objects_to_db",
                 return_value={
                     "success": True,
-                    "semantic_objects": semantic_rows,
-                    "semantic_dataset_rows": [],
+                    "semantic_dataset_rows": semantic_rows,
                     "synced_items": ["table:orders"],
                 },
             ) as prepare_semantic,
@@ -1593,14 +1595,14 @@ class TestOsiSync:
             result = generation_tools.sync_osi_to_db(str(osi_file))
 
         prepare_semantic.assert_called_once_with(str(osi_file), doc=doc, prepare_only=True)
-        generation_tools.semantic_rag.upsert_batch.assert_called_once_with(semantic_rows)
+        generation_tools.semantic_dataset_rag.upsert_batch.assert_called_once_with(semantic_rows)
         generation_tools.metric_rag.upsert_batch.assert_called_once_with(metric_rows)
         assert metric_rows[0]["sql"] == "SELECT COUNT(*) FROM orders"
-        generation_tools.semantic_rag.delete_artifact_rows_except.assert_called_once()
+        generation_tools.semantic_dataset_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once()
         assert result["success"] is True
         assert result["synced"] == 1
-        assert result["semantic_objects"] == 1
+        assert result["semantic_dataset_rows"] == 1
         assert result["metric_names"] == ["order_count"]
 
     def test_sync_osi_to_db_reconciles_empty_metric_collection(self, generation_tools, tmp_path):
@@ -1655,12 +1657,10 @@ class TestOsiSync:
     def test_sync_osi_to_db_restores_all_stores_when_metric_write_fails(self, generation_tools, tmp_path):
         osi_file = tmp_path / "model.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
-        semantic_rows = [{"id": "table:model:orders"}]
-        profile_rows = [{"id": "profile:model:orders"}]
+        dataset_rows = [{"id": "dataset:model:orders"}]
         metric_rows = [{"id": "metric:new", "name": "new"}]
         generation_tools.semantic_dataset_rag = Mock()
-        generation_tools.semantic_rag.list_artifact_rows.return_value = [{"id": "table:old"}]
-        generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = [{"id": "profile:old"}]
+        generation_tools.semantic_dataset_rag.list_artifact_rows.return_value = [{"id": "dataset:old"}]
         generation_tools.metric_rag.list_artifact_rows.return_value = [{"id": "metric:old", "name": "old"}]
         generation_tools.metric_rag.create_indices.side_effect = RuntimeError("metric index failed")
         with (
@@ -1671,8 +1671,7 @@ class TestOsiSync:
                 "_sync_osi_semantic_objects_to_db",
                 return_value={
                     "success": True,
-                    "semantic_objects": semantic_rows,
-                    "semantic_dataset_rows": profile_rows,
+                    "semantic_dataset_rows": dataset_rows,
                     "synced_items": [],
                 },
             ),
@@ -1682,11 +1681,8 @@ class TestOsiSync:
 
         assert result["success"] is False
         assert "metric index failed" in result["error"]
-        generation_tools.semantic_rag.restore_artifact_rows.assert_called_once_with(
-            str(osi_file), [{"id": "table:old"}]
-        )
         generation_tools.semantic_dataset_rag.restore_artifact_rows.assert_called_once_with(
-            str(osi_file), [{"id": "profile:old"}]
+            str(osi_file), [{"id": "dataset:old"}]
         )
         generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(
             str(osi_file), [{"id": "metric:old", "name": "old"}]
@@ -1863,8 +1859,10 @@ class TestCheckSemanticObjectExistsCacheHit:
 
     def test_cache_hit_returns_copy(self, generation_tools):
         mock_storage = Mock()
-        generation_tools.semantic_rag.storage = mock_storage
-        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+        generation_tools.semantic_dataset_rag.storage = mock_storage
+        mock_storage._search_all.return_value = [
+            {"id": "t1", "name": "orders", "kind": "dataset", "dataset_name": "orders", "source_table": "orders"}
+        ]
 
         with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
             # First call populates the cache

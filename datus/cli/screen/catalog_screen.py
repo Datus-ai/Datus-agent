@@ -26,7 +26,6 @@ from datus.cli.cli_styles import HEADER_BOLD_CYAN, TABLE_BORDER_STYLE
 from datus.cli.screen.base_widgets import FocusableStatic
 from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.semantic_dataset.store import SemanticDatasetRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.capabilities import supports_namespace
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -265,7 +264,6 @@ class CatalogScreen(ContextScreen):
         self.is_fullscreen = False
         self.db_connector: BaseSqlConnector = context_data.get("db_connector")
 
-        self.semantic_storage: SemanticModelRAG = SemanticModelRAG(self._agent_config)
         self.semantic_datasets: Optional[SemanticDatasetRAG] = None
         try:
             self.semantic_datasets = SemanticDatasetRAG(self._agent_config)
@@ -332,7 +330,6 @@ class CatalogScreen(ContextScreen):
     def on_unmount(self):
         self.clear_cache()
         self._agent_config = None
-        self.semantic_storage = None
         self.semantic_datasets = None
         self.db_connector = None
 
@@ -728,22 +725,6 @@ class CatalogScreen(ContextScreen):
         #     table.add_row("...", f"+{len(table_schema) - max_columns} more", "", "", "", "")
 
         return table
-
-    def _fetch_semantic_model_record(
-        self,
-        *,
-        catalog_name: str = "",
-        database_name: str = "",
-        schema_name: str = "",
-        table_name: str = "",
-    ) -> Optional[Dict[str, Any]]:
-        """Fetch semantic model record for the given table identifiers."""
-        if not self.semantic_storage:
-            return None
-
-        return self.semantic_storage.get_semantic_model(
-            catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
-        )
 
     def _fetch_table_semantic_profile_record(
         self,
@@ -1201,28 +1182,8 @@ class CatalogScreen(ContextScreen):
                     )
                 )
 
-        if not semantic_record and not self.semantic_storage:
-            message = "Semantic model storage is not configured."
-        elif not semantic_record:
-            try:
-                semantic_record = self._fetch_semantic_model_record(
-                    catalog_name=catalog_name,
-                    database_name=database_name,
-                    schema_name=schema_name,
-                    table_name=table_name,
-                )
-                if not semantic_record:
-                    message = "No semantic model found for this table."
-            except Exception as storage_error:  # pragma: no cover - defensive logging
-                message = f"Failed to load semantic model: {storage_error}"
-                message_style = "red"
-                logger.error(
-                    (
-                        f"Failed to load semantic model: catalog_name={catalog_name}, "
-                        f"database_name={database_name}, schema_name={schema_name}, table_name={table_name}, "
-                        f"error_msg = {storage_error}"
-                    )
-                )
+        if not semantic_record and message is None:
+            message = "No semantic model found for this table."
 
         self._show_semantic_panel(semantic_record, message, message_style)
 

@@ -16,7 +16,7 @@
 语义模型定义基础 schema 层。从 0.2.4 版本开始，它们独立运行：
 
 - **语义模型**（本文档）：包含维度、度量和实体关系的 schema 扩展
-  - 存储：LanceDB 中的 `semantic_model` 表
+  - 存储：知识库中的 `semantic_dataset` 表
   - 目的：帮助 agent 理解表结构以生成临时 SQL
 
 - **指标**（参见 [metrics.zh.md](metrics.zh.md)）：构建在语义模型之上的业务计算
@@ -27,19 +27,22 @@
 
 ## 存储结构
 
-语义模型对象按字段级别存储：
+每个授权对象一行，主键为 `(semantic_model, dataset)`：
 
 ```python
-# 存储的对象（kind 字段）:
-- "table": 表级元数据
-- "column": 列级元数据，带语义标记
-- "entity": 关系的实体定义
+# 行的 kind:
+- "dataset": 一个授权的 dataset，绑定到物理表或可复用查询
+- "field": dataset 的一个字段
+- "relationship": semantic model 的一条关系
 
-# 列的语义标记:
-- is_dimension: 用于分组/过滤的列
-- is_measure: 用于聚合的列
-- is_entity_key: 用于表连接的列
+# field 行上的标记:
+- is_dimension: 可用于分组/过滤
+- is_time: dataset 的时间维度
+- is_primary_key: 属于 dataset 的主键
 ```
+
+一张物理表可以被多个 dataset 建模（分属不同的 semantic model）。query-backed 的 dataset
+不带 `source_table`，因此不会被误当成同名的真实表。
 
 ## 使用方法
 
@@ -187,7 +190,7 @@ Agent 处理流程：
 /subject <domain>/<layer1>/<layer2>
 
 # 搜索语义对象
-search_semantic_objects(query="customer revenue", kinds=["table", "column"])
+search_semantic_objects(query_text="customer revenue", kinds=["dataset", "field"])
 ```
 
 ## 总结

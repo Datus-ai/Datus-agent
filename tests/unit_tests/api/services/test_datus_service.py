@@ -297,27 +297,30 @@ class TestSubAgentScopedServices:
         assert explorer.sub_agent_name == "analyst"
         assert explorer.metric_rag.sub_agent_name == "analyst"
 
-    def test_a_scope_filter_is_actually_built(self, real_agent_config):
-        """Was permanently None before: `_build_sub_agent_filter` returns None
-        for a falsy name, so an unnamed service could never filter anything."""
+    def test_an_unnamed_service_stays_unscoped(self, real_agent_config):
+        """`_build_sub_agent_filter` returns None for a falsy name, so an
+        unnamed service must not carry a sub-agent at all."""
         svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
 
-        assert svc.explorer.semantic_model_rag._sub_agent_filter is None
+        assert svc.explorer.sub_agent_name is None
+        assert svc.explorer.metric_rag.sub_agent_name is None
 
-        scoped = str(svc.explorer_for("analyst").semantic_model_rag._sub_agent_filter)
-        # The filter names the sub-agent's own tables, not merely "something".
-        assert "finance" in scoped and "revenue" in scoped
-
-    def test_two_sub_agents_get_different_filters(self, real_agent_config):
-        """Distinct scopes must produce distinct filters — equal filters would
-        mean the second service was handed the first one's scope."""
+    def test_two_sub_agents_get_their_own_scope(self, real_agent_config):
+        """Equal names would mean the second service was handed the first
+        one's scope. The filter contents are asserted where a `tables` scope
+        has a store to bind to; the explorer only holds subject-scoped RAGs."""
         svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
 
-        analyst = svc.explorer_for("analyst").semantic_model_rag._sub_agent_filter
-        auditor = svc.explorer_for("auditor").semantic_model_rag._sub_agent_filter
+        analyst = svc.explorer_for("analyst")
+        auditor = svc.explorer_for("auditor")
 
-        assert analyst is not None and auditor is not None
-        assert str(analyst) != str(auditor)
+        assert analyst.sub_agent_name == "analyst"
+        assert auditor.sub_agent_name == "auditor"
+        assert analyst.metric_rag.sub_agent_name == "analyst"
+        assert auditor.metric_rag.sub_agent_name == "auditor"
+        assert str(analyst.reference_sql_rag._sub_agent_filter) != str(auditor.reference_sql_rag._sub_agent_filter) or (
+            analyst.reference_sql_rag._sub_agent_filter is None
+        )
 
     def test_an_unknown_name_is_refused(self, real_agent_config):
         """The failure mode this must never have: `sub_agent_config` is a plain

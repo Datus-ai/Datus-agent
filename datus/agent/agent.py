@@ -34,7 +34,6 @@ from datus.storage.semantic_model.semantic_model_init import (
     sync_semantic_yaml_tree,
 )
 from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
-from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_artifacts import allocate_benchmark_attempt, finalize_benchmark_attempt
 from datus.utils.benchmark_utils import load_benchmark_tasks
@@ -643,7 +642,7 @@ class Agent:
                         "status": "success",
                         "message": (
                             "semantic_modeling bootstrap completed, "
-                            f"semantic_object_count={details.get('semantic_object_count', 0)}, "
+                            f"semantic_dataset_count={details.get('semantic_dataset_count', 0)}, "
                             f"metrics_count={details.get('metrics_count', 0)}, "
                             f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
                             f"authoring_scope={semantic_authoring_scope}"
@@ -671,7 +670,7 @@ class Agent:
                         "status": "success",
                         "message": (
                             "semantic_modeling check completed, "
-                            f"semantic_object_count={(details or {}).get('semantic_object_count', 0)}, "
+                            f"semantic_dataset_count={(details or {}).get('semantic_dataset_count', 0)}, "
                             f"metrics_count={(details or {}).get('metrics_count', 0)}"
                         ),
                         "details": details or {},
@@ -684,14 +683,11 @@ class Agent:
 
             elif component == "semantic_model":
                 if kb_update_strategy == "check":
-                    temp_rag = SemanticModelRAG(self.global_config)
-                    profile_rag = SemanticDatasetRAG(self.global_config)
                     result = {
                         "status": "success",
                         "message": (
                             "semantic_model check completed, "
-                            f"semantic_object_count={temp_rag.get_size()}, "
-                            f"semantic_dataset_count={profile_rag.get_size()}"
+                            f"semantic_dataset_count={SemanticDatasetRAG(self.global_config).get_size()}"
                         ),
                     }
                     results[component] = result
@@ -720,8 +716,7 @@ class Agent:
 
                 if kb_update_strategy == "refresh-profile":
                     self.global_config.check_init_storage_config("semantic_model")
-                    temp_rag = SemanticModelRAG(self.global_config)
-                    profile_rag = SemanticDatasetRAG(self.global_config)
+                    dataset_rag = SemanticDatasetRAG(self.global_config)
                     successful, error_message, changed = refresh_success_story_semantic_model_profile(
                         self.global_config,
                         self.args.semantic_yaml,
@@ -733,8 +728,7 @@ class Agent:
                             "message": (
                                 "semantic_model profile refresh completed, "
                                 f"changed_description_count={changed}, "
-                                f"semantic_object_count={temp_rag.get_size()}, "
-                                f"semantic_dataset_count={profile_rag.get_size()}"
+                                f"semantic_dataset_count={dataset_rag.get_size()}"
                             ),
                             "error": error_message,
                         }
@@ -760,10 +754,9 @@ class Agent:
                     self.global_config.save_storage_config("semantic_model")
                 else:
                     self.global_config.check_init_storage_config("semantic_model")
-                temp_rag = SemanticModelRAG(self.global_config)
+                dataset_rag = SemanticDatasetRAG(self.global_config)
                 if kb_update_strategy == "overwrite" and (uses_adapter or uses_semantic_yaml):
-                    temp_rag.truncate()
-                    SemanticDatasetRAG(self.global_config).truncate()
+                    dataset_rag.truncate()
 
                 # Initialize semantic model
                 if uses_adapter:
@@ -785,7 +778,7 @@ class Agent:
                 if successful:
                     result = {
                         "status": "success",
-                        "message": f"semantic_model bootstrap completed, semantic_object_count={temp_rag.get_size()}",
+                        "message": f"semantic_model bootstrap completed, semantic_dataset_count={dataset_rag.get_size()}",
                         "error": error_message,
                     }
                 else:

@@ -1,7 +1,13 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from datus.storage.semantic_dataset.store import SemanticDatasetRAG
+import pytest
+
+from datus.storage.semantic_dataset.store import (
+    MetricKindNotHere,
+    SemanticDatasetRAG,
+    resolve_object_kinds,
+)
 
 
 class _Rows:
@@ -248,3 +254,77 @@ def test_restore_artifact_rows_handles_empty_and_non_empty_paths():
     rag.delete_artifact_rows.assert_called_once_with("semantic/orders.yml")
     rag.upsert_batch.assert_called_once_with(rows)
     rag.create_indices.assert_called_once_with()
+
+
+def _kind_rag(rows):
+    rag = SemanticDatasetRAG.__new__(SemanticDatasetRAG)
+    rag.storage = Mock()
+    rag._sub_agent_conditions = lambda: []
+    rag.storage._search_all.return_value = _Rows(rows)
+    return rag
+
+
+def test_list_fields_orders_keys_then_time_then_the_rest():
+    """Storage returns no guaranteed order, so the authored shape is restored
+    here rather than letting the display drift between reads."""
+    rag = _kind_rag(
+        [
+            {"name": "amount"},
+            {"name": "order_date", "is_dimension": True, "is_time": True},
+            {"name": "order_id", "is_primary_key": True},
+            {"name": "segment", "is_dimension": True},
+        ]
+    )
+
+    names = [row["name"] for row in rag.list_fields("sales", "orders")]
+
+    assert names == ["order_id", "order_date", "segment", "amount"]
+
+
+def test_list_fields_without_dataset_returns_empty():
+    rag = _kind_rag([{"name": "amount"}])
+
+    assert rag.list_fields("sales", "") == []
+    rag.storage._search_all.assert_not_called()
+
+
+def test_list_relationships_keeps_only_the_ones_touching_the_dataset():
+    rag = _kind_rag(
+        [
+            {"name": "b_rel", "from_dataset": "orders", "to_dataset": "customers"},
+            {"name": "a_rel", "from_dataset": "shipments", "to_dataset": "orders"},
+            {"name": "other", "from_dataset": "invoices", "to_dataset": "customers"},
+        ]
+    )
+
+    names = [row["name"] for row in rag.list_relationships("sales", "orders")]
+
+    assert names == ["a_rel", "b_rel"]
+
+
+def test_resolve_object_kinds_maps_the_pre_dosi_vocabulary():
+    assert resolve_object_kinds(["table", "column"]).kinds == ["dataset", "field"]
+    assert resolve_object_kinds("column").kinds == ["field"]
+    assert resolve_object_kinds(None).kinds == []
+
+
+def test_resolve_object_kinds_narrows_entity_to_key_fields():
+    resolved = resolve_object_kinds(["entity"])
+
+    assert resolved.kinds == ["field"]
+    assert resolved.primary_key_only is True
+
+
+def test_resolve_object_kinds_drops_the_narrowing_when_widened():
+    """`entity` alone means key fields; asking for plain fields too would make
+    the narrowing silently drop rows the caller did ask for."""
+    resolved = resolve_object_kinds(["entity", "column"])
+
+    assert resolved.kinds == ["field"]
+    assert resolved.primary_key_only is False
+
+
+def test_resolve_object_kinds_rejects_metrics():
+    """An empty result would read as "no such metric" instead of "wrong tool"."""
+    with pytest.raises(MetricKindNotHere, match="search_metrics"):
+        resolve_object_kinds(["metric"])

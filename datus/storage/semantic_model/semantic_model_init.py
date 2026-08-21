@@ -381,7 +381,7 @@ def init_semantic_yaml_semantic_model(
     return False, result.get("error", "Unknown error")
 
 
-def _semantic_yaml_files(root: Path) -> list[Path]:
+def semantic_yaml_files(root: Path) -> list[Path]:
     """Every authored semantic YAML under ``root``, in a stable order."""
     if root.is_file():
         return [root]
@@ -416,7 +416,7 @@ def sync_semantic_yaml_tree(
     if not target.exists():
         return False, f"Semantic model path not found: {target}", 0
 
-    files = _semantic_yaml_files(target)
+    files = semantic_yaml_files(target)
     if not files:
         return True, f"No semantic YAML found under {target}", 0
 

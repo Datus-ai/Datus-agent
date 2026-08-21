@@ -61,7 +61,7 @@ class TestDBFuncToolCompressorModelName:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -77,7 +77,7 @@ class TestDBFuncToolCompressorModelName:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
-            patch("datus.tools.func_tool.database.SemanticModelRAG"),
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
         ):
             tool = DBFuncTool(mock_connector)
 
@@ -94,7 +94,7 @@ class TestDBFuncToolCompressorModelName:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
             patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_profile,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
@@ -113,7 +113,7 @@ class TestDBFuncToolExecuteDDL:
     def _make_tool(self, connector):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -201,7 +201,7 @@ class TestExecuteDDLStatementValidation:
             connector.execute_ddl.return_value = ddl_result
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -291,7 +291,7 @@ class TestDBFuncToolExecuteWrite:
             connector.get_databases.return_value = []
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -393,7 +393,7 @@ class TestDBFuncToolExecuteWrite:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -499,7 +499,7 @@ class TestDescribeTableDuckDBSchemaPrefix:
         ]
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -585,7 +585,7 @@ class TestDescribeTableConstraintPassthrough:
         mock_connector.get_schema.return_value = schema_rows
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -887,6 +887,50 @@ class TestDescribeTableMultipleDatasets:
         assert tool._semantic_datasets.get_table_projection.call_args.kwargs["semantic_model"] == "sales"
 
 
+class TestDescribeTableWithoutProjection:
+    """After an upgrade the projection starts empty until it is re-synced.
+
+    describe_table must degrade to the physical schema rather than fail, and
+    must say how to restore the semantics instead of going silent.
+    """
+
+    def _make_tool(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.get_schema.return_value = [{"name": "order_id", "type": "INTEGER", "comment": ""}]
+        tool = DBFuncTool(mock_connector)
+        tool._semantic_datasets = Mock()
+        tool._semantic_datasets.get_table_projection.return_value = None
+        return tool
+
+    def test_empty_projection_degrades_to_physical_schema(self):
+        result = self._make_tool().describe_table("orders")
+
+        assert result.success == 1
+        assert result.result["columns"] == [{"name": "order_id", "type": "INTEGER", "comment": ""}]
+        assert "table" not in result.result
+        assert "semantic" not in result.result
+
+    def test_stale_projection_is_reported_once_per_project(self):
+        from datus.tools.func_tool import database as database_module
+
+        database_module._STALE_PROJECTION_WARNED.clear()
+        config = Mock()
+        config.project_name = "shop"
+
+        with (
+            patch("datus.storage.semantic_dataset.store.semantic_projection_is_stale", return_value=True),
+            patch.object(database_module, "logger") as mock_logger,
+        ):
+            database_module._warn_once_if_projection_is_stale(config)
+            database_module._warn_once_if_projection_is_stale(config)
+
+        assert mock_logger.warning.call_count == 1
+        assert "sync-yaml" in mock_logger.warning.call_args.args[0]
+        database_module._STALE_PROJECTION_WARNED.clear()
+
+
 class TestSearchTableWithSharedTable:
     """A table modelled by two semantic models must not break table discovery.
 
@@ -959,7 +1003,7 @@ class TestExecuteDDLDatabaseParam:
             connector.execute_ddl.return_value = ddl_result
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1035,7 +1079,7 @@ class TestGetConnectorRouting:
     def _make_single_mode_tool(self, connector):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1081,7 +1125,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1121,7 +1165,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1160,7 +1204,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1188,7 +1232,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1218,7 +1262,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1252,7 +1296,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1291,7 +1335,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1311,7 +1355,7 @@ class TestTransferQueryResult:
         """Create a DBFuncTool with mocked _get_connector for multi-db routing."""
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1799,7 +1843,7 @@ class TestTransferQueryResult:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1833,7 +1877,7 @@ class TestPathTraversalGuard:
         connector.get_databases.return_value = []
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1873,7 +1917,7 @@ class TestDBFuncToolExecuteSql:
             connector.get_databases.return_value = []
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1930,7 +1974,7 @@ class TestDBFuncToolExecuteSql:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1962,7 +2006,7 @@ class TestDBFuncToolExecuteSql:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1983,7 +2027,7 @@ class TestDBFuncToolExecuteSql:
     def _build(connector, **kwargs):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2247,7 +2291,7 @@ class TestDBFuncToolExecuteSql:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2286,7 +2330,7 @@ class TestDBFuncToolWritePathsHonorReadOnly:
     def _build(connector, **kwargs):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2367,7 +2411,7 @@ class TestDBFuncToolExecuteReadEnforced:
     def _make_tool(self, connector, agent_config=None):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2467,7 +2511,7 @@ class TestDBFuncToolGuardEstimatedRows:
     def _make_tool(self, connector):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2557,7 +2601,7 @@ class TestExecuteSqlWriteLaundering:
     def _tool(self, connector, policy_context):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as sem,
         ):
             rag.return_value.schema_store.table_size.return_value = 0
             sem.return_value.get_size.return_value = 0
@@ -2642,7 +2686,7 @@ class TestMcpFactoriesHonorDeploymentReadOnly:
         with (
             patch("datus.tools.func_tool.database.db_manager_instance", return_value=manager),
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
             patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
             patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
         ):

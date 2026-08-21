@@ -30,9 +30,9 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-from datus.storage.metric.store import MetricRAG, build_metric_id
+from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG, build_metric_id
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.utils.loggings import get_logger
 
@@ -139,7 +139,7 @@ def _seed_all_context_sources(config: AgentConfig):
     reference_sql_store.upsert_batch(_reference_sql_items())
     reference_sql_store.after_init()
 
-    semantic_store = SemanticModelRAG(config)
+    semantic_store = SemanticDatasetRAG(config)
     semantic_store.upsert_batch(_semantic_objects())
     semantic_store.create_indices()
 

@@ -79,7 +79,6 @@ class TestNormalizeNull:
 def semantic_tools():
     """Create a SemanticTools instance with mocked dependencies."""
     with (
-        patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
         patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
     ):
         from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -739,7 +738,6 @@ class TestQueryMetricsCompression:
 def semantic_tools_ext():
     """Create a SemanticTools instance WITHOUT adapter_type (for tests that require no adapter)."""
     with (
-        patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
         patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
     ):
         from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -755,7 +753,6 @@ def semantic_tools_ext():
 @pytest.fixture
 def semantic_tools_with_adapter():
     with (
-        patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
         patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
     ):
         from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -805,7 +802,6 @@ class TestAvailableTools:
 
     def test_default_metricflow_adapter_does_not_load_during_tool_registration(self):
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch(
                 "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
@@ -841,7 +837,6 @@ class TestAvailableTools:
 
     def test_with_adapter_adds_validate_and_attribution_tools(self):
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
         ):
             from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -859,7 +854,6 @@ class TestAvailableTools:
 
     def test_configured_adapter_load_failure_is_reported_when_tool_runs(self):
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch(
                 "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
@@ -940,7 +934,6 @@ class TestRuntimeDbContext:
             return adapter_config
 
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
             patch(
@@ -996,7 +989,6 @@ class TestRuntimeDbContext:
             return adapter_config
 
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
             patch(
@@ -1031,7 +1023,6 @@ class TestRuntimeDbContext:
 
     def test_runtime_context_provider_failure_returns_empty_context(self):
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
         ):
             from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -1048,7 +1039,6 @@ class TestRuntimeDbContext:
 
     def test_agent_config_runtime_context_failure_returns_empty_context(self):
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
         ):
             from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -1062,7 +1052,6 @@ class TestRuntimeDbContext:
 
     def test_static_runtime_context_overrides_agent_config_context_and_is_idempotent(self):
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
         ):
             from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -1101,7 +1090,6 @@ class TestRuntimeDbContext:
         )
 
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
             patch(
@@ -1133,7 +1121,6 @@ class TestRuntimeDbContext:
         metadata = SimpleNamespace(config_class=FakeConfig)
 
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=metadata),
             patch(
@@ -1175,7 +1162,6 @@ class TestRuntimeDbContext:
         metadata = SimpleNamespace(config_class=FakeConfig)
 
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=metadata),
             patch(
@@ -1240,7 +1226,6 @@ class TestRuntimeDbContext:
         )
 
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
             patch(
@@ -2062,7 +2047,6 @@ class TestCompressorModelName:
 
     def test_compressor_uses_agent_config_model(self):
         with (
-            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
         ):
             from datus.tools.func_tool.semantic_tools import SemanticTools

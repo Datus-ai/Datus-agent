@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.semantic_dataset.store import MetricKindNotHere
 from datus.tools.func_tool import ContextSearchTools
 from datus.tools.func_tool.base import FuncToolResult, normalize_null
 from datus.tools.func_tool.context_search import _fill_subject_tree, _normalize_subject_tree
@@ -128,11 +129,10 @@ def build_tools(mock_agent_config):
 
         semantic_rag = Mock()
         semantic_rag.get_size.return_value = semantic_cfg.get("size", 0)
-        mock_storage = Mock()
-        mock_storage.search_objects.return_value = semantic_cfg.get("search_return", [])
+        semantic_rag.list_objects.return_value = semantic_cfg.get("search_return", [])
         if "search_side_effect" in semantic_cfg:
-            mock_storage.search_objects.side_effect = semantic_cfg["search_side_effect"]
-        semantic_rag.storage = mock_storage
+            semantic_rag.list_objects.side_effect = semantic_cfg["search_side_effect"]
+        semantic_rag.storage = Mock()
 
         reference_template_rag = Mock()
         template_entries = template_cfg.get("entries", [])
@@ -146,7 +146,7 @@ def build_tools(mock_agent_config):
 
         with (
             patch("datus.tools.func_tool.context_search.MetricRAG", return_value=metric_rag),
-            patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=semantic_rag),
+            patch("datus.tools.func_tool.context_search.SemanticDatasetRAG", return_value=semantic_rag),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
             patch("datus.tools.func_tool.context_search.ReferenceTemplateRAG", return_value=reference_template_rag),
             patch(
@@ -302,7 +302,7 @@ class TestSearchSemanticObjects:
         result = tools.search_semantic_objects("amount column", kinds=["column"])
 
         assert result.success == 1
-        called = semantic_rag.storage.search_objects.call_args.kwargs
+        called = semantic_rag.list_objects.call_args.kwargs
         assert called["query_text"] == "amount column"
         assert called["kinds"] == ["column"]
         assert called["top_n"] == 5
@@ -312,31 +312,30 @@ class TestSearchSemanticObjects:
 
         tools.search_semantic_objects("test", kinds="null")
 
-        called = semantic_rag.storage.search_objects.call_args.kwargs
+        called = semantic_rag.list_objects.call_args.kwargs
         assert called["query_text"] == "test"
         assert called["kinds"] is None
 
-    def test_search_is_scoped_to_the_current_datasource(self, build_tools):
-        """The physical table is shared across a project, so an unscoped search
-        reaches other datasources' semantic objects."""
+    def test_reads_through_the_scoped_rag_not_raw_storage(self, build_tools):
+        """The physical table is shared across a project, so going straight to
+        storage would reach other datasources' objects. Scoping lives in the RAG."""
         tools, _, _, semantic_rag = build_tools(semantic_cfg={"size": 1, "search_return": []})
-        semantic_rag._sub_agent_conditions.return_value = ["datasource_id = 'shop'"]
 
         tools.search_semantic_objects("orders")
 
-        called = semantic_rag.storage.search_objects.call_args.kwargs
-        assert called["extra_conditions"] == ["datasource_id = 'shop'"]
+        semantic_rag.list_objects.assert_called_once()
+        semantic_rag.storage.search_objects.assert_not_called()
 
-    def test_metric_kind_is_rejected_instead_of_returning_empty(self, build_tools):
-        """This store excludes metrics, so an empty success reads as "no such
-        metric" and sends the caller down the wrong path."""
-        tools, _, _, semantic_rag = build_tools(semantic_cfg={"size": 1, "search_return": []})
+    def test_metric_kind_is_reported_as_the_wrong_tool(self, build_tools):
+        """An empty success would read as "no such metric" and send the caller
+        down the wrong path, so the store raises and this surfaces it."""
+        tools, _, _, semantic_rag = build_tools(semantic_cfg={"size": 1})
+        semantic_rag.list_objects.side_effect = MetricKindNotHere("Use search_metrics instead.")
 
         result = tools.search_semantic_objects("daily active users", kinds=["metric"])
 
         assert result.success == 0
         assert "search_metrics" in result.error
-        semantic_rag.storage.search_objects.assert_not_called()
 
     def test_exception_returns_failure(self, build_tools):
         tools, _, _, semantic_rag = build_tools(
@@ -466,7 +465,7 @@ class TestCreateFactoryMethods:
         mock_metric, mock_semantic, mock_sql, mock_ref_tpl = _make_full_rag_mocks()
         with (
             patch("datus.tools.func_tool.context_search.MetricRAG", return_value=mock_metric),
-            patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=mock_semantic),
+            patch("datus.tools.func_tool.context_search.SemanticDatasetRAG", return_value=mock_semantic),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=mock_sql),
             patch("datus.tools.func_tool.context_search.ReferenceTemplateRAG", return_value=mock_ref_tpl),
         ):
@@ -479,7 +478,7 @@ class TestCreateFactoryMethods:
         mock_metric, mock_semantic, mock_sql, mock_ref_tpl = _make_full_rag_mocks()
         with (
             patch("datus.tools.func_tool.context_search.MetricRAG", return_value=mock_metric),
-            patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=mock_semantic),
+            patch("datus.tools.func_tool.context_search.SemanticDatasetRAG", return_value=mock_semantic),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=mock_sql),
             patch("datus.tools.func_tool.context_search.ReferenceTemplateRAG", return_value=mock_ref_tpl),
         ):
@@ -565,7 +564,7 @@ def build_context_search_tools(context_search_agent_config):
 
         with (
             patch("datus.tools.func_tool.context_search.MetricRAG", return_value=metric_rag),
-            patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=semantic_rag),
+            patch("datus.tools.func_tool.context_search.SemanticDatasetRAG", return_value=semantic_rag),
             patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
             patch("datus.tools.func_tool.context_search.ReferenceTemplateRAG", return_value=reference_template_rag),
             patch(

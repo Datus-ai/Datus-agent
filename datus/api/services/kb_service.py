@@ -26,7 +26,6 @@ from datus.storage.semantic_model.semantic_model_init import (
     refresh_success_story_semantic_model_profile,
 )
 from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
-from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -322,16 +321,11 @@ class KbService:
         args: types.SimpleNamespace,
         emit,
     ) -> dict:
-        rag = SemanticModelRAG(config)
+        rag = SemanticDatasetRAG(config)
         if strategy == "check":
-            profile_rag = SemanticDatasetRAG(config)
             return {
                 "status": "success",
-                "message": (
-                    "semantic_model check completed, "
-                    f"semantic_object_count={rag.get_size()}, "
-                    f"semantic_dataset_count={profile_rag.get_size()}"
-                ),
+                "message": (f"semantic_model check completed, semantic_dataset_count={rag.get_size()}"),
             }
         if strategy == "sync-yaml":
             from datus.storage.semantic_model.semantic_model_init import sync_semantic_yaml_tree
@@ -345,7 +339,6 @@ class KbService:
             return {"status": "failed", "message": message, "synced": synced}
 
         if strategy == "refresh-profile":
-            profile_rag = SemanticDatasetRAG(config)
             successful, error_message, changed = refresh_success_story_semantic_model_profile(
                 config,
                 args.semantic_yaml,
@@ -358,8 +351,7 @@ class KbService:
                     "message": (
                         "semantic_model profile refresh completed, "
                         f"changed_description_count={changed}, "
-                        f"semantic_object_count={rag.get_size()}, "
-                        f"semantic_dataset_count={profile_rag.get_size()}"
+                        f"semantic_dataset_count={rag.get_size()}"
                     ),
                     "error": error_message,
                 }
@@ -370,7 +362,7 @@ class KbService:
         if successful:
             return {
                 "status": "success",
-                "message": f"semantic_model bootstrap completed, semantic_object_count={rag.get_size()}",
+                "message": f"semantic_model bootstrap completed, semantic_dataset_count={rag.get_size()}",
                 "error": error_message,
             }
         return {"status": "failed", "message": error_message}
@@ -432,7 +424,7 @@ class KbService:
             "status": "success",
             "message": (
                 "semantic_modeling bootstrap completed, "
-                f"semantic_object_count={details.get('semantic_object_count', 0)}, "
+                f"semantic_dataset_count={details.get('semantic_dataset_count', 0)}, "
                 f"metrics_count={details.get('metrics_count', 0)}, "
                 f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
                 f"authoring_scope={authoring_scope}"

@@ -15,7 +15,7 @@ Enhances database schema understanding for better SQL generation:
 Semantic models define the foundational schema layer. Starting from version 0.2.4, they operate independently:
 
 - **Semantic Models** (this document): Schema extensions with dimensions, measures, and entity relationships
-  - Storage: `semantic_model` table in LanceDB
+  - Storage: `semantic_dataset` table in the knowledge base
   - Purpose: Help agent understand table structures for ad-hoc SQL generation
 
 - **Metrics** (see [metrics.md](metrics.md)): Business calculations built on semantic models
@@ -26,19 +26,23 @@ Semantic models provide the building blocks (dimensions, measures) that metrics 
 
 ## Storage Structure
 
-Semantic model objects are stored at field level:
+One row per authored object, keyed by `(semantic_model, dataset)`:
 
 ```python
-# Stored objects (kind field):
-- "table": Table-level metadata
-- "column": Column-level metadata with semantic flags
-- "entity": Entity definitions for relationships
+# Row kinds:
+- "dataset": one authored dataset, bound to a physical table or a reusable query
+- "field": one field of a dataset
+- "relationship": one relationship of the semantic model
 
-# Semantic flags for columns:
-- is_dimension: Column used for grouping/filtering
-- is_measure: Column used for aggregation
-- is_entity_key: Column used for table joins
+# Flags on a field row:
+- is_dimension: usable for grouping/filtering
+- is_time: the dataset's time dimension
+- is_primary_key: part of the dataset's key
 ```
+
+A physical table may be modelled by more than one dataset, in different semantic
+models. A query-backed dataset carries no `source_table`, so it is never mistaken
+for a real table that happens to share its name.
 
 ## Usage
 
@@ -191,7 +195,7 @@ Semantic models are searchable via `/subject` context command:
 /subject <domain>/<layer1>/<layer2>
 
 # Search for semantic objects
-search_semantic_objects(query="customer revenue", kinds=["table", "column"])
+search_semantic_objects(query_text="customer revenue", kinds=["dataset", "field"])
 ```
 
 ## Summary

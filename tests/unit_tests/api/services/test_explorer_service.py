@@ -1290,21 +1290,24 @@ class TestExplorerServiceSubAgentScope:
 
         assert svc.sub_agent_name is None
         assert svc.metric_rag.sub_agent_name is None
-        assert svc.semantic_model_rag._sub_agent_filter is None
+        assert svc.metric_rag._sub_agent_filter is None
 
     def test_name_reaches_every_rag(self, real_agent_config):
+        """The name has to reach each store, or a store reads unscoped.
+
+        The filter's contents are not asserted here: the explorer only holds
+        subject-scoped stores, whose filters resolve against the subject tree
+        and so stay empty on a bare test KB.
+        """
         real_agent_config.agentic_nodes = {
             **(real_agent_config.agentic_nodes or {}),
-            "analyst": {"scoped_context": {"tables": "finance.revenue"}},
+            "analyst": {"scoped_context": {"metrics": "finance.revenue"}},
         }
 
         svc = ExplorerService(agent_config=real_agent_config, sub_agent_name="analyst")
 
         assert svc.sub_agent_name == "analyst"
         assert svc.metric_rag.sub_agent_name == "analyst"
-
-        scoped = str(svc.semantic_model_rag._sub_agent_filter)
-        assert "finance" in scoped and "revenue" in scoped
 
 
 class TestExplorerServiceScopedReads:

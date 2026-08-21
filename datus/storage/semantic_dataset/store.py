@@ -17,7 +17,7 @@ lets a caller filter on ``source_table``, ``is_primary_key`` or
 
 from __future__ import annotations
 
-import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
@@ -39,6 +39,91 @@ KIND_RELATIONSHIP = "relationship"
 
 _TABLE_REF_FIELDS = ["catalog_name", "database_name", "schema_name", "source_table"]
 _DATASET_ORDER_FIELDS = ("semantic_model_name", "dataset_name")
+
+
+def _strip_identifier_quotes(value: str) -> str:
+    text = str(value or "").strip()
+    while len(text) >= 2 and (
+        (text[0] == text[-1] and text[0] in {'"', "'", "`"}) or (text[0] == "[" and text[-1] == "]")
+    ):
+        text = text[1:-1].strip()
+    return text
+
+
+def _identifier_variants(value: str) -> List[str]:
+    """Return common exact-match variants for SQL identifiers."""
+
+    parts = [_strip_identifier_quotes(part) for part in str(value or "").split(".") if part.strip()]
+    variants: List[str] = []
+    for start in range(len(parts)):
+        candidate = ".".join(parts[start:])
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+    if parts:
+        leaf = parts[-1]
+        if leaf and leaf not in variants:
+            variants.append(leaf)
+    raw = _strip_identifier_quotes(value)
+    if raw and raw not in variants:
+        variants.append(raw)
+    lower_variants = []
+    for item in variants:
+        lowered = item.lower()
+        if lowered and lowered not in variants and lowered not in lower_variants:
+            lower_variants.append(lowered)
+    variants.extend(lower_variants)
+    return variants
+
+
+def _normalized_identifier(value: str) -> str:
+    parts = [_strip_identifier_quotes(part) for part in str(value or "").split(".") if part.strip()]
+    return ".".join(parts).lower()
+
+
+class MetricKindNotHere(ValueError):
+    """Raised when a caller asks this store for metrics.
+
+    Metrics live in their own store. Answering with an empty list instead
+    reads as "no such metric" and sends the caller down the wrong path.
+    """
+
+
+@dataclass(frozen=True)
+class ResolvedKinds:
+    kinds: list[str]
+    primary_key_only: bool
+
+
+# Pre-Dosi callers speak of tables and columns; an ``entity`` was a key field.
+_LEGACY_KIND_ALIASES = {
+    "table": KIND_DATASET,
+    "column": KIND_FIELD,
+    "entity": KIND_FIELD,
+}
+
+
+def resolve_object_kinds(kinds: Optional[List[str] | str]) -> ResolvedKinds:
+    """Normalize a requested kind filter onto this store's vocabulary."""
+    requested = [kinds] if isinstance(kinds, str) else list(kinds or [])
+    names = [str(kind).strip().lower() for kind in requested]
+    names = [name for name in names if name]
+    if "metric" in names:
+        raise MetricKindNotHere(
+            "search_semantic_objects covers modelled datasets, fields and relationships only; "
+            "metrics are stored separately. Use search_metrics instead."
+        )
+
+    normalized: list[str] = []
+    for name in names:
+        resolved = _LEGACY_KIND_ALIASES.get(name, name)
+        if resolved not in normalized:
+            normalized.append(resolved)
+
+    # "entity" meant key fields specifically. Both it and "column" resolve to
+    # "field", so the narrowing has to be decided on what was asked for: asking
+    # for columns as well would otherwise silently drop the non-key ones.
+    primary_key_only = set(names) == {"entity"}
+    return ResolvedKinds(kinds=normalized, primary_key_only=primary_key_only)
 
 
 def dataset_row_id(semantic_model: str, dataset_name: str) -> str:
@@ -227,7 +312,12 @@ class SemanticDatasetRAG:
         return self._project(rows, select_fields)
 
     def list_fields(self, semantic_model: str, dataset_name: str) -> List[Dict[str, Any]]:
-        """Return one dataset's fields in authored order."""
+        """Return one dataset's fields, keys first, then time, then the rest.
+
+        Storage returns no guaranteed order, so this restores the shape the
+        model was authored in instead of letting the display drift between
+        reads.
+        """
         if not dataset_name:
             return []
         conditions = [
@@ -236,7 +326,16 @@ class SemanticDatasetRAG:
             eq("dataset_name", dataset_name),
             *self._sub_agent_conditions(),
         ]
-        return self.storage._search_all(where=And(conditions)).to_pylist()
+        rows = self.storage._search_all(where=And(conditions)).to_pylist()
+        rows.sort(
+            key=lambda row: (
+                not row.get("is_primary_key"),
+                not row.get("is_time"),
+                not row.get("is_dimension"),
+                str(row.get("name") or ""),
+            )
+        )
+        return rows
 
     def list_relationships(self, semantic_model: str, dataset_name: str) -> List[Dict[str, Any]]:
         """Return the relationships that touch one dataset, either end."""
@@ -251,6 +350,51 @@ class SemanticDatasetRAG:
         touching = [row for row in rows if dataset_name in (row.get("from_dataset", ""), row.get("to_dataset", ""))]
         touching.sort(key=lambda row: str(row.get("name") or ""))
         return touching
+
+    def list_objects(
+        self,
+        query_text: str,
+        kinds: Optional[List[str]] = None,
+        table_name: str = "",
+        top_n: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Search datasets, fields and relationships by description.
+
+        ``kinds`` accepts the pre-Dosi vocabulary as well, so a caller that
+        still asks for ``table`` or ``column`` keeps working.
+
+        ``table_name`` narrows to one physical table. Relationships span two
+        datasets and bind no single table, so they never match it.
+        """
+        resolved = resolve_object_kinds(kinds)
+        conditions = list(self._sub_agent_conditions())
+        if resolved.kinds:
+            conditions.append(in_("kind", resolved.kinds))
+        if resolved.primary_key_only:
+            conditions.append(eq("is_primary_key", True))
+        if table_name:
+            conditions.append(eq("source_table", table_name))
+        return self.storage.search(query_txt=query_text, top_n=top_n, where=And(conditions)).to_pylist()
+
+    def table_exists(
+        self,
+        table_name: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+    ) -> bool:
+        """Whether any dataset in scope is bound to this physical table."""
+        if not table_name:
+            return False
+        return bool(
+            self.list_datasets(
+                catalog_name=catalog_name,
+                database_name=database_name,
+                schema_name=schema_name,
+                table_name=table_name,
+                select_fields=["id"],
+            )
+        )
 
     def get_table_projection(
         self,
@@ -427,15 +571,36 @@ class SemanticDatasetRAG:
             logger.debug("Failed to refresh metadata retrieval documents from semantic datasets: %s", exc)
 
 
-def decode_json_field(value: Any, default: Any) -> Any:
-    """Decode a stored JSON column, tolerating already-decoded values."""
-    if value in (None, ""):
-        return default
-    if isinstance(value, (dict, list)):
-        return value
-    if not isinstance(value, str):
-        return default
+SYNC_YAML_HINT = (
+    "Authored semantic YAML exists but its knowledge-base projection is empty. "
+    "Run: datus-agent bootstrap-kb --components semantic_model --kb_update_strategy sync-yaml"
+)
+
+
+def semantic_projection_is_stale(agent_config: "AgentConfig") -> bool:
+    """Whether authored YAML exists with nothing projected from it.
+
+    True right after an upgrade that changed the projection layout, and after
+    any manual wipe of the store. Callers surface the hint rather than syncing
+    on the spot: a full re-projection is too slow to run from an interactive
+    lookup, and stalling silently is worse than saying what to run.
+    """
     try:
-        return json.loads(value)
-    except (TypeError, ValueError):
-        return default
+        if SemanticDatasetRAG(agent_config).get_size() > 0:
+            return False
+    except Exception as exc:
+        logger.debug("Unable to size the semantic dataset projection: %s", exc)
+        return False
+
+    try:
+        from datus.agent.node.semantic_authoring import _osi_semantic_model_dir
+
+        # Reuse what sync-yaml itself would pick up, so the hint is never shown
+        # for files that a sync would then skip.
+        from datus.storage.semantic_model.semantic_model_init import semantic_yaml_files
+
+        model_dir = _osi_semantic_model_dir(agent_config)
+        return bool(model_dir is not None and semantic_yaml_files(model_dir))
+    except Exception as exc:
+        logger.debug("Unable to resolve the semantic model directory: %s", exc)
+        return False

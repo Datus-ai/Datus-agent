@@ -43,14 +43,12 @@ class TestSemanticStorageManagerInit:
 
 class TestEnsureSemanticModelStore:
     def test_lazy_init_creates_store(self):
-        """_ensure_semantic_model_store lazily creates store via SemanticModelRAG import."""
+        """_ensure_semantic_model_store lazily creates the dataset RAG."""
         manager = _make_manager()
-        mock_rag_instance = MagicMock()
         mock_expected_store = MagicMock()
-        mock_rag_instance.storage = mock_expected_store
-        mock_rag_class = MagicMock(return_value=mock_rag_instance)
+        mock_rag_class = MagicMock(return_value=mock_expected_store)
 
-        with patch("datus.storage.semantic_model.store.SemanticModelRAG", mock_rag_class):
+        with patch("datus.tools.semantic_tools.storage_sync.SemanticDatasetRAG", mock_rag_class):
             store = manager._ensure_semantic_model_store()
 
         assert store is mock_expected_store
@@ -129,11 +127,11 @@ class TestStoreSemanticModel:
             )
 
         # batch_store called at least once (for the table object)
-        assert mock_store.batch_store.call_count >= 1
-        first_call_args = mock_store.batch_store.call_args_list[0][0][0]
+        assert mock_store.store_batch.call_count >= 1
+        first_call_args = mock_store.store_batch.call_args_list[0][0][0]
         table_obj = first_call_args[0]
-        assert table_obj["kind"] == "table"
-        assert table_obj["table_name"] == "users"
+        assert table_obj["kind"] == "dataset"
+        assert table_obj["source_table"] == "users"
 
     def test_stores_dimensions(self):
         manager = _make_manager()
@@ -153,7 +151,7 @@ class TestStoreSemanticModel:
 
         # Should have stored table + dimensions (2 calls or table + one batch of dims)
         all_stored = []
-        for call in mock_store.batch_store.call_args_list:
+        for call in mock_store.store_batch.call_args_list:
             all_stored.extend(call[0][0])
 
         dim_objects = [obj for obj in all_stored if obj.get("is_dimension") is True]
@@ -162,7 +160,9 @@ class TestStoreSemanticModel:
         assert "region" in dim_names
         assert "product" in dim_names
 
-    def test_stores_measures(self):
+    def test_measures_do_not_become_fields(self):
+        """A measure is a metric input, not a column of the dataset; metrics
+        have their own store, so nothing here should claim them."""
         manager = _make_manager()
         mock_store = MagicMock()
         with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
@@ -176,12 +176,11 @@ class TestStoreSemanticModel:
             )
 
         all_stored = []
-        for call in mock_store.batch_store.call_args_list:
+        for call in mock_store.store_batch.call_args_list:
             all_stored.extend(call[0][0])
 
-        measure_objects = [obj for obj in all_stored if obj.get("is_measure") is True]
-        assert len(measure_objects) == 1
-        assert measure_objects[0]["name"] == "total_sales"
+        assert [obj["kind"] for obj in all_stored] == ["dataset"]
+        assert not [obj for obj in all_stored if obj.get("name") == "total_sales"]
 
     def test_stores_identifiers(self):
         manager = _make_manager()
@@ -198,10 +197,10 @@ class TestStoreSemanticModel:
             )
 
         all_stored = []
-        for call in mock_store.batch_store.call_args_list:
+        for call in mock_store.store_batch.call_args_list:
             all_stored.extend(call[0][0])
 
-        id_objects = [obj for obj in all_stored if obj.get("is_entity_key") is True]
+        id_objects = [obj for obj in all_stored if obj.get("is_primary_key") is True]
         assert len(id_objects) == 1
         assert id_objects[0]["name"] == "order_id"
 
@@ -222,13 +221,13 @@ class TestStoreSemanticModel:
             )
 
         all_stored = []
-        for call in mock_store.batch_store.call_args_list:
+        for call in mock_store.store_batch.call_args_list:
             all_stored.extend(call[0][0])
 
         dim_objects = [obj for obj in all_stored if obj.get("is_dimension") is True]
         assert len(dim_objects) == 1
 
-    def test_builds_fully_qualified_name(self):
+    def test_keeps_the_warehouse_coordinates_on_the_dataset(self):
         manager = _make_manager()
         mock_store = MagicMock()
         with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
@@ -244,11 +243,14 @@ class TestStoreSemanticModel:
                 }
             )
 
-        first_call = mock_store.batch_store.call_args_list[0][0][0]
+        first_call = mock_store.store_batch.call_args_list[0][0][0]
         table_obj = first_call[0]
-        assert table_obj["fq_name"] == "my_catalog.my_db.my_schema.my_table"
+        assert table_obj["catalog_name"] == "my_catalog"
+        assert table_obj["database_name"] == "my_db"
+        assert table_obj["schema_name"] == "my_schema"
+        assert table_obj["source_table"] == "my_table"
 
-    def test_skips_empty_parts_in_fq_name(self):
+    def test_leaves_absent_coordinates_empty(self):
         manager = _make_manager()
         mock_store = MagicMock()
         with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
@@ -261,9 +263,11 @@ class TestStoreSemanticModel:
                 }
             )
 
-        first_call = mock_store.batch_store.call_args_list[0][0][0]
+        first_call = mock_store.store_batch.call_args_list[0][0][0]
         table_obj = first_call[0]
-        assert table_obj["fq_name"] == "simple_table"
+        assert table_obj["source_table"] == "simple_table"
+        assert table_obj["catalog_name"] == ""
+        assert table_obj["database_name"] == ""
 
     def test_stores_semantic_model_info_with_extra_metadata(self):
         from datus.tools.semantic_tools.models import DimensionInfo, SemanticModelInfo
@@ -282,10 +286,10 @@ class TestStoreSemanticModel:
             manager.store_semantic_model(model)
 
         all_stored = []
-        for call in mock_store.batch_store.call_args_list:
+        for call in mock_store.store_batch.call_args_list:
             all_stored.extend(call[0][0])
-        table_obj = [o for o in all_stored if o["kind"] == "table"][0]
-        assert table_obj["table_name"] == "orders"  # from extra, not model.name
+        table_obj = [o for o in all_stored if o["kind"] == "dataset"][0]
+        assert table_obj["source_table"] == "orders"  # from extra, not model.name
         assert table_obj["database_name"] == "analytics"
         assert table_obj["semantic_model_name"] == "orders_cube"
         dim_objects = [o for o in all_stored if o.get("is_dimension")]
@@ -310,13 +314,12 @@ class TestStoreSemanticModel:
             manager.store_semantic_model(model)
 
         all_stored = []
-        for call in mock_store.batch_store.call_args_list:
+        for call in mock_store.store_batch.call_args_list:
             all_stored.extend(call[0][0])
-        table_obj = [o for o in all_stored if o["kind"] == "table"][0]
-        assert table_obj["table_name"] == "orders"
+        table_obj = [o for o in all_stored if o["kind"] == "dataset"][0]
+        assert table_obj["source_table"] == "orders"
         assert table_obj["database_name"] == "analytics"
         assert table_obj["schema_name"] == "public"
-        assert table_obj["fq_name"] == "analytics.public.orders"
 
     def test_rejects_semantic_model_info_without_physical_table_name(self):
         from datus.tools.semantic_tools.models import SemanticModelInfo
@@ -339,7 +342,7 @@ class TestStoreSemanticModel:
                 }
             )
         all_stored = []
-        for call in mock_store.batch_store.call_args_list:
+        for call in mock_store.store_batch.call_args_list:
             all_stored.extend(call[0][0])
         dim_objects = [obj for obj in all_stored if obj.get("is_dimension") is True]
         assert len(dim_objects) == 1
