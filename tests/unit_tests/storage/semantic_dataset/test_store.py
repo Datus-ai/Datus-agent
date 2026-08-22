@@ -35,12 +35,42 @@ def test_list_datasets_uses_unique_namespace_fallback_only():
     assert result == [expected]
 
 
-def test_list_datasets_rejects_ambiguous_namespace_fallback():
+def test_list_datasets_ignores_broad_hits_from_another_namespace():
+    """A hit in a different database must not veto the one that matches."""
+    expected = {"source_table": "orders", "database_name": "shop"}
+    rag = _rag_with_rows(
+        [],
+        [expected, {"source_table": "orders", "database_name": "archive"}],
+    )
+
+    result = rag.list_datasets(database_name="shop", table_name="orders")
+
+    assert result == [expected]
+
+
+def test_list_datasets_keeps_every_model_of_an_under_qualified_table():
+    """Authored YAML often leaves catalog blank while the connector fills in a
+    default, so the broad lookup is the normal path for a table modelled more
+    than once -- all of its models must survive it."""
+    rows = [
+        {"source_table": "orders", "database_name": "shop", "semantic_model_name": "sales"},
+        {"source_table": "orders", "database_name": "shop", "semantic_model_name": "fulfillment"},
+    ]
+    rag = _rag_with_rows([], rows)
+
+    result = rag.list_datasets(catalog_name="default_catalog", database_name="shop", table_name="orders")
+
+    assert [row["semantic_model_name"] for row in result] == ["fulfillment", "sales"]
+
+
+def test_list_datasets_rejects_broad_hits_that_name_different_tables():
+    """Both rows are namespace-compatible with the request but sit in different
+    catalogs, so the request cannot tell which table it meant."""
     rag = _rag_with_rows(
         [],
         [
-            {"source_table": "orders", "database_name": "shop"},
-            {"source_table": "orders", "database_name": "archive"},
+            {"source_table": "orders", "catalog_name": "", "database_name": "shop"},
+            {"source_table": "orders", "catalog_name": "warehouse", "database_name": "shop"},
         ],
     )
 
@@ -62,8 +92,8 @@ def test_list_datasets_lowercase_fallback_runs_after_ambiguous_broad_lookup():
     rag = _rag_with_rows(
         [],
         [
-            {"source_table": "Orders", "database_name": "shop"},
-            {"source_table": "Orders", "database_name": "archive"},
+            {"source_table": "Orders", "catalog_name": "", "database_name": "shop"},
+            {"source_table": "Orders", "catalog_name": "warehouse", "database_name": "shop"},
         ],
         [expected],
     )
@@ -132,7 +162,9 @@ def test_list_datasets_without_table_name_returns_empty():
 
 
 def test_list_datasets_projects_back_to_requested_fields():
-    """Sort keys are read even when the caller did not ask for them."""
+    """Sort and namespace keys are read even when the caller did not ask for
+    them: without the namespace columns every row reads back as None and the
+    ambiguity check cannot tell two tables apart."""
     rows = [
         {"source_table": "orders", "semantic_model_name": "sales", "dataset_name": "orders"},
         {"source_table": "orders", "semantic_model_name": "fulfillment", "dataset_name": "orders"},
@@ -143,7 +175,14 @@ def test_list_datasets_projects_back_to_requested_fields():
 
     assert result == [{"source_table": "orders"}, {"source_table": "orders"}]
     queried = rag.storage._search_all.call_args.kwargs["select_fields"]
-    assert set(queried) == {"source_table", "semantic_model_name", "dataset_name"}
+    assert set(queried) == {
+        "source_table",
+        "semantic_model_name",
+        "dataset_name",
+        "catalog_name",
+        "database_name",
+        "schema_name",
+    }
 
 
 def test_list_datasets_puts_the_primary_dataset_first():

@@ -39,6 +39,7 @@ KIND_RELATIONSHIP = "relationship"
 
 _TABLE_REF_FIELDS = ["catalog_name", "database_name", "schema_name", "source_table"]
 _DATASET_ORDER_FIELDS = ("semantic_model_name", "dataset_name")
+_DATASET_NAMESPACE_FIELDS = ("catalog_name", "database_name", "schema_name")
 
 
 def _strip_identifier_quotes(value: str) -> str:
@@ -283,20 +284,22 @@ class SemanticDatasetRAG:
         if not rows and (catalog_name or database_name or schema_name):
             broad = [eq("source_table", table_name), *base_conds]
             broad_rows = self.storage._search_all(where=And(broad), select_fields=query_fields).to_pylist()
-            # A lone namespace-compatible hit is an unqualified reference to
-            # this table. Several hits mean the coordinates cannot tell them
-            # apart, so nothing is returned rather than a guess.
-            rows = (
-                broad_rows
-                if len(broad_rows) == 1
-                and self._namespace_compatible(
-                    broad_rows[0],
+            compatible = [
+                row
+                for row in broad_rows
+                if self._namespace_compatible(
+                    row,
                     catalog_name=catalog_name,
                     database_name=database_name,
                     schema_name=schema_name,
                 )
-                else []
-            )
+            ]
+            # Namespace-compatible hits that agree on their own coordinates are
+            # all the same physical table under an under-qualified reference --
+            # several of them is a table modelled more than once, not an
+            # ambiguity. Hits that disagree name different tables, so nothing is
+            # returned rather than a guess.
+            rows = compatible if self._share_one_namespace(compatible) else []
 
         if not rows and table_name.lower() != table_name:
             lower = [eq("source_table", table_name.lower()), *base_conds]
@@ -507,10 +510,15 @@ class SemanticDatasetRAG:
 
     @staticmethod
     def _with_order_fields(select_fields: Optional[List[str]]) -> Optional[List[str]]:
-        """Widen a projection so the sort keys are always readable."""
+        """Widen a projection so the sort and namespace keys are always readable.
+
+        A narrow projection would otherwise read the namespace columns back as
+        None and make every row look namespace-compatible.
+        """
         if not select_fields:
             return None
-        missing = [name for name in _DATASET_ORDER_FIELDS if name not in select_fields]
+        required = (*_DATASET_ORDER_FIELDS, *_DATASET_NAMESPACE_FIELDS)
+        missing = [name for name in required if name not in select_fields]
         return [*select_fields, *missing] if missing else list(select_fields)
 
     @staticmethod
@@ -536,6 +544,14 @@ class SemanticDatasetRAG:
             if requested and row.get(field) not in ("", None, requested):
                 return False
         return True
+
+    @staticmethod
+    def _share_one_namespace(rows: List[Dict[str, Any]]) -> bool:
+        """Whether every row names the same physical table."""
+        if not rows:
+            return False
+        coordinates = {tuple(str(row.get(name) or "") for name in _DATASET_NAMESPACE_FIELDS) for row in rows}
+        return len(coordinates) == 1
 
     def _table_refs(self, where) -> List[Dict[str, Any]]:
         try:
