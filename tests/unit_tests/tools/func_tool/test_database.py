@@ -141,11 +141,18 @@ class TestDBFuncToolTableCoordinates:
             ),
         ],
     )
-    def test_qualified_names_follow_connector_namespaces(self, capabilities, field_order, raw_name, defaults, expected):
+    def test_qualified_names_follow_connector_namespaces(
+        self,
+        capabilities: set[str],
+        field_order: list[str],
+        raw_name: str,
+        defaults: dict[str, str],
+        expected: tuple[str, str, str],
+    ) -> None:
         class Connector:
-            dialect = "hive"
+            dialect: str = "hive"
 
-            def get_effective_capabilities(self):
+            def get_effective_capabilities(self) -> set[str]:
                 return capabilities
 
         connector = Connector()
@@ -155,12 +162,12 @@ class TestDBFuncToolTableCoordinates:
 
         assert (coordinate.database, coordinate.schema, coordinate.table) == expected
 
-    def test_database_only_scope_rejects_another_database(self):
+    def test_database_only_scope_rejects_another_database(self) -> None:
         class Connector:
-            dialect = "hive"
+            dialect: str = "hive"
 
             @staticmethod
-            def get_effective_capabilities():
+            def get_effective_capabilities() -> set[str]:
                 return {"database"}
 
         connector = Connector()
@@ -172,8 +179,36 @@ class TestDBFuncToolTableCoordinates:
 
         assert pattern.database == "dwd"
         assert pattern.schema == ""
-        assert tool._table_matches_scope(tool._build_table_coordinate("dwd.events", connector=connector))
-        assert not tool._table_matches_scope(tool._build_table_coordinate("other.events", connector=connector))
+        assert tool._table_matches_scope(
+            tool._build_table_coordinate("dwd.events", connector=connector), connector=connector
+        )
+        assert not tool._table_matches_scope(
+            tool._build_table_coordinate("other.events", connector=connector), connector=connector
+        )
+
+    def test_scope_uses_routed_connector_namespaces(self) -> None:
+        class SchemaConnector:
+            dialect: str = "postgres"
+
+            @staticmethod
+            def get_effective_capabilities() -> set[str]:
+                return {"schema"}
+
+        class DatabaseConnector:
+            dialect: str = "hive"
+
+            @staticmethod
+            def get_effective_capabilities() -> set[str]:
+                return {"database"}
+
+        tool = object.__new__(DBFuncTool)
+        tool._primary_connector = SchemaConnector()
+        tool._field_order = ["schema", "table"]
+        tool._scoped_patterns = [tool._parse_scope_token("dwd.*")]
+        routed_connector = DatabaseConnector()
+        coordinate = tool._build_table_coordinate("other.events", connector=routed_connector)
+
+        assert not tool._table_matches_scope(coordinate, connector=routed_connector)
 
 
 class TestDBFuncToolExecuteDDL:

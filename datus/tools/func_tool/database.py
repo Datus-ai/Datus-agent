@@ -573,13 +573,16 @@ class DBFuncTool:
         except Exception:
             return None
 
-    def _parse_scope_token(self, token: str) -> Optional[ScopedTablePattern]:
+    def _parse_scope_token(
+        self, token: str, connector: Optional[BaseSqlConnector] = None
+    ) -> Optional[ScopedTablePattern]:
         token = (token or "").strip()
         if not token:
             return None
-        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        routed_connector = connector or self._primary_connector
+        dialect = getattr(routed_connector, "dialect", "") or ""
         parsed = parse_table_name_parts(token, dialect)
-        parsed = self._normalize_parsed_namespaces(parsed, self._primary_connector, dialect)
+        parsed = self._normalize_parsed_namespaces(parsed, routed_connector, dialect)
         if not parsed.get("table_name"):
             return None
         values = {
@@ -907,10 +910,17 @@ class DBFuncTool:
                 setattr(coordinate, field, self._normalize_identifier_part(parsed[parsed_field]))
         return coordinate
 
-    def _table_matches_scope(self, coordinate: TableCoordinate) -> bool:
+    def _table_matches_scope(self, coordinate: TableCoordinate, connector: Optional[BaseSqlConnector] = None) -> bool:
         if not self._scoped_patterns:
             return True
-        return any(pattern.matches(coordinate) for pattern in self._scoped_patterns)
+        patterns = self._scoped_patterns
+        if connector is not None:
+            patterns = []
+            for pattern in self._scoped_patterns:
+                routed_pattern = self._parse_scope_token(pattern.raw, connector)
+                if routed_pattern is not None:
+                    patterns.append(routed_pattern)
+        return any(pattern.matches(coordinate) for pattern in patterns)
 
     def _filter_table_entries(
         self,
@@ -932,7 +942,7 @@ class DBFuncTool:
                 schema=schema,
                 connector=connector,
             )
-            if self._table_matches_scope(coordinate):
+            if self._table_matches_scope(coordinate, connector=connector):
                 filtered.append(entry)
         return filtered
 
@@ -992,7 +1002,7 @@ class DBFuncTool:
         out_of_scope: List[str] = []
         for name in table_names:
             coordinate = self._build_table_coordinate(raw_name=name, connector=routed_connector)
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, connector=routed_connector):
                 out_of_scope.append(name)
         return out_of_scope
 
@@ -1403,7 +1413,7 @@ class DBFuncTool:
                 connector=connector,
             )
 
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, connector=connector):
                 error_msg = f"Table '{table_name}' is outside the scoped context."
                 logger.warning(error_msg)
                 return FuncToolResult(
@@ -1943,7 +1953,7 @@ class DBFuncTool:
                 schema=schema_name,
                 connector=connector,
             )
-            if not self._table_matches_scope(coordinate):
+            if not self._table_matches_scope(coordinate, connector=connector):
                 return FuncToolResult(
                     success=0,
                     error=f"Table '{table_name}' is outside the scoped context.",
