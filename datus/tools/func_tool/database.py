@@ -879,6 +879,18 @@ class DBFuncTool:
         )
         dialect = getattr(routed_connector, "dialect", "") or ""
         parsed = parse_table_name_parts(raw_name, dialect)
+        # Some database-only adapters (notably Hive) advertise capabilities on
+        # the connector while the generic parser lacks matching registry
+        # metadata. It then right-aligns ``database.table`` as ``schema.table``.
+        # Move that namespace back so the connector default cannot override it.
+        if (
+            parsed.get("schema_name")
+            and not parsed.get("database_name")
+            and supports_namespace("database", connector=routed_connector, dialect=dialect)
+            and not supports_namespace("schema", connector=routed_connector, dialect=dialect)
+        ):
+            parsed["database_name"] = parsed["schema_name"]
+            parsed["schema_name"] = ""
         for field, parsed_field in (
             ("catalog", "catalog_name"),
             ("database", "database_name"),

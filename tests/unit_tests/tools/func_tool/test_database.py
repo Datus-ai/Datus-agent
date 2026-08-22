@@ -107,6 +107,55 @@ class TestDBFuncToolCompressorModelName:
         assert tool._table_semantic_profiles is None
 
 
+class TestDBFuncToolTableCoordinates:
+    @pytest.mark.parametrize(
+        ("capabilities", "field_order", "raw_name", "defaults", "expected"),
+        [
+            (
+                {"database"},
+                ["database", "table"],
+                "dwd.dwd_dim_user_a_day",
+                {"database": "ods"},
+                ("dwd", "", "dwd_dim_user_a_day"),
+            ),
+            (
+                {"schema"},
+                ["schema", "table"],
+                "analytics.events",
+                {"schema": "public"},
+                ("", "analytics", "events"),
+            ),
+            (
+                {"database", "schema"},
+                ["database", "schema", "table"],
+                "warehouse.analytics.events",
+                {"database": "default", "schema": "public"},
+                ("warehouse", "analytics", "events"),
+            ),
+            (
+                {"database"},
+                ["database", "table"],
+                "events",
+                {"database": "ods"},
+                ("ods", "", "events"),
+            ),
+        ],
+    )
+    def test_qualified_names_follow_connector_namespaces(self, capabilities, field_order, raw_name, defaults, expected):
+        class Connector:
+            dialect = "hive"
+
+            def get_effective_capabilities(self):
+                return capabilities
+
+        connector = Connector()
+        tool = object.__new__(DBFuncTool)
+        tool._field_order = field_order
+        coordinate = tool._build_table_coordinate(raw_name, connector=connector, **defaults)
+
+        assert (coordinate.database, coordinate.schema, coordinate.table) == expected
+
+
 class TestDBFuncToolExecuteDDL:
     """Tests for DBFuncTool.execute_ddl method."""
 
