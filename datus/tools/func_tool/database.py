@@ -579,6 +579,7 @@ class DBFuncTool:
             return None
         dialect = getattr(self._primary_connector, "dialect", "") or ""
         parsed = parse_table_name_parts(token, dialect)
+        parsed = self._normalize_parsed_namespaces(parsed, self._primary_connector, dialect)
         if not parsed.get("table_name"):
             return None
         values = {
@@ -588,6 +589,22 @@ class DBFuncTool:
             "table": parsed.get("table_name", ""),
         }
         return ScopedTablePattern(raw=token, **values)
+
+    @staticmethod
+    def _normalize_parsed_namespaces(
+        parsed: Dict[str, str], connector: BaseSqlConnector, dialect: str
+    ) -> Dict[str, str]:
+        """Align generic parser output with the connector's namespace model."""
+        if (
+            parsed.get("schema_name")
+            and not parsed.get("database_name")
+            and supports_namespace("database", connector=connector, dialect=dialect)
+            and not supports_namespace("schema", connector=connector, dialect=dialect)
+        ):
+            parsed = dict(parsed)
+            parsed["database_name"] = parsed["schema_name"]
+            parsed["schema_name"] = ""
+        return parsed
 
     def _get_semantic_model(
         self, catalog: str = "", database: str = "", schema: str = "", table_name: str = ""
@@ -879,18 +896,7 @@ class DBFuncTool:
         )
         dialect = getattr(routed_connector, "dialect", "") or ""
         parsed = parse_table_name_parts(raw_name, dialect)
-        # Some database-only adapters (notably Hive) advertise capabilities on
-        # the connector while the generic parser lacks matching registry
-        # metadata. It then right-aligns ``database.table`` as ``schema.table``.
-        # Move that namespace back so the connector default cannot override it.
-        if (
-            parsed.get("schema_name")
-            and not parsed.get("database_name")
-            and supports_namespace("database", connector=routed_connector, dialect=dialect)
-            and not supports_namespace("schema", connector=routed_connector, dialect=dialect)
-        ):
-            parsed["database_name"] = parsed["schema_name"]
-            parsed["schema_name"] = ""
+        parsed = self._normalize_parsed_namespaces(parsed, routed_connector, dialect)
         for field, parsed_field in (
             ("catalog", "catalog_name"),
             ("database", "database_name"),

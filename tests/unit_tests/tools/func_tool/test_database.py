@@ -155,6 +155,26 @@ class TestDBFuncToolTableCoordinates:
 
         assert (coordinate.database, coordinate.schema, coordinate.table) == expected
 
+    def test_database_only_scope_rejects_another_database(self):
+        class Connector:
+            dialect = "hive"
+
+            @staticmethod
+            def get_effective_capabilities():
+                return {"database"}
+
+        connector = Connector()
+        tool = object.__new__(DBFuncTool)
+        tool._primary_connector = connector
+        tool._field_order = ["database", "table"]
+        pattern = tool._parse_scope_token("dwd.*")
+        tool._scoped_patterns = [pattern]
+
+        assert pattern.database == "dwd"
+        assert pattern.schema == ""
+        assert tool._table_matches_scope(tool._build_table_coordinate("dwd.events", connector=connector))
+        assert not tool._table_matches_scope(tool._build_table_coordinate("other.events", connector=connector))
+
 
 class TestDBFuncToolExecuteDDL:
     """Tests for DBFuncTool.execute_ddl method."""
