@@ -4362,3 +4362,59 @@ class TestEnsureNodeForBang:
         with patch.object(cmds, "_create_new_node", side_effect=RuntimeError("boom")):
             assert cmds.ensure_node_for_bang() is None
         assert cmds.current_node is None
+
+    def test_warm_up_keeps_node_published_while_it_was_building(self, real_agent_config, mock_llm_create):
+        """A turn that publishes mid-warm-up owns ``current_node`` afterwards.
+
+        The warm-up (background init thread) and a chat turn (input thread) can
+        both observe ``current_node is None``; node construction is slow enough
+        that the warm-up finishes last and used to overwrite the node the turn
+        was already streaming into, orphaning its session — the running turn's
+        actions then belonged to a node nobody could reach.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        turn_node = MagicMock(name="turn_node")
+        warm_node = MagicMock(name="warm_node")
+
+        def _publish_turn_node_mid_build(*args, **kwargs):
+            # Stands in for a chat turn winning the race while this warm-up is
+            # still mounting tools on its own node.
+            cmds.current_node = turn_node
+            return warm_node
+
+        with patch.object(cmds, "_create_new_node", side_effect=_publish_turn_node_mid_build):
+            assert cmds.ensure_node_for_bang() is turn_node
+
+        assert cmds.current_node is turn_node
+
+    def test_concurrent_warm_up_and_turn_agree_on_one_node(self, real_agent_config, mock_llm_create):
+        """Whoever wins, the node the turn uses is the one left published.
+
+        Exercises the real threading shape: background warm-up against an input
+        thread running the same check-create-publish the chat path does.
+        """
+        import threading
+
+        cmds = _make_chat_commands(real_agent_config)
+        start = threading.Barrier(2)
+        turn_node_used = []
+
+        def _run_turn():
+            start.wait(timeout=5)
+            with cmds.node_transaction():
+                if cmds._should_create_new_node(None):
+                    cmds.current_node = cmds._create_new_node(None)
+                turn_node_used.append(cmds.current_node)
+
+        def _run_warm_up():
+            start.wait(timeout=5)
+            cmds.ensure_node_for_bang()
+
+        threads = [threading.Thread(target=_run_turn), threading.Thread(target=_run_warm_up)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not any(thread.is_alive() for thread in threads), "node_transaction deadlocked"
+        assert cmds.current_node is turn_node_used[0]

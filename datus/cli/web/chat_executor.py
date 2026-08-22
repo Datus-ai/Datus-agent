@@ -41,16 +41,19 @@ class ChatExecutor:
             # @Agent yet).
             at_tables, at_metrics, at_sqls, _at_agent = cli.at_completer.parse_at_context(user_message)
 
-            # Reuse chat_commands node management
-            need_new_node = cli.chat_commands._should_create_new_node(current_subagent)
+            # Reuse chat_commands node management. The decision and the publish
+            # share one lock hold so a concurrent background node warm-up
+            # cannot replace the node this turn is about to stream into.
+            with cli.chat_commands.node_transaction():
+                need_new_node = cli.chat_commands._should_create_new_node(current_subagent)
 
-            # Disable compact in web mode to avoid blocking
-            if need_new_node:
-                current_node = cli.chat_commands._create_new_node(current_subagent)
-                cli.chat_commands.current_node = current_node
-                cli.chat_commands.current_subagent_name = current_subagent if current_subagent else None
-            else:
-                current_node = cli.chat_commands.current_node
+                # Disable compact in web mode to avoid blocking
+                if need_new_node:
+                    current_node = cli.chat_commands._create_new_node(current_subagent)
+                    cli.chat_commands.current_node = current_node
+                    cli.chat_commands.current_subagent_name = current_subagent if current_subagent else None
+                else:
+                    current_node = cli.chat_commands.current_node
 
             # Create input using shared method from chat_commands
             node_input, _ = cli.chat_commands.create_node_input(

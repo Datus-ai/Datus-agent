@@ -13,6 +13,7 @@ import json
 import platform
 import re
 import subprocess
+import threading
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
@@ -117,6 +118,15 @@ class ChatCommands:
         # Chat state management - unified node management
         self.current_node: ChatAgenticNode | None = None  # Can be ChatAgenticNode or GenSQLAgenticNode
         self.current_subagent_name: str | None = None  # Track current subagent name
+        # Serializes every ``current_node`` check-create-publish sequence.
+        # ``DatusCLI._warm_bang_node`` builds the default node from the
+        # background init thread while the input thread may start a chat turn,
+        # and node construction takes long enough (tool setup, skill/web/MCP
+        # mounting) for both to observe ``current_node is None`` and each
+        # publish its own node — the later writer then orphans the session the
+        # running turn is streaming into. Reentrant so a holder can call the
+        # nested node helpers.
+        self._node_lock = threading.RLock()
         self.chat_history = []
         self.last_actions = []
         self.all_turn_actions: List[Tuple[str, List[ActionHistory]]] = []
@@ -148,6 +158,19 @@ class ChatCommands:
             if hasattr(self.current_node, "active_database"):
                 self.current_node.active_database = getattr(self.cli.cli_context, "current_db_name", "") or ""
             self.current_node.setup_tools()
+
+    @contextmanager
+    def node_transaction(self):
+        """Hold the node lock across a check-create-publish of ``current_node``.
+
+        Every caller that decides whether to build a node and then publishes
+        the result must run inside this block, so a concurrent builder either
+        waits and reuses the published node or observes the decision that won.
+        Callers outside this module (the web executor) use it too — the lock
+        itself stays private.
+        """
+        with self._node_lock:
+            yield
 
     def _should_create_new_node(self, subagent_name: str = None) -> bool:
         """Determine if a new node should be created."""
@@ -261,26 +284,36 @@ class ChatCommands:
         ``self.current_node``, so ``!`` autocomplete lists the complete tool set
         and never observes a half-mounted node. Returns ``None`` when node
         construction fails.
+
+        Runs under :meth:`node_transaction` because this is the one caller that
+        builds a node nobody asked for yet: a chat turn starting concurrently
+        must never have its own node replaced by this warm-up. The publish is
+        therefore also re-checked — a turn that won the race keeps its node and
+        the warm one is dropped.
         """
-        if self.current_node is not None:
+        with self.node_transaction():
+            if self.current_node is not None:
+                return self.current_node
+            try:
+                node = self._create_new_node(None)
+                if hasattr(node, "active_database"):
+                    node.active_database = getattr(self.cli.cli_context, "current_db_name", "") or ""
+                if hasattr(node, "setup_tools"):
+                    node.setup_tools()
+                # Mount the tools that are otherwise injected lazily during a turn
+                # (skill / bash / memory / web) so the ``!`` list is complete.
+                if hasattr(node, "_ensure_lazy_tools_mounted"):
+                    node._ensure_lazy_tools_mounted()
+                if self.current_node is not None:
+                    logger.debug("Bang-node warm dropped: a chat turn published its own node first")
+                    return self.current_node
+                self.current_subagent_name = None
+                self.current_node = node
+            except Exception as exc:  # noqa: BLE001 - never crash the REPL on a ! call
+                logger.error(f"Failed to create chat node for '!' tool execution: {exc}", exc_info=True)
+                self.current_node = None
+                return None
             return self.current_node
-        try:
-            node = self._create_new_node(None)
-            if hasattr(node, "active_database"):
-                node.active_database = getattr(self.cli.cli_context, "current_db_name", "") or ""
-            if hasattr(node, "setup_tools"):
-                node.setup_tools()
-            # Mount the tools that are otherwise injected lazily during a turn
-            # (skill / bash / memory / web) so the ``!`` list is complete.
-            if hasattr(node, "_ensure_lazy_tools_mounted"):
-                node._ensure_lazy_tools_mounted()
-            self.current_subagent_name = None
-            self.current_node = node
-        except Exception as exc:  # noqa: BLE001 - never crash the REPL on a ! call
-            logger.error(f"Failed to create chat node for '!' tool execution: {exc}", exc_info=True)
-            self.current_node = None
-            return None
-        return self.current_node
 
     def create_node_input(
         self,
@@ -478,43 +511,49 @@ class ChatCommands:
                     message = self._render_agent_dispatch_hint(message, at_agent)
 
             if interactive:
-                # Decision logic: determine if we need to create a new node
-                need_new_node = self._should_create_new_node(subagent_name)
-                is_switch = self._is_agent_switch(subagent_name)
+                # The decision and the publish share one lock hold: a
+                # background ``!`` warm-up must not slip a node in between
+                # ``_should_create_new_node`` and the assignment below, nor
+                # replace this turn's node once it is published.
+                with self.node_transaction():
+                    # Decision logic: determine if we need to create a new node
+                    need_new_node = self._should_create_new_node(subagent_name)
+                    is_switch = self._is_agent_switch(subagent_name)
 
-                # Get or create node
-                if need_new_node:
-                    # Copy session when switching agents to preserve conversation
-                    # while keeping the session_id prefix consistent with the new
-                    # node type. The copy runs *before* construction so the new
-                    # node opens the cloned .db directly — no post-construct mutation.
-                    from datus.agent.node.node_factory import resolve_node_name
+                    # Get or create node
+                    if need_new_node:
+                        # Copy session when switching agents to preserve conversation
+                        # while keeping the session_id prefix consistent with the new
+                        # node type. The copy runs *before* construction so the new
+                        # node opens the cloned .db directly — no post-construct mutation.
+                        from datus.agent.node.node_factory import resolve_node_name
 
-                    prev_session_id = None
-                    prev_node_name = None
-                    new_session_id: Optional[str] = None
-                    if is_switch and self.current_node:
-                        prev_session_id = getattr(self.current_node, "session_id", None)
-                        prev_node_name = self.current_node.get_node_name()
-                    if prev_session_id:
-                        new_session_id = self._copy_session_for_switch(
-                            prev_session_id, resolve_node_name(subagent_name)
-                        )
-                    self.current_node = self._create_new_node(subagent_name, session_id=new_session_id)
-                    if prev_node_name:
-                        # Pass the previous node's name explicitly so downstream
-                        # nodes (e.g. feedback) can route memory to the caller
-                        # without having to parse the session id prefix.
-                        self.current_node.caller_node_name = prev_node_name
-                    self.current_subagent_name = subagent_name if subagent_name else None
-                    if not is_switch:
-                        self.all_turn_actions = []
+                        prev_session_id = None
+                        prev_node_name = None
+                        new_session_id: Optional[str] = None
+                        if is_switch and self.current_node:
+                            prev_session_id = getattr(self.current_node, "session_id", None)
+                            prev_node_name = self.current_node.get_node_name()
+                        if prev_session_id:
+                            new_session_id = self._copy_session_for_switch(
+                                prev_session_id, resolve_node_name(subagent_name)
+                            )
+                        self.current_node = self._create_new_node(subagent_name, session_id=new_session_id)
+                        if prev_node_name:
+                            # Pass the previous node's name explicitly so downstream
+                            # nodes (e.g. feedback) can route memory to the caller
+                            # without having to parse the session id prefix.
+                            self.current_node.caller_node_name = prev_node_name
+                        self.current_subagent_name = subagent_name if subagent_name else None
+                        if not is_switch:
+                            self.all_turn_actions = []
 
-                current_node = self.current_node
+                    current_node = self.current_node
             else:
                 # Non-interactive: always create a new node
-                self.current_node = self._create_new_node(None)
-                current_node = self.current_node
+                with self.node_transaction():
+                    self.current_node = self._create_new_node(None)
+                    current_node = self.current_node
 
             # Ensure the node has a pending-input queue so the TUI Enter
             # handler, the API ``/insert`` route, and the model layer's
@@ -1508,19 +1547,20 @@ class ChatCommands:
         self.console.clear()
 
         # Clear current session
-        if self.current_node:
-            try:
-                self.current_node.delete_session()
-                self.console.print("[green]Console and current session cleared.[/]")
-            except Exception as e:
-                logger.error(f"Error deleting session: {e}")
+        with self.node_transaction():
+            if self.current_node:
+                try:
+                    self.current_node.delete_session()
+                    self.console.print("[green]Console and current session cleared.[/]")
+                except Exception as e:
+                    logger.error(f"Error deleting session: {e}")
+                    self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
+            else:
                 self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
-        else:
-            self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
 
-        # Reset all node references
-        self.current_node = None
-        self.all_turn_actions = []
+            # Reset all node references
+            self.current_node = None
+            self.all_turn_actions = []
 
     def cmd_chat_info(self, args: str):
         """Display information about the current session."""
@@ -1854,11 +1894,12 @@ class ChatCommands:
             # Pass session_id at construction so ``AgenticNode.__init__`` can
             # rehydrate persisted plan-mode state (and the todolist disk-load
             # path) before the first turn — see ``restore_plan_mode_state``.
-            new_node = self._create_new_node(subagent_name, session_id=target_session_id)
+            with self.node_transaction():
+                new_node = self._create_new_node(subagent_name, session_id=target_session_id)
 
-            # Update state
-            self.current_node = new_node
-            self.current_subagent_name = subagent_name
+                # Update state
+                self.current_node = new_node
+                self.current_subagent_name = subagent_name
 
             # Mirror restored plan-mode flag back to the REPL toggle so the
             # bottom status bar reflects what the node believes (PLAN vs CHAT).
@@ -1964,9 +2005,10 @@ class ChatCommands:
             if turn_num == 1:
                 # First turn selected — no prior messages, create a fresh session
                 node_name = self._extract_node_type_from_session_id(source_session_id)
-                new_node = self._create_new_node(node_name if node_name != "chat" else None)
-                self.current_node = new_node
-                self.current_subagent_name = node_name if node_name != "chat" else None
+                with self.node_transaction():
+                    new_node = self._create_new_node(node_name if node_name != "chat" else None)
+                    self.current_node = new_node
+                    self.current_subagent_name = node_name if node_name != "chat" else None
                 self.chat_history = []
                 self.all_turn_actions = []
                 self.last_actions = []
@@ -1985,10 +2027,11 @@ class ChatCommands:
             node_name = self._extract_node_type_from_session_id(new_session_id)
             subagent_name = node_name if node_name != "chat" else None
 
-            new_node = self._create_new_node(subagent_name, session_id=new_session_id)
+            with self.node_transaction():
+                new_node = self._create_new_node(subagent_name, session_id=new_session_id)
 
-            self.current_node = new_node
-            self.current_subagent_name = subagent_name
+                self.current_node = new_node
+                self.current_subagent_name = subagent_name
             if hasattr(self.cli, "plan_mode_active"):
                 self.cli.plan_mode_active = bool(getattr(new_node, "plan_mode_active", False))
 
