@@ -1098,3 +1098,94 @@ class TestSearchAll:
 
         result = store._search_all(limit=0)
         assert result.num_rows == 0
+
+
+# ---------------------------------------------------------------------------
+# Runtime index creation across backends
+# ---------------------------------------------------------------------------
+
+
+class _RecordingIndexTable:
+    """A non-Lance backend implementing the VectorTable index contract."""
+
+    def __init__(self):
+        self.scalar_index_calls = []
+        self.vector_index_calls = []
+
+    def count_rows(self, where=None):
+        return 128
+
+    def create_scalar_index(self, column):
+        self.scalar_index_calls.append(column)
+
+    def create_vector_index(self, column, metric="cosine", **kwargs):
+        self.vector_index_calls.append((column, metric, kwargs))
+
+
+class _RejectingIndexTable(_RecordingIndexTable):
+    """A backend that refuses index creation, e.g. against a read-only replica."""
+
+    def create_scalar_index(self, column):
+        raise RuntimeError("permission denied")
+
+    def create_vector_index(self, column, metric="cosine", **kwargs):
+        raise RuntimeError("permission denied")
+
+
+class TestRuntimeIndexingAcrossBackends:
+    """Whether to build an index is the backend's call, not something base
+    decides from the table's class name."""
+
+    def _make_store(self, table):
+        schema = pa.schema(
+            [
+                pa.field("name", pa.string()),
+                pa.field("vector", pa.list_(pa.float32(), list_size=2)),
+            ]
+        )
+        store = BaseEmbeddingStore(
+            table_name="test_table",
+            embedding_model=_UnavailableEmbeddingModel(),
+            db=_ReadOnlyVectorDb(exists=True, table=table),
+            schema=schema,
+        )
+        store._shared.table = table
+        store._shared.initialized = True
+        return store
+
+    def test_scalar_index_reaches_a_non_lance_backend(self):
+        table = _RecordingIndexTable()
+        store = self._make_store(table)
+
+        store._create_scalar_index("name")
+
+        assert table.scalar_index_calls == ["name"]
+
+    def test_vector_index_reaches_a_non_lance_backend(self):
+        table = _RecordingIndexTable()
+        store = self._make_store(table)
+
+        store.create_vector_index(metric="cosine")
+
+        assert len(table.vector_index_calls) == 1
+        column, metric, _ = table.vector_index_calls[0]
+        assert (column, metric) == ("vector", "cosine")
+
+    def test_index_sizing_travels_as_kwargs_the_backend_may_ignore(self):
+        """A backend with a different index family takes column and metric and
+        drops the rest, so none of the sizing may become a positional argument."""
+        table = _RecordingIndexTable()
+        store = self._make_store(table)
+
+        store.create_vector_index()
+
+        _, _, kwargs = table.vector_index_calls[0]
+        assert "index_type" in kwargs
+        assert "num_partitions" in kwargs
+
+    def test_a_backend_refusing_an_index_does_not_break_its_caller(self):
+        table = _RejectingIndexTable()
+        store = self._make_store(table)
+
+        store._create_scalar_index("name")
+        store.create_vector_index()
