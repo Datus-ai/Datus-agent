@@ -323,6 +323,50 @@ class TestShouldCreateNewNode:
         assert cmds.current_subagent_name == "gen_sql"
 
 
+class TestGetOrCreateNode:
+    """The public check-create-publish shared by the web executor."""
+
+    def test_creates_and_publishes_when_no_node_exists(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        node = cmds.get_or_create_node()
+        assert node.id == "chat_cli"
+        assert cmds.current_node is node
+        assert cmds.current_subagent_name is None
+
+    def test_reuses_published_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        first = cmds.get_or_create_node()
+        assert cmds.get_or_create_node() is first
+
+    def test_switching_subagent_publishes_new_node_and_name(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        regular = cmds.get_or_create_node()
+        switched = cmds.get_or_create_node("gen_sql")
+        assert switched is not regular
+        assert cmds.current_node is switched
+        assert cmds.current_subagent_name == "gen_sql"
+
+    def test_publish_happens_under_the_node_lock(self, real_agent_config, mock_llm_create):
+        """The decision and the assignment share one lock hold.
+
+        A warm-up observing an unlocked gap between them could publish its own
+        node over the one this call is about to return.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        held = []
+
+        def _record_lock_state(*args, **kwargs):
+            # ``RLock`` is reentrant, so a same-thread acquire always succeeds;
+            # the owner check is what proves the section is held.
+            held.append(cmds._node_lock._is_owned())
+            return MagicMock(name="node")
+
+        with patch.object(cmds, "_create_new_node", side_effect=_record_lock_state):
+            cmds.get_or_create_node()
+
+        assert held == [True]
+
+
 # ===========================================================================
 # TestExtractNodeTypeFromSessionId
 # ===========================================================================
@@ -4398,23 +4442,57 @@ class TestEnsureNodeForBang:
         cmds = _make_chat_commands(real_agent_config)
         start = threading.Barrier(2)
         turn_node_used = []
+        errors = []
 
         def _run_turn():
-            start.wait(timeout=5)
-            with cmds.node_transaction():
-                if cmds._should_create_new_node(None):
-                    cmds.current_node = cmds._create_new_node(None)
-                turn_node_used.append(cmds.current_node)
+            try:
+                start.wait(timeout=1)
+                with cmds.node_transaction():
+                    if cmds._should_create_new_node(None):
+                        cmds.current_node = cmds._create_new_node(None)
+                    turn_node_used.append(cmds.current_node)
+            except Exception as exc:  # noqa: BLE001 - surfaced by the assert below
+                errors.append(("turn", exc))
 
         def _run_warm_up():
-            start.wait(timeout=5)
-            cmds.ensure_node_for_bang()
+            try:
+                start.wait(timeout=1)
+                cmds.ensure_node_for_bang()
+            except Exception as exc:  # noqa: BLE001 - surfaced by the assert below
+                errors.append(("warm-up", exc))
 
         threads = [threading.Thread(target=_run_turn), threading.Thread(target=_run_warm_up)]
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=30)
+            thread.join(timeout=2)
 
         assert not any(thread.is_alive() for thread in threads), "node_transaction deadlocked"
+        assert not errors, f"worker threads raised: {errors}"
+        assert turn_node_used, "the turn thread never published a node"
         assert cmds.current_node is turn_node_used[0]
+
+    def test_construction_failure_keeps_a_node_published_mid_build(self, real_agent_config, mock_llm_create):
+        """A node published inside the build survives a later failure.
+
+        The warm-up owns ``current_node`` only when it published it itself.
+        Clearing the attribute on any failure would discard a node a reentrant
+        caller installed while the build was running, orphaning its session.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        published_node = MagicMock(name="published_node")
+        warm_node = MagicMock(name="warm_node")
+
+        def _publish_then_fail():
+            # Stands in for a reentrant caller publishing its own node while
+            # this warm-up is still mounting tools, followed by a later step
+            # of the build raising.
+            cmds.current_node = published_node
+            raise RuntimeError("boom")
+
+        warm_node.setup_tools.side_effect = _publish_then_fail
+
+        with patch.object(cmds, "_create_new_node", return_value=warm_node):
+            assert cmds.ensure_node_for_bang() is published_node
+
+        assert cmds.current_node is published_node

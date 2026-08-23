@@ -14,6 +14,7 @@ import platform
 import re
 import subprocess
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
@@ -160,7 +161,7 @@ class ChatCommands:
             self.current_node.setup_tools()
 
     @contextmanager
-    def node_transaction(self):
+    def node_transaction(self) -> Iterator[None]:
         """Hold the node lock across a check-create-publish of ``current_node``.
 
         Every caller that decides whether to build a node and then publishes
@@ -268,6 +269,21 @@ class ChatCommands:
         except Exception:  # noqa: BLE001
             pass
 
+    def get_or_create_node(self, subagent_name: Optional[str] = None) -> "AgenticNode":
+        """Return the active node, publishing a new one under the node lock if needed.
+
+        The plain check-create-publish, for callers that do not carry the
+        interactive chat path's agent-switch handling (session copy,
+        ``caller_node_name``, turn-action reset). Owning the transaction here
+        keeps :attr:`_node_lock` and the node-creation internals inside this
+        class instead of being reassembled by callers in other modules.
+        """
+        with self.node_transaction():
+            if self._should_create_new_node(subagent_name):
+                self.current_node = self._create_new_node(subagent_name)
+                self.current_subagent_name = subagent_name if subagent_name else None
+            return self.current_node
+
     def ensure_node_for_bang(self) -> Optional["AgenticNode"]:
         """Return the current chat node, lazily creating a default one if needed.
 
@@ -311,8 +327,11 @@ class ChatCommands:
                 self.current_node = node
             except Exception as exc:  # noqa: BLE001 - never crash the REPL on a ! call
                 logger.error(f"Failed to create chat node for '!' tool execution: {exc}", exc_info=True)
-                self.current_node = None
-                return None
+                # ``current_node`` was ``None`` on entry, so a non-None value here
+                # was published by a reentrant caller inside the build. Clearing
+                # it would orphan that node's session — the very failure this
+                # method's re-check exists to prevent.
+                return self.current_node
             return self.current_node
 
     def create_node_input(
@@ -1551,12 +1570,12 @@ class ChatCommands:
             if self.current_node:
                 try:
                     self.current_node.delete_session()
-                    self.console.print("[green]Console and current session cleared.[/]")
+                    print_success(self.console, "Console and current session cleared.")
                 except Exception as e:
                     logger.error(f"Error deleting session: {e}")
-                    self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
+                    print_success(self.console, "Console cleared. Next chat will create a new session.")
             else:
-                self.console.print("[green]Console cleared. Next chat will create a new session.[/]")
+                print_success(self.console, "Console cleared. Next chat will create a new session.")
 
             # Reset all node references
             self.current_node = None
