@@ -5,6 +5,7 @@ Service for handling Database Management operations.
 import asyncio
 import stat
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,30 @@ _NO_SCHEMA_TYPES = {"sqlite", "duckdb", "mysql"}
 # Default cap on tables per /table/columns batch; override with
 # ``api.max_prefetch_tables`` in agent.yml.
 _DEFAULT_MAX_PREFETCH_TABLES = 500
+# Wall-clock a single /table/columns batch may spend resolving uncached tables
+# before it returns what it has; override with ``api.prefetch_budget_seconds``.
+# A batch walks tables one at a time behind the connector lock, so on a slow
+# source an unbounded one holds a to_thread worker for minutes.
+_DEFAULT_PREFETCH_BUDGET_SECONDS = 3.0
+
+
+def _brief_columns(columns: list[ColumnInfo]) -> list[TableColumnBrief]:
+    """Slim the prefetch payload: no default_value, which no client reads."""
+    return [TableColumnBrief(name=c.name, type=c.type, nullable=c.nullable, pk=c.pk) for c in columns]
+
+
+def _positive_number(raw: Any, fallback: float) -> float:
+    """Coerce an operator-supplied bound to a positive number.
+
+    Operator YAML is untrusted here: a missing key, ``null``, a non-numeric
+    string, or a non-positive number all fall back rather than raise, since a
+    typo in agent.yml must not take the endpoint down.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return value if value > 0 else fallback
 
 
 class DatasourceService:
@@ -75,6 +100,11 @@ class DatasourceService:
         # asyncio.to_thread detail/batch requests.
         self._columns_cache: dict[str, list[ColumnInfo]] = {}
         self._schema_lock = threading.Lock()
+        # Only one prefetch batch resolves uncached tables at a time. Several in
+        # parallel cannot go any faster — they serialize on _schema_lock anyway —
+        # they just each pin a to_thread worker while queuing, which is what
+        # starves interactive metadata reads.
+        self._prefetch_gate = threading.BoundedSemaphore(1)
         self._initialize_connection()
 
     def _active_semantic_adapter(self) -> str:
@@ -420,6 +450,29 @@ class DatasourceService:
                 errorMessage=str(e),
             )
 
+    def _resolve_table_identity(self, full_path: str) -> tuple[str, str, str, str]:
+        """Resolve a dotted reference to (catalog, database, schema, table).
+
+        Connector defaults fill in whatever the caller left out. For StarRocks
+        that is catalog.database.table, with no schema level.
+        """
+        name_parts = parse_table_name_parts(full_path, self.current_db_connector.get_type())
+        catalog_name = name_parts["catalog_name"] or getattr(self.current_db_connector, "catalog_name", "")
+        database_name = (
+            name_parts["database_name"] or self.current_db_name or getattr(self.current_db_connector, "database", "")
+        )
+        schema_name = name_parts["schema_name"] or getattr(self.current_db_connector, "schema_name", "")
+        return catalog_name, database_name, schema_name, name_parts["table_name"]
+
+    def _cached_columns(self, full_path: str) -> Optional[list[ColumnInfo]]:
+        """Columns already in the cache for this reference, without touching the source."""
+        try:
+            catalog_name, database_name, schema_name, table_name = self._resolve_table_identity(full_path)
+        except Exception:
+            # Unparseable name — let the per-table path report it.
+            return None
+        return self._columns_cache.get(f"{catalog_name}.{database_name}.{schema_name}.{table_name}")
+
     def get_table_schema(self, full_path: str) -> Result[GetTableDetailData]:
         """
         Get table schema details.
@@ -438,21 +491,8 @@ class DatasourceService:
                     errorMessage="No database connection",
                 )
 
-            # Get table schema
-            name_parts = parse_table_name_parts(full_path, self.current_db_connector.get_type())
-
             try:
-                # For StarRocks: catalog.database.table (no schema level)
-                # Use current database if not specified
-                catalog_name = name_parts["catalog_name"] or getattr(self.current_db_connector, "catalog_name", "")
-                database_name = (
-                    name_parts["database_name"]
-                    or self.current_db_name
-                    or getattr(self.current_db_connector, "database", "")
-                )
-                schema_name = name_parts["schema_name"] or getattr(self.current_db_connector, "schema_name", "")
-                table_name = name_parts["table_name"]
-
+                catalog_name, database_name, schema_name, table_name = self._resolve_table_identity(full_path)
                 cache_key = f"{catalog_name}.{database_name}.{schema_name}.{table_name}"
 
                 def _detail(cols: list[ColumnInfo]) -> Result[GetTableDetailData]:
@@ -535,12 +575,26 @@ class DatasourceService:
         """Batch-fetch columns for multiple tables (autocomplete prefetch).
 
         Reuses get_table_schema (and its column cache) per table. Tables that
-        fail to resolve are omitted rather than failing the whole batch. The
-        request is capped at ``api.max_prefetch_tables`` (agent.yml) to bound
-        per-request datasource work.
+        fail to resolve are omitted rather than failing the whole batch.
+
+        Prefetch is a convenience, so it yields rather than competes. Three
+        bounds keep one caller from monopolising the datasource, because the
+        columns of N tables cost N serial round-trips behind the connector lock —
+        on a slow source (Oracle listing every schema) that is minutes of held
+        lock and a to_thread worker, and everything else needing table metadata,
+        interactive reads included, waits behind it:
+
+        - the request size is capped at ``api.max_prefetch_tables``;
+        - only one batch resolves uncached tables at a time, and a second does
+          not queue — it returns what the cache already holds;
+        - a batch stops once ``api.prefetch_budget_seconds`` is spent.
+
+        Under the last two, tables are left out of the response. That is the
+        contract a table failing to resolve already has, so a client re-asks for
+        what it still needs — one table at a time, via /table/detail.
         """
         api_config = getattr(self.agent_config, "api_config", {}) or {}
-        max_tables = int(api_config.get("max_prefetch_tables", _DEFAULT_MAX_PREFETCH_TABLES))
+        max_tables = int(_positive_number(api_config.get("max_prefetch_tables"), _DEFAULT_MAX_PREFETCH_TABLES))
         if len(tables) > max_tables:
             return Result(
                 success=False,
@@ -549,14 +603,47 @@ class DatasourceService:
             )
 
         results: list[TableColumns] = []
+        pending: list[str] = []
         for full_path in tables:
-            detail = self.get_table_schema(full_path)
-            if detail.success and detail.data is not None:
-                columns = [
-                    TableColumnBrief(name=c.name, type=c.type, nullable=c.nullable, pk=c.pk)
-                    for c in detail.data.table.columns
-                ]
-                results.append(TableColumns(table=full_path, columns=columns))
+            cached = self._cached_columns(full_path)
+            if cached is None:
+                pending.append(full_path)
+            else:
+                results.append(TableColumns(table=full_path, columns=_brief_columns(cached)))
+
+        # Cache hits cost nothing, so they are served regardless of the bounds
+        # below — and a fully-warm batch never even takes the gate.
+        if not pending:
+            return Result(success=True, data=GetTablesColumnsData(tables=results))
+
+        if not self._prefetch_gate.acquire(blocking=False):
+            logger.info(
+                "Prefetch already in flight; serving %d cached of %d tables and omitting %d",
+                len(results),
+                len(tables),
+                len(pending),
+            )
+            return Result(success=True, data=GetTablesColumnsData(tables=results))
+
+        try:
+            budget = _positive_number(api_config.get("prefetch_budget_seconds"), _DEFAULT_PREFETCH_BUDGET_SECONDS)
+            deadline = time.monotonic() + budget
+            for index, full_path in enumerate(pending):
+                if time.monotonic() >= deadline:
+                    logger.info(
+                        "Prefetch budget of %.1fs spent after %d tables; omitting the remaining %d",
+                        budget,
+                        index,
+                        len(pending) - index,
+                    )
+                    break
+
+                detail = self.get_table_schema(full_path)
+                if detail.success and detail.data is not None:
+                    results.append(TableColumns(table=full_path, columns=_brief_columns(detail.data.table.columns)))
+        finally:
+            self._prefetch_gate.release()
+
         return Result(success=True, data=GetTablesColumnsData(tables=results))
 
     def _semantic_models_root(self) -> Optional[Path]:

@@ -914,6 +914,108 @@ class TestGetTablesColumns:
         assert result.success is False
         assert result.errorCode == "INVALID_PARAMETERS"
 
+    def test_a_bad_limit_falls_back_instead_of_raising(self, real_agent_config):
+        """A typo in agent.yml must not take the endpoint down."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"max_prefetch_tables": "not-a-number"}
+        result = svc.get_tables_columns(["schools"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+
+
+class TestGetTablesColumnsBounds:
+    """A prefetch batch must yield to the rest of the service, not compete.
+
+    Columns cost one serial round-trip per table behind the connector lock, so
+    an unbounded batch on a slow source holds that lock — and a to_thread
+    worker — for minutes, starving interactive metadata reads.
+    """
+
+    def test_stops_once_the_budget_is_spent(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 1e-9}
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        result = svc.get_tables_columns(["schools", "frpm"])
+
+        # An exhausted budget omits tables rather than failing the batch.
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_omitted_tables_stay_fetchable(self, real_agent_config):
+        """What a bound leaves out, the client can still ask for one at a time."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 1e-9}
+
+        assert svc.get_tables_columns(["schools"]).data.tables == []
+        detail = svc.get_table_schema("schools")
+
+        assert detail.success is True
+        assert detail.data.table.columns
+
+    def test_budget_spent_mid_batch_returns_the_partial_result(self, real_agent_config):
+        """The clock runs out after the first table; the second is omitted."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+        # deadline = 0 + 5; then: first check 1 (under), second check 99 (over).
+        clock = iter([0.0, 1.0, 99.0])
+        with patch("datus.api.services.database_service.time.monotonic", lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
+
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+
+    def test_a_second_batch_does_not_queue_behind_the_first(self, real_agent_config):
+        """A batch that cannot take the gate returns instead of pinning a worker."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        svc._prefetch_gate.acquire()
+        try:
+            result = svc.get_tables_columns(["schools"])
+        finally:
+            svc._prefetch_gate.release()
+
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_cache_hits_are_served_while_the_gate_is_held(self, real_agent_config):
+        """Warm tables cost nothing, so no bound should withhold them."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.get_tables_columns(["schools"])
+
+        svc._prefetch_gate.acquire()
+        try:
+            result = svc.get_tables_columns(["schools", "frpm"])
+        finally:
+            svc._prefetch_gate.release()
+
+        # schools is cached; frpm would need the source, so it is omitted.
+        assert [t.table for t in result.data.tables] == ["schools"]
+        assert result.data.tables[0].columns
+
+    def test_the_gate_is_released_for_the_next_batch(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+
+        first = svc.get_tables_columns(["schools"])
+        second = svc.get_tables_columns(["frpm"])
+
+        assert [t.table for t in first.data.tables] == ["schools"]
+        assert [t.table for t in second.data.tables] == ["frpm"]
+
+    def test_the_gate_is_released_when_a_table_blows_up(self, real_agent_config):
+        """An exception mid-batch must not leave the gate held forever."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        with patch.object(svc, "get_table_schema", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                svc.get_tables_columns(["schools"])
+
+        assert svc.get_tables_columns(["schools"]).data.tables
+
 
 class TestSchemaOnlyDialectCatalog:
     """A dialect whose only namespace is the schema (Oracle) must still list.
