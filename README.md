@@ -27,7 +27,15 @@
 
 Datus handles SQL authoring and validation, semantic model and metric construction, and the generation of pipelines, reports, and dashboards. Every run and every correction settles into context, which steadily raises the accuracy of its output. The whole stack stays open and flexible: databases, BI, schedulers, LLMs, and your team's own tools all connect through standard interfaces.
 
-![How Datus works](docs/assets/how_it_works.svg)
+## Architecture
+
+![Datus Architecture](docs/assets/datus_architecture.svg)
+
+The diagram reads top to bottom: who uses Datus, what the agent is made of, and what it connects to.
+
+- **Three entry points, by role**: data engineers work in [Datus-CLI](https://docs.datus.ai/latest/cli/introduction/) to explore data and build assets; analysts ask through [Datus-Chat](https://docs.datus.ai/latest/web_chatbot/introduction/) on the web, in Slack/Feishu, or in VS Code, and their feedback flows back into the agent; other agents and applications consume [Datus-API](https://docs.datus.ai/latest/API/introduction/) over REST and MCP.
+- **The agent core**: [subagents](https://docs.datus.ai/latest/subagent/introduction/) package curated context, tools, and rules for one business domain, [skills](https://docs.datus.ai/latest/skills/introduction/) add packaged tools, and [plugins](https://docs.datus.ai/latest/plugin/introduction/) connect third-party and in-house tools. Underneath sits the [context engine](https://docs.datus.ai/latest/knowledge_base/introduction/): metadata, metrics, reference SQL, knowledge, and local files, retrieved through business-domain trees plus vector search, with [storage](https://docs.datus.ai/latest/configuration/storage/) on embedded LanceDB and SQLite and PostgreSQL for teams that share context.
+- **Connected systems**: LLM providers, data warehouses, the [Dosi](https://dosi.datus.ai/) semantic layer, job schedulers, BI tools, and MCP servers and clients, all reached through adapters.
 
 ## Features
 
@@ -81,17 +89,6 @@ The examples below use a datasource named `demo`; create one first with `/dataso
 | [**VS Code**](https://docs.datus.ai/latest/vscode_extension/introduction/) (Datus Studio) | connects to `datus --web` | Catalog explorer, chat panel, SQL results & AI charts in the IDE |
 
 > **Tip:** Print mode streams JSON to stdout for scripting and CI: `datus -p "your question" --datasource demo`.
-
-## Architecture
-
-![Datus Architecture](docs/assets/datus_architecture.svg)
-
-The architecture has four layers, matching the diagram above:
-
-- **Delivery**: six entry points (CLI, web chatbot, REST API, MCP, IM gateway, and VS Code) that share one agent backend.
-- **Intelligence**: the chat agent plans and reasons, subagents handle specialized tasks, skills and plugins add tools, and governance applies here. Interactive requests run in agentic mode, where the agent plans its own steps; benchmark and batch runs use [workflow mode](https://docs.datus.ai/latest/workflow/introduction/), which executes a predefined plan of nodes.
-- **Semantic layer and context**: the asset layer the agent builds. One half is semantic models and metrics, executed by Dosi or MetricFlow; the other half is [context](https://docs.datus.ai/latest/knowledge_base/introduction/): schema metadata, reference SQL, knowledge, and memory. Retrieval combines business-domain trees with vector search, and [storage](https://docs.datus.ai/latest/configuration/storage/) defaults to embedded LanceDB and SQLite, with PostgreSQL as the option for teams that share context.
-- **Data and tool plane**: the databases, BI platforms, schedulers, and LLM providers reached through adapters.
 
 ## Development
 

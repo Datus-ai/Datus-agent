@@ -27,7 +27,15 @@
 
 Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数据管道、报告和看板的生成；每一次执行与修正都会沉淀为上下文，持续提升后续输出的准确性。整个体系在生态上保持开放与灵活：数据库、BI、调度、LLM 乃至团队自己的工具，都能以标准方式接入。
 
-![Datus 工作方式](docs/assets/how_it_works.svg)
+## 架构
+
+![Datus 架构](docs/assets/datus_architecture.svg)
+
+整体架构自上而下分三段：谁在用、Agent 由什么组成、连接哪些系统，与上图对应：
+
+- **按角色划分的三个入口**：数据工程师在 [Datus-CLI](https://docs.datus.ai/zh/latest/cli/introduction/) 里探索数据、构建资产；分析师通过 [Datus-Chat](https://docs.datus.ai/zh/latest/web_chatbot/introduction/)(Web、Slack/飞书、VS Code)提问，使用中的反馈会回流进 Agent；其他 Agent 和应用经 [Datus-API](https://docs.datus.ai/zh/latest/API/introduction/)(REST、MCP)消费。
+- **Agent 核心**：[Subagent](https://docs.datus.ai/zh/latest/subagent/introduction/) 为单个业务域打包配好的上下文、工具和规则，[Skill](https://docs.datus.ai/zh/latest/skills/introduction/) 提供打包的扩展工具，[Plugin](https://docs.datus.ai/zh/latest/plugin/introduction/) 接入第三方和公司内部工具；底座是[上下文引擎](https://docs.datus.ai/zh/latest/knowledge_base/introduction/)：元数据、指标、参考 SQL、知识与本地文件，检索用业务域树加向量召回，[存储](https://docs.datus.ai/zh/latest/configuration/storage/)默认内嵌 LanceDB 和 SQLite，团队共享上下文时可换 PostgreSQL。
+- **连接的系统**：LLM、数据仓库、[Dosi](https://dosi.datus.ai/) 语义层、作业调度、BI 工具与 MCP 服务端/客户端，均经适配器接入。
 
 ## 核心能力
 
@@ -81,17 +89,6 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 | [**VS Code**](https://docs.datus.ai/zh/latest/vscode_extension/introduction/)(Datus Studio) | 连接 `datus --web` | IDE 内的目录浏览器、聊天面板、SQL 结果与 AI 图表 |
 
 > **提示：** Print 模式向 stdout 流式输出 JSON，适合脚本与 CI：`datus -p "你的问题" --datasource demo`。
-
-## 架构
-
-![Datus 架构](docs/assets/datus_architecture.svg)
-
-整体架构自上而下分四层，与上图对应：
-
-- **交付层**：CLI、Web 聊天、REST API、MCP、IM 网关和 VS Code 六个入口，共享同一个 Agent 后端。
-- **智能层**：Chat Agent 负责规划和推理，subagent 处理专项任务，Skill 与 Plugin 提供扩展工具，治理机制也作用在这一层。交互请求走 Agentic 模式，步骤由 Agent 自行规划；benchmark 和批量任务走 [Workflow 模式](https://docs.datus.ai/zh/latest/workflow/introduction/)，按预定义的节点计划执行。
-- **语义层与上下文**：Agent 构建的资产层。一半是语义模型与指标，由 Dosi 或 MetricFlow 执行；另一半是[上下文](https://docs.datus.ai/zh/latest/knowledge_base/introduction/)，包括 schema 元数据、参考 SQL、知识与记忆。检索用业务域树加向量召回；[存储](https://docs.datus.ai/zh/latest/configuration/storage/)默认是内嵌的 LanceDB 和 SQLite，团队需要共享上下文时可换成 PostgreSQL。
-- **数据与工具层**：经适配器连接的数据库、BI 平台、调度系统与 LLM 提供商。
 
 ## 开发
 

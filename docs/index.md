@@ -4,24 +4,15 @@
 
 Datus handles SQL authoring and validation, semantic model and metric construction, and the generation of pipelines, reports, and dashboards. Every run and every correction settles into context, which steadily raises the accuracy of its output. The whole stack stays open and flexible: databases, BI, schedulers, LLMs, and your team's own tools all connect through standard interfaces.
 
-## How Datus works
+## Architecture
 
-The quality of an agent's answers is set by the quality of the context it receives. Datus therefore concentrates on accumulating and reusing context; the diagram shows the full loop:
+![Datus Architecture](assets/datus_architecture.svg)
 
-![How Datus works](assets/how_it_works.svg)
+The diagram reads top to bottom: who uses Datus, what the agent is made of, and what it connects to.
 
-The diagram reads in two halves. The front half is the data engineer's work: exploring data, building context, and modeling semantics; its output is reusable assets. The back half is how the organization consumes those assets: subagents turn them into a service anyone can question.
-
-The handoff is not one-way either: every correction an analyst makes flows back, and the assets thicken with use.
-
-1. **Explore**: no groundwork required. Chat with your database in the [CLI](cli/chat_command.md), referencing tables with `@table` and files with `@file`, and get familiar with the data as you go.
-2. **Build context**: [`/init`](skills/init.md) scans the current project, and `/bootstrap` and [`/build-kb`](skills/build_kb.md) collect the knowledge scattered across schemas, SQL history, and documents into the [knowledge base](knowledge_base/introduction.md); this is the raw material for all the accuracy that follows.
-3. **Model semantics**: the [semantic modeling subagent](subagent/semantic_modeling.md) mines datasets, semantic models, and metrics from your schema and SQL history, validates them, and registers them in the semantic layer; business definitions gain a single, executable form.
-4. **Create subagents**: with `/agent`, package the curated context, tools, and rules into a [subagent for one business domain](subagent/customized_subagent.md); from this step on, the assets become a service others can use directly.
-5. **Deliver**: analysts ask where they already work, whether that is the browser, Slack/Feishu, or the IDE (see [interfaces](#interfaces)); [AskMetrics](subagent/ask_metrics.md) answers from metric definitions, and [reports and dashboards](subagent/gen_visual_report.md) are generated right in the conversation.
-6. **Measure**: [benchmark](benchmark/benchmark_manual.md) SQL accuracy on BIRD, Spider 2.0-Snow, or [your own datasets](configuration/benchmark.md), turning what context adds into a quantified number.
-
-Corrections, feedback, and success stories from stage 5 flow back into the context of stage 2. The assets grow more complete with use, rather than starting to age the day they are built.
+- **Three entry points, by role**: data engineers work in [Datus-CLI](cli/introduction.md) to explore data and build assets; analysts ask through [Datus-Chat](web_chatbot/introduction.md) on the web, in Slack/Feishu, or in VS Code, and their feedback flows back into the agent; other agents and applications consume [Datus-API](API/introduction.md) over REST and MCP.
+- **The agent core**: [subagents](subagent/introduction.md) package curated context, tools, and rules for one business domain, [skills](skills/introduction.md) add packaged tools, and [plugins](plugin/introduction.md) connect third-party and in-house tools. Underneath sits the [context engine](knowledge_base/introduction.md): metadata, metrics, reference SQL, knowledge, and local files, retrieved through business-domain trees plus vector search, with [storage](configuration/storage.md) on embedded LanceDB and SQLite and PostgreSQL for teams that share context.
+- **Connected systems**: LLM providers, data warehouses, the [Dosi](https://dosi.datus.ai/) semantic layer, job schedulers, BI tools, and MCP servers and clients, all reached through adapters.
 
 ## Features
 
@@ -64,16 +55,24 @@ Curate context, tools, and rules for one business domain and package them as a [
 
 ![Open ecosystem: install a plugin, connect the stack you already run](assets/ecosystem_plugins.svg)
 
-## Architecture
+## How Datus works
 
-![Datus Architecture](assets/datus_architecture.svg)
+The quality of an agent's answers is set by the quality of the context it receives. Datus therefore concentrates on accumulating and reusing context; the diagram shows the full loop:
 
-The architecture has four layers, matching the diagram above:
+![How Datus works](assets/how_it_works.svg)
 
-- **Delivery**: six entry points (CLI, web chatbot, REST API, MCP, IM gateway, and VS Code) that share one agent backend.
-- **Intelligence**: the chat agent plans and reasons, subagents handle specialized tasks, skills and plugins add tools, and governance applies here. Interactive requests run in agentic mode, where the agent plans its own steps; benchmark and batch runs use [workflow mode](workflow/introduction.md), which executes a predefined plan of nodes.
-- **Semantic layer and context**: the asset layer the agent builds. One half is semantic models and metrics, executed by Dosi or MetricFlow; the other half is [context](knowledge_base/introduction.md): schema metadata, reference SQL, knowledge, and memory. Retrieval combines business-domain trees with vector search, and [storage](configuration/storage.md) defaults to embedded LanceDB and SQLite, with PostgreSQL as the option for teams that share context.
-- **Data and tool plane**: the databases, BI platforms, schedulers, and LLM providers reached through adapters.
+The diagram reads in two halves. The front half is the data engineer's work: exploring data, building context, and modeling semantics; its output is reusable assets. The back half is how the organization consumes those assets: subagents turn them into a service anyone can question.
+
+The handoff is not one-way either: every correction an analyst makes flows back, and the assets thicken with use.
+
+1. **Explore**: no groundwork required. Chat with your database in the [CLI](cli/chat_command.md), referencing tables with `@table` and files with `@file`, and get familiar with the data as you go.
+2. **Build context**: [`/init`](skills/init.md) scans the current project, and `/bootstrap` and [`/build-kb`](skills/build_kb.md) collect the knowledge scattered across schemas, SQL history, and documents into the [knowledge base](knowledge_base/introduction.md); this is the raw material for all the accuracy that follows.
+3. **Model semantics**: the [semantic modeling subagent](subagent/semantic_modeling.md) mines datasets, semantic models, and metrics from your schema and SQL history, validates them, and registers them in the semantic layer; business definitions gain a single, executable form.
+4. **Create subagents**: with `/agent`, package the curated context, tools, and rules into a [subagent for one business domain](subagent/customized_subagent.md); from this step on, the assets become a service others can use directly.
+5. **Deliver**: analysts ask where they already work, whether that is the browser, Slack/Feishu, or the IDE (see [interfaces](#interfaces)); [AskMetrics](subagent/ask_metrics.md) answers from metric definitions, and [reports and dashboards](subagent/gen_visual_report.md) are generated right in the conversation.
+6. **Measure**: [benchmark](benchmark/benchmark_manual.md) SQL accuracy on BIRD, Spider 2.0-Snow, or [your own datasets](configuration/benchmark.md), turning what context adds into a quantified number.
+
+Corrections, feedback, and success stories from stage 5 flow back into the context of stage 2. The assets grow more complete with use, rather than starting to age the day they are built.
 
 ## Getting started
 
@@ -123,7 +122,7 @@ All six entry points share one agent backend and one body of context: assets bui
 
     ---
 
-    How semantic models and metrics are generated, stored, and executed by Dosi or MetricFlow.
+    How semantic models and metrics are generated, stored, and executed by the Dosi engine.
 
     [:octicons-arrow-right-24: Semantic adapters](adapters/semantic_adapters.md)
 

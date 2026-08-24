@@ -4,24 +4,15 @@
 
 Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数据管道、报告和看板的生成；每一次执行与修正都会沉淀为上下文，持续提升后续输出的准确性。整个体系在生态上保持开放与灵活：数据库、BI、调度、LLM 乃至团队自己的工具，都能以标准方式接入。
 
-## 工作方式
+## 架构
 
-Agent 回答的质量，取决于它拿到的上下文质量。Datus 因此把重点放在上下文的沉淀与复用上，下图是完整的循环：
+![Datus 架构](assets/datus_architecture.svg)
 
-![Datus 工作方式](assets/how_it_works.svg)
+整体架构自上而下分三段：谁在用、Agent 由什么组成、连接哪些系统，与上图对应：
 
-图分前后两半。前半段是数据工程师的工作：探索数据、构建上下文、完成语义建模，产出可复用的资产；后半段是组织对资产的消费：subagent 把它们变成任何人都能提问的服务。
-
-两半之间也不是单向交付：分析师的每次修正都会回流，资产随使用不断变厚。
-
-1. **探索**：不需要任何前置建设，在 [CLI](cli/chat_command.zh.md) 里直接与数据库对话，用 `@table` 引用表、`@file` 引用文件，边问边熟悉数据。
-2. **构建上下文**：[`/init`](skills/init.zh.md) 扫描当前项目，`/bootstrap` 和 [`/build-kb`](skills/build_kb.zh.md) 把散落在 schema、历史 SQL 和文档里的知识收进[知识库](knowledge_base/introduction.zh.md)；这是后面一切准确性的原料。
-3. **语义建模**：语义建模 subagent 从 schema 和历史 SQL 中挖掘数据集、[语义模型](knowledge_base/semantic_model.zh.md)与[指标](knowledge_base/metrics.zh.md)，校验后注册进语义层；业务口径从此有了唯一的、可执行的定义。
-4. **创建 Subagent**：用 `/agent` 把配好的上下文、工具和规则打包成[面向单个业务域的 subagent](subagent/customized_subagent.zh.md)；资产从这一步开始变成别人可以直接使用的服务。
-5. **交付**：分析师在自己习惯的地方提问，浏览器、Slack/飞书或 IDE 都可以(见[接入方式](#interfaces))；[AskMetrics](subagent/ask_metrics.zh.md) 依据指标定义回答，[报告和看板](subagent/gen_visual_report.zh.md)在对话里直接生成。
-6. **度量**：用 [benchmark](benchmark/benchmark_manual.zh.md) 在 BIRD、Spider 2.0-Snow 或[自定义数据集](configuration/benchmark.zh.md)上度量 SQL 准确率，把上下文带来的提升变成可量化的数字。
-
-第 5 步产生的修正、反馈和成功案例会回流进第 2 步的上下文。资产在使用中越来越完整，而不是建成之日就开始过时。
+- **按角色划分的三个入口**：数据工程师在 [Datus-CLI](cli/introduction.zh.md) 里探索数据、构建资产；分析师通过 [Datus-Chat](web_chatbot/introduction.zh.md)(Web、Slack/飞书、VS Code)提问，使用中的反馈会回流进 Agent；其他 Agent 和应用经 [Datus-API](API/introduction.zh.md)(REST、MCP)消费。
+- **Agent 核心**：[Subagent](subagent/introduction.zh.md) 为单个业务域打包配好的上下文、工具和规则，[Skill](skills/introduction.zh.md) 提供打包的扩展工具，[Plugin](plugin/introduction.zh.md) 接入第三方和公司内部工具；底座是[上下文引擎](knowledge_base/introduction.zh.md)：元数据、指标、参考 SQL、知识与本地文件，检索用业务域树加向量召回，[存储](configuration/storage.zh.md)默认内嵌 LanceDB 和 SQLite，团队共享上下文时可换 PostgreSQL。
+- **连接的系统**：LLM、数据仓库、[Dosi](https://dosi.datus.ai/) 语义层、作业调度、BI 工具与 MCP 服务端/客户端，均经适配器接入。
 
 ## 核心能力
 
@@ -64,16 +55,24 @@ Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://dosi.dat
 
 ![开放生态：安装 plugin，接入现有技术栈](assets/ecosystem_plugins.svg)
 
-## 架构
+## 工作方式
 
-![Datus 架构](assets/datus_architecture.svg)
+Agent 回答的质量，取决于它拿到的上下文质量。Datus 因此把重点放在上下文的沉淀与复用上，下图是完整的循环：
 
-整体架构自上而下分四层，与上图对应：
+![Datus 工作方式](assets/how_it_works.svg)
 
-- **交付层**：CLI、Web 聊天、REST API、MCP、IM 网关和 VS Code 六个入口，共享同一个 Agent 后端。
-- **智能层**：Chat Agent 负责规划和推理，subagent 处理专项任务，Skill 与 Plugin 提供扩展工具，治理机制也作用在这一层。交互请求走 Agentic 模式，步骤由 Agent 自行规划；benchmark 和批量任务走 [Workflow 模式](workflow/introduction.zh.md)，按预定义的节点计划执行。
-- **语义层与上下文**：Agent 构建的资产层。一半是语义模型与指标，由 Dosi 或 MetricFlow 执行；另一半是[上下文](knowledge_base/introduction.zh.md)，包括 schema 元数据、参考 SQL、知识与记忆。检索用业务域树加向量召回；[存储](configuration/storage.zh.md)默认是内嵌的 LanceDB 和 SQLite，团队需要共享上下文时可换成 PostgreSQL。
-- **数据与工具层**：经适配器连接的数据库、BI 平台、调度系统与 LLM 提供商。
+图分前后两半。前半段是数据工程师的工作：探索数据、构建上下文、完成语义建模，产出可复用的资产；后半段是组织对资产的消费：subagent 把它们变成任何人都能提问的服务。
+
+两半之间也不是单向交付：分析师的每次修正都会回流，资产随使用不断变厚。
+
+1. **探索**：不需要任何前置建设，在 [CLI](cli/chat_command.zh.md) 里直接与数据库对话，用 `@table` 引用表、`@file` 引用文件，边问边熟悉数据。
+2. **构建上下文**：[`/init`](skills/init.zh.md) 扫描当前项目，`/bootstrap` 和 [`/build-kb`](skills/build_kb.zh.md) 把散落在 schema、历史 SQL 和文档里的知识收进[知识库](knowledge_base/introduction.zh.md)；这是后面一切准确性的原料。
+3. **语义建模**：语义建模 subagent 从 schema 和历史 SQL 中挖掘数据集、[语义模型](knowledge_base/semantic_model.zh.md)与[指标](knowledge_base/metrics.zh.md)，校验后注册进语义层；业务口径从此有了唯一的、可执行的定义。
+4. **创建 Subagent**：用 `/agent` 把配好的上下文、工具和规则打包成[面向单个业务域的 subagent](subagent/customized_subagent.zh.md)；资产从这一步开始变成别人可以直接使用的服务。
+5. **交付**：分析师在自己习惯的地方提问，浏览器、Slack/飞书或 IDE 都可以(见[接入方式](#interfaces))；[AskMetrics](subagent/ask_metrics.zh.md) 依据指标定义回答，[报告和看板](subagent/gen_visual_report.zh.md)在对话里直接生成。
+6. **度量**：用 [benchmark](benchmark/benchmark_manual.zh.md) 在 BIRD、Spider 2.0-Snow 或[自定义数据集](configuration/benchmark.zh.md)上度量 SQL 准确率，把上下文带来的提升变成可量化的数字。
+
+第 5 步产生的修正、反馈和成功案例会回流进第 2 步的上下文。资产在使用中越来越完整，而不是建成之日就开始过时。
 
 ## 快速开始
 
@@ -123,7 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
     ---
 
-    语义模型与指标如何生成、存储，并由 Dosi 或 MetricFlow 执行。
+    语义模型与指标如何生成、存储，并由 Dosi 引擎执行。
 
     [:octicons-arrow-right-24: 语义适配器](adapters/semantic_adapters.zh.md)
 
