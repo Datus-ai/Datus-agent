@@ -3,6 +3,7 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from itertools import chain, repeat
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator, NoReturn
@@ -17,6 +18,7 @@ from datus.api.models.table_models import (
     ValidateSemanticModelData,
     ValidateSemanticModelInput,
 )
+from datus.api.services import database_service
 from datus.api.services.database_service import DatasourceService
 from datus.storage.semantic_model.artifact_file import artifact_revision, semantic_artifact_lock
 from datus.tools.db_tools.db_manager import DBManager
@@ -914,13 +916,59 @@ class TestGetTablesColumns:
         assert result.success is False
         assert result.errorCode == "INVALID_PARAMETERS"
 
-    def test_a_bad_limit_falls_back_instead_of_raising(self, real_agent_config):
+    @pytest.mark.parametrize(
+        "limit",
+        [
+            "not-a-number",
+            None,
+            0,
+            -5,
+            float("inf"),  # YAML `.inf` — what an operator writes for "no limit"
+            "inf",
+            0.5,  # would truncate to a limit of 0 and reject every batch
+        ],
+        ids=["text", "null", "zero", "negative", "inf", "inf-text", "fraction"],
+    )
+    def test_a_bad_limit_falls_back_instead_of_breaking(self, real_agent_config, limit):
         """A typo in agent.yml must not take the endpoint down."""
         svc = DatasourceService(agent_config=real_agent_config)
-        svc.agent_config.api_config = {"max_prefetch_tables": "not-a-number"}
+        svc.agent_config.api_config = {"max_prefetch_tables": limit}
         result = svc.get_tables_columns(["schools"])
         assert result.success is True
         assert [t.table for t in result.data.tables] == ["schools"]
+
+    @pytest.mark.parametrize(
+        "budget",
+        [float("inf"), "inf", "not-a-number", None, 0, -1],
+        ids=["inf", "inf-text", "text", "null", "zero", "negative"],
+    )
+    def test_a_bad_budget_falls_back_to_a_real_deadline(self, real_agent_config, budget):
+        """Infinity is the dangerous one: it passes `> 0` and removes the deadline."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": budget}
+
+        # The default budget is finite, so a clock jump past it stops the batch.
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools"])
+
+        assert result.success is True
+        assert result.data.tables == []
+
+
+@contextmanager
+def _fake_monotonic(reading) -> Iterator[None]:
+    """Drive database_service's clock without touching the stdlib one.
+
+    The module does ``import time``, so ``database_service.time`` *is* the
+    stdlib module — patching ``...database_service.time.monotonic`` swaps it
+    process-wide, and every other caller in the window (another thread, a
+    library timer) then reads the fake. Rebinding the module-level name instead
+    keeps the fake local to this module.
+    """
+    stand_in = SimpleNamespace(monotonic=reading)
+    with patch.object(database_service, "time", stand_in):
+        yield
 
 
 class TestGetTablesColumnsBounds:
@@ -960,8 +1008,11 @@ class TestGetTablesColumnsBounds:
         svc = DatasourceService(agent_config=real_agent_config)
         svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
         # deadline = 0 + 5; then: first check 1 (under), second check 99 (over).
-        clock = iter([0.0, 1.0, 99.0])
-        with patch("datus.api.services.database_service.time.monotonic", lambda: next(clock)):
+        # Trailing repeat so an extra reading — another thread, or a future
+        # version of the method taking one more — degrades the assertion rather
+        # than raising StopIteration from inside the code under test.
+        clock = chain([0.0, 1.0], repeat(99.0))
+        with _fake_monotonic(lambda: next(clock)):
             result = svc.get_tables_columns(["schools", "frpm"])
 
         assert result.success is True

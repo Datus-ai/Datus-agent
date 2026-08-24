@@ -40,6 +40,7 @@ from datus.storage.semantic_model.artifact_file import (
 )
 from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
+from datus.utils.config_utils import coerce_positive_int, coerce_positive_seconds
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_table_name_parts
 from datus.utils.text_utils import redact_uri
@@ -61,20 +62,6 @@ _DEFAULT_PREFETCH_BUDGET_SECONDS = 3.0
 def _brief_columns(columns: list[ColumnInfo]) -> list[TableColumnBrief]:
     """Slim the prefetch payload: no default_value, which no client reads."""
     return [TableColumnBrief(name=c.name, type=c.type, nullable=c.nullable, pk=c.pk) for c in columns]
-
-
-def _positive_number(raw: Any, fallback: float) -> float:
-    """Coerce an operator-supplied bound to a positive number.
-
-    Operator YAML is untrusted here: a missing key, ``null``, a non-numeric
-    string, or a non-positive number all fall back rather than raise, since a
-    typo in agent.yml must not take the endpoint down.
-    """
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return fallback
-    return value if value > 0 else fallback
 
 
 class DatasourceService:
@@ -594,7 +581,7 @@ class DatasourceService:
         what it still needs — one table at a time, via /table/detail.
         """
         api_config = getattr(self.agent_config, "api_config", {}) or {}
-        max_tables = int(_positive_number(api_config.get("max_prefetch_tables"), _DEFAULT_MAX_PREFETCH_TABLES))
+        max_tables = coerce_positive_int(api_config.get("max_prefetch_tables"), _DEFAULT_MAX_PREFETCH_TABLES)
         if len(tables) > max_tables:
             return Result(
                 success=False,
@@ -626,7 +613,9 @@ class DatasourceService:
             return Result(success=True, data=GetTablesColumnsData(tables=results))
 
         try:
-            budget = _positive_number(api_config.get("prefetch_budget_seconds"), _DEFAULT_PREFETCH_BUDGET_SECONDS)
+            budget = coerce_positive_seconds(
+                api_config.get("prefetch_budget_seconds"), _DEFAULT_PREFETCH_BUDGET_SECONDS
+            )
             deadline = time.monotonic() + budget
             for index, full_path in enumerate(pending):
                 if time.monotonic() >= deadline:
