@@ -4092,7 +4092,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        快速入门
+        工作方式
       
     </span>
   </a>
@@ -4103,7 +4103,112 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        重点主题
+        核心能力
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="核心能力">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        语义建模自动化
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        指标问答与归因
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        越用越准的上下文引擎
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#subagent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subagent 交付
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plugin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plugin 生态与治理
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        架构
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速开始
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        接入方式
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        深入了解
       
     </span>
   </a>
@@ -4136,72 +4241,172 @@
 
 
 <h1 id="_1">介绍<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p><strong><a href="https://github.com/Datus-ai/Datus-agent">Datus</a></strong> 是一个开源数据工程智能体，用于为你的数据系统构建 <strong>可演化的上下文</strong>。与只负责搬运数据的传统工具不同，Datus 会捕获、学习并进化围绕数据的知识，将元数据、Reference SQL、语义模型和指标转化为一个不断生长的知识库，为 AI 查询提供依据并消除幻觉。</p>
-<p>借助 Datus，数据工程师能够把精力从编写重复的 SQL 转向构建可复用、面向 AI 的上下文。每一次查询、纠错和领域规则都会成为长期记忆帮助专用子代理为整个组织提供准确、具备领域认知的分析。</p>
-<p><img alt="Datus architecture" src="assets/home_architecture.png" /></p>
-<p><strong>面向不同用户的三个入口</strong></p>
+<p><strong><a href="https://github.com/Datus-ai/Datus-agent">Datus</a></strong> 是面向现代数据栈的开源数据工程 Agent：用一个 Agent 连接数据仓库、数据目录、语义层和 BI，底座是一套沉淀在团队自己手里的可演进上下文引擎(evolvable context engine)。</p>
+<p>Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数据管道、报告和看板的生成；每一次执行与修正都会沉淀为上下文，持续提升后续输出的准确性。整个体系在生态上保持开放与灵活：数据库、BI、调度、LLM 乃至团队自己的工具，都能以标准方式接入。</p>
+<h2 id="_2">工作方式<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>Agent 回答的质量，取决于它拿到的上下文质量。Datus 因此把重点放在上下文的沉淀与复用上，下图是完整的循环：</p>
+<p><img alt="Datus 工作方式" src="assets/how_it_works.svg" /></p>
+<p>图分前后两半。前半段是数据工程师的工作：探索数据、构建上下文、完成语义建模，产出可复用的资产；后半段是组织对资产的消费：subagent 把它们变成任何人都能提问的服务。</p>
+<p>两半之间也不是单向交付：分析师的每次修正都会回流，资产随使用不断变厚。</p>
+<ol>
+<li><strong>探索</strong>：不需要任何前置建设，在 <a href="cli/chat_command/">CLI</a> 里直接与数据库对话，用 <code>@table</code> 引用表、<code>@file</code> 引用文件，边问边熟悉数据。</li>
+<li><strong>构建上下文</strong>：<a href="skills/init/"><code>/init</code></a> 扫描当前项目，<code>/bootstrap</code> 和 <a href="skills/build_kb/"><code>/build-kb</code></a> 把散落在 schema、历史 SQL 和文档里的知识收进<a href="knowledge_base/introduction/">知识库</a>；这是后面一切准确性的原料。</li>
+<li><strong>语义建模</strong>：语义建模 subagent 从 schema 和历史 SQL 中挖掘数据集、<a href="knowledge_base/semantic_model/">语义模型</a>与<a href="knowledge_base/metrics/">指标</a>，校验后注册进语义层；业务口径从此有了唯一的、可执行的定义。</li>
+<li><strong>创建 Subagent</strong>：用 <code>/agent</code> 把配好的上下文、工具和规则打包成<a href="subagent/customized_subagent/">面向单个业务域的 subagent</a>；资产从这一步开始变成别人可以直接使用的服务。</li>
+<li><strong>交付</strong>：分析师在自己习惯的地方提问，浏览器、Slack/飞书或 IDE 都可以(见<a href="#interfaces">接入方式</a>)；<a href="subagent/ask_metrics/">AskMetrics</a> 依据指标定义回答，<a href="subagent/gen_visual_report/">报告和看板</a>在对话里直接生成。</li>
+<li><strong>度量</strong>：用 <a href="benchmark/benchmark_manual/">benchmark</a> 在 BIRD、Spider 2.0-Snow 或<a href="configuration/benchmark/">自定义数据集</a>上度量 SQL 准确率，把上下文带来的提升变成可量化的数字。</li>
+</ol>
+<p>第 5 步产生的修正、反馈和成功案例会回流进第 2 步的上下文。资产在使用中越来越完整，而不是建成之日就开始过时。</p>
+<h2 id="_3">核心能力<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>准确率来自两处：语义层把业务口径变成可执行的定义，上下文引擎把使用中产生的知识留存下来。Subagent 负责把这些资产交付给使用的人，Plugin 生态与治理让整套体系能接入现有技术栈，并在生产环境中受控运行。</p>
+<h3 id="_4">语义建模自动化<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<p>Agent 读取数据库 schema 和历史 SQL，自动生成 <a href="https://dosi.datus.ai/">OSI</a> 格式的语义模型与指标定义，校验通过后注册进语义层，不需要手写 YAML。</p>
+<p>执行由 <a href="https://dosi.datus.ai/">Dosi</a> 引擎承担：同一份语义模型编译成 13+ 种数据库方言的 SQL。它是一个独立程序，也可以单独以 CLI、REST 服务或 MCP server 的方式部署，详见 <a href="adapters/dosi_semantic_adapter/">Dosi 语义适配器</a>。</p>
+<p><img alt="语义建模：从 schema 与历史 SQL 到已校验的语义模型" src="assets/semantic_modeling_session.svg" /></p>
+<h3 id="_5">指标问答与归因<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
+<p><a href="subagent/ask_metrics/">AskMetrics</a> 依据指标定义回答业务问题，而不是临时拼 SQL；指标出现波动时，<code>attribution_analyze</code> 给出各维度贡献的量化归因。</p>
+<p><img alt="一次指标问答：提问、语义层工具调用、归因结果" src="assets/metric_qa_session.svg" /></p>
+<h3 id="_6">越用越准的上下文引擎<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<p><a href="getting_started/contextual_data_engineering/">上下文引擎</a>汇集 schema 元数据、参考 SQL 和业务规则，按业务域树组织，配合向量检索召回。使用中的每次修正都会写回<a href="knowledge_base/introduction/">知识库</a>，让后续回答持续变准。</p>
+<p><img alt="构建上下文：schema 抓取、参考 SQL 索引、业务域树" src="assets/context_engine_session.svg" /></p>
+<h3 id="subagent">Subagent 交付<a class="headerlink" href="#subagent" title="Permanent link">&para;</a></h3>
+<p>为一个业务领域配好上下文、工具和规则，打包成<a href="subagent/customized_subagent/">专属聊天机器人</a>，交付给分析师直接使用。</p>
 <ul>
-<li><strong><a href="cli/introduction/">Datus-CLI</a></strong>：面向数据工程师的 AI 驱动命令行界面——就像“专为数据工程打造的 Claude Code”。你可以交互式地编写 SQL、构建子代理并维护上下文。</li>
-<li><strong><a href="web_chatbot/introduction/">Datus-Chat</a></strong>：面向数据分析师的网页聊天机器人，支持多轮对话以及内置反馈机制（点赞、问题反馈、成功案例）。</li>
-<li><strong><a href="API/introduction/">Datus-API</a></strong>:为其他智能体或应用提供稳定、准确的数据服务的 RESTful API。详见 <a href="API/deployment/">部署</a> 与 <a href="API/chat/">Chat</a>。</li>
+<li>分析师在浏览器、Slack/飞书或 IDE 里提问，<a href="subagent/gen_visual_report/">报告和看板</a>在对话里生成，本地即可预览，不依赖任何 SaaS 后端。</li>
+<li><a href="subagent/builtin_subagents/">内置 subagent</a> 还覆盖跨库迁移、ETL 作业生成和宽表构建等工程任务，可编排 <a href="adapters/scheduler_adapters/">Airflow</a> 调度。</li>
 </ul>
-<p><strong>两种执行模式</strong></p>
+<p><img alt="创建 subagent，并通过六种入口交付" src="assets/subagent_delivery_session.svg" /></p>
+<h3 id="plugin">Plugin 生态与治理<a class="headerlink" href="#plugin" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><a href="subagent/introduction/">Agentic 模式</a></strong>：适合临时开发和探索性流程。灵活、对话式，并通过专业化的子代理感知上下文。</li>
-<li><strong><a href="workflow/introduction/">Workflow 模式</a></strong>：为需要高稳定性和编排能力的生产场景而设。工作流可以把子代理作为节点来构建复杂的管道。</li>
+<li><a href="plugin/introduction/">Plugin</a> 框架把第三方平台和公司内部工具接入 Agent：一份 <code>datus-plugin.yml</code> 清单声明 CLI 命令、Skill 和 prompt 上下文，按项目启用。</li>
+<li>适配器覆盖 <a href="adapters/db_adapters/">15 种数据库</a>和 10+ LLM 提供商，另有 <a href="integration/mcp/">MCP</a> 服务端与客户端；<a href="skills/introduction/">Skill</a> 遵循 agentskills.io 约定，支持从 marketplace 安装。</li>
+<li>治理上，权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，<a href="develop/observability/">trace</a> 可导出到任意 OTLP 平台。</li>
 </ul>
-<p><strong>核心在于上下文引擎</strong></p>
-<p>Datus 的核心是其 <strong><a href="knowledge_base/introduction/">上下文引擎</a></strong>，融合了人工专业知识与 AI 能力：</p>
+<p><img alt="开放生态：安装 plugin，接入现有技术栈" src="assets/ecosystem_plugins.svg" /></p>
+<h2 id="_7">架构<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p><img alt="Datus 架构" src="assets/datus_architecture.svg" /></p>
+<p>整体架构自上而下分四层，与上图对应：</p>
 <ul>
-<li>自动捕获<a href="knowledge_base/metadata/">元数据</a>、<a href="knowledge_base/semantic_model/">语义模型</a>、<a href="knowledge_base/metrics/">指标</a>、<a href="knowledge_base/reference_sql/">Reference SQL</a>、<a href="knowledge_base/reference_template/">Reference Template</a>、文档和成功案例</li>
-<li>支持人在回路的策划与迭代</li>
-<li>为子代理和工作流提供丰富、具领域特异性的上下文</li>
+<li><strong>交付层</strong>：CLI、Web 聊天、REST API、MCP、IM 网关和 VS Code 六个入口，共享同一个 Agent 后端。</li>
+<li><strong>智能层</strong>：Chat Agent 负责规划和推理，subagent 处理专项任务，Skill 与 Plugin 提供扩展工具，治理机制也作用在这一层。交互请求走 Agentic 模式，步骤由 Agent 自行规划；benchmark 和批量任务走 <a href="workflow/introduction/">Workflow 模式</a>，按预定义的节点计划执行。</li>
+<li><strong>语义层与上下文</strong>：Agent 构建的资产层。一半是语义模型与指标，由 Dosi 或 MetricFlow 执行；另一半是<a href="knowledge_base/introduction/">上下文</a>，包括 schema 元数据、参考 SQL、知识与记忆。检索用业务域树加向量召回；<a href="configuration/storage/">存储</a>默认是内嵌的 LanceDB 和 SQLite，团队需要共享上下文时可换成 PostgreSQL。</li>
+<li><strong>数据与工具层</strong>：经适配器连接的数据库、BI 平台、调度系统与 LLM 提供商。</li>
 </ul>
-<p><strong>灵活的集成层</strong></p>
-<p>Datus 可以无缝对接你现有的技术栈：</p>
-<ul>
-<li><strong>大模型</strong>：支持 OpenAI、Claude、DeepSeek、Qwen、Kimi、OpenRouter 等（参见<a href="configuration/agent/">配置</a>）</li>
-<li><strong>数据仓库</strong>：支持 StarRocks、Snowflake、DuckDB、SQLite、PostgreSQL 等（参见<a href="configuration/datasources/">数据源配置</a>、<a href="adapters/db_adapters/">数据库适配器</a>）</li>
-<li><strong>语义层</strong>：兼容 <a href="metricflow/introduction/">MetricFlow</a> 的指标定义与查询</li>
-<li><strong>可扩展性</strong>：通过 <a href="cli/mcp_extensions/">MCP</a>（Model Context Protocol）集成自定义扩展</li>
-</ul>
-<h2 id="_2">快速入门<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>几分钟内即可启动你的 Datus Agent。</p>
+<h2 id="_8">快速开始<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<p>第一次运行不需要准备自己的数据库：安装自带 California Schools 示例数据集，数据源 <code>california_schools</code> 已预注册。Linux 或 macOS：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+</span></code></pre></div>
+<p>打开新终端，运行 <code>datus</code>，然后：</p>
+<ol>
+<li><code>/model</code> 配置模型</li>
+<li><code>/datasource</code> 添加自己的数据源(只用内置示例可跳过)</li>
+<li><code>/init</code>(可选)扫描当前项目</li>
+</ol>
+<p>也可以用 <code>pip install datus-agent</code> 手动安装(Python 3.12+)。配置分两级：全局 <code>agent.yml</code> 存放主配置，项目下的 <code>.datus/config.yml</code> 保存当前模型、默认数据源等项目级覆盖，详见<a href="configuration/introduction/">配置文档</a>。</p>
+<p>想先在示例数据上完整体验，<a href="getting_started/contextual_data_engineering/">端到端教程</a>十分钟走完从构建上下文到指标问答的闭环：</p>
 <div class="admonition tip">
-<p class="admonition-title">从这里开始</p>
-<p><a class="md-button md-button--primary" href="getting_started/Quickstart/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m13.13 22.19-1.63-3.83c1.57-.58 3.04-1.36 4.4-2.27zM5.64 12.5l-3.83-1.63 6.1-2.77C7 9.46 6.22 10.93 5.64 12.5M21.61 2.39S16.66.269 11 5.93c-2.19 2.19-3.5 4.6-4.35 6.71-.28.75-.09 1.57.46 2.13l2.13 2.12c.55.56 1.37.74 2.12.46A19.1 19.1 0 0 0 18.07 13c5.66-5.66 3.54-10.61 3.54-10.61m-7.07 7.07c-.78-.78-.78-2.05 0-2.83s2.05-.78 2.83 0c.77.78.78 2.05 0 2.83s-2.05.78-2.83 0m-5.66 7.07-1.41-1.41zM6.24 22l3.64-3.64c-.34-.09-.67-.24-.97-.45L4.83 22zM2 22h1.41l4.77-4.76-1.42-1.41L2 20.59zm0-2.83 4.09-4.08c-.21-.3-.36-.62-.45-.97L2 17.76z"/></svg></span> <strong>快速入门指南</strong></a></p>
+<p class="admonition-title">继续深入</p>
+<p><a class="md-button md-button--primary" href="getting_started/Quickstart/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m13.13 22.19-1.63-3.83c1.57-.58 3.04-1.36 4.4-2.27zM5.64 12.5l-3.83-1.63 6.1-2.77C7 9.46 6.22 10.93 5.64 12.5M21.61 2.39S16.66.269 11 5.93c-2.19 2.19-3.5 4.6-4.35 6.71-.28.75-.09 1.57.46 2.13l2.13 2.12c.55.56 1.37.74 2.12.46A19.1 19.1 0 0 0 18.07 13c5.66-5.66 3.54-10.61 3.54-10.61m-7.07 7.07c-.78-.78-.78-2.05 0-2.83s2.05-.78 2.83 0c.77.78.78 2.05 0 2.83s-2.05.78-2.83 0m-5.66 7.07-1.41-1.41zM6.24 22l3.64-3.64c-.34-.09-.67-.24-.97-.45L4.83 22zM2 22h1.41l4.77-4.76-1.42-1.41L2 20.59zm0-2.83 4.09-4.08c-.21-.3-.36-.62-.45-.97L2 17.76z"/></svg></span> <strong>快速入门指南</strong></a>
+<a class="md-button" href="getting_started/contextual_data_engineering/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 1 9l11 6 9-4.91V17h2V9M5 13.18v4L12 21l7-3.82v-4L12 17z"/></svg></span> <strong>端到端教程</strong></a></p>
 </div>
-<p>了解 Datus 如何利用数据资产中的上下文数据工程不断学习和改进。</p>
-<div class="admonition info">
-<p class="admonition-title">掌握关键概念</p>
-<p><a class="md-button" href="getting_started/contextual_data_engineering/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 21.5c-1.35-.85-3.8-1.5-5.5-1.5-1.65 0-3.35.3-4.75 1.05-.1.05-.15.05-.25.05-.25 0-.5-.25-.5-.5V6c.6-.45 1.25-.75 2-1 1.11-.35 2.33-.5 3.5-.5 1.95 0 4.05.4 5.5 1.5 1.45-1.1 3.55-1.5 5.5-1.5 1.17 0 2.39.15 3.5.5.75.25 1.4.55 2 1v14.6c0 .25-.25.5-.5.5-.1 0-.15 0-.25-.05-1.4-.75-3.1-1.05-4.75-1.05-1.7 0-4.15.65-5.5 1.5M12 8v11.5c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5V7c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5m1 3.5c1.11-.68 2.6-1 4.5-1 .91 0 1.76.09 2.5.28V9.23c-.87-.15-1.71-.23-2.5-.23q-2.655 0-4.5.84zm4.5.17c-1.71 0-3.21.26-4.5.79v1.69c1.11-.65 2.6-.99 4.5-.99 1.04 0 1.88.08 2.5.24v-1.5c-.87-.16-1.71-.23-2.5-.23m2.5 2.9c-.87-.16-1.71-.24-2.5-.24-1.83 0-3.33.27-4.5.8v1.69c1.11-.66 2.6-.99 4.5-.99 1.04 0 1.88.08 2.5.24z"/></svg></span> <strong>上下文数据工程</strong></a></p>
+<p>数据管道和迁移场景可以从<a href="getting_started/data_engineering_quickstart/">数据工程快速入门</a>开始；以 BI 为主的场景见 <a href="getting_started/dashboard_copilot/">Dashboard Copilot</a>。</p>
+<h2 id="interfaces">接入方式<a class="headerlink" href="#interfaces" title="Permanent link">&para;</a></h2>
+<p>六个入口共享同一个 Agent 后端和同一份上下文：在 CLI 里沉淀的资产，分析师在浏览器或 Slack 里提问时同样生效。表中的 <code>demo</code> 是示例数据源名，适用于带 <code>--datasource</code> 参数的命令，请先用 <code>/datasource</code> 创建；使用内置示例时，把 <code>demo</code> 换成 <code>california_schools</code> 即可。</p>
+<table>
+<thead>
+<tr>
+<th>接入方式</th>
+<th>命令</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="cli/introduction/"><strong>CLI</strong></a>(交互式 REPL)</td>
+<td><code>datus --datasource demo</code></td>
+<td>数据工程师探索数据、构建上下文、创建 subagent</td>
+</tr>
+<tr>
+<td><a href="web_chatbot/introduction/"><strong>Web 聊天</strong></a>(FastAPI + React)</td>
+<td><code>datus --web --datasource demo</code></td>
+<td>分析师通过浏览器与 subagent 对话(<code>http://localhost:8501</code>)</td>
+</tr>
+<tr>
+<td><a href="API/introduction/"><strong>REST API</strong></a>(FastAPI)</td>
+<td><code>datus-api --datasource demo</code></td>
+<td>应用通过 REST 消费数据服务(<code>http://localhost:8000</code>)</td>
+</tr>
+<tr>
+<td><a href="integration/mcp/"><strong>MCP 服务端</strong></a></td>
+<td><code>datus-mcp --datasource demo</code></td>
+<td>MCP 客户端(Claude Desktop、Cursor 等)</td>
+</tr>
+<tr>
+<td><a href="gateway/introduction/"><strong>IM 网关</strong></a></td>
+<td><code>datus-gateway</code></td>
+<td>分析师在 Slack 或飞书中与 subagent 对话</td>
+</tr>
+<tr>
+<td><a href="vscode_extension/introduction/"><strong>VS Code</strong></a>(Datus Studio)</td>
+<td>连接 <code>datus --web</code></td>
+<td>IDE 内的目录浏览器、聊天面板、SQL 结果与 AI 图表</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Print 模式</p>
+<p>Print 模式向 stdout 流式输出 JSON，适合脚本与 CI：<code>datus -p "你的问题" --datasource demo</code>。</p>
 </div>
-<h2 id="_3">重点主题<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h2 id="_9">深入了解<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
 <div class="grid cards">
 <ul>
 <li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 19v-3h8v3zm-4.5-6L2.47 7h4.24l4.96 4.95c.58.59.58 1.55 0 2.12L6.74 19H2.5z"/></svg></span> <strong>Datus CLI</strong></p>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 0 3 7l1.63 1.27L12 14l7.36-5.73L21 7zm7.37 10.73L12 16.47l-7.38-5.73L3 12l9 7 9-7zm0 5L12 21.47l-7.38-5.73L3 17l9 7 9-7z"/></svg></span> <strong>语义层</strong></p>
 <hr />
-<p>面向本地开发和实时预览数据工作流的命令行界面。</p>
-<p><a href="cli/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 了解更多</a></p>
+<p>语义模型与指标如何生成、存储，并由 Dosi 或 MetricFlow 执行。</p>
+<p><a href="adapters/semantic_adapters/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 语义适配器</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.5 15.5c0 1.11-.89 2-2 2s-2-.89-2-2 .9-2 2-2 2 .9 2 2m-9-2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.89 2-2-.89-2-2-2M23 15v3c0 .55-.45 1-1 1h-1v1c0 1.11-.89 2-2 2H5a2 2 0 0 1-2-2v-1H2c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1h1c0-3.87 3.13-7 7-7h1V5.73c-.6-.34-1-.99-1-1.73 0-1.1.9-2 2-2s2 .9 2 2c0 .74-.4 1.39-1 1.73V7h1c3.87 0 7 3.13 7 7h1c.55 0 1 .45 1 1m-2 1h-2v-2c0-2.76-2.24-5-5-5h-4c-2.76 0-5 2.24-5 5v2H3v1h2v3h14v-3h2z"/></svg></span> <strong>Subagent</strong></p>
+<hr />
+<p>为一个业务领域打包上下文、工具和规则，交付给分析师直接使用的聊天机器人。</p>
+<p><a href="subagent/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 探索 subagent</a></p>
 </li>
 <li>
 <p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4M4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4m0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4"/></svg></span> <strong>知识库</strong></p>
 <hr />
-<p>用于组织和管理数据资产与文档的集中式存储库。</p>
+<p>上下文引擎的存储：元数据、语义模型、指标、参考 SQL 与记忆。</p>
 <p><a href="knowledge_base/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 浏览知识库</a></p>
 </li>
 <li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.5 15.5c0 1.11-.89 2-2 2s-2-.89-2-2 .9-2 2-2 2 .9 2 2m-9-2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.89 2-2-.89-2-2-2M23 15v3c0 .55-.45 1-1 1h-1v1c0 1.11-.89 2-2 2H5a2 2 0 0 1-2-2v-1H2c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1h1c0-3.87 3.13-7 7-7h1V5.73c-.6-.34-1-.99-1-1.73 0-1.1.9-2 2-2s2 .9 2 2c0 .74-.4 1.39-1 1.73V7h1c3.87 0 7 3.13 7 7h1c.55 0 1 .45 1 1m-2 1h-2v-2c0-2.76-2.24-5-5-5h-4c-2.76 0-5 2.24-5 5v2H3v1h2v3h14v-3h2z"/></svg></span> <strong>子代理系统</strong></p>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M22 13.5c0 1.76-1.3 3.22-3 3.46V20a2 2 0 0 1-2 2h-3.8v-.3a2.7 2.7 0 0 0-2.7-2.7c-1.5 0-2.7 1.21-2.7 2.7v.3H4a2 2 0 0 1-2-2v-3.8h.3C3.79 16.2 5 15 5 13.5s-1.21-2.7-2.7-2.7H2V7a2 2 0 0 1 2-2h3.04c.24-1.7 1.7-3 3.46-3s3.22 1.3 3.46 3H17a2 2 0 0 1 2 2v3.04c1.7.24 3 1.7 3 3.46M17 15h1.5a1.5 1.5 0 0 0 1.5-1.5 1.5 1.5 0 0 0-1.5-1.5H17V7h-5V5.5A1.5 1.5 0 0 0 10.5 4 1.5 1.5 0 0 0 9 5.5V7H4v2.12c1.76.68 3 2.38 3 4.38s-1.25 3.7-3 4.38V20h2.12a4.7 4.7 0 0 1 4.38-3c2 0 3.7 1.25 4.38 3H17z"/></svg></span> <strong>Plugin</strong></p>
 <hr />
-<p>通过专用子代理扩展 Datus，以处理不同的数据工程任务和流程。</p>
-<p><a href="subagent/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 探索子代理</a></p>
+<p>通过一份清单把第三方平台和公司内部工具接入 Agent。</p>
+<p><a href="plugin/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 了解 Plugin</a></p>
 </li>
 <li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 16v-3c0-1.11-.89-2-2-2h-6V8h2V2H9v6h2v3H5c-1.11 0-2 .89-2 2v3H1v6h6v-6H5v-3h6v3H9v6h6v-6h-2v-3h6v3h-2v6h6v-6zM11 4h2v2h-2zM5 20H3v-2h2zm8 0h-2v-2h2zm8 0h-2v-2h2z"/></svg></span> <strong>工作流管理</strong></p>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 19v-3h8v3zm-4.5-6L2.47 7h4.24l4.96 4.95c.58.59.58 1.55 0 2.12L6.74 19H2.5z"/></svg></span> <strong>CLI</strong></p>
 <hr />
-<p>通过可配置的工作流构建器设计和编排复杂的数据管道。</p>
-<p><a href="workflow/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 探索工作流</a></p>
+<p>交互式 REPL：对话、上下文与执行命令、MCP 扩展和 Plan 模式。</p>
+<p><a href="cli/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> CLI 参考</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m21.71 20.29-1.42 1.42a1 1 0 0 1-1.41 0L7 9.85A3.8 3.8 0 0 1 6 10a4 4 0 0 1-3.78-5.3l2.54 2.54.53-.53 1.42-1.42.53-.53L4.7 2.22A4 4 0 0 1 10 6a3.8 3.8 0 0 1-.15 1l11.86 11.88a1 1 0 0 1 0 1.41M2.29 18.88a1 1 0 0 0 0 1.41l1.42 1.42a1 1 0 0 0 1.41 0l5.47-5.46-2.83-2.83M20 2l-4 2v2l-2.17 2.17 2 2L18 8h2l2-4Z"/></svg></span> <strong>Skill</strong></p>
+<hr />
+<p>内置与可安装的 Skill：项目初始化、知识抽取、记忆整理等。</p>
+<p><a href="skills/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 浏览 Skill</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 1 4 4 4 4 0 0 1-4 4 4 4 0 0 1-4-4 4 4 0 0 1 4-4m0 2a2 2 0 0 0-2 2 2 2 0 0 0 2 2 2 2 0 0 0 2-2 2 2 0 0 0-2-2m-2 12c-.25 0-.46-.18-.5-.42l-.37-2.65c-.63-.25-1.17-.59-1.69-.99l-2.49 1.01c-.22.08-.49 0-.61-.22l-2-3.46a.493.493 0 0 1 .12-.64l2.11-1.66L4.5 12l.07-1-2.11-1.63a.493.493 0 0 1-.12-.64l2-3.46c.12-.22.39-.31.61-.22l2.49 1c.52-.39 1.06-.73 1.69-.98l.37-2.65c.04-.24.25-.42.5-.42h4c.25 0 .46.18.5.42l.37 2.65c.63.25 1.17.59 1.69.98l2.49-1c.22-.09.49 0 .61.22l2 3.46c.13.22.07.49-.12.64L19.43 11l.07 1-.07 1 2.11 1.63c.19.15.25.42.12.64l-2 3.46c-.12.22-.39.31-.61.22l-2.49-1c-.52.39-1.06.73-1.69.98l-.37 2.65c-.04.24-.25.42-.5.42zm1.25-18-.37 2.61c-1.2.25-2.26.89-3.03 1.78L5.44 7.35l-.75 1.3L6.8 10.2a5.55 5.55 0 0 0 0 3.6l-2.12 1.56.75 1.3 2.43-1.04c.77.88 1.82 1.52 3.01 1.76l.37 2.62h1.52l.37-2.61c1.19-.25 2.24-.89 3.01-1.77l2.43 1.04.75-1.3-2.12-1.55c.4-1.17.4-2.44 0-3.61l2.11-1.55-.75-1.3-2.41 1.04a5.42 5.42 0 0 0-3.03-1.77L12.75 4z"/></svg></span> <strong>配置</strong></p>
+<hr />
+<p>数据源、模型、语义层、SQL 策略、存储，以及 <code>agent.yml</code> 里的其他设置。</p>
+<p><a href="configuration/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 配置 Datus</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 16a3 3 0 0 1-3-3c0-1.12.61-2.1 1.5-2.61l9.71-5.62-5.53 9.58c-.5.98-1.51 1.65-2.68 1.65m0-13c1.81 0 3.5.5 4.97 1.32l-2.1 1.21C14 5.19 13 5 12 5a8 8 0 0 0-8 8c0 2.21.89 4.21 2.34 5.65h.01c.39.39.39 1.02 0 1.41s-1.03.39-1.42.01A9.97 9.97 0 0 1 2 13 10 10 0 0 1 12 3m10 10c0 2.76-1.12 5.26-2.93 7.07-.39.38-1.02.38-1.41-.01a.996.996 0 0 1 0-1.41A7.95 7.95 0 0 0 20 13c0-1-.19-2-.54-2.9L20.67 8C21.5 9.5 22 11.18 22 13"/></svg></span> <strong>Benchmark</strong></p>
+<hr />
+<p>在 BIRD、Spider 2.0-Snow 或自定义数据集上度量 SQL 准确率。</p>
+<p><a href="benchmark/benchmark_manual/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 运行 benchmark</a></p>
 </li>
 </ul>
 </div>
