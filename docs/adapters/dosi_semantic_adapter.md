@@ -35,7 +35,7 @@ agent:
         type: duckdb
         uri: /absolute/path/to/warehouse.db
     semantic_layer:
-      dosi: {}  # optional: Dosi is selected when this section is empty
+      dosi:  # optional: Dosi is selected when this section is empty
         # semantic_model_path: /absolute/path/to/model.yaml
 ```
 

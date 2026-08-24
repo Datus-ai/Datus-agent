@@ -30,7 +30,7 @@ agent:
         type: duckdb
         uri: /absolute/path/to/warehouse.db
     semantic_layer:
-      dosi: {}  # 可选；该 section 为空时也默认选择 Dosi
+      dosi:  # 可选；该 section 为空时也默认选择 Dosi
         # semantic_model_path: /absolute/path/to/model.yaml
 ```
 

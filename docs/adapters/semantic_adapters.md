@@ -13,12 +13,16 @@ This page is the adapter overview. For adapter-specific behavior, use:
 
 ## Overview
 
-Semantic adapters provide a unified interface for:
+All three semantic adapters provide a unified query interface for:
 
 - listing executable metrics
 - discovering dimensions for a metric
 - querying metric values
-- validating semantic assets before publishing
+- validating existing semantic assets
+
+Dosi additionally provides the authoring lifecycle for:
+
+- validating authored semantic assets before publishing
 - syncing validated semantic assets into the Datus Knowledge Base
 
 Three adapters are currently supported:
