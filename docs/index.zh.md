@@ -77,7 +77,7 @@ Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://dosi.dat
 
 ## 快速开始
 
-第一次运行不需要准备任何环境：安装自带 California Schools 示例数据集，数据源 `california_schools` 已预注册，不用连接自己的数据库。Linux 或 macOS：
+第一次运行不需要准备自己的数据库：安装自带 California Schools 示例数据集，数据源 `california_schools` 已预注册。Linux 或 macOS：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
@@ -101,7 +101,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
 ## 接入方式 { #interfaces }
 
-六个入口共享同一个 Agent 后端和同一份上下文：在 CLI 里沉淀的资产，分析师在浏览器或 Slack 里提问时同样生效。以下示例使用名为 `demo` 的数据源，请先用 `/datasource` 创建；使用内置示例时，把 `demo` 换成 `california_schools` 即可。
+六个入口共享同一个 Agent 后端和同一份上下文：在 CLI 里沉淀的资产，分析师在浏览器或 Slack 里提问时同样生效。表中的 `demo` 是示例数据源名，适用于带 `--datasource` 参数的命令，请先用 `/datasource` 创建；使用内置示例时，把 `demo` 换成 `california_schools` 即可。
 
 | 接入方式 | 命令 | 适用场景 |
 |-----------|---------|----------|

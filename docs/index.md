@@ -77,7 +77,7 @@ The architecture has four layers, matching the diagram above:
 
 ## Getting started
 
-The first run needs no environment preparation: the install bundles the California Schools sample dataset with its datasource `california_schools` pre-registered, so you do not have to connect a database of your own. Linux or macOS:
+The first run needs no database of your own: the install bundles the California Schools sample dataset with its datasource `california_schools` pre-registered. Linux or macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
@@ -101,7 +101,7 @@ Pipeline and migration work can start from the [Data Engineering Quickstart](get
 
 ## Interfaces
 
-All six entry points share one agent backend and one body of context: assets built in the CLI apply equally when an analyst asks from the browser or Slack. The examples below use a datasource named `demo`; create one first with `/datasource`, or substitute `california_schools` to use the bundled sample.
+All six entry points share one agent backend and one body of context: assets built in the CLI apply equally when an analyst asks from the browser or Slack. In the table, `demo` is a sample datasource name for the commands that take `--datasource`; create one first with `/datasource`, or substitute `california_schools` to use the bundled sample.
 
 | Interface | Command | Use Case |
 |-----------|---------|----------|
