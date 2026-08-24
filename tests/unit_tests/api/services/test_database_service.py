@@ -665,7 +665,10 @@ class TestPerDatasourceResolution:
         svc._datasource_connectors["other"] = (svc.current_db_connector, "california_schools")
         assert svc._connector_for("other")[0] is svc.current_db_connector
         assert svc._cached_columns("frpm", "other") is None
-        assert svc._cached_columns("frpm", current) is not None
+        # The current datasource still hits, with the columns it actually cached.
+        assert [c.name for c in svc._cached_columns("frpm", current) or []] == [
+            c.name for c in detail.data.table.columns
+        ]
 
 
 class _FakeServerConnector:
