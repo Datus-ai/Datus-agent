@@ -89,6 +89,12 @@ _DUCKDB_CSV_ENCODINGS = frozenset({"utf-8", "utf-16", "latin-1", "gb18030", "big
 #: sequence, so offering it would mask every real answer behind mojibake.
 _ENCODING_CANDIDATES = ("gb18030", "shift_jis", "cp1252")
 
+#: Below this many bytes a detected encoding is not solid enough to refuse a file
+#: over — the detector will label a handful of bytes as almost anything. Set just
+#: past "too short to hold a CSV row at all"; a real header plus one row clears
+#: it comfortably and is still refused when it genuinely is Big5.
+_MIN_SAMPLE_FOR_REFUSAL = 16
+
 #: Accepted by DuckDB's reader but corrupted by it: a Big5 trailing byte may fall
 #: in the ASCII range (``0x42`` here), and the reader loses the row boundary
 #: after it — ``金額\n台北`` comes back as one field. Verified on 1.5.2 against a
@@ -526,11 +532,13 @@ def detect_csv_encoding(path: Path, sample_bytes: int = 256 * 1024) -> str:
     if sample.startswith((b"\xff\xfe", b"\xfe\xff")):
         return "utf-16"
 
-    try:
-        sample.decode("utf-8")
+    # Incremental, like the candidate loop below: a fixed-size sample almost
+    # always ends mid-character, and a strict one-shot decode reports that as
+    # "not UTF-8". The file then falls through to the CJK candidates, where
+    # gb18030 accepts the bytes — so a plain UTF-8 file gets read as gb18030, or
+    # worse, refused outright as Big5.
+    if _decodes(sample, "utf-8"):
         return "utf-8"
-    except UnicodeDecodeError:
-        pass
     label = None
     guess = None
     try:
@@ -547,7 +555,12 @@ def detect_csv_encoding(path: Path, sample_bytes: int = 256 * 1024) -> str:
     # ranges overlap enough that detection mislabels freely — a GB18030 file
     # comes back as ``cp949`` — so whatever it says is confirmed by actually
     # decoding, and an unusable label falls through to the candidate list.
-    if guess in _DUCKDB_BROKEN_CSV_ENCODINGS:
+    # Only trust a "broken encoding" label on a sample big enough for the
+    # detector to be confident. On a handful of bytes it will label almost
+    # anything, and refusing a valid file on that basis is worse than the
+    # mojibake the refusal exists to prevent — a file that short has no rows to
+    # corrupt. A header plus one row is already well past this.
+    if guess in _DUCKDB_BROKEN_CSV_ENCODINGS and len(sample) >= _MIN_SAMPLE_FOR_REFUSAL:
         raise DataFileError(
             f"{path.name} looks {guess}-encoded, which DuckDB's CSV reader corrupts "
             f"(it loses row boundaries after certain trailing bytes). Re-save the file as "

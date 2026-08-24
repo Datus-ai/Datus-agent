@@ -612,5 +612,49 @@ class TestCsvEncoding:
         source = self._write(tmp_path, "big.csv", payload)
         assert detect_csv_encoding(source, sample_bytes=1001) == "gb18030"
 
+    def test_utf8_survives_every_truncation_point(self, tmp_path):
+        """The UTF-8 short-circuit has to tolerate a cut mid-character too.
+
+        With a strict one-shot decode there it reported "not UTF-8" and the file
+        fell through to the CJK candidates, where gb18030 accepts the bytes — so
+        a plain UTF-8 CSV was read as gb18030, and at some cut points refused
+        outright as Big5. Reachable at the default sample size: any UTF-8 file
+        over 256 KiB whose boundary lands inside a multi-byte character.
+        """
+        payload = "店,值\n".encode("utf-8") + "布鲁,1\n".encode("utf-8") * 40
+        source = self._write(tmp_path, "u.csv", payload)
+
+        misdetected = []
+        for cut in range(1, len(payload) + 1):
+            try:
+                chosen = detect_csv_encoding(source, sample_bytes=cut)
+            except DataFileError as exc:  # a wrong refusal counts as a failure
+                chosen = f"refused: {exc}"
+            if chosen != "utf-8":
+                misdetected.append((cut, chosen))
+
+        assert misdetected == []
+
+    def test_truncation_does_not_loosen_non_utf8_detection(self, tmp_path):
+        """The tolerant short-circuit must not start claiming everything is UTF-8.
+
+        Cut at a range of sizes, since the incremental decoder's tolerance is
+        what makes the short-circuit safe and a too-tolerant one would swallow
+        these bytes as UTF-8.
+        """
+        source = self._write(tmp_path, "gb.csv", self.ROWS.encode("gb18030"))
+
+        for cut in (16, 32, 64, 128):
+            assert detect_csv_encoding(source, sample_bytes=cut) != "utf-8"
+
+    def test_a_tiny_sample_does_not_trigger_the_big5_refusal(self, tmp_path):
+        """The refusal guards against silent corruption of real data. On a few
+        bytes the detector will label almost anything, and refusing a valid file
+        on that basis is the worse error — such a file has no rows to corrupt."""
+        source = self._write(tmp_path, "gb.csv", self.ROWS.encode("gb18030"))
+
+        # No exception; the value itself is not the contract here.
+        assert detect_csv_encoding(source, sample_bytes=8)
+
     def test_an_unreadable_file_does_not_raise(self, tmp_path):
         assert detect_csv_encoding(tmp_path / "absent.csv") == "utf-8"
