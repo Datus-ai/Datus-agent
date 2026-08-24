@@ -253,6 +253,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
     # ── Tool whitelist enforcement (honor SubAgent.tools) ───────────────
 
+    #: The base class also reads ``tools``, but this node must not let it: the
+    #: whitelist below runs *after* the base builds every tool instance and
+    #: needs them all to exist (see the docstring). Two mechanisms narrowing on
+    #: the same field would leave `filesystem_func_tool` and friends None.
+    HONOURS_CONFIGURED_TOOLS: ClassVar[bool] = False
+
     def setup_tools(self) -> None:
         """Restrict the LLM-facing tool surface to the configured ``tools``.
 

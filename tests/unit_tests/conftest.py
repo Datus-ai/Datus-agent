@@ -269,7 +269,13 @@ def _create_real_agent_config(
             },
             "chat": {
                 "system_prompt": "chat",
-                "tools": "db_tools.*,context_search_tools.*",
+                # No `tools`: a chat node is full-featured by default, which is
+                # what the tests below assert. The key used to sit here carrying
+                # "db_tools.*,context_search_tools.*", but ChatAgenticNode
+                # ignored it entirely, so it described a narrowing that never
+                # happened. Now that the node honours the field, leaving the
+                # dead value in place would silently strip filesystem, bash,
+                # skills and date parsing from every chat node in the suite.
                 "max_turns": 5,
             },
             "gen_sql": {

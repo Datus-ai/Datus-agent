@@ -10,7 +10,7 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
-from typing import Dict, Literal, Optional
+from typing import ClassVar, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
@@ -127,36 +127,108 @@ class ChatAgenticNode(AgenticNode):
 
     # ── Tool Setup ──────────────────────────────────────────────────────
 
+    #: Whether ``agentic_nodes[<name>].tools`` narrows what this node builds.
+    #:
+    #: True for a plain chat node. The ask_* subclasses set it False: they run
+    #: their own whitelist over ``self.tools`` *after* this base setup, and that
+    #: design depends on every tool instance existing — the artifact-anchored
+    #: filesystem instance in particular is infrastructure they use whether or
+    #: not ``filesystem_tools`` is exposed to the LLM. Gating construction here
+    #: would leave those attributes None and break the subclass, so the two
+    #: mechanisms must not both act on the same field.
+    HONOURS_CONFIGURED_TOOLS: ClassVar[bool] = True
+
+    def _selected_tool_families(self) -> Optional[set]:
+        """Tool families this node may mount, or ``None`` for "all of them".
+
+        ``None`` is the default and means today's behaviour verbatim: a chat
+        node with no ``tools`` key mounts every family, and the overwhelming
+        majority of chat nodes have no such key. Narrowing that default would be
+        a silent capability regression, so absence must never be read as "none".
+
+        A configured value is a comma-separated list of the same family patterns
+        the other agentic nodes accept (``db_tools``, ``db_tools.*``, and
+        ``db_tools.execute_sql``-style entries all select the ``db_tools``
+        family). Family granularity is what this node acts on; a per-tool suffix
+        still enables its family rather than being dropped on the floor, since
+        dropping it would quietly remove a tool the operator asked for.
+        """
+        if not self.HONOURS_CONFIGURED_TOOLS:
+            return None
+        raw = self.node_config.get("tools") if self.node_config else None
+        if not raw:
+            return None
+        families = set()
+        for pattern in str(raw).split(","):
+            pattern = pattern.strip()
+            if not pattern:
+                continue
+            families.add(pattern.split(".", 1)[0])
+        return families or None
+
+    @staticmethod
+    def _family_enabled(selected: Optional[set], family: str) -> bool:
+        return selected is None or family in selected
+
     def setup_tools(self):
-        """Initialize all tools, binding the DB tool to the active database (if any)."""
+        """Initialize tools, binding the DB tool to the active database (if any).
+
+        Honours ``agentic_nodes[<name>].tools`` the way the five other agentic
+        node classes do. Chat was the one class that ignored it, which mattered
+        beyond tidiness: a host publishing a chat sub-agent strips write-capable
+        tools from that list, and here the strip had no effect — the model was
+        still shown tools it would then be denied at the permission layer.
+        Nothing became writable (the permission profile and the database grants
+        both still refused), but a layer of defence was missing and the denials
+        surfaced as confusing mid-conversation errors.
+        """
+        selected = self._selected_tool_families()
         node_name = self.get_node_name()
-        self.db_func_tool = DBFuncTool(
-            agent_config=self.agent_config,
-            sub_agent_name=node_name,
-            default_database=getattr(self, "active_database", "") or None,
-            read_only=self._db_read_only,
-            # Same anchor the filesystem tools use, so a path the model got back
-            # from glob resolves identically inside load_file_as_table.
-            filesystem_root=self._resolve_workspace_root(),
-        )
-        self._setup_context_search_tools()
-        self._setup_reference_template_tools()
-        self._setup_date_parsing_tools()
-        self._setup_filesystem_tools()
-        self._setup_memory_tools()
-        # self.bash_tool was created in AgenticNode.__init__; just surface its
-        # tool in this node's eager tools list (rebuild_tools also re-appends).
-        if self.bash_tool:
-            self.tools.extend(self.bash_tool.available_tools())
-        self._setup_skill_tools()
-        self._setup_sub_agent_task_tool()
+        if self._family_enabled(selected, "db_tools"):
+            self.db_func_tool = DBFuncTool(
+                agent_config=self.agent_config,
+                sub_agent_name=node_name,
+                default_database=getattr(self, "active_database", "") or None,
+                read_only=self._db_read_only,
+                # Same anchor the filesystem tools use, so a path the model got back
+                # from glob resolves identically inside load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
+            )
+        if self._family_enabled(selected, "context_search_tools"):
+            self._setup_context_search_tools()
+        if self._family_enabled(selected, "reference_template_tools"):
+            self._setup_reference_template_tools()
+        if self._family_enabled(selected, "date_parsing_tools"):
+            self._setup_date_parsing_tools()
+        if self._family_enabled(selected, "filesystem_tools"):
+            self._setup_filesystem_tools()
+        if self._family_enabled(selected, "memory_tools"):
+            self._setup_memory_tools()
+        # self.bash_tool was created in AgenticNode.__init__, so leaving it in
+        # place is what mounts it — dropping the reference is the only way to
+        # exclude it, and _rebuild_tools re-adds it from the attribute on every
+        # rebuild otherwise.
+        if self._family_enabled(selected, "bash_tools"):
+            if self.bash_tool:
+                self.tools.extend(self.bash_tool.available_tools())
+        else:
+            self.bash_tool = None
+        if self._family_enabled(selected, "skills"):
+            self._setup_skill_tools()
+        if self._family_enabled(selected, "sub_agent_tools"):
+            self._setup_sub_agent_task_tool()
         # Setup ask_user tool for clarification questions (interactive mode only)
+        #
+        # From here down is deliberately ungated: asking the user a question and
+        # reporting a result to an orchestrator are how the node converses and
+        # terminates, not data access an operator would want to scope away.
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
         # No-op unless the request declared an orchestrator origin.
         self._setup_task_result_tool()
         self._rebuild_tools()
-        self._setup_platform_doc_tools()
+        if self._family_enabled(selected, "platform_doc_tools"):
+            self._setup_platform_doc_tools()
 
         # Populate the shared tool_registry eagerly so consumers that inspect
         # categories before the first LLM turn (tests, ``apply_proxy_tools``'

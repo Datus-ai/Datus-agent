@@ -1984,3 +1984,169 @@ class TestChatAgenticNodeNoSchedulerTools:
         assert tool_names.isdisjoint(scheduler_tool_names), (
             f"Chat node still has scheduler tools: {tool_names & scheduler_tool_names}"
         )
+
+
+# ===========================================================================
+# agentic_nodes[<name>].tools
+# ===========================================================================
+
+
+class TestChatAgenticNodeHonoursConfiguredTools:
+    """`ChatAgenticNode` was the one agentic node class that ignored `tools`.
+
+    The five others (gen_sql, gen_report, ask_metrics, and the two artifact
+    bases) read `node_config.get("tools")` and build only what it names. Chat
+    mounted every family unconditionally, so a host that publishes a chat
+    sub-agent and strips write-capable tools from that list got no effect from
+    the strip: the model was still shown tools the permission layer would then
+    deny.
+    """
+
+    @staticmethod
+    def _node(real_agent_config, tools=None):
+        """Build a chat node with `tools` set to *tools*, or removed entirely.
+
+        The shared fixture's `chat` entry declares a narrow `tools` list, so a
+        test for the no-key default has to delete the key rather than just leave
+        the argument out.
+        """
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        chat_entry = dict((real_agent_config.agentic_nodes or {}).get("chat") or {})
+        if tools is None:
+            chat_entry.pop("tools", None)
+        else:
+            chat_entry["tools"] = tools
+        real_agent_config.agentic_nodes = {
+            **(real_agent_config.agentic_nodes or {}),
+            "chat": chat_entry,
+        }
+        return ChatAgenticNode(
+            node_id="test_tools",
+            description="Test configured tools",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+    @staticmethod
+    def _families(node):
+        """The tool families actually mounted, by instance attribute."""
+        return {
+            "db_tools": node.db_func_tool is not None,
+            "context_search_tools": node.context_search_tools is not None,
+            "reference_template_tools": node.reference_template_tools is not None,
+            "date_parsing_tools": node.date_parsing_tools is not None,
+            "filesystem_tools": node.filesystem_func_tool is not None,
+            "memory_tools": node.memory_func_tool is not None,
+            "bash_tools": node.bash_tool is not None,
+        }
+
+    def test_no_tools_key_mounts_everything(self, real_agent_config, mock_llm_create):
+        """The default must not change. Chat nodes without a `tools` key are the
+        overwhelming majority, so narrowing this would be a silent capability
+        regression rather than a policy change anyone asked for."""
+        node = self._node(real_agent_config)
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is True
+        assert families["bash_tools"] is True
+
+    def test_an_empty_tools_value_is_treated_as_absent(self, real_agent_config, mock_llm_create):
+        """`tools: ""` is a missing value, not a request for no tools — reading
+        it as "none" would strip a node its operator never meant to strip."""
+        node = self._node(real_agent_config, tools="")
+
+        assert self._families(node) == self._families(self._node(real_agent_config))
+
+    def test_a_narrow_list_excludes_the_other_families(self, real_agent_config, mock_llm_create):
+        """The acceptance case: a db-only chat node must not carry filesystem or
+        bash tools."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is False
+        assert families["bash_tools"] is False
+        assert families["context_search_tools"] is False
+
+    def test_excluded_families_stay_out_of_available_tools(self, real_agent_config, mock_llm_create):
+        """Instance attributes are the mechanism; the tool list the LLM sees is
+        the thing that actually matters."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        names = {tool.name for tool in node.tools}
+        assert names, "a db-only node should still expose the db tools"
+        for excluded in ("read_file", "write_file", "glob", "bash"):
+            assert excluded not in names
+
+    def test_bash_is_dropped_even_though_init_built_it(self, real_agent_config, mock_llm_create):
+        """`bash_tool` is created in `AgenticNode.__init__`, not in
+        `setup_tools`, and `_rebuild_tools` re-adds it from the attribute on
+        every rebuild. Clearing the attribute is the only thing that keeps it
+        out — leaving it set would let a later rebuild resurrect it."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        assert node.bash_tool is None
+
+        node._rebuild_tools()
+
+        assert all(tool.name != "bash" for tool in node.tools)
+
+    def test_several_families_can_be_selected(self, real_agent_config, mock_llm_create):
+        node = self._node(real_agent_config, tools="db_tools.*, filesystem_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is True
+        assert families["bash_tools"] is False
+
+    def test_a_per_tool_pattern_still_enables_its_family(self, real_agent_config, mock_llm_create):
+        """Other node classes accept `context_search_tools.list_subject_tree`.
+        This node acts at family granularity, so the suffix selects the family
+        rather than being dropped — dropping it would silently remove a tool the
+        operator explicitly asked for."""
+        node = self._node(real_agent_config, tools="db_tools.execute_sql")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is False
+
+    def test_an_unknown_family_selects_nothing_rather_than_everything(self, real_agent_config, mock_llm_create):
+        """Fail closed. A typo that fell back to "all tools" would hand a
+        published sub-agent the full surface its author meant to narrow."""
+        node = self._node(real_agent_config, tools="no_such_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is False
+        assert families["filesystem_tools"] is False
+        assert families["bash_tools"] is False
+
+    def test_the_ask_subclasses_opt_out(self):
+        """`BaseArtifactAskAgenticNode` inherits this setup but runs its own
+        whitelist over `self.tools` *after* it, and that design needs every tool
+        instance to exist — the artifact-anchored filesystem instance is
+        infrastructure it uses whether or not `filesystem_tools` is exposed.
+
+        Letting both mechanisms narrow on the same field left those attributes
+        None and broke the subclass, which is why the opt-out is explicit rather
+        than implied by overriding `setup_tools`.
+        """
+        from datus.agent.node.base_artifact_ask_agentic_node import BaseArtifactAskAgenticNode
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        assert ChatAgenticNode.HONOURS_CONFIGURED_TOOLS is True
+        assert BaseArtifactAskAgenticNode.HONOURS_CONFIGURED_TOOLS is False
+
+    def test_opting_out_ignores_a_configured_list(self, real_agent_config, mock_llm_create):
+        """The flag, not the class name, is what disables the narrowing."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = self._node(real_agent_config, tools="db_tools.*")
+        assert node.filesystem_func_tool is None
+
+        with patch.object(ChatAgenticNode, "HONOURS_CONFIGURED_TOOLS", False):
+            unrestricted = self._node(real_agent_config, tools="db_tools.*")
+
+        # The list is ignored entirely, not partly: same surface as no key at all.
+        assert self._families(unrestricted) == self._families(self._node(real_agent_config))
