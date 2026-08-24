@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/cli/mcp_extensions/">
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/plugin/mwaa/">
       
       
-        <link rel="prev" href="../execution_command/">
+        <link rel="prev" href="../airflow/">
       
       
-        <link rel="next" href="../sql_execution/">
+        <link rel="next" href="../s3/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>MCP 扩展 - Datus Docs</title>
+        <title>MWAA - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#mcp" class="md-skip">
+        <a href="#mwaa" class="md-skip">
           跳转至
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              MCP 扩展
+              MWAA
             
           </span>
         </div>
@@ -629,10 +629,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -665,11 +663,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -690,7 +688,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -708,7 +706,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
@@ -736,7 +734,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../chat_command/" class="md-nav__link">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
@@ -764,7 +762,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../context_command/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
@@ -792,7 +790,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../execution_command/" class="md-nav__link">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
@@ -817,37 +815,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MCP 扩展
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
@@ -863,242 +834,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="目录">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      目录
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. 概览
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. 基础用法
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. 基础用法">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#mcp_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        添加新的 MCP 服务器
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        查看已有服务器
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        检查指定服务器
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        调用服务器工具
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        移除服务器
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        工具过滤
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 高级特性
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. 高级特性">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        存储与配置
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        服务器类型
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        环境变量展开
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        错误处理与调试
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        安全性考量
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        集成示例
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="集成示例">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_12" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        数据库集成
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#metricflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MetricFlow 集成
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_13" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        文件系统集成
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1111,7 +846,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_execution/" class="md-nav__link">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
@@ -1139,7 +874,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_command/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
@@ -1167,7 +902,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../package_command/" class="md-nav__link">
+      <a href="../../cli/package_command/" class="md-nav__link">
         
   
   
@@ -1195,7 +930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/" class="md-nav__link">
+      <a href="../../cli/reference/" class="md-nav__link">
         
   
   
@@ -1223,7 +958,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../plan_mode/" class="md-nav__link">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
         
   
   
@@ -1251,7 +986,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../other_commands/" class="md-nav__link">
+      <a href="../../cli/other_commands/" class="md-nav__link">
         
   
   
@@ -2006,8 +1741,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2028,11 +1765,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6" id="__nav_1_6_label" tabindex="0">
@@ -2053,7 +1790,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2071,7 +1808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -2099,7 +1836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/development/" class="md-nav__link">
+      <a href="../development/" class="md-nav__link">
         
   
   
@@ -2127,7 +1864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/airflow/" class="md-nav__link">
+      <a href="../airflow/" class="md-nav__link">
         
   
   
@@ -2152,10 +1889,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../plugin/mwaa/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MWAA
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2171,6 +1935,148 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        安装
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mwaa_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mwaa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mwaa-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mwaa-setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mwaa-dag-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mwaa-dag-export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在 agent 中使用
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        编排工作流
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="编排工作流">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#airflow-dag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        用 Airflow 插件做细粒度 DAG 操作
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s3-dag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        用 S3 插件部署 DAG
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2183,7 +2089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/s3/" class="md-nav__link">
+      <a href="../s3/" class="md-nav__link">
         
   
   
@@ -4446,44 +4352,33 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. 概览
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. 基础用法
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. 基础用法">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#mcp_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        添加新的 MCP 服务器
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        查看已有服务器
+        安装
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mwaa_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mwaa
       
     </span>
   </a>
@@ -4491,10 +4386,60 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#mwaa-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mwaa-setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mwaa-dag-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mwaa-dag-export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        在 agent 中使用
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        检查指定服务器
+        编排工作流
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="编排工作流">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#airflow-dag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        用 Airflow 插件做细粒度 DAG 操作
       
     </span>
   </a>
@@ -4502,162 +4447,29 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#s3-dag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        用 S3 插件部署 DAG
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        调用服务器工具
+        相关文档
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        移除服务器
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        工具过滤
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 高级特性
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. 高级特性">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        存储与配置
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        服务器类型
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        环境变量展开
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        错误处理与调试
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        安全性考量
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        集成示例
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="集成示例">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_12" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        数据库集成
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#metricflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MetricFlow 集成
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_13" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        文件系统集成
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4678,7 +4490,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/mcp_extensions.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/plugin/mwaa.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4686,162 +4498,105 @@
   
 
 
-<h1 id="mcp">MCP 扩展<a class="headerlink" href="#mcp" title="Permanent link">&para;</a></h1>
-<h2 id="1">1. 概览<a class="headerlink" href="#1" title="Permanent link">&para;</a></h2>
-<p>MCP（Model Context Protocol）是 Datus-CLI 连接外部工具服务器的方式，让你的智能体能力超越内置功能。</p>
-<p>通过 <code>/mcp</code>，你可以：</p>
+<h1 id="mwaa">MWAA 插件<a class="headerlink" href="#mwaa" title="Permanent link">&para;</a></h1>
+<p>MWAA 插件（<code>datus-mwaa-plugin</code>）把 Datus agent 连接到 Amazon Managed Workflows
+for Apache Airflow。它工作在环境层面：查看 MWAA 环境、签发 Airflow UI 登录链接和
+CLI 令牌、列出环境当前运行的 DAG 并读取源码，以及把 Airflow CLI 命令透传给 MWAA
+的 REST 端点。创建、修改或删除环境不在其范围内。</p>
+<h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-mwaa-plugin
+</span></code></pre></div>
+<p>要求 datus-agent &gt;= 0.3.8。AWS 凭据按标准 boto3 链解析，也可以通过下面
+<code>mwaa-setup</code> 收集的 profile 字段提供。其他安装来源和 profile 管理方式见
+<a href="../introduction/">插件</a>。</p>
+<h2 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mwaa</code></td>
+<td>查看环境、签发令牌、读取当前 DAG 及其源码</td>
+</tr>
+<tr>
+<td><code>mwaa-setup</code></td>
+<td>创建 profile（区域、凭据、默认环境）</td>
+</tr>
+<tr>
+<td><code>mwaa-dag-export</code></td>
+<td>在明确确认范围后导出环境的 DAG 源码</td>
+</tr>
+</tbody>
+</table>
+<h3 id="mwaa_1">mwaa<a class="headerlink" href="#mwaa_1" title="Permanent link">&para;</a></h3>
+<p>借助这个 skill，agent 可以：</p>
 <ul>
-<li>添加本地或远程 MCP 服务器（stdio、HTTP、SSE）</li>
-<li>列出所有可用服务器及其状态</li>
-<li>检查服务器连接情况与可用工具</li>
-<li>在 CLI 内直接调用任意 MCP 服务器暴露的工具</li>
+<li>列出 MWAA 环境并查看详情——包括 Airflow 版本、状态、Web 服务器地址，以及环境
+  读取 DAG 的 S3 桶和路径；</li>
+<li>签发一次性的 Airflow UI 登录链接，或 CLI 令牌加 Web 服务器主机名；</li>
+<li>列出环境当前运行的 DAG 并读取某个 DAG 的源码。两者都通过短时 MWAA Web 会话
+  直接调用环境的 Airflow REST API——从不读取 S3 桶；</li>
+<li>通过 MWAA 的 REST 端点执行 Airflow CLI 命令。这是不透明的透传——被包裹的命令
+  可能有破坏性——因此 agent 总是先请求确认，而且 MWAA 并不支持所有 Airflow
+  子命令。日常 DAG 操作建议改用指向该环境的 <a href="../airflow/">Airflow 插件</a>。</li>
 </ul>
-<p>这让 Datus-CLI 拥有无限扩展性：无需改动核心即可接入 SQLite、Snowflake、MetricFlow、文件系统，甚至自建的 MCP 服务器。</p>
-<h2 id="2">2. 基础用法<a class="headerlink" href="#2" title="Permanent link">&para;</a></h2>
-<h3 id="mcp_1">添加新的 MCP 服务器<a class="headerlink" href="#mcp_1" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/mcp<span class="w"> </span>add<span class="w"> </span>&lt;name&gt;<span class="w"> </span>&lt;command&gt;<span class="w"> </span><span class="o">[</span>args...<span class="o">]</span>
+<h3 id="mwaa-setup">mwaa-setup<a class="headerlink" href="#mwaa-setup" title="Permanent link">&para;</a></h3>
+<p>让 agent 帮你配置插件，这个 skill 会收集 AWS 区域、凭据来源（默认 AWS 链、命名
+profile、以 <code>${ENV_VAR}</code> 引用的密钥，或要 assume 的角色），以及可选的默认环境名，
+然后通过列出环境来验证 profile。IAM 主体需要 <code>airflow:ListEnvironments</code>、
+<code>airflow:GetEnvironment</code>、<code>airflow:CreateWebLoginToken</code> 和
+<code>airflow:CreateCliToken</code> 四项权限。生成的 profile 形如：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">mwaa</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod-airflow</span><span class="w">  </span><span class="c1"># 可选的默认环境</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="c1"># 凭据：标准 AWS 链，或 profile / 密钥 / role_arn</span>
 </span></code></pre></div>
-<p><strong>示例：</strong></p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># 本地 stdio 服务器</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>/mcp<span class="w"> </span>add<span class="w"> </span>--transport<span class="w"> </span>stdio<span class="w"> </span>sqlite<span class="w"> </span>/Users/me/bin/uv<span class="w"> </span>--<span class="w"> </span>-m<span class="w"> </span>mcp_sqlite_server
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># 携带认证头的 SSE 服务器</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>/mcp<span class="w"> </span>add<span class="w"> </span>--transport<span class="w"> </span>sse<span class="w"> </span>api-server<span class="w"> </span>https://api.example.com/mcp/sse<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--header<span class="w"> </span><span class="s2">"Authorization: Bearer token"</span><span class="w"> </span>--timeout<span class="w"> </span><span class="m">30</span>.0
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># HTTP 流式服务器</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>/mcp<span class="w"> </span>add<span class="w"> </span>--transport<span class="w"> </span>http<span class="w"> </span>metricflow<span class="w"> </span>https://localhost:9000/mcp
-</span></code></pre></div>
-<hr />
-<h3 id="_1">查看已有服务器<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/mcp<span class="w"> </span>list
-</span></code></pre></div>
-<p>展示所有已配置的 MCP 服务器及其状态：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>1. duckdb-mftutorial  ✘ failed
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>2. filesystem         ✔ connected
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>3. metricflow         ✔ connected
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>4. snowflake_local    ✔ connected
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>5. sqlite             ✔ connected
-</span></code></pre></div>
-<p>按 Enter 可查看详情，包括命令、参数、环境变量与可用工具。</p>
-<hr />
-<h3 id="_2">检查指定服务器<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/mcp<span class="w"> </span>check<span class="w"> </span>&lt;mcp_name&gt;
-</span></code></pre></div>
-<p>验证连接状况并打印该服务器提供的工具列表。</p>
-<hr />
-<h3 id="_3">调用服务器工具<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>/mcp<span class="w"> </span>call<span class="w"> </span>&lt;mcp_name&gt;.&lt;tool_name&gt;<span class="w"> </span>&lt;args&gt;
-</span></code></pre></div>
-<p><strong>示例：</strong></p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>/mcp<span class="w"> </span>call<span class="w"> </span>sqlite.list_tables
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>/mcp<span class="w"> </span>call<span class="w"> </span>metricflow.query_metrics<span class="w"> </span><span class="s1">'{"metrics": "revenue"}'</span>
-</span></code></pre></div>
-<hr />
-<h3 id="_4">移除服务器<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>/mcp<span class="w"> </span>remove<span class="w"> </span>&lt;name&gt;
-</span></code></pre></div>
-<p>从你的 <code>~/.datus/conf/.mcp.json</code> 中移除已有的 MCP 服务器配置。</p>
-<hr />
-<h3 id="_5">工具过滤<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
-<p>允许你显式包含或排除服务器暴露的特定工具。</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># 只允许特定工具（排除其他所有工具）</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>/mcp<span class="w"> </span>filter<span class="w"> </span><span class="nb">set</span><span class="w"> </span>&lt;mcp_name&gt;<span class="w"> </span>include<span class="w"> </span>read_query,list_tables
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># 拒绝特定工具（允许其他所有工具）</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>/mcp<span class="w"> </span>filter<span class="w"> </span><span class="nb">set</span><span class="w"> </span>&lt;mcp_name&gt;<span class="w"> </span>exclude<span class="w"> </span>write_query,drop_table
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c1"># 查看当前的过滤配置</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>/mcp<span class="w"> </span>filter<span class="w"> </span>get<span class="w"> </span>&lt;mcp_name&gt;
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="c1"># 移除该服务器的所有过滤配置</span>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>/mcp<span class="w"> </span>filter<span class="w"> </span>remove<span class="w"> </span>&lt;mcp_name&gt;
-</span></code></pre></div>
-<hr />
-<h2 id="3">3. 高级特性<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
-<h3 id="_6">存储与配置<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<h3 id="mwaa-dag-export">mwaa-dag-export<a class="headerlink" href="#mwaa-dag-export" title="Permanent link">&para;</a></h3>
+<p>Airflow 插件导出工作流的 MWAA 对应版本，保证完全一致：以环境的 Airflow API 为
+唯一权威来源（skill 绝不枚举 MWAA 的 S3 DAG 前缀），范围可用自然语言反复调整、
+每次调整后重新计算，在你确认当前方案之前不写入、不上传，导出结果附带含校验和的
+<code>dag-export-manifest.json</code>，绝不包含凭据或令牌。上传按目的地 URI 路由——
+<code>s3://</code> 走 <a href="../s3/">S3 插件</a>。</p>
+<h2 id="agent">在 agent 中使用<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
+<p>配置好 profile 后，可以这样提出请求：</p>
 <ul>
-<li>所有 MCP 服务器定义存放在单一 JSON 文件：<code>~/.datus/conf/.mcp.json</code></li>
-<li>每条记录包含命令、参数、可选的环境变量与 Header</li>
-<li>可以在 command、args、env、url、headers 中使用 <code>${VAR}</code> 或 <code>${VAR:-default}</code> 展开环境变量</li>
+<li><strong>「给我一个 prod MWAA UI 的登录链接。」</strong> —— 返回一次性 web-login URL。</li>
+<li><strong>「prod 环境现在跑着哪些 DAG？把 sales_daily 的源码给我看看。」</strong></li>
+<li><strong>「看下 analytics-airflow 这个环境的详情——它从哪个桶读 DAG？」</strong></li>
+<li><strong>「帮我在 us-east-1 配置 mwaa 插件。」</strong> —— 触发 <code>mwaa-setup</code>。</li>
 </ul>
-<p><strong>配置示例：</strong></p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">"filesystem"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"npx"</span><span class="p">,</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">        </span><span class="s2">"-y"</span><span class="p">,</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">        </span><span class="s2">"@modelcontextprotocol/server-filesystem"</span><span class="p">,</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">        </span><span class="s2">"/Users/me/project"</span>
-</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">      </span><span class="p">]</span>
-</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="p">}</span>
+<p>以上查看类操作都不需要确认；只有 Airflow CLI 透传总是先确认，因为它的内容对
+<a href="../introduction/#permissions">权限系统</a>来说是不透明的。</p>
+<h2 id="_2">编排工作流<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h3 id="airflow-dag">用 Airflow 插件做细粒度 DAG 操作<a class="headerlink" href="#airflow-dag" title="Permanent link">&para;</a></h3>
+<p>MWAA 插件管环境，<a href="../airflow/">Airflow 插件</a>管 DAG。触发、暂停、清理、看日志
+这些带权限分级的操作，应该给 Airflow 插件配置一个指向 MWAA 环境 Web 服务器的
+profile——主机名和令牌由本插件提供。直接让 agent 把两者接起来：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>把 airflow 插件指向 prod MWAA 环境，然后触发 sales_daily 并等待运行结束。
 </span></code></pre></div>
-<hr />
-<h3 id="_7">服务器类型<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<h3 id="s3-dag">用 S3 插件部署 DAG<a class="headerlink" href="#s3-dag" title="Permanent link">&para;</a></h3>
+<p>MWAA 环境从环境详情里显示的 S3 桶和前缀读取 DAG。MWAA 插件不含 S3 传输能力，
+所以部署是一个组合动作：agent 先通过 <a href="../s3/">S3 插件</a>上传文件，再通过本插件
+验证 DAG 出现：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>把 dags/sales_daily.py 上传到 prod MWAA 环境的 DAG 目录，并确认 DAG 已经出现。
+</span></code></pre></div>
+<p>反过来，「把 prod MWAA 环境的所有 DAG 导出到 s3://backup/mwaa/2026-08-24/」会
+运行 <code>mwaa-dag-export</code>——源码始终来自 Airflow API，上传由 S3 插件完成。</p>
+<h2 id="_3">相关文档<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>stdio</strong> —— 本地启动子进程，通过 stdin/stdout 通信</li>
-<li><strong>http</strong> —— 连接到可流式响应的 HTTP 端点</li>
-<li><strong>sse</strong> —— 连接到 Server-Sent Events 端点</li>
+<li><a href="../introduction/">插件</a> —— 安装来源、profile、项目启用与权限</li>
+<li><a href="../airflow/">Airflow 插件</a> —— 对同一环境做细粒度 DAG 操作</li>
+<li><a href="../s3/">S3 插件</a> —— 向环境的桶上传 DAG</li>
+<li><a href="../../skills/introduction/">Skills</a> —— skills 的发现和加载方式</li>
 </ul>
-<p>开发本地工具优先使用 stdio（最快）；http 适合常驻服务；sse 适用于远端云服务。</p>
-<h3 id="_8">环境变量展开<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
-<p>MCP 配置支持环境变量展开：</p>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">"snowflake"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"${PYTHON_PATH:-python}"</span><span class="p">,</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"-m"</span><span class="p">,</span><span class="w"> </span><span class="s2">"mcp_snowflake_server"</span><span class="p">],</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">      </span><span class="nt">"env"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">        </span><span class="nt">"SNOWFLAKE_ACCOUNT"</span><span class="p">:</span><span class="w"> </span><span class="s2">"${SNOWFLAKE_ACCOUNT}"</span><span class="p">,</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">        </span><span class="nt">"SNOWFLAKE_USER"</span><span class="p">:</span><span class="w"> </span><span class="s2">"${SNOWFLAKE_USER}"</span><span class="p">,</span>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">        </span><span class="nt">"SNOWFLAKE_PASSWORD"</span><span class="p">:</span><span class="w"> </span><span class="s2">"${SNOWFLAKE_PASSWORD:-}"</span>
-</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">      </span><span class="p">}</span>
-</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="p">}</span>
-</span></code></pre></div>
-<h3 id="_9">错误处理与调试<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
-<ul>
-<li>清晰报告服务器连接失败原因</li>
-<li>工具调用错误会附带详细信息</li>
-<li>提供调试模式诊断连接问题</li>
-<li>针对瞬时失败具备自动重试逻辑</li>
-</ul>
-<h3 id="_10">安全性考量<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
-<ul>
-<li>含密钥的环境变量会安全处理</li>
-<li>认证 Header 会加密存储</li>
-<li>本地 stdio 服务器以用户权限运行</li>
-<li>远程连接采用安全协议（HTTPS/WSS）</li>
-</ul>
-<h2 id="_11">集成示例<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
-<h3 id="_12">数据库集成<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># 为本地开发添加 SQLite 服务器</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>/mcp<span class="w"> </span>add<span class="w"> </span>sqlite<span class="w"> </span>uvx<span class="w"> </span>mcp-server-sqlite<span class="w"> </span>--db-path<span class="w"> </span>./data/sample.db
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># 通过 MCP 查询数据表</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>/mcp<span class="w"> </span>call<span class="w"> </span>sqlite.list_tables
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>/mcp<span class="w"> </span>call<span class="w"> </span>sqlite.read_query<span class="w"> </span><span class="s2">"SELECT * FROM customers LIMIT 5"</span>
-</span></code></pre></div>
-<h3 id="metricflow">MetricFlow 集成<a class="headerlink" href="#metricflow" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># 添加 MetricFlow 服务器以访问语义层</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>/mcp<span class="w"> </span>add<span class="w"> </span>metricflow<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>mcp_metricflow_server
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># 调用业务指标</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>/mcp<span class="w"> </span>call<span class="w"> </span>metricflow.list_metrics
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>/mcp<span class="w"> </span>call<span class="w"> </span>metricflow.query_metrics<span class="w"> </span><span class="s1">'{"metrics": ["revenue"], "dimensions": ["customer_segment"]}'</span>
-</span></code></pre></div>
-<h3 id="_13">文件系统集成<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># 添加文件系统服务器以执行文件操作</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>/mcp<span class="w"> </span>add<span class="w"> </span>filesystem<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>mcp_filesystem_server<span class="w"> </span>--base-path<span class="w"> </span>/project/data
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="c1"># 通过 MCP 执行文件操作</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>/mcp<span class="w"> </span>call<span class="w"> </span>filesystem.list_directory<span class="w"> </span>/reports
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>/mcp<span class="w"> </span>call<span class="w"> </span>filesystem.read_file<span class="w"> </span>/reports/summary.md
-</span></code></pre></div>
 
 
 
@@ -4871,7 +4626,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../execution_command/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 执行命令">
+          <a href="../airflow/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Airflow">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4881,20 +4636,20 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                执行命令
+                Airflow
               </div>
             </div>
           </a>
         
         
           
-          <a href="../sql_execution/" class="md-footer__link md-footer__link--next" aria-label="下一页: SQL 执行">
+          <a href="../s3/" class="md-footer__link md-footer__link--next" aria-label="下一页: S3">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                SQL 执行
+                S3
               </div>
             </div>
             <div class="md-footer__button md-icon">
