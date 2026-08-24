@@ -71,24 +71,20 @@
   <rect x="70" y="210" width="860" height="230" rx="12" class="band"/>
   <text x="94" y="240" class="label-accent">DATUS AGENT</text>
 
-  <rect x="150" y="258" width="220" height="74" rx="10" class="chip"/>
-  <text x="260" y="288" text-anchor="middle" class="title">Subagent</text>
-  <text x="260" y="310" text-anchor="middle" class="sub">curated context &#183; tools &#183; rules</text>
+  <rect x="150" y="258" width="330" height="74" rx="10" class="chip"/>
+  <text x="315" y="288" text-anchor="middle" class="title">Subagent</text>
+  <text x="315" y="310" text-anchor="middle" class="sub">curated context &#183; tools &#183; rules, per domain</text>
 
-  <rect x="390" y="258" width="220" height="74" rx="10" class="chip"/>
-  <text x="500" y="288" text-anchor="middle" class="title">Skill</text>
-  <text x="500" y="310" text-anchor="middle" class="sub">packaged tools &#183; marketplace</text>
-
-  <rect x="630" y="258" width="220" height="74" rx="10" class="chip"/>
-  <text x="740" y="288" text-anchor="middle" class="title">Plugin</text>
-  <text x="740" y="310" text-anchor="middle" class="sub">third-party &amp; in-house tools</text>
+  <rect x="520" y="258" width="330" height="74" rx="10" class="chip"/>
+  <text x="685" y="288" text-anchor="middle" class="title">Skill</text>
+  <text x="685" y="310" text-anchor="middle" class="sub">packaged tools &#183; marketplace</text>
 
   <rect x="150" y="350" width="700" height="70" rx="10" class="chip-accent"/>
   <text x="500" y="378" text-anchor="middle" class="title">Context engine</text>
   <text x="500" y="400" text-anchor="middle" class="sub">metadata &#183; metrics &#183; reference SQL &#183; knowledge &#183; local files</text>
 
   <!-- connected systems -->
-  <text x="70" y="490" class="label">CONNECTED SYSTEMS &#183; VIA ADAPTERS</text>
+  <text x="70" y="490" class="label">CONNECTED SYSTEMS &#183; VIA ADAPTERS &amp; PLUGINS</text>
 
   <rect x="70" y="506" width="130" height="72" rx="10" class="chip"/>
   <text x="135" y="536" text-anchor="middle" class="title">LLMs</text>
