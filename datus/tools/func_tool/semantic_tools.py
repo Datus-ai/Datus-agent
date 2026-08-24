@@ -24,7 +24,6 @@ from pydantic import BaseModel
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.attribution_utils import (
     AttributionValidationException,
     DimensionAttributionUtil,
@@ -378,7 +377,6 @@ class SemanticTools:
         # Keep storage handles for compatibility with older call sites, but
         # public SemanticTools methods use the semantic adapter as their source
         # of truth. ContextSearchTools owns RAG/storage discovery.
-        self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
         self.compressor = DataCompressor(model_name=agent_config.active_model().model)
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()

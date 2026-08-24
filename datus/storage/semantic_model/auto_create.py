@@ -185,12 +185,12 @@ def find_missing_semantic_models(
     Returns:
         List of table names that are missing semantic models
     """
-    from datus.storage.semantic_model.store import SemanticModelRAG
+    from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 
     if not tables:
         return []
 
-    semantic_rag = SemanticModelRAG(agent_config)
+    semantic_rag = SemanticDatasetRAG(agent_config)
     try:
         current_db_config = agent_config.current_db_config()
     except Exception as e:

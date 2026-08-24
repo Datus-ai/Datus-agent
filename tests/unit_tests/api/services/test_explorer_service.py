@@ -622,17 +622,6 @@ class TestMetricDbToYaml:
         assert "locked_metadata" not in result["metric"]
 
 
-class TestGetSemanticFilePath:
-    """Tests for _get_semantic_file_path helper."""
-
-    def test_no_semantic_model_returns_empty(self, real_agent_config):
-        """Returns empty string when no semantic model found."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        path, error = svc._get_semantic_file_path(None, None, None, "nonexistent_table")
-        assert path == ""
-        assert error == "No semantic model found for provided parameters"
-
-
 class TestExplorerServiceHelpers:
     """Tests for ExplorerService helper methods."""
 
@@ -977,6 +966,13 @@ class TestExplorerServiceOSIAuthoring:
         "        source: jeff_shop.raw_orders\n"
         "        primary_key: [id]\n"
         "        fields:\n"
+        # Dosi will not resolve a column that no dataset declares, so the key
+        # column is a field in its own right rather than only a primary_key.
+        "          - name: id\n"
+        "            expression:\n"
+        "              dialects:\n"
+        "                - dialect: STARROCKS\n"
+        "                  expression: id\n"
         "          - name: order_total\n"
         "            expression:\n"
         "              dialects:\n"
@@ -995,20 +991,20 @@ class TestExplorerServiceOSIAuthoring:
     )
 
     def _osi_adapter(self, tmp_path):
-        # datus-semantic-osi is a guaranteed test dependency (dependency-groups
-        # dev in pyproject), so these run in CI rather than silently skipping.
-        from datus_semantic_osi.adapter import DatusOSIAdapter
-        from datus_semantic_osi.config import DatusOSIConfig
+        # Dosi is the only supported adapter for this OSI-shaped YAML; it is a
+        # test dependency, so these run in CI rather than silently skipping.
+        from datus_semantic_dosi.adapter import DosiAdapter
+        from datus_semantic_dosi.config import DosiConfig
 
         model_dir = tmp_path / "jeff_shop_live"
         model_dir.mkdir()
         (model_dir / "jeff_shop_live.yml").write_text(self.SAMPLE)
-        config = DatusOSIConfig(
+        config = DosiConfig(
             datasource="ds",
             semantic_models_path=str(tmp_path),
             db_config={"type": "starrocks"},
         )
-        return DatusOSIAdapter(config)
+        return DosiAdapter(config)
 
     def _wire(self, svc, monkeypatch, adapter, *, adapter_type="osi"):
         from types import SimpleNamespace
@@ -1301,42 +1297,24 @@ class TestExplorerServiceSubAgentScope:
 
         assert svc.sub_agent_name is None
         assert svc.metric_rag.sub_agent_name is None
-        assert svc.semantic_model_rag._sub_agent_filter is None
+        assert svc.metric_rag._sub_agent_filter is None
 
     def test_name_reaches_every_rag(self, real_agent_config):
+        """The name has to reach each store, or a store reads unscoped.
+
+        The filter's contents are not asserted here: the explorer only holds
+        subject-scoped stores, whose filters resolve against the subject tree
+        and so stay empty on a bare test KB.
+        """
         real_agent_config.agentic_nodes = {
             **(real_agent_config.agentic_nodes or {}),
-            "analyst": {"scoped_context": {"tables": "finance.revenue"}},
+            "analyst": {"scoped_context": {"metrics": "finance.revenue"}},
         }
 
         svc = ExplorerService(agent_config=real_agent_config, sub_agent_name="analyst")
 
         assert svc.sub_agent_name == "analyst"
         assert svc.metric_rag.sub_agent_name == "analyst"
-
-        scoped = str(svc.semantic_model_rag._sub_agent_filter)
-        assert "finance" in scoped and "revenue" in scoped
-
-    def test_semantic_file_path_reuses_the_scoped_rag(self, real_agent_config):
-        """`_get_semantic_file_path` used to build its own
-        `SemanticModelRAG` inline, which dropped the scope and would have handed
-        back semantic models from outside the sub-agent's tables. It must go
-        through the instance built in __init__.
-        """
-        real_agent_config.agentic_nodes = {
-            **(real_agent_config.agentic_nodes or {}),
-            "analyst": {"scoped_context": {"tables": "finance.revenue"}},
-        }
-        svc = ExplorerService(agent_config=real_agent_config, sub_agent_name="analyst")
-        svc.semantic_model_rag = MagicMock()
-        svc.semantic_model_rag.get_semantic_model.return_value = []
-
-        path, error = svc._get_semantic_file_path(None, None, None, "orders")
-
-        assert path == ""
-        assert error == "No semantic model found for provided parameters"
-        # The scoped instance was consulted — not a fresh unscoped one.
-        svc.semantic_model_rag.get_semantic_model.assert_called_once()
 
 
 class TestExplorerServiceScopedReads:

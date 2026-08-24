@@ -61,7 +61,7 @@ class TestDBFuncToolCompressorModelName:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -77,7 +77,7 @@ class TestDBFuncToolCompressorModelName:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG"),
-            patch("datus.tools.func_tool.database.SemanticModelRAG"),
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
         ):
             tool = DBFuncTool(mock_connector)
 
@@ -94,8 +94,8 @@ class TestDBFuncToolCompressorModelName:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
-            patch("datus.tools.func_tool.database.TableSemanticProfileRAG") as mock_profile,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_profile,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -103,8 +103,8 @@ class TestDBFuncToolCompressorModelName:
 
             tool = DBFuncTool(mock_connector, agent_config=mock_config)
 
-        assert tool.has_table_semantic_profiles is False
-        assert tool._table_semantic_profiles is None
+        assert tool.has_semantic_datasets is False
+        assert tool._semantic_datasets is None
 
 
 class TestDBFuncToolExecuteDDL:
@@ -113,7 +113,7 @@ class TestDBFuncToolExecuteDDL:
     def _make_tool(self, connector):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -201,7 +201,7 @@ class TestExecuteDDLStatementValidation:
             connector.execute_ddl.return_value = ddl_result
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -291,7 +291,7 @@ class TestDBFuncToolExecuteWrite:
             connector.get_databases.return_value = []
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -393,7 +393,7 @@ class TestDBFuncToolExecuteWrite:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -499,7 +499,7 @@ class TestDescribeTableDuckDBSchemaPrefix:
         ]
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -585,7 +585,7 @@ class TestDescribeTableConstraintPassthrough:
         mock_connector.get_schema.return_value = schema_rows
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -680,25 +680,26 @@ class TestDescribeTableConstraintPassthrough:
         ]
 
         tool = DBFuncTool(mock_connector)
-        tool._table_semantic_profiles = Mock()
+        tool._semantic_datasets = Mock()
         tool.has_semantic_models = True
         tool._semantic_storage = Mock()
-        tool._table_semantic_profiles.get_profile.return_value = {
-            "format": "osi",
-            "physical_table_fq_name": "main.orders",
+        tool._semantic_datasets.get_table_projection.return_value = {
             "semantic_model_name": "shop",
             "dataset_name": "orders",
-            "data_source_name": "",
+            "source_table": "orders",
             "description": "Orders dataset",
             "ai_context_json": "",
-            "columns_json": (
-                "["
-                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
-                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
-                "]"
-            ),
-            "relationships_json": "[]",
-            "custom_extensions_json": "",
+            "fields": [
+                {
+                    "name": "order_id",
+                    "expr": "order_id",
+                    "is_primary_key": True,
+                    "description": "Order key",
+                },
+                {"name": "amount", "expr": "amount", "description": "Order amount"},
+            ],
+            "relationships": [],
+            "alternatives": [],
             "yaml_path": "/tmp/orders.yml",
         }
 
@@ -710,7 +711,7 @@ class TestDescribeTableConstraintPassthrough:
         assert cols["order_id"]["nullable"] is False
         assert cols["order_id"]["semantic_role"] == "primary_key"
         assert "pk" not in cols["amount"]
-        assert cols["amount"]["semantic_role"] == "measure"
+        assert cols["amount"]["semantic_role"] == "field"
 
 
 class TestDescribeTableSemanticProfile:
@@ -725,26 +726,28 @@ class TestDescribeTableSemanticProfile:
         ]
 
         tool = DBFuncTool(mock_connector)
-        tool._table_semantic_profiles = Mock()
+        tool._semantic_datasets = Mock()
         tool.has_semantic_models = True
         tool._semantic_storage = Mock()
-        tool._table_semantic_profiles.get_profile.return_value = {
-            "format": "osi",
-            "physical_table_fq_name": "main.orders",
+        tool._semantic_datasets.get_table_projection.return_value = {
             "semantic_model_name": "shop",
             "dataset_name": "orders",
-            "data_source_name": "",
+            "source_table": "orders",
             "description": "Orders dataset",
             "ai_context_json": '{"synonyms": ["purchases"]}',
-            "columns_json": (
-                "["
-                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
-                '{"name":"order_date","expr":"order_date","role":"time_dimension","description":"Order date"},'
-                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
-                "]"
-            ),
-            "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
-            "custom_extensions_json": "",
+            "fields": [
+                {"name": "order_id", "expr": "order_id", "is_primary_key": True, "description": "Order key"},
+                {
+                    "name": "order_date",
+                    "expr": "order_date",
+                    "is_dimension": True,
+                    "is_time": True,
+                    "description": "Order date",
+                },
+                {"name": "amount", "expr": "amount", "description": "Order amount"},
+            ],
+            "relationships": [{"name": "orders_to_customers", "to_dataset": "customers"}],
+            "alternatives": [],
             "yaml_path": "/tmp/orders.yml",
         }
 
@@ -759,68 +762,261 @@ class TestDescribeTableSemanticProfile:
         }
         assert result.result["semantic"]["relationships"][0]["name"] == "orders_to_customers"
         assert "filters" not in result.result["semantic"]
-        assert "format" not in result.result["semantic"]
         assert "semantic_model_name" not in result.result["semantic"]
         assert "dataset_name" not in result.result["semantic"]
-        assert "data_source_name" not in result.result["semantic"]
-        assert "physical_table" not in result.result["semantic"]
-        assert "custom_extensions" not in result.result["semantic"]
         assert "yaml_path" not in result.result["semantic"]
         columns = {col["name"]: col for col in result.result["columns"]}
         assert columns["order_id"]["semantic_role"] == "primary_key"
         assert "is_entity_key" not in columns["order_id"]
         assert columns["order_date"]["is_dimension"] is True
-        assert columns["amount"]["semantic_role"] == "measure"
+        assert columns["order_date"]["semantic_role"] == "time_dimension"
+        assert columns["amount"]["semantic_role"] == "field"
         assert "is_measure" not in columns["amount"]
         assert columns["amount"]["comment"] == "Order amount"
 
-    def test_describe_table_keeps_metricflow_profile_enrichment(self):
+    def test_describe_table_falls_back_to_the_dataset_name_when_unnamed(self):
+        """A dataset row always names the table; the model name is the last resort."""
         mock_connector = Mock()
         mock_connector.dialect = "sqlite"
         mock_connector.get_databases.return_value = []
-        mock_connector.get_schema.return_value = [
-            {"name": "order_id", "type": "INTEGER", "comment": ""},
-            {"name": "order_date", "type": "DATE", "comment": ""},
-            {"name": "amount", "type": "DOUBLE", "comment": ""},
-        ]
+        mock_connector.get_schema.return_value = [{"name": "order_id", "type": "INTEGER", "comment": ""}]
 
         tool = DBFuncTool(mock_connector)
-        tool._table_semantic_profiles = Mock()
-        tool._table_semantic_profiles.get_profile.return_value = {
-            "table_name": "orders",
-            "semantic_model_name": "orders_source",
+        tool._semantic_datasets = Mock()
+        tool._semantic_datasets.get_table_projection.return_value = {
+            "semantic_model_name": "orders_analytics",
             "dataset_name": "",
-            "data_source_name": "orders_source",
-            "description": "Orders data source",
-            "ai_context_json": '{"synonyms": ["sales orders"]}',
-            "columns_json": (
-                "["
-                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
-                '{"name":"order_date","expr":"order_date","role":"time_dimension","description":"Order date"},'
-                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount","agg":"sum"}'
-                "]"
-            ),
-            "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
+            "source_table": "orders",
+            "description": "Orders",
+            "fields": [],
+            "relationships": [],
+            "alternatives": [],
         }
 
         result = tool.describe_table("orders")
 
         assert result.success == 1
-        assert result.result["table"] == {
-            "name": "orders_source",
-            "description": "Orders data source",
-            "ai_context": {"synonyms": ["sales orders"]},
+        assert result.result["table"]["name"] == "orders_analytics"
+
+
+class TestDescribeTableMultipleDatasets:
+    """One physical table may be modelled by several semantic models.
+
+    The primary dataset alone supplies the meaning; the rest are navigation.
+    Merging them would assert a join graph that exists in neither model, since
+    OSI relationships reference dataset names local to their own model.
+    """
+
+    def _make_tool(self, projection):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.get_schema.return_value = [
+            {"name": "order_id", "type": "INTEGER", "comment": ""},
+            {"name": "amount", "type": "DOUBLE", "comment": ""},
+        ]
+        tool = DBFuncTool(mock_connector)
+        tool._semantic_datasets = Mock()
+        tool._semantic_datasets.get_table_projection.return_value = projection
+        return tool
+
+    @staticmethod
+    def _dataset_row(model, *, description):
+        return {
+            "semantic_model_name": model,
+            "dataset_name": "orders",
+            "source_table": "orders",
+            "description": description,
+            "ai_context_json": "",
+            "yaml_path": f"/tmp/{model}.yml",
         }
-        assert result.result["semantic"] == {
-            "relationships": [{"name": "orders_to_customers", "to_dataset": "customers"}],
+
+    def _projection(self, *, with_alternative: bool):
+        return {
+            **self._dataset_row("fulfillment", description="Orders being shipped"),
+            "fields": [{"name": "amount", "expr": "amount", "description": "Shipped amount"}],
+            "relationships": [{"name": "orders_to_shipments", "from_dataset": "orders", "to_dataset": "shipments"}],
+            "alternatives": [self._dataset_row("sales", description="Orders booked")] if with_alternative else [],
         }
-        columns = {col["name"]: col for col in result.result["columns"]}
-        assert columns["order_date"]["semantic_role"] == "time_dimension"
-        assert columns["order_date"]["is_dimension"] is True
-        assert columns["amount"]["semantic_role"] == "measure"
-        assert columns["amount"]["comment"] == "Order amount"
-        assert "is_measure" not in columns["amount"]
-        assert "is_entity_key" not in columns["order_id"]
+
+    def test_single_dataset_output_carries_no_disambiguation_keys(self):
+        """The common case must stay byte-identical for existing consumers."""
+        tool = self._make_tool(self._projection(with_alternative=False))
+
+        table = tool.describe_table("orders").result["table"]
+
+        assert "alternatives" not in table
+        assert "semantic_model" not in table
+
+    def test_primary_dataset_alone_supplies_meaning(self):
+        tool = self._make_tool(self._projection(with_alternative=True))
+
+        result = tool.describe_table("orders").result
+
+        assert result["table"]["description"] == "Orders being shipped"
+        assert result["table"]["semantic_model"] == "fulfillment"
+        columns = {col["name"]: col for col in result["columns"]}
+        assert columns["amount"]["semantic_description"] == "Shipped amount"
+
+    def test_relationships_are_never_merged_across_models(self):
+        tool = self._make_tool(self._projection(with_alternative=True))
+
+        relationships = tool.describe_table("orders").result["semantic"]["relationships"]
+
+        assert relationships == [{"name": "orders_to_shipments", "from_dataset": "orders", "to_dataset": "shipments"}]
+
+    def test_other_models_are_surfaced_as_navigation(self):
+        tool = self._make_tool(self._projection(with_alternative=True))
+
+        alternatives = tool.describe_table("orders").result["table"]["alternatives"]
+
+        assert alternatives == [
+            {
+                "semantic_model": "sales",
+                "dataset": "orders",
+                "description": "Orders booked",
+                "yaml_path": "/tmp/sales.yml",
+            }
+        ]
+
+    def test_semantic_model_argument_is_passed_down_to_storage(self):
+        tool = self._make_tool(self._projection(with_alternative=False))
+
+        tool.describe_table("orders", semantic_model="sales")
+
+        assert tool._semantic_datasets.get_table_projection.call_args.kwargs["semantic_model"] == "sales"
+
+    def test_a_model_that_does_not_describe_the_table_is_an_error(self):
+        """Degrading to physical columns would read as "this table has no
+        semantic model", which sends the caller off to guess at raw columns
+        when the name is merely misspelled."""
+        tool = self._make_tool(self._projection(with_alternative=True))
+        tool._semantic_datasets.get_table_projection.return_value = None
+        tool._semantic_datasets.list_datasets.return_value = [
+            {"semantic_model_name": "fulfillment"},
+            {"semantic_model_name": "sales"},
+        ]
+
+        result = tool.describe_table("orders", semantic_model="salez")
+
+        assert result.success == 0
+        assert "salez" in result.error
+        assert "fulfillment" in result.error and "sales" in result.error
+
+    def test_an_unmodelled_table_still_degrades_to_physical_columns(self):
+        """No model names to offer means the table simply is not modelled, so
+        the physical schema is the honest answer rather than an error."""
+        tool = self._make_tool(self._projection(with_alternative=True))
+        tool._semantic_datasets.get_table_projection.return_value = None
+        tool._semantic_datasets.list_datasets.return_value = []
+
+        result = tool.describe_table("orders", semantic_model="sales")
+
+        assert result.success == 1
+        assert "table" not in result.result
+
+
+class TestDescribeTableWithoutProjection:
+    """After an upgrade the projection starts empty until it is re-synced.
+
+    describe_table must degrade to the physical schema rather than fail, and
+    must say how to restore the semantics instead of going silent.
+    """
+
+    def _make_tool(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.get_schema.return_value = [{"name": "order_id", "type": "INTEGER", "comment": ""}]
+        tool = DBFuncTool(mock_connector)
+        tool._semantic_datasets = Mock()
+        tool._semantic_datasets.get_table_projection.return_value = None
+        return tool
+
+    def test_empty_projection_degrades_to_physical_schema(self):
+        result = self._make_tool().describe_table("orders")
+
+        assert result.success == 1
+        assert result.result["columns"] == [{"name": "order_id", "type": "INTEGER", "comment": ""}]
+        assert "table" not in result.result
+        assert "semantic" not in result.result
+
+    def test_stale_projection_is_reported_once_per_project(self):
+        from datus.tools.func_tool import database as database_module
+
+        database_module._STALE_PROJECTION_WARNED.clear()
+        config = Mock()
+        config.project_name = "shop"
+
+        with (
+            patch("datus.storage.semantic_dataset.store.semantic_projection_is_stale", return_value=True),
+            patch.object(database_module, "logger") as mock_logger,
+        ):
+            database_module._warn_once_if_projection_is_stale(config)
+            database_module._warn_once_if_projection_is_stale(config)
+
+        assert mock_logger.warning.call_count == 1
+        assert "sync-yaml" in mock_logger.warning.call_args.args[0]
+        database_module._STALE_PROJECTION_WARNED.clear()
+
+
+class TestSearchTableWithSharedTable:
+    """A table modelled by two semantic models must not break table discovery.
+
+    The pre-profile lookup raises in exactly that case, and search_table had no
+    inner guard, so a single shared table failed the entire search.
+    """
+
+    def _make_tool(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        tool = DBFuncTool(mock_connector)
+        tool.has_schema = True
+        tool.schema_rag = Mock()
+        tool.schema_rag.search_similar.return_value = (Mock(num_rows=1), None)
+        tool._metadata_search_rows = Mock(
+            return_value=[
+                {
+                    "catalog_name": "",
+                    "database_name": "shop",
+                    "schema_name": "",
+                    "table_name": "orders",
+                    "identifier": "shop.orders",
+                    "description": "raw metadata description",
+                }
+            ]
+        )
+        tool._sample_rows_by_identifier = Mock(return_value={})
+        tool._search_table_result_row = lambda row, _samples: row
+        return tool
+
+    def test_search_survives_a_table_owned_by_two_models(self):
+        tool = self._make_tool()
+        tool._semantic_datasets = Mock()
+        tool._semantic_datasets.list_datasets.return_value = [
+            {"semantic_model_name": "fulfillment", "dataset_name": "orders", "description": "Orders being shipped"},
+            {"semantic_model_name": "sales", "dataset_name": "orders", "description": "Orders booked"},
+        ]
+
+        result = tool.search_table("orders")
+
+        assert result.success == 1
+        assert result.result["metadata"][0]["description"] == "Orders being shipped"
+
+    def test_raising_legacy_lookup_does_not_fail_the_search(self):
+        tool = self._make_tool()
+        tool._semantic_datasets = None
+        tool.has_semantic_models = True
+        tool._semantic_storage = Mock()
+        tool._semantic_storage.get_semantic_model.side_effect = RuntimeError(
+            "Table `orders` belongs to multiple semantic models"
+        )
+
+        result = tool.search_table("orders")
+
+        assert result.success == 1
+        assert result.result["metadata"][0]["description"] == "raw metadata description"
 
 
 class TestExecuteDDLDatabaseParam:
@@ -836,7 +1032,7 @@ class TestExecuteDDLDatabaseParam:
             connector.execute_ddl.return_value = ddl_result
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -912,7 +1108,7 @@ class TestGetConnectorRouting:
     def _make_single_mode_tool(self, connector):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -958,7 +1154,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -998,7 +1194,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1037,7 +1233,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1065,7 +1261,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1095,7 +1291,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1129,7 +1325,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1168,7 +1364,7 @@ class TestGetConnectorRouting:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1188,7 +1384,7 @@ class TestTransferQueryResult:
         """Create a DBFuncTool with mocked _get_connector for multi-db routing."""
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1676,7 +1872,7 @@ class TestTransferQueryResult:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1710,7 +1906,7 @@ class TestPathTraversalGuard:
         connector.get_databases.return_value = []
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1750,7 +1946,7 @@ class TestDBFuncToolExecuteSql:
             connector.get_databases.return_value = []
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1807,7 +2003,7 @@ class TestDBFuncToolExecuteSql:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1839,7 +2035,7 @@ class TestDBFuncToolExecuteSql:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -1860,7 +2056,7 @@ class TestDBFuncToolExecuteSql:
     def _build(connector, **kwargs):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2124,7 +2320,7 @@ class TestDBFuncToolExecuteSql:
 
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2163,7 +2359,7 @@ class TestDBFuncToolWritePathsHonorReadOnly:
     def _build(connector, **kwargs):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2244,7 +2440,7 @@ class TestDBFuncToolExecuteReadEnforced:
     def _make_tool(self, connector, agent_config=None):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2344,7 +2540,7 @@ class TestDBFuncToolGuardEstimatedRows:
     def _make_tool(self, connector):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0
             mock_sem.return_value.get_size.return_value = 0
@@ -2434,7 +2630,7 @@ class TestExecuteSqlWriteLaundering:
     def _tool(self, connector, policy_context):
         with (
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as sem,
         ):
             rag.return_value.schema_store.table_size.return_value = 0
             sem.return_value.get_size.return_value = 0
@@ -2519,8 +2715,8 @@ class TestMcpFactoriesHonorDeploymentReadOnly:
         with (
             patch("datus.tools.func_tool.database.db_manager_instance", return_value=manager),
             patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
-            patch("datus.tools.func_tool.database.TableSemanticProfileRAG"),
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
             patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
         ):
             mock_rag.return_value.schema_store.table_size.return_value = 0

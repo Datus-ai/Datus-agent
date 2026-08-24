@@ -21,7 +21,7 @@ from datus.schemas.semantic_agentic_node_models import (
     source_query_from_success_story_row,
 )
 from datus.storage.metric.store import MetricRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
@@ -228,14 +228,14 @@ async def init_success_story_semantic_modeling_async(
         return False, f"batch_size must be > 0, got {batch_size}", None
 
     if build_mode == "check":
-        semantic_count = SemanticModelRAG(agent_config).get_size()
+        semantic_count = SemanticDatasetRAG(agent_config).get_size()
         metric_count = MetricRAG(agent_config).get_metrics_size()
         return (
             True,
             "",
             {
                 "checked": True,
-                "semantic_object_count": semantic_count,
+                "semantic_dataset_count": semantic_count,
                 "metrics_count": metric_count,
                 "authoring_scope": authoring_scope,
             },
@@ -296,7 +296,7 @@ async def init_success_story_semantic_modeling_async(
         if batch_models:
             target_hint = str(batch_models[0])
 
-    semantic_count = SemanticModelRAG(agent_config).get_size()
+    semantic_count = SemanticDatasetRAG(agent_config).get_size()
     metric_count = MetricRAG(agent_config).get_metrics_size()
     result = {
         "batches_total": len(batches),
@@ -304,7 +304,7 @@ async def init_success_story_semantic_modeling_async(
         "sql_entries_total": len(source_queries),
         "sql_entries_covered": len(source_queries),
         "semantic_models": semantic_models,
-        "semantic_object_count": semantic_count,
+        "semantic_dataset_count": semantic_count,
         "metrics_count": metric_count,
         "authoring_scope": authoring_scope,
     }
