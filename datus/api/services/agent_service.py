@@ -1110,7 +1110,11 @@ class AgentService:
         # so the read path doesn't see two competing values.
         # ``datasource_name`` is not a persisted field — it selects the binding
         # resolved below. Left in, ``agent.update(update_data)`` would write it
-        # as a bogus top-level key on the sub-agent's yaml.
+        # as a bogus top-level key on the sub-agent's yaml. Captured first
+        # because excluding it also hides it from ``scope_touched``: an edit
+        # carrying only this field would then fall through to the no-op return
+        # and report success without moving the binding.
+        datasource_name_input = request.datasource_name
         update_data = request.model_dump(
             exclude={"id", "name", "prompt_template", "channels", "datasource_name"},
             exclude_none=True,
@@ -1137,7 +1141,12 @@ class AgentService:
         # edits are dropped so the read path can't see two competing copies.
         catalogs_input = update_data.pop("catalogs", None)
         subjects_input = update_data.pop("subjects", None)
-        scope_touched = catalogs_input is not None or subjects_input is not None or "scoped_context" in update_data
+        scope_touched = (
+            datasource_name_input is not None
+            or catalogs_input is not None
+            or subjects_input is not None
+            or "scoped_context" in update_data
+        )
         # Tracks deletions applied directly to ``agent`` (the live yaml dict)
         # rather than through ``update_data``. ``agent.update(update_data)``
         # below can't represent a key removal, so we have to bypass the
@@ -1160,15 +1169,28 @@ class AgentService:
             # fall back to "no datasource → all metrics" and silently
             # mis-bucket subjects against a binding that's about to be
             # re-persisted by ``_build_scoped_context``.
-            # A request that names a datasource re-points the binding; that has
-            # to win over the config's current one, or an edit would silently
-            # rebind the agent back to the active datasource.
+            # Request first, then the agent's own saved binding, then the
+            # active datasource. The saved one has to outrank the active one:
+            # ``EditAgentInput`` says an omitted ``datasource_name`` leaves the
+            # binding untouched, so an agent bound to B must not be silently
+            # rebound to A just because someone edited its catalogs while A was
+            # current.
             datasource = (
-                (getattr(request, "datasource_name", None) or "")
-                or getattr(agent_config, "current_datasource", "")
+                (datasource_name_input or "")
                 or base_ctx.get("datasource")
+                or getattr(agent_config, "current_datasource", "")
                 or ""
             )
+
+            # Only the explicit input is validated. A saved binding whose
+            # datasource has since left the config is historical data and falls
+            # through to the active one; a name the caller just typed should not.
+            if datasource_name_input and datasource_name_input not in getattr(agent_config, "datasource_configs", {}):
+                return Result(
+                    success=False,
+                    errorCode="INVALID_DATASOURCE",
+                    errorMessage=f"Unknown datasource '{datasource_name_input}'",
+                )
             subject_buckets = None
             if subjects_input is not None:
                 subject_buckets = _classify_subject_paths(

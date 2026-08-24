@@ -633,8 +633,10 @@ class TestPerDatasourceResolution:
         assert database == svc.current_db_name
 
     def test_connector_for_rejects_unknown_datasource(self, real_agent_config):
+        from datus.utils.exceptions import DatusException
+
         svc = DatasourceService(agent_config=real_agent_config)
-        with pytest.raises(ValueError, match="Unknown datasource"):
+        with pytest.raises(DatusException, match="datasource"):
             svc._connector_for("not_bound")
 
     def test_connector_for_normalizes_an_unreachable_datasource(self, real_agent_config):
@@ -655,7 +657,8 @@ class TestPerDatasourceResolution:
             "first_conn_with_name",
             side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
         ):
-            with pytest.raises(ValueError, match="no usable connection"):
+            # Re-raised as-is: it is already the structured type the boundary maps.
+            with pytest.raises(DatusException):
                 svc._connector_for("broken")
 
         # Nothing unusable was remembered for the next request.
@@ -667,8 +670,10 @@ class TestPerDatasourceResolution:
         current = real_agent_config.current_datasource
         real_agent_config.services.datasources["empty"] = real_agent_config.services.datasources[current]
 
+        from datus.utils.exceptions import DatusException
+
         with patch.object(svc.db_manager, "first_conn_with_name", return_value=("db", None)):
-            with pytest.raises(ValueError, match="no usable connection"):
+            with pytest.raises(DatusException, match="no usable connection"):
                 svc._connector_for("empty")
 
         assert "empty" not in svc._datasource_connectors
@@ -691,27 +696,35 @@ class TestPerDatasourceResolution:
         assert opened.call_count == 1
 
     def test_connector_for_rejects_a_current_datasource_with_no_connection(self, real_agent_config):
+        from datus.utils.exceptions import DatusException
+
         svc = DatasourceService(agent_config=real_agent_config)
         svc.current_db_connector = None
 
-        with pytest.raises(ValueError, match="no usable connection"):
+        with pytest.raises(DatusException, match="no usable connection"):
             svc._connector_for(real_agent_config.current_datasource)
 
-    def test_connector_for_passes_a_valueerror_through_unwrapped(self, real_agent_config):
-        """Already the right type — re-wrapping would bury the original message."""
+    def test_connector_for_wraps_an_unstructured_failure(self, real_agent_config):
+        """A plain exception from the db manager still reaches the caller as the
+        structured database error, so the boundary maps one type, and the
+        original message survives inside it."""
+        from datus.utils.exceptions import DatusException
+
         svc = DatasourceService(agent_config=real_agent_config)
         current = real_agent_config.current_datasource
         real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
 
         with patch.object(svc.db_manager, "first_conn_with_name", side_effect=ValueError("bad uri")):
-            with pytest.raises(ValueError, match="^bad uri$"):
+            with pytest.raises(DatusException, match="bad uri"):
                 svc._connector_for("second")
 
     def test_connector_for_rejects_when_nothing_is_configured(self, real_agent_config):
         svc = DatasourceService(agent_config=real_agent_config)
         svc.current_datasource = ""
 
-        with pytest.raises(ValueError, match="No datasource configured"):
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="no datasource configured"):
             svc._connector_for(None)
 
     def test_table_detail_reports_an_unknown_datasource(self, real_agent_config):

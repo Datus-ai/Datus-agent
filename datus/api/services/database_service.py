@@ -41,6 +41,8 @@ from datus.storage.semantic_model.artifact_file import (
 from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.config_utils import coerce_positive_int, coerce_positive_seconds
+from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import ErrorCode as DbErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_table_name_parts
 from datus.utils.text_utils import redact_uri
@@ -213,35 +215,48 @@ class DatasourceService:
         """
         key = self.resolve_datasource(datasource)
         if not key:
-            raise ValueError("No datasource configured")
+            raise DatusException(
+                DbErrorCode.DB_CONNECTION_FAILED, message_args={"error_message": "no datasource configured"}
+            )
 
         if key == self.current_datasource:
             if self.current_db_connector is None:
-                raise ValueError(f"Datasource {key!r} has no usable connection")
+                raise DatusException(
+                    DbErrorCode.DB_CONNECTION_FAILED,
+                    message_args={"error_message": f"datasource {key!r} has no usable connection"},
+                )
             return self.current_db_connector, self.current_db_name or ""
 
         configs = getattr(self.agent_config, "datasource_configs", {}) or {}
         if key not in configs:
-            raise ValueError(f"Unknown datasource {key!r}")
+            raise DatusException(
+                DbErrorCode.COMMON_UNSUPPORTED, message_args={"field_name": "datasource", "your_value": key}
+            )
 
         cached = self._datasource_connectors.get(key)
         if cached is not None:
             return cached
 
+        # Anything the db manager raises for a declared-but-unreachable
+        # datasource is re-raised as the database-connection code, so the caller
+        # maps one exception type to one error response instead of guessing.
         try:
-            # Declared but unreachable raises DatusException, not ValueError, so
-            # normalize it — every caller of this method reports ValueError as a
-            # clean error response.
             db_name, connector = self.db_manager.first_conn_with_name(key)
-        except ValueError:
+        except DatusException:
             raise
         except Exception as e:  # noqa: BLE001 — normalized for the callers
-            raise ValueError(f"Datasource {key!r} has no usable connection: {e}") from e
+            raise DatusException(
+                DbErrorCode.DB_CONNECTION_FAILED,
+                message_args={"error_message": f"datasource {key!r} is unreachable: {e}"},
+            ) from e
 
         # Symmetric with the current-datasource branch above, which rejects a
         # missing connector rather than handing one back.
         if connector is None:
-            raise ValueError(f"Datasource {key!r} has no usable connection")
+            raise DatusException(
+                DbErrorCode.DB_CONNECTION_FAILED,
+                message_args={"error_message": f"datasource {key!r} has no usable connection"},
+            )
 
         entry = (connector, connector.database_name or db_name or "")
         self._datasource_connectors[key] = entry
@@ -595,7 +610,7 @@ class DatasourceService:
         try:
             try:
                 connector, default_database = self._connector_for(datasource)
-            except ValueError as e:
+            except DatusException as e:
                 return Result(
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,

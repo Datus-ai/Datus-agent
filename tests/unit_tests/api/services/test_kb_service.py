@@ -418,7 +418,11 @@ class TestKbServiceBootstrapStream:
             config=None,
             authoring_scope=None,
         ):
-            calls.append((component, authoring_scope))
+            # Record the forwarded config, not just the component: a double
+            # that drops it would pass even if bootstrap_stream stopped
+            # forwarding the pre-resolved one, which is the datasource-isolation
+            # contract.
+            calls.append((component, authoring_scope, getattr(config, "current_datasource", None)))
             return {"status": "success", "message": "done", "details": {}}
 
         with patch.object(svc, "_run_component", side_effect=fake_run_component):
@@ -432,7 +436,7 @@ class TestKbServiceBootstrapStream:
                 )
             ]
 
-        assert calls == [("semantic_model", "full")]
+        assert calls == [("semantic_model", "full", real_agent_config.current_datasource)]
         summary = events[-1].payload["components"]
         assert set(summary) == {"semantic_model", "metrics"}
         assert summary["metrics"]["details"]["shared_execution"] == "semantic_model"
@@ -800,6 +804,7 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
         request, component, queue, loop, cancel_event, project_root, *, config=None, authoring_scope=None
     ):
         assert authoring_scope is None
+        assert config is not None and config.current_datasource == real_agent_config.current_datasource
         calls.append((component, request.subject_tree, project_root))
         return {
             "status": "success",

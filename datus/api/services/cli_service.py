@@ -33,6 +33,8 @@ from datus.schemas.action_history import (
 )
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.config_utils import coerce_positive_seconds
+from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import ErrorCode as DbErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import (
     SQLType,
@@ -50,10 +52,10 @@ logger = get_logger(__name__)
 #: anything the parser could not place must fall to the enforced path, where it
 #: is refused — the alternative is that a syntax the dialect accepts but sqlglot
 #: does not becomes an unfiltered read.
-# How long a statement waits for its datasource's connector before being refused.
-# Long enough to ride out a normal interactive query, short enough that a queue
-# cannot pin to_thread workers indefinitely. Override via
-# ``api.sql_queue_budget_seconds``.
+# Fallback for ``agent.api.sql_queue_budget_seconds`` (see conf/agent.yml.example),
+# used when a deployment's yaml predates the setting. Long enough to ride out a
+# normal interactive query, short enough that a queue cannot pin to_thread
+# workers indefinitely.
 _DEFAULT_SQL_QUEUE_BUDGET_SECONDS = 30.0
 
 _WRITE_SQL_TYPES = frozenset(
@@ -153,29 +155,44 @@ class CLIService:
         """
         key = (datasource or "").strip() or (self.current_datasource or "")
         if not key:
-            raise ValueError("No database connection available")
+            raise DatusException(
+                DbErrorCode.DB_CONNECTION_FAILED,
+                message_args={"error_message": "No database connection available"},
+            )
 
         if key == self.current_datasource:
             if not self.current_db_connector:
-                raise ValueError("No database connection available")
+                raise DatusException(
+                    DbErrorCode.DB_CONNECTION_FAILED,
+                    message_args={"error_message": "No database connection available"},
+                )
             return key, self.current_db_connector
 
         configs = getattr(self.agent_config, "datasource_configs", {}) or {}
         if key not in configs:
-            raise ValueError(f"Unknown datasource '{key}'")
+            raise DatusException(
+                DbErrorCode.COMMON_UNSUPPORTED, message_args={"field_name": "datasource", "your_value": key}
+            )
 
         cached = self._datasource_connectors.get(key)
         if cached is None:
+            # Whatever the db manager raises for a declared-but-unreachable
+            # datasource reaches the caller as the structured database error, so
+            # one exception type maps to one error response.
             try:
-                # Declared in the config but unreachable raises DatusException,
-                # not ValueError — without this the caller's `except ValueError`
-                # misses it and the failure loses its DATABASE_CONNECTION_ERROR
-                # code to the generic handler.
                 _db_name, connector = self.db_manager.first_conn_with_name(key)
+            except DatusException:
+                raise
             except Exception as e:  # noqa: BLE001 — normalized for the caller
-                raise ValueError(f"Datasource '{key}' has no usable connection: {e}") from e
+                raise DatusException(
+                    DbErrorCode.DB_CONNECTION_FAILED,
+                    message_args={"error_message": f"datasource '{key}' is unreachable: {e}"},
+                ) from e
             if connector is None:
-                raise ValueError(f"Datasource '{key}' has no usable connection")
+                raise DatusException(
+                    DbErrorCode.DB_CONNECTION_FAILED,
+                    message_args={"error_message": f"datasource '{key}' has no usable connection"},
+                )
             # Only cached once known good. Caching a None turned the next
             # request's `connector.dialect` into an AttributeError.
             cached = connector
@@ -211,7 +228,7 @@ class CLIService:
         try:
             try:
                 datasource, connector = self._execution_target(request.datasource)
-            except ValueError as e:
+            except DatusException as e:
                 return Result(
                     success=False,
                     errorCode=ErrorCode.DATABASE_CONNECTION_ERROR,

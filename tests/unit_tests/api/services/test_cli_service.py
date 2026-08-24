@@ -11,6 +11,7 @@ from datus.api.models.config_models import ErrorCode as ApiErrorCode
 from datus.api.services.chat_service import ChatService
 from datus.api.services.chat_task_manager import ChatTaskManager
 from datus.api.services.cli_service import CLIService
+from datus.utils.exceptions import DatusException
 
 
 @pytest.fixture
@@ -184,12 +185,10 @@ class TestCLIServiceExecuteSQL:
         assert datasource == real_agent_config.current_datasource
         assert connector is cli_svc.current_db_connector
 
-    def test_execution_target_reports_an_unreachable_datasource_as_valueerror(self, cli_svc, real_agent_config):
-        """A declared-but-unreachable datasource must not escape as DatusException.
-
-        `_execute_sql_sync` only catches ValueError; anything else loses its
-        DATABASE_CONNECTION_ERROR code to the generic handler.
-        """
+    def test_execution_target_reraises_a_structured_failure_as_is(self, cli_svc, real_agent_config):
+        """A DatusException from the db manager is already the type the boundary
+        maps, so it passes through rather than being re-wrapped and losing its
+        original code."""
         from unittest.mock import patch
 
         from datus.utils.exceptions import DatusException, ErrorCode
@@ -204,9 +203,10 @@ class TestCLIServiceExecuteSQL:
             "first_conn_with_name",
             side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
         ):
-            with pytest.raises(ValueError, match="no usable connection"):
+            with pytest.raises(DatusException) as raised:
                 cli_svc._execution_target("broken")
 
+        assert raised.value.code is ErrorCode.COMMON_UNSUPPORTED
         # And nothing unusable was remembered for the next request.
         assert "broken" not in cli_svc._datasource_connectors
 
@@ -274,7 +274,7 @@ class TestCLIServiceConnectorSerialization:
     def test_execution_target_rejects_when_no_datasource_is_configured(self, cli_svc):
         cli_svc.current_datasource = None
 
-        with pytest.raises(ValueError, match="No database connection available"):
+        with pytest.raises(DatusException, match="No database connection available"):
             cli_svc._execution_target(None)
 
     def test_execution_target_rejects_a_current_datasource_with_no_connection(self, cli_svc):
@@ -282,7 +282,7 @@ class TestCLIServiceConnectorSerialization:
         handing back a connector the caller would dereference."""
         cli_svc.current_db_connector = None
 
-        with pytest.raises(ValueError, match="No database connection available"):
+        with pytest.raises(DatusException, match="No database connection available"):
             cli_svc._execution_target(None)
 
     def test_execution_target_opens_and_remembers_another_datasource(self, cli_svc, real_agent_config):
@@ -296,6 +296,19 @@ class TestCLIServiceConnectorSerialization:
 
         assert opened.call_count == 1
 
+    def test_execution_target_wraps_an_unstructured_failure(self, cli_svc, real_agent_config):
+        """A plain exception from the db manager still reaches the caller as the
+        structured database error, so the boundary maps one type — and the
+        original message survives inside it."""
+        current = real_agent_config.current_datasource
+        cli_svc.agent_config.services.datasources["second"] = cli_svc.agent_config.services.datasources[current]
+
+        with patch.object(cli_svc.db_manager, "first_conn_with_name", side_effect=ValueError("bad uri")):
+            with pytest.raises(DatusException, match="bad uri"):
+                cli_svc._execution_target("second")
+
+        assert "second" not in cli_svc._datasource_connectors
+
     def test_execution_target_rejects_a_null_connector(self, cli_svc, real_agent_config):
         """Caching a None turned the next request's `connector.dialect` into an
         AttributeError instead of a reported connection failure."""
@@ -303,7 +316,7 @@ class TestCLIServiceConnectorSerialization:
         cli_svc.agent_config.services.datasources["empty"] = cli_svc.agent_config.services.datasources[current]
 
         with patch.object(cli_svc.db_manager, "first_conn_with_name", return_value=("db", None)):
-            with pytest.raises(ValueError, match="no usable connection"):
+            with pytest.raises(DatusException, match="no usable connection"):
                 cli_svc._execution_target("empty")
 
         assert "empty" not in cli_svc._datasource_connectors
@@ -322,14 +335,16 @@ class TestCLIServiceConnectorSerialization:
         held = cli_svc._connector_lock(real_agent_config.current_datasource)
         held.acquire()
         try:
-            result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1"))
+            with patch.object(cli_svc, "_execute_resolved_sql") as ran:
+                result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1"))
         finally:
             held.release()
 
         assert result.success is False
         assert result.errorCode == ApiErrorCode.DATASOURCE_BUSY
-        # The statement was never sent, so saying so matters: a refused write is
-        # safe to retry.
+        # The property the contract rests on, not just the message: a refused
+        # write is only safe to retry because nothing ran.
+        ran.assert_not_called()
         assert "Nothing was executed" in result.errorMessage
 
     @pytest.mark.asyncio
