@@ -4466,7 +4466,7 @@
 <p>语义模型定义基础 schema 层。从 0.2.4 版本开始，它们独立运行：</p>
 <ul>
 <li><strong>语义模型</strong>（本文档）：包含维度、度量和实体关系的 schema 扩展</li>
-<li>存储：LanceDB 中的 <code>semantic_model</code> 表</li>
+<li>存储：知识库中的 <code>semantic_dataset</code> 表</li>
 <li>
 <p>目的：帮助 agent 理解表结构以生成临时 SQL</p>
 </li>
@@ -4478,17 +4478,21 @@
 </ul>
 <p>语义模型提供指标引用的构建块（维度、度量）。</p>
 <h2 id="_4">存储结构<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>语义模型对象按字段级别存储：</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 存储的对象（kind 字段）:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="o">-</span> <span class="s2">"table"</span><span class="p">:</span> <span class="n">表级元数据</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="o">-</span> <span class="s2">"column"</span><span class="p">:</span> <span class="n">列级元数据</span><span class="err">，</span><span class="n">带语义标记</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="o">-</span> <span class="s2">"entity"</span><span class="p">:</span> <span class="n">关系的实体定义</span>
+<p>每个编写对象一行。dataset 行由 <code>(semantic_model, dataset)</code> 标识；
+field 行在此之上再加自身名称；relationship 行由
+<code>(semantic_model, relationship)</code> 标识：</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 行的 kind:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="o">-</span> <span class="s2">"dataset"</span><span class="p">:</span> <span class="n">一个授权的</span> <span class="n">dataset</span><span class="err">，</span><span class="n">绑定到物理表或可复用查询</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="o">-</span> <span class="s2">"field"</span><span class="p">:</span> <span class="n">dataset</span> <span class="n">的一个字段</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="o">-</span> <span class="s2">"relationship"</span><span class="p">:</span> <span class="n">semantic</span> <span class="n">model</span> <span class="n">的一条关系</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># 列的语义标记:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="o">-</span> <span class="n">is_dimension</span><span class="p">:</span> <span class="n">用于分组</span><span class="o">/</span><span class="n">过滤的列</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="o">-</span> <span class="n">is_measure</span><span class="p">:</span> <span class="n">用于聚合的列</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="o">-</span> <span class="n">is_entity_key</span><span class="p">:</span> <span class="n">用于表连接的列</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># field 行上的标记:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="o">-</span> <span class="n">is_dimension</span><span class="p">:</span> <span class="n">可用于分组</span><span class="o">/</span><span class="n">过滤</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="o">-</span> <span class="n">is_time</span><span class="p">:</span> <span class="n">dataset</span> <span class="n">的时间维度</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="o">-</span> <span class="n">is_primary_key</span><span class="p">:</span> <span class="n">属于</span> <span class="n">dataset</span> <span class="n">的主键</span>
 </span></code></pre></div>
+<p>一张物理表可以被多个 dataset 建模（分属不同的 semantic model）。query-backed 的 dataset
+不带 <code>source_table</code>，因此不会被误当成同名的真实表。</p>
 <h2 id="_5">使用方法<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <p>使用 <code>--success_story</code> 时，该兼容组件会运行 Dosi-only 的 <code>semantic_modeling</code> 工作流（datasets-only 范围），不会创建、更新或删除指标。YAML 导入与 profile 刷新是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。</p>
 <h3 id="_6">基本命令<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
@@ -4504,13 +4508,19 @@
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># 刷新已有 YAML 中的观测 profile 描述</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># 将已授权的 YAML 重新投影进知识库（不调用 LLM）</span>
 </span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span>--kb_update_strategy<span class="w"> </span>refresh-profile<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span>--success_story<span class="w"> </span>path/to/success_story.csv
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span>--kb_update_strategy<span class="w"> </span>sync-yaml
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="c1"># 刷新已有 YAML 中的观测 profile 描述</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">    </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">    </span>--kb_update_strategy<span class="w"> </span>refresh-profile<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">    </span>--success_story<span class="w"> </span>path/to/success_story.csv
 </span></code></pre></div>
 <h3 id="_7">关键参数<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
 <table>
@@ -4550,11 +4560,14 @@
 <tr>
 <td><code>--kb_update_strategy</code></td>
 <td>❌</td>
-<td>更新策略。默认是 <code>check</code>；<code>refresh-profile</code> 仅支持 <code>semantic_model</code> 组件。</td>
-<td><code>check</code>/<code>overwrite</code>/<code>incremental</code>/<code>refresh-profile</code></td>
+<td>更新策略。默认是 <code>check</code>；<code>refresh-profile</code> 与 <code>sync-yaml</code> 仅支持 <code>semantic_model</code> 组件。</td>
+<td><code>check</code>/<code>overwrite</code>/<code>incremental</code>/<code>refresh-profile</code>/<code>sync-yaml</code></td>
 </tr>
 </tbody>
 </table>
+<p><code>sync-yaml</code> 把已授权的语义 YAML 重新投影进知识库。<code>subject/semantic_models/&lt;datasource&gt;/</code> 下的 YAML 是唯一真相源，
+该策略逐个文件将其重放进存储——不调用 LLM、不访问数仓，可安全重复执行。传 <code>--semantic_yaml</code> 可只同步单个文件或
+子目录；不传则同步当前 datasource 的全部文件。手工改完 YAML 后，或升级导致存储结构变化需要重建投影时使用。</p>
 <p><code>refresh-profile</code> 会原地更新已有 Dosi/OSI 语义模型 YAML（MetricFlow YAML 会被拒绝）。它会根据 <code>--success_story</code> 中的历史 SQL
 重新做有界、只读的数据 profile，替换表和字段 description 中生成的 <code>Observed profile:</code> 片段，并把更新后的 YAML
 同步回语义模型向量库。它不会重新运行完整 LLM 语义模型生成，也不会清空 semantic model store。</p>
@@ -4637,7 +4650,7 @@
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>/subject<span class="w"> </span>&lt;domain&gt;/&lt;layer1&gt;/&lt;layer2&gt;
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># 搜索语义对象</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>search_semantic_objects<span class="o">(</span><span class="nv">query</span><span class="o">=</span><span class="s2">"customer revenue"</span>,<span class="w"> </span><span class="nv">kinds</span><span class="o">=[</span><span class="s2">"table"</span>,<span class="w"> </span><span class="s2">"column"</span><span class="o">])</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>search_semantic_objects<span class="o">(</span><span class="nv">query_text</span><span class="o">=</span><span class="s2">"customer revenue"</span>,<span class="w"> </span><span class="nv">kinds</span><span class="o">=[</span><span class="s2">"dataset"</span>,<span class="w"> </span><span class="s2">"field"</span><span class="o">])</span>
 </span></code></pre></div>
 <h2 id="_10">总结<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
 <p>语义模型通过丰富的语义信息扩展数据库 schema，实现更准确的临时 SQL 生成。从 0.2.4 版本开始，它们独立于指标运行：</p>

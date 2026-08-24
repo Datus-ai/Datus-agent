@@ -4446,7 +4446,7 @@
 <td><code>strategy</code></td>
 <td>string</td>
 <td><code>incremental</code></td>
-<td><code>check</code>（仅检查）、<code>overwrite</code>（重建）、<code>incremental</code>（增量更新）或 <code>refresh-profile</code>（仅语义模型）</td>
+<td><code>check</code>（仅检查）、<code>overwrite</code>（重建）、<code>incremental</code>（增量更新）、<code>refresh-profile</code>（仅语义模型）或 <code>sync-yaml</code>（仅语义模型；重放已授权 YAML，不调用 LLM）</td>
 </tr>
 <tr>
 <td><code>schema_linking_type</code></td>
@@ -4493,6 +4493,8 @@
 </tbody>
 </table>
 <p><strong>响应</strong>：<code>text/event-stream</code>，参见下方 <a href="#sse-events">SSE 事件格式</a>。</p>
+<p><code>strategy=sync-yaml</code> 仅在 <code>components</code> 恰好为 <code>["semantic_model"]</code> 时有效。它不调用 LLM，直接把已授权的 YAML
+重放进存储；不传 <code>semantic_yaml</code> 则同步当前 datasource 的全部文件。</p>
 <p><code>strategy=refresh-profile</code> 仅在 <code>components</code> 恰好为 <code>["semantic_model"]</code> 时有效。它要求同时传入 <code>semantic_yaml</code>
 和 <code>success_story</code>，会用有界、只读的数据 profile 刷新已有 MetricFlow 或 OSI YAML 中生成的 <code>Observed profile:</code>
 description 片段，并把更新后的 YAML 同步回 semantic model storage。它不会重新运行完整语义模型生成，也不会清空
