@@ -3,6 +3,7 @@
 
 """Tests for semantic bootstrap compatibility routing, YAML import, and profile parsing."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -243,7 +244,7 @@ def test_sync_semantic_yaml_tree_projects_every_file_under_the_directory(tmp_pat
     assert synced == 2
     assert "2 semantic YAML file(s)" in message
     synced_paths = sorted(call.args[0] for call in tools.sync_osi_to_db.call_args_list)
-    assert [path.rsplit("/", 1)[-1] for path in synced_paths] == ["fulfillment.yaml", "sales.yml"]
+    assert [Path(path).name for path in synced_paths] == ["fulfillment.yaml", "sales.yml"]
 
 
 def test_sync_semantic_yaml_tree_skips_the_metrics_fragment_directory(tmp_path):

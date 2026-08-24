@@ -26,7 +26,9 @@ Semantic models provide the building blocks (dimensions, measures) that metrics 
 
 ## Storage Structure
 
-One row per authored object, keyed by `(semantic_model, dataset)`:
+One row per authored object. A dataset row is identified by
+`(semantic_model, dataset)`; a field row adds its own name, and a
+relationship row is identified by `(semantic_model, relationship)`:
 
 ```python
 # Row kinds:

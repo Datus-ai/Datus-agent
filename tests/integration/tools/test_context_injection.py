@@ -30,9 +30,9 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
-from datus.storage.metric.store import MetricRAG
+from datus.storage.metric.store import MetricRAG, build_metric_id
 from datus.storage.reference_sql.store import ReferenceSqlRAG
-from datus.storage.semantic_dataset.store import SemanticDatasetRAG, build_metric_id
+from datus.storage.semantic_dataset.store import KIND_DATASET, SemanticDatasetRAG, dataset_row_id
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.utils.loggings import get_logger
 
@@ -91,35 +91,27 @@ def _reference_sql_items():
 
 
 def _semantic_objects():
-    """A table-kind semantic object so search_semantic_objects has catalog metadata."""
+    """A dataset row shaped exactly as the projection writes it, so the search
+    path is exercised against the producer's real output."""
     table_name = "schools"
+    semantic_model = "nightly_injection_school"
+    description = (
+        "California schools catalog table holding one row per school / campus, including County and Charter attributes."
+    )
     return [
         {
-            "id": f"table:nightly_injection.{table_name}",
-            "kind": "table",
+            "id": dataset_row_id(semantic_model, table_name),
+            "kind": KIND_DATASET,
+            "semantic_model_name": semantic_model,
+            "dataset_name": table_name,
             "name": table_name,
-            "fq_name": f"california_schools.public.{table_name}",
-            "semantic_model_name": "nightly_injection_school",
+            "source_table": table_name,
+            "source_query": "",
             "catalog_name": "",
             "database_name": "california_schools",
             "schema_name": "public",
-            "table_name": table_name,
-            "description": (
-                "California schools catalog table holding one row per school / campus, "
-                "including County and Charter attributes."
-            ),
-            "is_dimension": False,
-            "is_measure": False,
-            "is_entity_key": False,
-            "is_deprecated": False,
-            "expr": "",
-            "column_type": "",
-            "agg": "",
-            "create_metric": False,
-            "agg_time_dimension": "",
-            "is_partition": False,
-            "time_granularity": "",
-            "entity": "",
+            "description": description,
+            "search_text": f"{semantic_model}\n{table_name}\n{description}",
             "yaml_path": "",
             "updated_at": Timestamp.now().floor("ms"),
         }

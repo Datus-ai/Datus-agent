@@ -632,6 +632,13 @@ class DBFuncTool:
         logger.info(f"list_table_semantic_datasets for {table_name!r}: {len(rows)} dataset(s)")
         return rows
 
+    def _table_semantic_model_names(self, coordinate: "TableCoordinate") -> List[str]:
+        """Names of every semantic model describing one table, in lookup order."""
+        rows = self._list_table_semantic_datasets(
+            coordinate.catalog, coordinate.database, coordinate.schema, coordinate.table
+        )
+        return [str(row.get("semantic_model_name") or "") for row in rows if row.get("semantic_model_name")]
+
     def _get_table_semantic_projection(
         self,
         catalog: str = "",
@@ -1423,7 +1430,8 @@ class DBFuncTool:
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
             semantic_model: Optional semantic model to read the table's meaning from. Use it when
                 `table.alternatives` shows the table is modelled by more than one semantic model
-                and you want another one's view; defaults to the primary dataset.
+                and you want another one's view; defaults to the primary dataset. Naming a model
+                that does not describe this table fails with the list of models that do.
 
         Returns:
             FuncToolResult with a dictionary containing:
@@ -1521,13 +1529,14 @@ class DBFuncTool:
             # 3. Enrich with Semantic Model Info if available
             result_data = {"columns": columns}
 
+            requested_model = str(semantic_model or "").strip()
             try:
                 projection = self._get_table_semantic_projection(
                     coordinate.catalog,
                     coordinate.database,
                     coordinate.schema,
                     coordinate.table,
-                    semantic_model=str(semantic_model or "").strip(),
+                    semantic_model=requested_model,
                 )
                 if projection:
                     logger.debug(
@@ -1536,6 +1545,19 @@ class DBFuncTool:
                         len(projection.get("alternatives") or []),
                     )
                     self._apply_table_semantic_profile(result_data, projection)
+                elif requested_model:
+                    # Silently dropping to physical columns would read as "this
+                    # table has no semantic model", sending the caller to guess
+                    # at raw columns when the name is merely misspelled.
+                    modelled_by = self._table_semantic_model_names(coordinate)
+                    if modelled_by:
+                        return FuncToolResult(
+                            success=0,
+                            error=(
+                                f"Semantic model '{requested_model}' does not describe table '{table_name}'. "
+                                f"It is modelled by: {', '.join(modelled_by)}."
+                            ),
+                        )
             except Exception as e:
                 logger.warning(f"Failed to get table semantic profile for {table_name}: {e}")
 

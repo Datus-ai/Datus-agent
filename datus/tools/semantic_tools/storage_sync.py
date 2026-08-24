@@ -133,13 +133,21 @@ class SemanticStorageManager:
         rag = self._ensure_semantic_model_store()
         semantic_model_name = model_data["semantic_model_name"]
         table_name = model_data.get("table_name", "")
+        # An adapter model always binds a physical table. Without one the row
+        # would look like a query-backed dataset and no table lookup could ever
+        # reach it, so it is refused here as it is on the typed path above.
+        if not table_name:
+            raise DatusException(
+                ErrorCode.SEMANTIC_ADAPTER_SYNC_FAILED,
+                message_args={"error_message": f"semantic model '{semantic_model_name}' missing physical table_name"},
+            )
         catalog = model_data.get("catalog_name", "")
         database = model_data.get("database_name", "")
         schema = model_data.get("schema_name", "")
         updated_at = datetime.now().replace(microsecond=0)
         # An adapter reports one model per physical table, so the dataset takes
         # the table's name; datasets authored in Dosi carry their own.
-        dataset_name = table_name or semantic_model_name
+        dataset_name = table_name
         coordinates = {"catalog_name": catalog, "database_name": database, "schema_name": schema}
 
         rows = [
@@ -199,7 +207,9 @@ class SemanticStorageManager:
                 )
                 counts[key] += 1
 
-        rag.store_batch(rows)
+        # Keyed on storage_key so re-syncing an adapter reconciles its rows
+        # instead of appending a second copy of every one of them.
+        rag.upsert_batch(rows)
 
         logger.info(
             f"Stored semantic model '{semantic_model_name}': "

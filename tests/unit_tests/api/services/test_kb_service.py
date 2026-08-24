@@ -62,6 +62,42 @@ class TestKbServiceSemanticComponentRouting:
         ]
 
 
+class TestKbServiceComponentSetRejection:
+    """Components run one after another, so a set the request had no right to
+    ask for must be refused before the first component writes anything."""
+
+    @pytest.mark.parametrize("strategy", ["sync-yaml", "refresh-profile"])
+    def test_a_semantic_model_only_strategy_refuses_extra_components(self, strategy):
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy=strategy,
+            success_story="stories.csv",
+        )
+
+        rejection = KbService._reject_unsupported_component_set(request)
+
+        assert rejection == f"strategy={strategy} is only supported with semantic_model, not metrics"
+
+    @pytest.mark.parametrize("strategy", ["sync-yaml", "refresh-profile"])
+    def test_semantic_model_alone_is_accepted(self, strategy):
+        request = BootstrapKbInput(
+            components=["semantic_model"],
+            strategy=strategy,
+            success_story="stories.csv",
+        )
+
+        assert KbService._reject_unsupported_component_set(request) is None
+
+    def test_other_strategies_are_not_restricted(self):
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy="incremental",
+            success_story="stories.csv",
+        )
+
+        assert KbService._reject_unsupported_component_set(request) is None
+
+
 class TestKbServiceBuildArgs:
     """Tests for _build_args — argument namespace creation."""
 

@@ -27,7 +27,9 @@
 
 ## 存储结构
 
-每个授权对象一行，主键为 `(semantic_model, dataset)`：
+每个编写对象一行。dataset 行由 `(semantic_model, dataset)` 标识；
+field 行在此之上再加自身名称；relationship 行由
+`(semantic_model, relationship)` 标识：
 
 ```python
 # 行的 kind:

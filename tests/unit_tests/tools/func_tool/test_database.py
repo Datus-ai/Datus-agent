@@ -886,6 +886,35 @@ class TestDescribeTableMultipleDatasets:
 
         assert tool._semantic_datasets.get_table_projection.call_args.kwargs["semantic_model"] == "sales"
 
+    def test_a_model_that_does_not_describe_the_table_is_an_error(self):
+        """Degrading to physical columns would read as "this table has no
+        semantic model", which sends the caller off to guess at raw columns
+        when the name is merely misspelled."""
+        tool = self._make_tool(self._projection(with_alternative=True))
+        tool._semantic_datasets.get_table_projection.return_value = None
+        tool._semantic_datasets.list_datasets.return_value = [
+            {"semantic_model_name": "fulfillment"},
+            {"semantic_model_name": "sales"},
+        ]
+
+        result = tool.describe_table("orders", semantic_model="salez")
+
+        assert result.success == 0
+        assert "salez" in result.error
+        assert "fulfillment" in result.error and "sales" in result.error
+
+    def test_an_unmodelled_table_still_degrades_to_physical_columns(self):
+        """No model names to offer means the table simply is not modelled, so
+        the physical schema is the honest answer rather than an error."""
+        tool = self._make_tool(self._projection(with_alternative=True))
+        tool._semantic_datasets.get_table_projection.return_value = None
+        tool._semantic_datasets.list_datasets.return_value = []
+
+        result = tool.describe_table("orders", semantic_model="sales")
+
+        assert result.success == 1
+        assert "table" not in result.result
+
 
 class TestDescribeTableWithoutProjection:
     """After an upgrade the projection starts empty until it is re-synced.

@@ -1243,6 +1243,7 @@ class GenerationTools:
                 db_parts = self._dataset_db_parts(dataset, default_db_parts)
                 yaml_path = semantic_model_path
                 source_table, source_query = self._osi_dataset_binding(dataset)
+                synced_items.append(source_table or dataset_name)
                 dataset_rows.extend(
                     self._osi_dataset_rows(
                         doc=doc,

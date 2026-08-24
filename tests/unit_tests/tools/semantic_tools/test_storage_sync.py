@@ -105,6 +105,18 @@ class TestEnsureSubjectTreeStore:
 
 
 class TestStoreSemanticModel:
+    def test_a_model_is_reconciled_rather_than_appended(self):
+        """Adapter syncs re-run on every bootstrap. store_batch appends, and the
+        lance backend does not enforce the unique column, so it would leave a
+        second copy of every row behind."""
+        manager = _make_manager()
+        mock_store = MagicMock()
+        with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
+            manager.store_semantic_model({"semantic_model_name": "user_model", "table_name": "users"})
+
+        assert mock_store.upsert_batch.call_count == 1
+        mock_store.store_batch.assert_not_called()
+
     def test_raises_for_missing_semantic_model_name(self):
         manager = _make_manager()
         with pytest.raises(ValueError, match="semantic_model_name"):
@@ -127,8 +139,8 @@ class TestStoreSemanticModel:
             )
 
         # batch_store called at least once (for the table object)
-        assert mock_store.store_batch.call_count >= 1
-        first_call_args = mock_store.store_batch.call_args_list[0][0][0]
+        assert mock_store.upsert_batch.call_count >= 1
+        first_call_args = mock_store.upsert_batch.call_args_list[0][0][0]
         table_obj = first_call_args[0]
         assert table_obj["kind"] == "dataset"
         assert table_obj["source_table"] == "users"
@@ -151,7 +163,7 @@ class TestStoreSemanticModel:
 
         # Should have stored table + dimensions (2 calls or table + one batch of dims)
         all_stored = []
-        for call in mock_store.store_batch.call_args_list:
+        for call in mock_store.upsert_batch.call_args_list:
             all_stored.extend(call[0][0])
 
         dim_objects = [obj for obj in all_stored if obj.get("is_dimension") is True]
@@ -176,7 +188,7 @@ class TestStoreSemanticModel:
             )
 
         all_stored = []
-        for call in mock_store.store_batch.call_args_list:
+        for call in mock_store.upsert_batch.call_args_list:
             all_stored.extend(call[0][0])
 
         assert [obj["kind"] for obj in all_stored] == ["dataset"]
@@ -197,7 +209,7 @@ class TestStoreSemanticModel:
             )
 
         all_stored = []
-        for call in mock_store.store_batch.call_args_list:
+        for call in mock_store.upsert_batch.call_args_list:
             all_stored.extend(call[0][0])
 
         id_objects = [obj for obj in all_stored if obj.get("is_primary_key") is True]
@@ -221,7 +233,7 @@ class TestStoreSemanticModel:
             )
 
         all_stored = []
-        for call in mock_store.store_batch.call_args_list:
+        for call in mock_store.upsert_batch.call_args_list:
             all_stored.extend(call[0][0])
 
         dim_objects = [obj for obj in all_stored if obj.get("is_dimension") is True]
@@ -243,7 +255,7 @@ class TestStoreSemanticModel:
                 }
             )
 
-        first_call = mock_store.store_batch.call_args_list[0][0][0]
+        first_call = mock_store.upsert_batch.call_args_list[0][0][0]
         table_obj = first_call[0]
         assert table_obj["catalog_name"] == "my_catalog"
         assert table_obj["database_name"] == "my_db"
@@ -263,7 +275,7 @@ class TestStoreSemanticModel:
                 }
             )
 
-        first_call = mock_store.store_batch.call_args_list[0][0][0]
+        first_call = mock_store.upsert_batch.call_args_list[0][0][0]
         table_obj = first_call[0]
         assert table_obj["source_table"] == "simple_table"
         assert table_obj["catalog_name"] == ""
@@ -286,7 +298,7 @@ class TestStoreSemanticModel:
             manager.store_semantic_model(model)
 
         all_stored = []
-        for call in mock_store.store_batch.call_args_list:
+        for call in mock_store.upsert_batch.call_args_list:
             all_stored.extend(call[0][0])
         table_obj = [o for o in all_stored if o["kind"] == "dataset"][0]
         assert table_obj["source_table"] == "orders"  # from extra, not model.name
@@ -314,7 +326,7 @@ class TestStoreSemanticModel:
             manager.store_semantic_model(model)
 
         all_stored = []
-        for call in mock_store.store_batch.call_args_list:
+        for call in mock_store.upsert_batch.call_args_list:
             all_stored.extend(call[0][0])
         table_obj = [o for o in all_stored if o["kind"] == "dataset"][0]
         assert table_obj["source_table"] == "orders"
@@ -342,7 +354,7 @@ class TestStoreSemanticModel:
                 }
             )
         all_stored = []
-        for call in mock_store.store_batch.call_args_list:
+        for call in mock_store.upsert_batch.call_args_list:
             all_stored.extend(call[0][0])
         dim_objects = [obj for obj in all_stored if obj.get("is_dimension") is True]
         assert len(dim_objects) == 1

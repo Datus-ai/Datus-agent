@@ -60,6 +60,12 @@ class KbService:
         loop = asyncio.get_running_loop()
         summary: dict[str, dict] = {}
 
+        # Components run one after another, so a set the request never had the
+        # right to ask for has to be refused before the first one writes.
+        if rejection := self._reject_unsupported_component_set(request):
+            yield self._make_event(stream_id, request.components[0], BatchStage.TASK_FAILED, error=rejection)
+            return
+
         for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
             if cancel_event.is_set():
                 yield self._make_event(
@@ -599,6 +605,19 @@ class KbService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _reject_unsupported_component_set(request: BootstrapKbInput) -> Optional[str]:
+        """Describe why the whole request is invalid, or None when it is fine."""
+        if request.strategy not in {"refresh-profile", "sync-yaml"}:
+            return None
+        components = [
+            component.value if hasattr(component, "value") else str(component) for component in request.components
+        ]
+        unsupported = [component for component in components if component != KbComponent.SEMANTIC_MODEL.value]
+        if not unsupported:
+            return None
+        return f"strategy={request.strategy} is only supported with semantic_model, not {', '.join(unsupported)}"
 
     @staticmethod
     def _component_execution_specs(request: BootstrapKbInput) -> list[tuple[str, list[str], Optional[str]]]:

@@ -1208,9 +1208,9 @@ class NavigationHelpScreen(ModalScreen):
                 "• F4 - Show path\n"
                 "• F5 - Select and exit\n"
                 "• Ctrl+r - Retry loading (on timeout/error)\n"
-                "• Ctrl+e - Enter edit mode\n"
-                "• Ctrl+w - Save and exit edit mode\n"
-                "• Esc - Exit editing mode or application\n\n"
+                "• Esc - Exit\n\n"
+                "Semantic models are read-only here; edit them with the "
+                "semantic_modeling agent.\n\n"
                 "Press any key to close this help.",
                 id="navigation-help-content",
             ),
