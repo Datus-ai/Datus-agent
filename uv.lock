@@ -790,7 +790,7 @@ requires-dist = [
     { name = "json-repair", specifier = ">=0.47.6" },
     { name = "jsonschema", specifier = ">=4.17,<5" },
     { name = "lancedb", specifier = "==0.34.0" },
-    { name = "litellm", specifier = ">=1.67.4.post1,<2" },
+    { name = "litellm", specifier = ">=1.67.4.post1,<1.83.1" },
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "mcp", specifier = ">=1.11.0" },
