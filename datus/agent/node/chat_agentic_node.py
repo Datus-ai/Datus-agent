@@ -135,6 +135,9 @@ class ChatAgenticNode(AgenticNode):
             sub_agent_name=node_name,
             default_database=getattr(self, "active_database", "") or None,
             read_only=self._db_read_only,
+            # Same anchor the filesystem tools use, so a path the model got back
+            # from glob resolves identically inside load_file_as_table.
+            filesystem_root=self._resolve_workspace_root(),
         )
         self._setup_context_search_tools()
         self._setup_reference_template_tools()
@@ -301,6 +304,7 @@ class ChatAgenticNode(AgenticNode):
             sub_agent_name=self.get_node_name(),
             default_database=database_name,
             read_only=self._db_read_only,
+            filesystem_root=self._resolve_workspace_root(),
         )
         self._rebuild_tools()
 

@@ -32,6 +32,7 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
+from datus.tools.db_tools.data_file_loader import LOCAL_FILES_DATASOURCE
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.language_utils import build_fallback_directive as _build_fallback_directive
 from datus.utils.language_utils import ensure_native_directive as _ensure_native_directive
@@ -721,10 +722,25 @@ class AgenticNode(Node):
         if schema:
             details.append(f"schema: {schema}")
         suffix = f" ({', '.join(details)})" if details else ""
-        return (
+        line = (
             f"Current datasource: {datasource}{suffix}. This is the authoritative "
             "target for this turn; generate SQL for THIS dialect."
         )
+
+        # The uploads catalog is a *second* datasource, and nothing else tells the
+        # model it exists: this reminder names only the current one, and no prompt
+        # template renders ``available_datasources``. Without this the model
+        # writes the primary dialect against DuckDB views, or does not look for
+        # uploaded files at all. Config-only check — deliberately no query to
+        # count tables, which would cost a round trip on every single turn.
+        available = ds_ctx.get("available_datasources") or {}
+        if LOCAL_FILES_DATASOURCE in available and datasource != LOCAL_FILES_DATASOURCE:
+            line += (
+                f" Uploaded data files are separately queryable via "
+                f"datasource '{LOCAL_FILES_DATASOURCE}' (dialect: duckdb) after "
+                f"load_file_as_table registers them."
+            )
+        return line
 
     def _semantic_runtime_db_context(self) -> Dict[str, str]:
         """Return the current datasource/catalog/database/schema for semantic adapter initialization."""

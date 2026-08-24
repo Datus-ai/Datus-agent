@@ -271,6 +271,9 @@ class AskMetricsAgenticNode(AgenticNode):
         if category == "db_tools":
             if not self.db_func_tool:
                 self.db_func_tool = DBFuncTool(
+                    # Same anchor the filesystem tools use, so a path the model got
+                    # from glob resolves identically in load_file_as_table.
+                    filesystem_root=self._resolve_workspace_root(),
                     agent_config=self.agent_config,
                     default_database=self._input_database(),
                     sub_agent_name=sub_agent_name,
@@ -282,6 +285,9 @@ class AskMetricsAgenticNode(AgenticNode):
                 if not db_tool:
                     try:
                         db_tool = DBFuncTool(
+                            # Same anchor the filesystem tools use, so a path the model got
+                            # from glob resolves identically in load_file_as_table.
+                            filesystem_root=self._resolve_workspace_root(),
                             agent_config=self.agent_config,
                             default_database=self._input_database(),
                             sub_agent_name=sub_agent_name,

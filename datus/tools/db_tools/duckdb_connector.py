@@ -3,8 +3,10 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import functools
+import os
 import re
 import threading
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, TypeVar, override
 
 import duckdb
@@ -137,6 +139,17 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
 
             # Per-session settings — kept as post-connect SET so they don't enter
             # DuckDB's instance-config equality check.
+            #
+            # ``extension_directory`` must be SET explicitly: DuckDB has no env-var
+            # equivalent (verified — it silently falls back to ``$HOME/.duckdb``),
+            # and a container's build user and runtime user need not share a HOME.
+            # Deployments that bake extensions into the image (see the Dockerfile's
+            # ``excel`` layer) point this at that directory so an egress-less pod
+            # can still ``LOAD`` them.
+            extension_dir = os.environ.get("DATUS_DUCKDB_EXTENSION_DIRECTORY", "").strip()
+            if extension_dir:
+                self.connection.execute(f"SET extension_directory={self._sql_literal(extension_dir)}")
+
             if self.memory_limit:
                 self.connection.execute(f"SET memory_limit='{self.memory_limit}'")
 
@@ -151,6 +164,31 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 ErrorCode.DB_CONNECTION_FAILED,
                 message_args={"error_message": str(e)},
             ) from e
+
+    @contextmanager
+    def exclusive_connection(self):
+        """Yield the raw ``DuckDBPyConnection`` while holding the connector's lock.
+
+        For multi-statement units that need cursor metadata (``description``)
+        rather than an :class:`ExecuteSQLResult` — building a set of VIEWs over a
+        spreadsheet, say. Two reasons it goes through here instead of reaching
+        for ``.connection`` directly:
+
+        * ``DuckDBPyConnection`` is not thread-safe (see :func:`_serialised`), and
+          a multi-statement unit must hold the lock across *all* of it, not
+          per call.
+        * Opening a second ``duckdb.connect()`` on the same file would trip
+          DuckDB's instance-config equality check ("Can't open a connection to
+          same database file with a different configuration"), so callers must
+          share this connector's single connection.
+        """
+        # Lock first, then connect inside it. ``connect()`` takes the same
+        # RLock re-entrantly, and holding it across both steps is what stops a
+        # concurrent ``close()`` from landing between them and handing the caller
+        # a ``None`` connection.
+        with self._lock:
+            self.connect()
+            yield self.connection
 
     @staticmethod
     def _sql_literal(value: Any) -> str:
