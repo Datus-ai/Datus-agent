@@ -4258,6 +4258,7 @@
 <p>Dosi adapter 使用原生 Rust engine 直接执行 OSI 语义模型。authoring、校验、
 catalog 加载和执行都由 <code>datus-semantic-dosi</code> 提供；它不会加载 Python OSI
 adapter，也不会降低到 MetricFlow。</p>
+<p>Dosi 是内置默认语义适配器，同时支持 <code>semantic_modeling</code> 创作和完整查询能力。未配置语义适配器时，Datus 会在交互式启动过程中自动安装并选择 Dosi。</p>
 <h2 id="_1">安装<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <p>本地开发不要求先发布 <code>dosi-engine</code>。在标准的同级仓库布局中，从
 <code>Datus-agent</code> checkout 进入同一个 Python 环境后安装源码：</p>
@@ -4275,9 +4276,8 @@ adapter，也不会降低到 MetricFlow。</p>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/to/warehouse.db</span>
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">        </span><span class="c1"># semantic_model_path: /absolute/path/to/model.yaml</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span><span class="w">  </span><span class="c1"># 可选；该 section 为空时也默认选择 Dosi</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="c1"># semantic_model_path: /absolute/path/to/model.yaml</span>
 </span></code></pre></div>
 <p>Datus 会注入当前数据源连接，并默认把 <code>semantic_models_path</code> 指向
 <code>subject/semantic_models/&lt;datasource&gt;/</code>。目录中只有一个 YAML 或 JSON 文件时

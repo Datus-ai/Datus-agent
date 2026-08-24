@@ -3609,7 +3609,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        校验和发布流程
+        查询校验
       
     </span>
   </a>
@@ -4377,7 +4377,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        校验和发布流程
+        查询校验
       
     </span>
   </a>
@@ -4677,15 +4677,14 @@
 </span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="nt">from_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
 </span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="nt">to_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
 </span></code></pre></div>
-<h2 id="_7">校验和发布流程<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
-<p>OSI 模式下，Datus 在发布前会做硬性校验：</p>
+<h2 id="_7">查询校验<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p>Datus 为已有 OSI 资产保留以下校验链路：</p>
 <ol>
-<li><code>validate_semantic(scope="semantic_model")</code> 校验语义模型。</li>
+<li><code>validate_semantic(scope="semantic_model")</code> 校验指定语义模型。</li>
 <li><code>validate_semantic(scope="all")</code> 校验完整语义层。</li>
-<li><code>query_metrics(..., dry_run=True)</code> 对生成的指标做 SQL dry-run。</li>
-<li><code>publish_semantic_model</code> / <code>publish_metrics</code> 把 OSI semantic objects 和 metrics 同步到 Knowledge Base。</li>
+<li><code>query_metrics(..., dry_run=True)</code> 通过渲染 SQL 检查指标查询。</li>
 </ol>
-<p>如果 validation 或 dry-run 失败，Datus 不会发布该指标到 Knowledge Base。这样 <code>ask_metrics</code> 只会查询已经通过语义层验证的指标。</p>
+<p>OSI 模式不会发布或修改语义资产。需要修改模型并同步 Knowledge Base 时，请先迁移到 Dosi，再使用 <code>semantic_modeling</code>。</p>
 <h2 id="ask_metrics">ask_metrics 查询<a class="headerlink" href="#ask_metrics" title="Permanent link">&para;</a></h2>
 <p><code>ask_metrics</code> 面向统一的 semantic adapter 接口工作。使用 OSI adapter 时，它仍然调用同一组工具：</p>
 <ul>

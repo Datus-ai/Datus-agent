@@ -4827,7 +4827,7 @@
 <ul>
 <li>已安装 <code>datus</code>（参见<a href="../Quickstart/">快速开始</a>）</li>
 <li>在 <code>datus</code> 内通过 <code>/model</code> 配置好 LLM provider；选择器会把凭据写入 <code>~/.datus/conf/agent.yml</code></li>
-<li>通过 <code>/services semantic</code> 配置 MetricFlow 语义层适配器；CLI 会在保存该服务配置时自动安装缺失的 <code>datus-semantic-metricflow</code> 包</li>
+<li>使用默认的 Dosi 语义层适配器；交互式启动且未配置语义适配器时，Datus 会自动安装，也可以通过 <code>/services semantic</code> 显式选择</li>
 </ul>
 <p>不需要下载或手动 <code>cp</code> 任何文件。首次启动 <code>datus</code> 在没有配置时会自动 bootstrap <code>~/.datus/</code>：</p>
 <ul>
@@ -5037,7 +5037,7 @@
 </tr>
 <tr>
 <td>语义模型 bootstrap</td>
-<td>基于成功案例生成 MetricFlow YAML</td>
+<td>基于成功案例生成 Dosi 语义模型</td>
 </tr>
 <tr>
 <td>指标 bootstrap</td>
