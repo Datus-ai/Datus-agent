@@ -63,9 +63,7 @@ class TestGetTablesColumns:
     @pytest.mark.asyncio
     async def test_passes_the_batch_datasource_through(self):
         svc = MagicMock()
-        svc.datasource.get_tables_columns.return_value = Result(
-            success=True, data=GetTablesColumnsData(tables=[])
-        )
+        svc.datasource.get_tables_columns.return_value = Result(success=True, data=GetTablesColumnsData(tables=[]))
 
         request = GetTablesColumnsInput(tables=["db.public.orders"], datasource="lake")
         await get_tables_columns(request, svc)
