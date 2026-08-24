@@ -4299,7 +4299,10 @@
 
 
 <h1 id="semantic-adapters">Semantic Adapters<a class="headerlink" href="#semantic-adapters" title="Permanent link">&para;</a></h1>
-<p>Datus Agent uses semantic adapters to connect metric generation, validation, discovery, and querying to a concrete semantic layer implementation.</p>
+<p>Datus Agent uses semantic adapters to connect semantic authoring, validation,
+discovery, and querying to a concrete semantic layer implementation. Dosi is
+the default and the only authoring adapter; MetricFlow and OSI remain available
+as explicitly configured query-compatibility adapters.</p>
 <p>This page is the adapter overview. For adapter-specific behavior, use:</p>
 <ul>
 <li><a href="../metricflow_semantic_adapter/">MetricFlow Semantic Adapter</a></li>
@@ -4307,12 +4310,16 @@
 <li><a href="../dosi_semantic_adapter/">Dosi Semantic Adapter</a></li>
 </ul>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>Semantic adapters provide a unified interface for:</p>
+<p>All three semantic adapters provide a unified query interface for:</p>
 <ul>
 <li>listing executable metrics</li>
 <li>discovering dimensions for a metric</li>
 <li>querying metric values</li>
-<li>validating semantic assets before publishing</li>
+<li>validating existing semantic assets</li>
+</ul>
+<p>Dosi additionally provides the authoring lifecycle for:</p>
+<ul>
+<li>validating authored semantic assets before publishing</li>
 <li>syncing validated semantic assets into the Datus Knowledge Base</li>
 </ul>
 <p>Three adapters are currently supported:</p>
@@ -4321,40 +4328,40 @@
 <tr>
 <th>Adapter</th>
 <th>Package</th>
-<th>Authoring format</th>
+<th>Source format</th>
 <th>Execution backend</th>
-<th>Status</th>
+<th>Datus mode</th>
 </tr>
 </thead>
 <tbody>
-<tr>
-<td>MetricFlow</td>
-<td><code>datus-semantic-metricflow</code></td>
-<td>MetricFlow YAML</td>
-<td>MetricFlow</td>
-<td>Ready</td>
-</tr>
-<tr>
-<td>OSI</td>
-<td><code>datus-semantic-osi</code></td>
-<td>strict OSI core YAML + DATUS custom extensions</td>
-<td>MetricFlow by default</td>
-<td>Ready</td>
-</tr>
 <tr>
 <td>Dosi</td>
 <td><code>datus-semantic-dosi</code></td>
 <td>strict OSI core YAML + DATUS custom extensions</td>
 <td>Native Dosi engine</td>
-<td>Ready</td>
+<td>Default; authoring + query</td>
+</tr>
+<tr>
+<td>MetricFlow</td>
+<td><code>datus-semantic-metricflow</code></td>
+<td>MetricFlow YAML</td>
+<td>MetricFlow</td>
+<td>Explicit; query-only</td>
+</tr>
+<tr>
+<td>OSI</td>
+<td><code>datus-semantic-osi[metricflow]</code></td>
+<td>strict OSI core YAML + DATUS custom extensions</td>
+<td>MetricFlow</td>
+<td>Explicit; query-only</td>
 </tr>
 </tbody>
 </table>
-<p>MetricFlow, OSI, and Dosi are peer semantic adapters. They differ in what users and generation agents author and how the authored model is executed:</p>
+<p>The adapters share a query interface, but no longer share the authoring surface:</p>
 <ul>
-<li>MetricFlow mode authors MetricFlow YAML directly.</li>
-<li>OSI mode authors OSI core YAML and lets <code>datus-semantic-osi</code> compile it to Datus Semantic IR before lowering to MetricFlow.</li>
-<li>Dosi mode authors the same OSI format but compiles, plans, and executes it directly in the Rust engine.</li>
+<li>Dosi authors strict OSI-compatible YAML and compiles, plans, and executes it directly in the Rust engine.</li>
+<li>MetricFlow loads existing MetricFlow YAML for validation, discovery, and querying.</li>
+<li>OSI loads existing OSI core YAML, compiles it to Datus Semantic IR, and lowers it to MetricFlow for querying.</li>
 </ul>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus-agent
@@ -4380,13 +4387,12 @@
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">execution_backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">  </span><span class="c1"># optional query compatibility</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span><span class="w">         </span><span class="c1"># optional query compatibility; install osi[metricflow]</span>
 </span></code></pre></div>
 <p>The key under <code>services.semantic_layer</code> must equal the adapter type, for example <code>metricflow</code>, <code>osi</code>, or <code>dosi</code>. If a <code>type:</code> field is present, it must match the key.
 The selected semantic adapter is global. Legacy node-level <code>semantic_adapter</code> and <code>authoring_format</code> fields are ignored.</p>
@@ -4424,19 +4430,19 @@ The selected semantic adapter is global. Legacy node-level <code>semantic_adapte
 <p>Use MetricFlow when:</p>
 <ul>
 <li>you already have MetricFlow YAML</li>
-<li>you want generated files to be MetricFlow-native</li>
-<li>your team expects to inspect or maintain MetricFlow assets directly</li>
+<li>your team maintains those assets outside Datus</li>
+<li>you need Datus query surfaces to keep using them during migration</li>
 </ul>
 <p>Use OSI when:</p>
 <ul>
 <li>you want the authored source to follow OSI core schema</li>
 <li>you want Datus-specific execution hints isolated in <code>custom_extensions</code></li>
-<li>you want LLM generation to avoid backend YAML fields such as <code>measure_proxy</code>, <code>type_params</code>, and <code>data_source</code></li>
-<li>you still want to execute through MetricFlow today</li>
+<li>you already have OSI assets that must remain queryable through MetricFlow</li>
 </ul>
 <p>Use Dosi when:</p>
 <ul>
-<li>you want the same strict OSI authoring workflow</li>
+<li>you are starting new semantic authoring or changing existing models</li>
+<li>you want the strict OSI authoring workflow</li>
 <li>aggregate, ratio, and expression metrics cover the model</li>
 <li>you want native join planning, fan-out protection, and execution without MetricFlow</li>
 </ul>

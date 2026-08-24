@@ -4259,6 +4259,9 @@
 engine. Its authoring, validation, catalog loading, and execution paths are
 provided by <code>datus-semantic-dosi</code>; it does not load the Python OSI adapter or
 lower models to MetricFlow.</p>
+<p>Dosi is the built-in default semantic adapter and supports both
+<code>semantic_modeling</code> authoring and the complete query surface. When no semantic
+adapter is configured, interactive Datus startup installs and selects it.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <p>For local development, a published <code>dosi-engine</code> package is not required. From
 the <code>Datus-agent</code> checkout in the standard sibling-repository layout, install
@@ -4278,9 +4281,8 @@ is needed only for registry-based installation and formal delivery.</p>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/absolute/path/to/warehouse.db</span>
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">        </span><span class="c1"># semantic_model_path: /absolute/path/to/model.yaml</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span><span class="w">  </span><span class="c1"># optional: Dosi is selected when this section is empty</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="c1"># semantic_model_path: /absolute/path/to/model.yaml</span>
 </span></code></pre></div>
 <p>Datus supplies the active datasource connection and defaults
 <code>semantic_models_path</code> to <code>subject/semantic_models/&lt;datasource&gt;/</code>. The adapter

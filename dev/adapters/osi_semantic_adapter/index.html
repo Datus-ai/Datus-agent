@@ -3606,10 +3606,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation-and-publishing" class="md-nav__link">
+  <a href="#query-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation and Publishing
+        Query Validation
       
     </span>
   </a>
@@ -4374,10 +4374,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation-and-publishing" class="md-nav__link">
+  <a href="#query-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation and Publishing
+        Query Validation
       
     </span>
   </a>
@@ -4678,15 +4678,16 @@ active <code>osi</code> adapter loads OSI assets; it does not enable semantic au
 </span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="nt">from_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
 </span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="nt">to_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
 </span></code></pre></div>
-<h2 id="validation-and-publishing">Validation and Publishing<a class="headerlink" href="#validation-and-publishing" title="Permanent link">&para;</a></h2>
-<p>Datus enforces validation before publishing OSI assets:</p>
+<h2 id="query-validation">Query Validation<a class="headerlink" href="#query-validation" title="Permanent link">&para;</a></h2>
+<p>Datus exposes the following validation path for existing OSI assets:</p>
 <ol>
-<li><code>validate_semantic(scope="semantic_model")</code> validates generated semantic models.</li>
+<li><code>validate_semantic(scope="semantic_model")</code> validates a selected semantic model.</li>
 <li><code>validate_semantic(scope="all")</code> validates the full semantic layer.</li>
-<li><code>query_metrics(..., dry_run=True)</code> validates generated metrics by rendering SQL.</li>
-<li><code>publish_semantic_model</code> / <code>publish_metrics</code> sync semantic objects and metrics to the Knowledge Base.</li>
+<li><code>query_metrics(..., dry_run=True)</code> checks a metric query by rendering SQL.</li>
 </ol>
-<p>If validation or dry-run fails, Datus does not publish the metric to the Knowledge Base. This ensures <code>ask_metrics</code> only queries validated metrics.</p>
+<p>OSI mode does not publish or mutate semantic assets. Migrate to Dosi before
+using <code>semantic_modeling</code> to change a model and reconcile it to the Knowledge
+Base.</p>
 <h2 id="ask_metrics-queries">ask_metrics Queries<a class="headerlink" href="#ask_metrics-queries" title="Permanent link">&para;</a></h2>
 <p><code>ask_metrics</code> uses the unified semantic adapter interface. With the OSI adapter, it still calls:</p>
 <ul>
