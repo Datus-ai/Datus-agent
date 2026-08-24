@@ -4470,7 +4470,7 @@ semantic modeling, semantic compatibility aliases, metrics, and reference SQL.</
 <td><code>strategy</code></td>
 <td>string</td>
 <td><code>incremental</code></td>
-<td><code>check</code> (inspect only), <code>overwrite</code> (rebuild), <code>incremental</code> (append/update), or <code>refresh-profile</code> (semantic model only)</td>
+<td><code>check</code> (inspect only), <code>overwrite</code> (rebuild), <code>incremental</code> (append/update), <code>refresh-profile</code> (semantic model only), or <code>sync-yaml</code> (semantic model only; re-project authored YAML, no LLM call)</td>
 </tr>
 <tr>
 <td><code>schema_linking_type</code></td>
@@ -4517,6 +4517,8 @@ semantic modeling, semantic compatibility aliases, metrics, and reference SQL.</
 </tbody>
 </table>
 <p><strong>Response</strong>: <code>text/event-stream</code>. See <a href="#sse-event-format">SSE event format</a> below.</p>
+<p><code>strategy=sync-yaml</code> is only valid when <code>components</code> is exactly <code>["semantic_model"]</code>. It replays the authored
+YAML into storage without any LLM call; omit <code>semantic_yaml</code> to sync every file of the active datasource.</p>
 <p><code>strategy=refresh-profile</code> is only valid when <code>components</code> is exactly <code>["semantic_model"]</code>. It requires both
 <code>semantic_yaml</code> and <code>success_story</code>, refreshes generated <code>Observed profile:</code> description suffixes in the existing
 MetricFlow or OSI YAML using bounded read-only data profiling, and syncs the updated YAML back to semantic model storage.

@@ -4464,7 +4464,7 @@
 <p>Semantic models define the foundational schema layer. Starting from version 0.2.4, they operate independently:</p>
 <ul>
 <li><strong>Semantic Models</strong> (this document): Schema extensions with dimensions, measures, and entity relationships</li>
-<li>Storage: <code>semantic_model</code> table in LanceDB</li>
+<li>Storage: <code>semantic_dataset</code> table in the knowledge base</li>
 <li>
 <p>Purpose: Help agent understand table structures for ad-hoc SQL generation</p>
 </li>
@@ -4476,17 +4476,22 @@
 </ul>
 <p>Semantic models provide the building blocks (dimensions, measures) that metrics reference.</p>
 <h2 id="storage-structure">Storage Structure<a class="headerlink" href="#storage-structure" title="Permanent link">&para;</a></h2>
-<p>Semantic model objects are stored at field level:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Stored objects (kind field):</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="o">-</span> <span class="s2">"table"</span><span class="p">:</span> <span class="n">Table</span><span class="o">-</span><span class="n">level</span> <span class="n">metadata</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="o">-</span> <span class="s2">"column"</span><span class="p">:</span> <span class="n">Column</span><span class="o">-</span><span class="n">level</span> <span class="n">metadata</span> <span class="k">with</span> <span class="n">semantic</span> <span class="n">flags</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="o">-</span> <span class="s2">"entity"</span><span class="p">:</span> <span class="n">Entity</span> <span class="n">definitions</span> <span class="k">for</span> <span class="n">relationships</span>
+<p>One row per authored object. A dataset row is identified by
+<code>(semantic_model, dataset)</code>; a field row adds its own name, and a
+relationship row is identified by <code>(semantic_model, relationship)</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Row kinds:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="o">-</span> <span class="s2">"dataset"</span><span class="p">:</span> <span class="n">one</span> <span class="n">authored</span> <span class="n">dataset</span><span class="p">,</span> <span class="n">bound</span> <span class="n">to</span> <span class="n">a</span> <span class="n">physical</span> <span class="n">table</span> <span class="ow">or</span> <span class="n">a</span> <span class="n">reusable</span> <span class="n">query</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="o">-</span> <span class="s2">"field"</span><span class="p">:</span> <span class="n">one</span> <span class="n">field</span> <span class="n">of</span> <span class="n">a</span> <span class="n">dataset</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="o">-</span> <span class="s2">"relationship"</span><span class="p">:</span> <span class="n">one</span> <span class="n">relationship</span> <span class="n">of</span> <span class="n">the</span> <span class="n">semantic</span> <span class="n">model</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Semantic flags for columns:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="o">-</span> <span class="n">is_dimension</span><span class="p">:</span> <span class="n">Column</span> <span class="n">used</span> <span class="k">for</span> <span class="n">grouping</span><span class="o">/</span><span class="n">filtering</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="o">-</span> <span class="n">is_measure</span><span class="p">:</span> <span class="n">Column</span> <span class="n">used</span> <span class="k">for</span> <span class="n">aggregation</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="o">-</span> <span class="n">is_entity_key</span><span class="p">:</span> <span class="n">Column</span> <span class="n">used</span> <span class="k">for</span> <span class="n">table</span> <span class="n">joins</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Flags on a field row:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="o">-</span> <span class="n">is_dimension</span><span class="p">:</span> <span class="n">usable</span> <span class="k">for</span> <span class="n">grouping</span><span class="o">/</span><span class="n">filtering</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="o">-</span> <span class="n">is_time</span><span class="p">:</span> <span class="n">the</span> <span class="n">dataset</span><span class="s1">'s time dimension</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="o">-</span> <span class="n">is_primary_key</span><span class="p">:</span> <span class="n">part</span> <span class="n">of</span> <span class="n">the</span> <span class="n">dataset</span><span class="s1">'s key</span>
 </span></code></pre></div>
+<p>A physical table may be modelled by more than one dataset, in different semantic
+models. A query-backed dataset carries no <code>source_table</code>, so it is never mistaken
+for a real table that happens to share its name.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <p>With <code>--success_story</code>, this compatibility component runs the Dosi-only <code>semantic_modeling</code> workflow in datasets-only scope. It never creates, updates, or deletes metrics. Existing YAML import and profile refresh remain non-LLM compatibility operations for Dosi/OSI YAML in Dosi projects; MetricFlow YAML is rejected.</p>
 <h3 id="basic-command">Basic Command<a class="headerlink" href="#basic-command" title="Permanent link">&para;</a></h3>
@@ -4502,13 +4507,19 @@
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># Refresh observed profile descriptions in an existing YAML</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># Re-project authored YAML into the knowledge base (no LLM call)</span>
 </span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span>--kb_update_strategy<span class="w"> </span>refresh-profile<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span>--success_story<span class="w"> </span>path/to/success_story.csv
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span>--kb_update_strategy<span class="w"> </span>sync-yaml
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="c1"># Refresh observed profile descriptions in an existing YAML</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">    </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">    </span>--kb_update_strategy<span class="w"> </span>refresh-profile<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">    </span>--success_story<span class="w"> </span>path/to/success_story.csv
 </span></code></pre></div>
 <h3 id="key-parameters">Key Parameters<a class="headerlink" href="#key-parameters" title="Permanent link">&para;</a></h3>
 <table>
@@ -4548,12 +4559,17 @@
 <tr>
 <td><code>--kb_update_strategy</code></td>
 <td>❌</td>
-<td>Update strategy. Defaults to <code>check</code>; <code>refresh-profile</code> is semantic-model only.</td>
-<td><code>check</code>/<code>overwrite</code>/<code>incremental</code>/<code>refresh-profile</code></td>
+<td>Update strategy. Defaults to <code>check</code>; <code>refresh-profile</code> and <code>sync-yaml</code> are semantic-model only.</td>
+<td><code>check</code>/<code>overwrite</code>/<code>incremental</code>/<code>refresh-profile</code>/<code>sync-yaml</code></td>
 </tr>
 </tbody>
 </table>
 <p>When <code>semantic_model</code> is combined with <code>metrics</code> or <code>semantic_modeling</code>, bootstrap executes one full <code>semantic_modeling</code> run rather than separate legacy generators.</p>
+<p><code>sync-yaml</code> re-projects authored semantic YAML into the knowledge base. The YAML files under
+<code>subject/semantic_models/&lt;datasource&gt;/</code> are the source of truth, and this replays them into storage one file at a
+time — no LLM call, no warehouse access, and safe to repeat. Pass <code>--semantic_yaml</code> to sync a single file or
+subdirectory; omit it to sync everything for the active datasource. Use it after editing YAML by hand, or to
+rebuild the projection after an upgrade changes the storage layout.</p>
 <p><code>refresh-profile</code> updates an existing Dosi/OSI semantic YAML in place (MetricFlow YAML is rejected). It re-runs bounded, read-only data
 profiling guided by the historical SQLs in <code>--success_story</code>, replaces the generated <code>Observed profile:</code> suffixes in
 table and column descriptions, and syncs the updated YAML back to the semantic model vector store. It does not run full
@@ -4637,7 +4653,7 @@ LLM semantic-model generation and does not truncate the semantic model store.</p
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>/subject<span class="w"> </span>&lt;domain&gt;/&lt;layer1&gt;/&lt;layer2&gt;
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># Search for semantic objects</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>search_semantic_objects<span class="o">(</span><span class="nv">query</span><span class="o">=</span><span class="s2">"customer revenue"</span>,<span class="w"> </span><span class="nv">kinds</span><span class="o">=[</span><span class="s2">"table"</span>,<span class="w"> </span><span class="s2">"column"</span><span class="o">])</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>search_semantic_objects<span class="o">(</span><span class="nv">query_text</span><span class="o">=</span><span class="s2">"customer revenue"</span>,<span class="w"> </span><span class="nv">kinds</span><span class="o">=[</span><span class="s2">"dataset"</span>,<span class="w"> </span><span class="s2">"field"</span><span class="o">])</span>
 </span></code></pre></div>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Semantic models extend database schemas with rich semantic information, enabling more accurate ad-hoc SQL generation. Starting from version 0.2.4, they operate independently from metrics:</p>
