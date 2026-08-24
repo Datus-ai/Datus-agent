@@ -1,10 +1,11 @@
-/* Theme-specific logo and favicon switching */
-
-/* Force logo to render in solid white */
-.md-header__button.md-logo img,
-.md-header__button.md-logo svg,
+/* Theme-specific logo switching: brand mark on the light header,
+   white mark on the dark header */
 [data-md-color-scheme="default"] .md-header__button.md-logo img,
-[data-md-color-scheme="default"] .md-header__button.md-logo svg,
+[data-md-color-scheme="default"] .md-header__button.md-logo svg {
+  content: url("../assets/logo-light.png");
+  filter: none;
+}
+
 [data-md-color-scheme="slate"] .md-header__button.md-logo img,
 [data-md-color-scheme="slate"] .md-header__button.md-logo svg {
   content: url("../assets/logo-dark.png");
@@ -52,4 +53,226 @@
 .md-content__button[rel="edit"]:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 3px rgba(68, 138, 255, 0.4);
+}
+
+/* ---------- Typography ---------- */
+
+/* Material defaults render h1/h2 at weight 300, which reads flat.
+   Give headings real weight and a tighter tracking. */
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h2 {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin-top: 2.4em;
+}
+
+/* Brand accent bar under section headings */
+.md-typeset h2::after {
+  content: "";
+  display: block;
+  width: 2.4rem;
+  height: 3px;
+  margin-top: 0.4rem;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #654ff0, #c4b5fd);
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 2em;
+}
+
+/* Slightly looser body rhythm */
+.md-typeset {
+  line-height: 1.75;
+}
+
+/* Lead paragraph right under the page title */
+.md-typeset h1 + p {
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+
+/* ---------- Brand color ---------- */
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #4f46b8;
+  --md-primary-fg-color--dark: #3f3894;
+  --md-accent-fg-color: #654ff0;
+  --md-typeset-a-color: #5344cc;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-accent-fg-color: #a78bfa;
+  --md-typeset-a-color: #a78bfa;
+}
+
+/* ---------- Content images ---------- */
+
+.md-typeset p > img:only-child {
+  display: block;
+  margin: 1.4em auto;
+  border-radius: 10px;
+}
+
+/* ---------- Grid cards ---------- */
+
+.md-typeset .grid.cards > ul > li {
+  border-radius: 12px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  transform: translateY(-2px);
+  border-color: rgba(101, 79, 240, 0.4);
+  box-shadow: 0 8px 24px rgba(30, 30, 60, 0.1);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > ul > li:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- Buttons ---------- */
+
+.md-typeset .md-button {
+  border-radius: 999px;
+  padding: 0.5em 1.4em;
+}
+
+/* ---------- Tables ---------- */
+
+.md-typeset table:not([class]) {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background: rgba(101, 79, 240, 0.07);
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  background: rgba(167, 139, 250, 0.1);
+}
+
+/* ---------- Header: light chrome instead of a colored block ---------- */
+
+/* Material derives header colors from the primary pair, so a white
+   header with dark text only needs these two variables. */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #ffffff;
+  --md-primary-fg-color--dark: #f3f4f6;
+  --md-primary-bg-color: #1f2430;
+  --md-primary-bg-color--light: #6b7280;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #14161f;
+  --md-primary-fg-color--dark: #10121a;
+  --md-primary-bg-color: #e6e9f0;
+  --md-primary-bg-color--light: #8b93a7;
+}
+
+[data-md-color-scheme="default"] .md-header,
+[data-md-color-scheme="default"] .md-tabs {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+[data-md-color-scheme="slate"] .md-header,
+[data-md-color-scheme="slate"] .md-tabs {
+  border-bottom: 1px solid #262a38;
+}
+
+.md-header--shadow {
+  box-shadow: none;
+}
+
+.md-tabs {
+  border-top: none;
+}
+
+[data-md-color-scheme="default"] .md-search__form {
+  background-color: #f3f4f6;
+}
+
+[data-md-color-scheme="default"] .md-search__form:hover {
+  background-color: #e5e7eb;
+}
+
+[data-md-color-scheme="slate"] .md-search__form {
+  background-color: #1f2330;
+}
+
+/* Active tab picks up the accent instead of relying on contrast alone */
+.md-tabs__link--active {
+  color: var(--md-accent-fg-color);
+  font-weight: 600;
+}
+
+/* ---------- Primary buttons and the edit pill follow the accent,
+   since primary is now the header surface ---------- */
+
+.md-typeset .md-button--primary {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: #ffffff;
+}
+
+.md-content__button[rel="edit"] {
+  background: var(--md-accent-fg-color);
+  color: #ffffff;
+}
+
+.md-content__button[rel="edit"]:hover {
+  color: #ffffff;
+}
+
+/* Back-to-top pill */
+.md-top {
+  background-color: var(--md-accent-fg-color);
+  color: #ffffff;
+}
+
+/* ---------- Sidebar and TOC: pill hover, accented active item ---------- */
+
+.md-nav__link {
+  border-radius: 6px;
+  padding: 0.15rem 0.35rem;
+  margin-left: -0.35rem;
+}
+
+.md-nav__link:hover {
+  background: rgba(101, 79, 240, 0.07);
+}
+
+[data-md-color-scheme="slate"] .md-nav__link:hover {
+  background: rgba(167, 139, 250, 0.1);
+}
+
+.md-nav__link--active,
+.md-nav__link.md-nav__link--active {
+  color: var(--md-accent-fg-color);
+  font-weight: 600;
+}
+
+/* ---------- Self-hosted Inter (variable, all weights in one file).
+   No external font host involved; CJK text falls through to the
+   system font (PingFang SC / Microsoft YaHei). License: OFL 1.1,
+   see assets/fonts/LICENSE.txt ---------- */
+
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --md-text-font: "Inter";
 }
