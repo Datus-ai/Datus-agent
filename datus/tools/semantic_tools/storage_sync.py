@@ -75,6 +75,21 @@ class SemanticStorageManager:
             )
         return self.subject_tree_store
 
+    def _split_qualified_table_name(self, table_ref: str) -> tuple[str, dict[str, str]]:
+        """Return (table leaf, coordinates) for a possibly qualified name."""
+        empty = {"catalog_name": "", "database_name": "", "schema_name": ""}
+        if "." not in table_ref:
+            return table_ref, empty
+        from datus.utils.sql_utils import parse_table_name_parts
+
+        try:
+            parsed = parse_table_name_parts(table_ref, dialect=self.agent_config.db_type or "snowflake")
+        except Exception as exc:
+            # An unparseable name is still better stored whole than dropped.
+            logger.warning(f"Could not parse qualified table name {table_ref!r}: {exc}")
+            return table_ref, empty
+        return parsed.get("table_name") or table_ref, {key: parsed.get(key) or "" for key in empty}
+
     def store_semantic_model(
         self,
         model_data: Union[SemanticModelInfo, Dict[str, Any]],
@@ -132,18 +147,23 @@ class SemanticStorageManager:
 
         rag = self._ensure_semantic_model_store()
         semantic_model_name = model_data["semantic_model_name"]
-        table_name = model_data.get("table_name", "")
+        raw_table_name = model_data.get("table_name", "")
         # An adapter model always binds a physical table. Without one the row
         # would look like a query-backed dataset and no table lookup could ever
         # reach it, so it is refused here as it is on the typed path above.
-        if not table_name:
+        if not raw_table_name:
             raise DatusException(
                 ErrorCode.SEMANTIC_ADAPTER_SYNC_FAILED,
                 message_args={"error_message": f"semantic model '{semantic_model_name}' missing physical table_name"},
             )
-        catalog = model_data.get("catalog_name", "")
-        database = model_data.get("database_name", "")
-        schema = model_data.get("schema_name", "")
+        # An adapter may report a qualified name. Table lookups match
+        # ``source_table`` against the leaf a connector reports, so the
+        # qualifiers belong in the coordinate columns -- the same split the
+        # Dosi authoring path performs.
+        table_name, parsed_parts = self._split_qualified_table_name(raw_table_name)
+        catalog = model_data.get("catalog_name", "") or parsed_parts["catalog_name"]
+        database = model_data.get("database_name", "") or parsed_parts["database_name"]
+        schema = model_data.get("schema_name", "") or parsed_parts["schema_name"]
         updated_at = datetime.now().replace(microsecond=0)
         # An adapter reports one model per physical table, so the dataset takes
         # the table's name; datasets authored in Dosi carry their own.

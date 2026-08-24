@@ -97,6 +97,30 @@ class TestKbServiceComponentSetRejection:
 
         assert KbService._reject_unsupported_component_set(request) is None
 
+    @pytest.mark.asyncio
+    async def test_a_refused_request_still_terminates_the_stream(self, real_agent_config):
+        """Consumers read the "all" component as the end of the stream, so a
+        refusal that returned early would leave them waiting forever."""
+        import asyncio
+
+        svc = KbService(agent_config=real_agent_config)
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy="sync-yaml",
+            success_story="stories.csv",
+        )
+
+        events = [
+            event
+            async for event in svc.bootstrap_stream(
+                request, "refused-stream", asyncio.Event(), str(real_agent_config.home)
+            )
+        ]
+
+        assert [event.component for event in events] == ["all"]
+        assert events[-1].stage == BatchStage.TASK_FAILED
+        assert "metrics" in events[-1].error
+
 
 class TestKbServiceBuildArgs:
     """Tests for _build_args — argument namespace creation."""

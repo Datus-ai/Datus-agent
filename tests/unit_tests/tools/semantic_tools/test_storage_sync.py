@@ -105,17 +105,63 @@ class TestEnsureSubjectTreeStore:
 
 
 class TestStoreSemanticModel:
-    def test_a_model_is_reconciled_rather_than_appended(self):
-        """Adapter syncs re-run on every bootstrap. store_batch appends, and the
-        lance backend does not enforce the unique column, so it would leave a
-        second copy of every row behind."""
+    def test_resyncing_a_model_leaves_one_row_per_identity(self, real_agent_config):
+        """Adapter syncs re-run on every bootstrap. Against real storage this is
+        the property that matters: an appending write would leave a second copy
+        of every row, since the lance backend does not enforce the unique
+        column."""
+        manager = SemanticStorageManager(agent_config=real_agent_config)
+        model = {
+            "semantic_model_name": "user_model",
+            "table_name": "users",
+            "database_name": "shop",
+            "dimensions": [{"name": "country", "description": "", "expr": ""}],
+            "identifiers": [{"name": "id", "description": "", "expr": ""}],
+        }
+
+        manager.store_semantic_model(model)
+        manager.store_semantic_model(model)
+
+        rag = manager._ensure_semantic_model_store()
+        rag.storage._ensure_table_ready()
+        ids = [row["id"] for row in rag.storage.table.search_all(limit=100).to_pylist()]
+        assert sorted(ids) == sorted(set(ids)), f"duplicate rows after re-sync: {ids}"
+        assert len(ids) == 3  # one dataset, one dimension field, one key field
+
+    def test_a_qualified_adapter_table_is_split_into_coordinates(self):
+        """A connector reports the leaf name, and that is what table lookups
+        match on, so the qualifiers have to land in the coordinate columns
+        rather than inside source_table."""
         manager = _make_manager()
+        manager.agent_config.db_type = "snowflake"
         mock_store = MagicMock()
         with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
-            manager.store_semantic_model({"semantic_model_name": "user_model", "table_name": "users"})
+            manager.store_semantic_model(
+                {"semantic_model_name": "orders_model", "table_name": "analytics.public.orders"}
+            )
 
-        assert mock_store.upsert_batch.call_count == 1
-        mock_store.store_batch.assert_not_called()
+        dataset_row = mock_store.upsert_batch.call_args_list[0][0][0][0]
+        assert dataset_row["source_table"] == "orders"
+        assert dataset_row["dataset_name"] == "orders"
+        assert dataset_row["database_name"] == "analytics"
+        assert dataset_row["schema_name"] == "public"
+
+    def test_an_explicit_coordinate_wins_over_the_parsed_one(self):
+        manager = _make_manager()
+        manager.agent_config.db_type = "snowflake"
+        mock_store = MagicMock()
+        with patch.object(manager, "_ensure_semantic_model_store", return_value=mock_store):
+            manager.store_semantic_model(
+                {
+                    "semantic_model_name": "orders_model",
+                    "table_name": "analytics.public.orders",
+                    "database_name": "warehouse",
+                }
+            )
+
+        dataset_row = mock_store.upsert_batch.call_args_list[0][0][0][0]
+        assert dataset_row["database_name"] == "warehouse"
+        assert dataset_row["schema_name"] == "public"
 
     def test_raises_for_missing_semantic_model_name(self):
         manager = _make_manager()

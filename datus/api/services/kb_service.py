@@ -61,9 +61,18 @@ class KbService:
         summary: dict[str, dict] = {}
 
         # Components run one after another, so a set the request never had the
-        # right to ask for has to be refused before the first one writes.
+        # right to ask for has to be refused before the first one writes. The
+        # refusal is emitted on "all" because consumers treat that component as
+        # the end of the stream, and it belongs to the request rather than to
+        # any single component.
         if rejection := self._reject_unsupported_component_set(request):
-            yield self._make_event(stream_id, request.components[0], BatchStage.TASK_FAILED, error=rejection)
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=rejection,
+                payload={"components": summary},
+            )
             return
 
         for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
