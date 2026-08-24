@@ -23,6 +23,7 @@ from datus.tools.db_tools.data_file_loader import (
     DataFileError,
     build_table_name,
     column_letter,
+    detect_csv_encoding,
     detect_header_row,
     find_file_reading_functions,
     inspect_file,
@@ -516,3 +517,100 @@ class TestConversionCacheLocation:
         from datus.tools.db_tools.data_file_loader import default_conversion_cache_dir
 
         assert default_conversion_cache_dir("/var/x/local_files.duckdb") == Path("/var/x/_conversions")
+
+
+class TestCsvEncoding:
+    """DuckDB's CSV reader assumes UTF-8 and fails the whole read on anything
+    else — a GB18030 file errors with ``CSV Error on Line: 1``. Excel's "Save as
+    CSV" on a Chinese Windows writes GB18030, so preserving the bytes through
+    upload only gets them as far as a reader that cannot decode them.
+    """
+
+    ROWS = "门店,品类,金额\n布鲁克林,鞋类,299.5\n费城,配件,88.0\n"
+
+    def _write(self, tmp_path, name, data):
+        target = tmp_path / name
+        target.write_bytes(data)
+        return target
+
+    @pytest.mark.parametrize(
+        "name,codec,expected",
+        [
+            ("utf8.csv", "utf-8", "utf-8"),
+            ("u16.csv", "utf-16", "utf-16"),
+            ("gb.csv", "gb18030", "gb18030"),
+        ],
+    )
+    def test_detects_the_encoding(self, tmp_path, name, codec, expected):
+        assert detect_csv_encoding(self._write(tmp_path, name, self.ROWS.encode(codec))) == expected
+
+    def test_a_utf8_bom_is_decisive(self, tmp_path):
+        source = self._write(tmp_path, "bom.csv", b"\xef\xbb\xbf" + self.ROWS.encode("utf-8"))
+        assert detect_csv_encoding(source) == "utf-8"
+
+    def test_plain_ascii_is_utf8(self, tmp_path):
+        assert detect_csv_encoding(self._write(tmp_path, "a.csv", b"a,b\n1,2\n")) == "utf-8"
+
+    @pytest.mark.parametrize("codec", ["utf-8", "utf-16", "gb18030"])
+    def test_round_trips_through_the_loader(self, tmp_path, connection, codec):
+        source = self._write(tmp_path, f"t_{codec}.csv", self.ROWS.encode(codec))
+
+        loaded, _ = load_file(source, source.name, connection=connection, conversion_cache_dir=tmp_path)
+
+        assert loaded[0].preview_columns == ["门店", "品类", "金额"]
+        assert connection.execute(f'SELECT count(*) FROM "{loaded[0].table}"').fetchone()[0] == 2
+
+    def test_a_gb18030_tsv_keeps_its_tab_delimiter(self, tmp_path, connection):
+        """Delimiter and encoding are passed together, so setting one must not
+        disturb the other."""
+        source = self._write(tmp_path, "t.tsv", self.ROWS.replace(",", "\t").encode("gb18030"))
+
+        loaded, _ = load_file(source, "t.tsv", connection=connection, conversion_cache_dir=tmp_path)
+
+        assert loaded[0].preview_columns == ["门店", "品类", "金额"]
+
+    def test_the_chosen_encoding_is_reported(self, tmp_path, connection):
+        """A heuristic that cannot be seen cannot be corrected."""
+        source = self._write(tmp_path, "gb.csv", self.ROWS.encode("gb18030"))
+        loaded, _ = load_file(source, "gb.csv", connection=connection, conversion_cache_dir=tmp_path)
+        assert loaded[0].encoding == "gb18030"
+
+    def test_an_explicit_encoding_overrides_detection(self, tmp_path, connection):
+        source = self._write(tmp_path, "gb.csv", self.ROWS.encode("gb18030"))
+
+        loaded, _ = load_file(
+            source, "gb.csv", connection=connection, conversion_cache_dir=tmp_path, encoding="gb18030"
+        )
+
+        assert loaded[0].encoding == "gb18030"
+        assert loaded[0].preview_columns == ["门店", "品类", "金额"]
+
+    def test_big5_is_refused_rather_than_corrupted(self, tmp_path, connection):
+        """DuckDB accepts ``encoding='big5'`` and then loses the row boundary
+        after a trailing byte in the ASCII range: two rows come back as one
+        header. Python decodes the same bytes correctly, so this is the reader —
+        and mojibake with no error is the one outcome worse than a refusal.
+        """
+        source = self._write(tmp_path, "big5.csv", "門店,金額\n台北,299.5\n".encode("big5"))
+
+        with pytest.raises(DataFileError) as excinfo:
+            load_file(source, "big5.csv", connection=connection, conversion_cache_dir=tmp_path)
+
+        assert "big5" in str(excinfo.value)
+        assert "UTF-8" in str(excinfo.value)
+
+    def test_latin1_is_never_auto_selected(self, tmp_path):
+        """It decodes any byte sequence, so offering it would mask every real
+        answer behind mojibake."""
+        source = self._write(tmp_path, "gb.csv", self.ROWS.encode("gb18030"))
+        assert detect_csv_encoding(source) != "latin-1"
+
+    def test_a_truncated_sample_does_not_defeat_detection(self, tmp_path):
+        """A fixed-size sample almost always ends mid-character; a one-shot
+        decode would report that as failure for the correct encoding."""
+        payload = ("门店,金额\n" + "布鲁克林,1\n" * 400).encode("gb18030")
+        source = self._write(tmp_path, "big.csv", payload)
+        assert detect_csv_encoding(source, sample_bytes=1001) == "gb18030"
+
+    def test_an_unreadable_file_does_not_raise(self, tmp_path):
+        assert detect_csv_encoding(tmp_path / "absent.csv") == "utf-8"

@@ -1693,6 +1693,7 @@ class DBFuncTool:
         path: str,
         sheet: Optional[str] = "",
         header_row: Optional[int] = None,
+        encoding: Optional[str] = "",
         materialize: bool = False,
         inspect_only: bool = False,
     ) -> FuncToolResult:
@@ -1721,6 +1722,11 @@ class DBFuncTool:
         Args:
             path: Path to the data file, relative to the project workspace.
             sheet: Spreadsheets only — load just this sheet instead of all of them.
+            encoding: CSV/TSV only — override the detected text encoding. Detection
+                handles the common cases (UTF-8, a BOM, GB18030 from Excel on a
+                Chinese Windows); pass one of ``utf-8``, ``utf-16``, ``gb18030``,
+                ``big5``, ``shift_jis``, ``cp1252``, ``latin-1`` when the reported
+                ``encoding`` is wrong — the symptom is garbled text in the preview.
             header_row: Spreadsheets only — 1-based row holding the column names.
                 Omit to auto-detect. Pass it when the detected header (reported
                 back as ``header_row``) picked up a title or a blank row: the
@@ -1807,6 +1813,7 @@ class DBFuncTool:
                     conversion_cache_dir=default_conversion_cache_dir(getattr(connector, "db_path", "")),
                     sheet=sheet or None,
                     header_row=header_row,
+                    encoding=encoding or None,
                     materialize=materialize,
                     existing_objects=registered_objects(connection),
                 )

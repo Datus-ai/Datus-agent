@@ -74,6 +74,52 @@ HEADER_PROBE_ROW_LIMIT = 30
 HEADER_PROBE_COLUMN_LIMIT = 64
 
 _CSV_SUFFIXES = frozenset({".csv", ".tsv"})
+
+#: Text encodings DuckDB's CSV reader accepts (verified against 1.5.2 — it
+#: rejects anything else outright, ``gbk`` included, so a detected label has to
+#: be mapped onto this set rather than passed through).
+_DUCKDB_CSV_ENCODINGS = frozenset({"utf-8", "utf-16", "latin-1", "gb18030", "big5", "shift_jis", "cp1252"})
+
+#: What a detected label maps to. ``gb18030`` is a superset of GBK and GB2312, so
+#: the whole family lands there; the rest collapse onto DuckDB's spelling.
+#: Order to try when the detected label is unusable, restricted to encodings
+#: whose DuckDB reader was verified to round-trip a CJK/accented sample intact.
+#: Frequency-ordered for the files this tool actually sees: Excel on a Chinese
+#: Windows first. ``latin-1`` is deliberately absent — it decodes any byte
+#: sequence, so offering it would mask every real answer behind mojibake.
+_ENCODING_CANDIDATES = ("gb18030", "shift_jis", "cp1252")
+
+#: Accepted by DuckDB's reader but corrupted by it: a Big5 trailing byte may fall
+#: in the ASCII range (``0x42`` here), and the reader loses the row boundary
+#: after it — ``金額\n台北`` comes back as one field. Verified on 1.5.2 against a
+#: file Python decodes correctly, so this is the reader, not the detection.
+#: Detected rather than silently attempted, because mojibake with no error is the
+#: one outcome worse than a refusal.
+_DUCKDB_BROKEN_CSV_ENCODINGS = frozenset({"big5"})
+
+_ENCODING_ALIASES = {
+    "utf_8": "utf-8",
+    "utf8": "utf-8",
+    "ascii": "utf-8",
+    "utf_16": "utf-16",
+    "utf_16_le": "utf-16",
+    "utf_16_be": "utf-16",
+    "gbk": "gb18030",
+    "gb2312": "gb18030",
+    "gb18030": "gb18030",
+    "cp936": "gb18030",
+    "cp949": "gb18030",
+    "euc_kr": "gb18030",
+    "big5": "big5",
+    "big5hkscs": "big5",
+    "shift_jis": "shift_jis",
+    "sjis": "shift_jis",
+    "cp932": "shift_jis",
+    "cp1252": "cp1252",
+    "windows_1252": "cp1252",
+    "latin_1": "latin-1",
+    "iso8859_1": "latin-1",
+}
 _PARQUET_SUFFIXES = frozenset({".parquet", ".pq"})
 _JSON_SUFFIXES = frozenset({".json", ".jsonl", ".ndjson"})
 _EXCEL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
@@ -125,6 +171,7 @@ class LoadedTable:
     sheet: Optional[str] = None
     header_row: Optional[int] = None
     used_range: Optional[str] = None
+    encoding: Optional[str] = None
     row_count: int = 0
     columns: List[Dict[str, Any]] = field(default_factory=list)
     preview_columns: List[str] = field(default_factory=list)
@@ -146,6 +193,8 @@ class LoadedTable:
             payload["header_row"] = self.header_row
         if self.used_range is not None:
             payload["used_range"] = self.used_range
+        if self.encoding is not None:
+            payload["encoding"] = self.encoding
         if self.materialized:
             payload["materialized"] = True
         return payload
@@ -431,9 +480,100 @@ def detect_header_row(grid: Sequence[Sequence[Any]]) -> Optional[int]:
 # --------------------------------------------------------------- scan clauses
 
 
-def _csv_scan(path: Path) -> str:
+def _decodes(sample: bytes, encoding: str) -> bool:
+    """Whether ``sample`` decodes cleanly, tolerating a truncated final character."""
+    import codecs
+
+    try:
+        # Incremental, with ``final=False``: a fixed-size sample almost always
+        # ends mid-character, and a one-shot decode would report that as a
+        # failure for the very encoding that is correct.
+        codecs.getincrementaldecoder(encoding)().decode(sample, False)
+        return True
+    except (UnicodeDecodeError, LookupError):
+        return False
+
+
+def detect_csv_encoding(path: Path, sample_bytes: int = 256 * 1024) -> str:
+    """Best guess at a CSV's text encoding, as a name DuckDB's reader accepts.
+
+    Needed because DuckDB assumes UTF-8 and *fails the whole read* on anything
+    else — verified: a GB18030 file errors with ``CSV Error on Line: 1``. Excel's
+    "Save as CSV" on a Chinese Windows writes GB18030, so that is not an exotic
+    case, and preserving the bytes through upload (which the IDE now does) only
+    gets them as far as a reader that cannot decode them.
+
+    A BOM is decisive where present, and clean UTF-8 short-circuits. Beyond that
+    ``charset_normalizer`` (already a runtime dependency) supplies a hint that is
+    then *verified by decoding*, because on a short sample the CJK double-byte
+    ranges overlap enough for it to mislabel freely — a GB18030 file comes back
+    as ``cp949``. Trusting the label alone therefore fails the read outright.
+
+    Discriminating between the CJK pages is still a heuristic, which is why the
+    chosen encoding is reported on the result and can be overridden per call.
+    When nothing decodes, the answer is ``utf-8`` rather than a single-byte page:
+    Latin-1 accepts any byte sequence, so it would convert a miss into silent
+    mojibake, whereas UTF-8 produces DuckDB's own actionable error.
+    """
+    try:
+        with path.open("rb") as handle:
+            sample = handle.read(sample_bytes)
+    except OSError:  # pragma: no cover - caller has already stat'd the file
+        return "utf-8"
+
+    if sample.startswith(b"\xef\xbb\xbf"):
+        return "utf-8"
+    if sample.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return "utf-16"
+
+    try:
+        sample.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        pass
+    label = None
+    guess = None
+    try:
+        from charset_normalizer import from_bytes
+
+        best = from_bytes(sample).best()
+        if best is not None and best.encoding:
+            label = best.encoding
+            guess = _ENCODING_ALIASES.get(label.replace("-", "_").lower())
+    except ImportError:  # pragma: no cover - declared runtime dependency
+        logger.debug("charset_normalizer unavailable for %s", path.name)
+
+    # The label is a hint, not the answer. On a short sample the CJK double-byte
+    # ranges overlap enough that detection mislabels freely — a GB18030 file
+    # comes back as ``cp949`` — so whatever it says is confirmed by actually
+    # decoding, and an unusable label falls through to the candidate list.
+    if guess in _DUCKDB_BROKEN_CSV_ENCODINGS:
+        raise DataFileError(
+            f"{path.name} looks {guess}-encoded, which DuckDB's CSV reader corrupts "
+            f"(it loses row boundaries after certain trailing bytes). Re-save the file as "
+            f"UTF-8, or pass encoding={guess!r} explicitly to read it anyway."
+        )
+
+    ordered = [guess] if guess in _ENCODING_CANDIDATES else []
+    ordered += [enc for enc in _ENCODING_CANDIDATES if enc != guess]
+    for candidate in ordered:
+        if _decodes(sample, candidate):
+            if candidate != guess:
+                logger.info("Encoding for %s reported as %s, reading as %s", path.name, label, candidate)
+            return candidate
+
+    # Nothing decoded — let DuckDB fail on utf-8 with its own actionable message
+    # rather than forcing a single-byte page and returning mojibake.
+    return "utf-8"
+
+
+def _csv_scan(path: Path, encoding: Optional[str] = None) -> str:
     delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
-    return f"read_csv_auto({quote_literal(str(path))}, delim={quote_literal(delimiter)})"
+    resolved = encoding or detect_csv_encoding(path)
+    return (
+        f"read_csv_auto({quote_literal(str(path))}, delim={quote_literal(delimiter)}, "
+        f"encoding={quote_literal(resolved)})"
+    )
 
 
 def _parquet_scan(path: Path) -> str:
@@ -676,6 +816,7 @@ def _finish_table(
     header_row: Optional[int],
     used_range: Optional[str],
     materialized: bool,
+    encoding: Optional[str] = None,
 ) -> LoadedTable:
     preview_columns, preview_rows = preview_view(connection, table)
     return LoadedTable(
@@ -684,6 +825,7 @@ def _finish_table(
         sheet=sheet,
         header_row=header_row,
         used_range=used_range,
+        encoding=encoding,
         row_count=count_view(connection, table),
         columns=summarize_view(connection, table),
         preview_columns=preview_columns,
@@ -728,7 +870,9 @@ def inspect_file(path: Path, *, connection: Any, sheet: Optional[str] = None) ->
         return result
 
     if suffix in _CSV_SUFFIXES:
-        scan = _csv_scan(path)
+        detected = detect_csv_encoding(path)
+        result["encoding"] = detected
+        scan = _csv_scan(path, detected)
     elif suffix in _PARQUET_SUFFIXES:
         scan = _parquet_scan(path)
     elif suffix in _JSON_SUFFIXES:
@@ -764,6 +908,7 @@ def load_file(
     sheet: Optional[str] = None,
     header_row: Optional[int] = None,
     materialize: bool = False,
+    encoding: Optional[str] = None,
     existing_objects: Optional[Dict[str, Optional[str]]] = None,
 ) -> Tuple[List[LoadedTable], List[SkippedSheet]]:
     """Create one VIEW (or table, when ``materialize``) per loadable unit.
@@ -845,8 +990,10 @@ def load_file(
             raise DataFileError(f"No readable sheet in {path.name} ({reasons})")
         return loaded, skipped
 
+    resolved_encoding: Optional[str] = None
     if suffix in _CSV_SUFFIXES:
-        scan = _csv_scan(path)
+        resolved_encoding = encoding or detect_csv_encoding(path)
+        scan = _csv_scan(path, resolved_encoding)
     elif suffix in _PARQUET_SUFFIXES:
         scan = _parquet_scan(path)
     elif suffix in _JSON_SUFFIXES:
@@ -881,6 +1028,7 @@ def load_file(
             header_row=None,
             used_range=None,
             materialized=materialize,
+            encoding=resolved_encoding,
         )
     )
     return loaded, skipped
