@@ -3,6 +3,7 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from itertools import chain, repeat
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator, NoReturn
@@ -17,6 +18,7 @@ from datus.api.models.table_models import (
     ValidateSemanticModelData,
     ValidateSemanticModelInput,
 )
+from datus.api.services import database_service
 from datus.api.services.database_service import DatasourceService
 from datus.storage.semantic_model.artifact_file import artifact_revision, semantic_artifact_lock
 from datus.tools.db_tools.db_manager import DBManager
@@ -913,6 +915,170 @@ class TestGetTablesColumns:
         result = svc.get_tables_columns(["schools", "frpm"])
         assert result.success is False
         assert result.errorCode == "INVALID_PARAMETERS"
+
+    @pytest.mark.parametrize(
+        "limit",
+        [
+            "not-a-number",
+            None,
+            0,
+            -5,
+            float("inf"),  # YAML `.inf` — what an operator writes for "no limit"
+            "inf",
+            0.5,  # truncates to 0, so falls back for being non-positive
+            True,  # YAML `true`/`yes`/`on`; bool is an int subclass, so -> 1
+        ],
+        ids=["text", "null", "zero", "negative", "inf", "inf-text", "fraction", "yaml-true"],
+    )
+    def test_a_bad_limit_falls_back_instead_of_breaking(self, real_agent_config, limit):
+        """A typo in agent.yml must not take the endpoint down.
+
+        Two tables on purpose: several of these values coerce to a bound of 1,
+        which a single-table batch could not tell apart from the real default.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"max_prefetch_tables": limit}
+        result = svc.get_tables_columns(["schools", "frpm"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools", "frpm"]
+
+    @pytest.mark.parametrize(
+        "budget",
+        [float("inf"), "inf", "not-a-number", None, 0, -1],
+        ids=["inf", "inf-text", "text", "null", "zero", "negative"],
+    )
+    def test_a_bad_budget_falls_back_to_a_real_deadline(self, real_agent_config, budget):
+        """Infinity is the dangerous one: it passes `> 0` and removes the deadline."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": budget}
+
+        # The default budget is finite, so a clock jump past it stops the batch.
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools"])
+
+        assert result.success is True
+        assert result.data.tables == []
+
+
+@contextmanager
+def _fake_monotonic(reading) -> Iterator[None]:
+    """Drive database_service's clock without touching the stdlib one.
+
+    The module does ``import time``, so ``database_service.time`` *is* the
+    stdlib module — patching ``...database_service.time.monotonic`` swaps it
+    process-wide, and every other caller in the window (another thread, a
+    library timer) then reads the fake. Rebinding the module-level name instead
+    keeps the fake local to this module.
+    """
+    stand_in = SimpleNamespace(monotonic=reading)
+    with patch.object(database_service, "time", stand_in):
+        yield
+
+
+class TestGetTablesColumnsBounds:
+    """A prefetch batch must yield to the rest of the service, not compete.
+
+    Columns cost one serial round-trip per table behind the connector lock, so
+    an unbounded batch on a slow source holds that lock — and a to_thread
+    worker — for minutes, starving interactive metadata reads.
+    """
+
+    def test_stops_once_the_budget_is_spent(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        # A fake clock rather than a tiny budget: a real one relies on two
+        # consecutive monotonic() readings differing, which they do not on a
+        # platform whose clock resolution is coarse (~15.6ms on Windows).
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
+
+        # An exhausted budget omits tables rather than failing the batch.
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_omitted_tables_stay_fetchable(self, real_agent_config):
+        """What a bound leaves out, the client can still ask for one at a time."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            assert svc.get_tables_columns(["schools"]).data.tables == []
+
+        detail = svc.get_table_schema("schools")
+
+        assert detail.success is True
+        assert detail.data.table.columns
+
+    def test_budget_spent_mid_batch_returns_the_partial_result(self, real_agent_config):
+        """The clock runs out after the first table; the second is omitted."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+        # deadline = 0 + 5; then: first check 1 (under), second check 99 (over).
+        # Trailing repeat so an extra reading — another thread, or a future
+        # version of the method taking one more — degrades the assertion rather
+        # than raising StopIteration from inside the code under test.
+        clock = chain([0.0, 1.0], repeat(99.0))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
+
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+
+    def test_a_second_batch_does_not_queue_behind_the_first(self, real_agent_config):
+        """A batch that cannot take the gate returns instead of pinning a worker."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        svc._prefetch_gate.acquire()
+        try:
+            result = svc.get_tables_columns(["schools"])
+        finally:
+            svc._prefetch_gate.release()
+
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_cache_hits_are_served_while_the_gate_is_held(self, real_agent_config):
+        """Warm tables cost nothing, so no bound should withhold them."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.get_tables_columns(["schools"])
+
+        svc._prefetch_gate.acquire()
+        try:
+            result = svc.get_tables_columns(["schools", "frpm"])
+        finally:
+            svc._prefetch_gate.release()
+
+        # schools is cached; frpm would need the source, so it is omitted.
+        assert [t.table for t in result.data.tables] == ["schools"]
+        assert result.data.tables[0].columns
+
+    def test_the_gate_is_released_for_the_next_batch(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+
+        first = svc.get_tables_columns(["schools"])
+        second = svc.get_tables_columns(["frpm"])
+
+        assert [t.table for t in first.data.tables] == ["schools"]
+        assert [t.table for t in second.data.tables] == ["frpm"]
+
+    def test_the_gate_is_released_when_a_table_blows_up(self, real_agent_config):
+        """An exception mid-batch must not leave the gate held forever."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        with patch.object(svc, "get_table_schema", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                svc.get_tables_columns(["schools"])
+
+        assert svc.get_tables_columns(["schools"]).data.tables
 
 
 class TestSchemaOnlyDialectCatalog:

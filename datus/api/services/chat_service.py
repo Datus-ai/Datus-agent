@@ -34,12 +34,23 @@ from datus.api.services.chat_task_manager import (
 from datus.configuration.agent_config import AgentConfig
 from datus.models.session_manager import SessionManager, session_matches_agent
 from datus.schemas.action_history import ActionRole, ActionStatus
+from datus.utils.config_utils import coerce_positive_int
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
+<<<<<<< HEAD
+=======
+# Session-list pagination bounds. Overridable via the ``api`` section of
+# agent.yml (``api.default_session_page_size`` / ``api.max_session_page_size``),
+# mirroring ``api.max_prefetch_tables``. Both are finite so that the default
+# request path — clients that omit ``limit`` entirely — stays bounded.
+_DEFAULT_SESSION_PAGE_SIZE = 50
+_DEFAULT_MAX_SESSION_PAGE_SIZE = 200
+
+>>>>>>> ce91ee3 ([BugFix] Bound the /table/columns prefetch so it cannot starve the datasource (#1332))
 
 class ChatService:
     """Thin service that delegates chat execution to ChatTaskManager.
@@ -109,6 +120,24 @@ class ChatService:
         (including legacy prefix-less sessions).
         """
         try:
+<<<<<<< HEAD
+=======
+            api_config = getattr(self.agent_config, "api_config", {}) or {}
+            max_page_size = coerce_positive_int(api_config.get("max_session_page_size"), _DEFAULT_MAX_SESSION_PAGE_SIZE)
+            default_page_size = min(
+                coerce_positive_int(api_config.get("default_session_page_size"), _DEFAULT_SESSION_PAGE_SIZE),
+                max_page_size,
+            )
+            # A non-positive ``limit`` is treated as unspecified rather than
+            # passed through: the route pins ``ge=1``, but a direct caller
+            # passing -1 would otherwise slice ``all_ids[offset:-1]`` and
+            # enrich nearly every session — the exact cost this bounds.
+            page_size = min(coerce_positive_int(limit, default_page_size), max_page_size)
+            # Likewise the route pins ``ge=0``; clamp again for non-HTTP callers,
+            # since a negative offset would silently slice from the tail.
+            offset = max(offset, 0)
+
+>>>>>>> ce91ee3 ([BugFix] Bound the /table/columns prefetch so it cannot starve the datasource (#1332))
             session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
             all_ids = session_mgr.list_sessions()
             if subagent_id is not None:
