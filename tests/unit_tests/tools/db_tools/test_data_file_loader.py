@@ -741,6 +741,40 @@ class TestTextDateHints:
         # Runs, rather than merely looking quoted.
         assert connection.execute(f"SELECT strftime({expression}, '%Y-%m') FROM v").fetchone()[0] == "2017-07"
 
+    def test_space_padded_dates_still_get_the_hint(self, connection):
+        """Validity is tested against DATE, not TIMESTAMP — they are not ordered
+        the way they look. ``TRY_CAST('2017-07-01 ' AS TIMESTAMP)`` is NULL while
+        ``AS DATE`` is not, so gating on TIMESTAMP withheld the hint from exactly
+        the space-padded text that turns up in cells and aligned CSV exports."""
+        column = self._profile(connection, ["  2017-07-01  ", "2017-08-31 "])
+
+        assert column["cast_hint"] == 'text dates: CAST("d" AS DATE) to use date functions'
+
+    def test_a_clock_mixed_with_padded_dates_falls_back_to_date(self, connection):
+        """TIMESTAMP would NULL the padded rows; DATE is valid for every row.
+        Losing a time beats losing a row."""
+        column = self._profile(connection, ["2017-07-01 09:30:00", "2017-07-02 "])
+
+        assert "AS DATE)" in column["cast_hint"]
+
+    def test_hints_survive_the_probe_batch_boundary(self, connection):
+        """The probe runs in batches, so the row-offset arithmetic restarts per
+        batch. A column past the first boundary must still be annotated, and
+        annotated with *its own* result."""
+        from datus.tools.db_tools.data_file_loader import _DATE_PROBE_BATCH
+
+        width = _DATE_PROBE_BATCH * 2 + 3
+        # Every column is a date except one placed past the first boundary.
+        odd_one = _DATE_PROBE_BATCH + 5
+        values = [f"'not-a-date{i}' AS c{i}" if i == odd_one else f"'2017-07-01' AS c{i}" for i in range(width)]
+        connection.execute(f"CREATE VIEW wide AS SELECT {', '.join(values)} FROM range(3)")
+
+        profile = {column["column_name"]: column for column in summarize_view(connection, "wide")}
+
+        assert len(profile) == width
+        assert "cast_hint" not in profile[f"c{odd_one}"]
+        assert all("cast_hint" in profile[f"c{i}"] for i in range(width) if i != odd_one)
+
     def test_a_bare_year_is_not_a_date(self, connection):
         """``TRY_CAST('2017' AS DATE)`` is NULL, so a year column stays un-hinted."""
         column = self._profile(connection, ["2017", "2018"])
