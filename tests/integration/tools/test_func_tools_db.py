@@ -448,6 +448,7 @@ class TestAllToolsNameContract:
             "list_tables",
             "describe_table",
             "execute_sql",
+            "load_file_as_table",
         }
         assert decorated.issubset(set(names))
 
@@ -488,6 +489,7 @@ class TestAllToolsNameContract:
             "list_tables",
             "describe_table",
             "execute_sql",
+            "load_file_as_table",
             # mounted directly by gen_job
             "transfer_query_result",
             "get_migration_capabilities",
