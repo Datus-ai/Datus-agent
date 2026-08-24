@@ -34,7 +34,12 @@ logger = get_logger(__name__)
 #:
 #: ``.csv``/``.tsv`` are deliberately absent: they are text, ``read_file``
 #: genuinely works on them, and small ones are cheaper to just read.
-_TABULAR_BINARY_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xls", ".xlsb", ".parquet", ".ods"})
+_TABULAR_BINARY_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xls", ".parquet"})
+
+#: Binary tabular formats nothing downstream can read either. Redirecting these
+#: to ``load_file_as_table`` would cost a round trip to learn what can be said
+#: here in one: re-save as .xlsx or .csv.
+_UNREADABLE_TABULAR_EXTENSIONS = frozenset({".xlsb", ".ods"})
 
 
 class FilesystemConfig:
@@ -289,6 +294,15 @@ class FilesystemFuncTool(BaseTool):
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
 
             suffix = target_path.suffix.lower()
+            if suffix in _UNREADABLE_TABULAR_EXTENSIONS:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Cannot read {suffix} files: {resolved.display} is a binary "
+                        f"spreadsheet format that is not supported anywhere in the "
+                        f"pipeline. Ask the user to re-save it as .xlsx or .csv."
+                    ),
+                )
             if suffix in _TABULAR_BINARY_EXTENSIONS:
                 return FuncToolResult(
                     success=0,

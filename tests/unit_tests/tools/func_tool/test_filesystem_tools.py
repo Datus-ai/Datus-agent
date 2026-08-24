@@ -918,7 +918,7 @@ class TestTabularFilesRedirect:
     correction.
     """
 
-    @pytest.mark.parametrize("name", ["book.xlsx", "book.xlsm", "book.xls", "book.xlsb", "data.parquet", "s.ods"])
+    @pytest.mark.parametrize("name", ["book.xlsx", "book.xlsm", "book.xls", "data.parquet"])
     def test_binary_tabular_read_names_the_alternative(self, tmp_path, name):
         (tmp_path / name).write_bytes(b"PK\x03\x04binary-ish")
         tool = _make_tool(str(tmp_path))
@@ -927,6 +927,22 @@ class TestTabularFilesRedirect:
 
         assert result.success == 0
         assert "load_file_as_table" in result.error
+
+    @pytest.mark.parametrize("name", ["book.xlsb", "sheet.ods"])
+    def test_formats_nothing_can_read_say_so_in_one_turn(self, tmp_path, name):
+        """Pointing these at load_file_as_table would only spend a round trip to
+        arrive at the same answer, since it rejects them too."""
+        (tmp_path / name).write_bytes(b"PK\x03\x04")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file(name)
+
+        assert result.success == 0
+        assert "load_file_as_table" not in result.error
+        # Name both conversion targets: the message's whole job is telling the
+        # user what to re-save as, so "mentions one of them" is not the contract.
+        assert ".xlsx" in result.error
+        assert ".csv" in result.error
 
     def test_extension_match_is_case_insensitive(self, tmp_path):
         (tmp_path / "BOOK.XLSX").write_bytes(b"PK\x03\x04")

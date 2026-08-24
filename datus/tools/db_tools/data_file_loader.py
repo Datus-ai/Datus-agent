@@ -280,14 +280,22 @@ def enumerate_sheets(path: Path) -> List[str]:
 
 
 def sheet_bounds(path: Path, sheet: str) -> Tuple[int, int]:
-    """``(max_row, max_column)`` of a sheet's used range.
+    """``(max_row, max_column)`` of the last cell that actually holds a value.
 
     This is load-bearing for correctness, not an optimisation. ``read_xlsx``
-    needs a complete ``range`` (``'A3'`` alone is rejected), and padding the end
-    generously is silently wrong: every cell in the padding reads back as a NULL
-    *row*, so a 4-row sheet read as ``A3:D200`` reports 197 rows, a 98% null
-    rate, and an extra all-NULL group in every ``GROUP BY``. The model has no
-    way to tell that apart from real sparse data.
+    needs a complete ``range`` (``'A3'`` alone is rejected), and overshooting the
+    end is silently wrong: every padding cell reads back as a NULL *row*, so a
+    2-row sheet scanned as ``A1:E200`` reports 199 rows, a 99% null rate, two
+    phantom columns and an extra all-NULL group in every ``GROUP BY``. The model
+    cannot tell that apart from genuinely sparse data.
+
+    Which is exactly why ``worksheet.max_row`` / ``max_column`` are not used:
+    they report the sheet's *dimension*, which counts any cell carrying only
+    formatting. One bolded blank cell far below the data — routine in a
+    hand-maintained export — inflates the extent to that row (verified: a
+    styled ``B200`` on a 2-row sheet yields exactly the 199-row reading above).
+    Scanning values costs one streaming pass, against a file every query
+    re-reads anyway.
     """
     from openpyxl import load_workbook
 
@@ -296,7 +304,17 @@ def sheet_bounds(path: Path, sheet: str) -> Tuple[int, int]:
         if sheet not in workbook.sheetnames:
             raise DataFileError(f"Sheet {sheet!r} not found in {path.name}. Available: {workbook.sheetnames}")
         worksheet = workbook[sheet]
-        return int(worksheet.max_row or 0), int(worksheet.max_column or 0)
+        last_row = 0
+        last_column = 0
+        for row_index, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
+            widest = 0
+            for column_index, value in enumerate(row, start=1):
+                if value is not None and str(value).strip() != "":
+                    widest = column_index
+            if widest:
+                last_row = row_index
+                last_column = max(last_column, widest)
+        return last_row, last_column
     finally:
         workbook.close()
 
@@ -370,11 +388,18 @@ def _json_scan(path: Path) -> str:
 
 
 def _xlsx_scan(path: Path, sheet: str, header_row: int, max_row: int, max_column: int) -> Tuple[str, str]:
-    """``(scan_expression, used_range)`` for one sheet, bounded to its real extent."""
+    """``(scan_expression, used_range)`` for one sheet, bounded to its real extent.
+
+    ``stop_at_empty=false`` is stated rather than inferred. The range already
+    ends at the last cell holding a value (:func:`sheet_bounds`), so there is no
+    padding for it to protect against — and letting DuckDB infer it would
+    truncate at the first interior blank row, silently dropping every group below
+    a separator row, which hand-maintained exports use freely.
+    """
     used_range = f"A{header_row}:{column_letter(max_column)}{max_row}"
     scan = (
         f"read_xlsx({quote_literal(str(path))}, sheet={quote_literal(sheet)}, "
-        f"range={quote_literal(used_range)}, header=true)"
+        f"range={quote_literal(used_range)}, header=true, stop_at_empty=false)"
     )
     return scan, used_range
 
@@ -726,7 +751,10 @@ def load_file(
                 # file") among other per-sheet problems. One bad tab must not
                 # sink the workbook.
                 logger.info("Skipping sheet %s of %s: %s", name, rel_path, exc)
-                skipped.append(SkippedSheet(name, str(exc).splitlines()[0]))
+                # An exception with an empty message yields [] from splitlines(),
+                # so indexing it would make this handler the thing that fails.
+                reason = (str(exc).splitlines() or [repr(exc)])[0]
+                skipped.append(SkippedSheet(name, reason))
 
         if not loaded and skipped:
             reasons = "; ".join(f"{item.sheet}: {item.reason}" for item in skipped)

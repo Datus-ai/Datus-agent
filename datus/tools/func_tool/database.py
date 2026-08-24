@@ -134,6 +134,7 @@ class DBFuncTool:
         scoped_tables: Optional[Iterable[str]] = None,
         connector_cache_size: int = DEFAULT_CONNECTOR_CACHE_SIZE,
         read_only: bool = False,
+        filesystem_root: Optional[str] = None,
     ):
         """
         Initialize DBFuncTool.
@@ -149,6 +150,13 @@ class DBFuncTool:
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
+            filesystem_root: Root that ``load_file_as_table`` resolves relative paths
+                       against. Pass the node's own workspace root: a node configured
+                       with ``node_config["workspace_root"]`` anchors its filesystem
+                       tools there, so leaving this unset would make a path the model
+                       just got back from ``glob`` resolve against a different root
+                       here. Defaults to ``agent_config.project_root``, which is the
+                       same value whenever no override is configured.
             read_only: When True, the write paths (``execute_sql``,
                        ``execute_write``, ``execute_ddl``,
                        ``transfer_query_result``) hard-reject any non-read
@@ -191,6 +199,7 @@ class DBFuncTool:
         # Backing field for the ``read_only`` property: this instance's own
         # posture, before the deployment-wide switch is ORed in.
         self._read_only = read_only
+        self._filesystem_root = filesystem_root
         if agent_config and metadata_fts_enabled(agent_config):
             self.schema_rag = create_metadata_rag(agent_config, sub_agent_name)
         else:
@@ -443,6 +452,10 @@ class DBFuncTool:
         self._db_manager = None
         self._default_datasource = ""
         self._default_database = ""
+        # Empty rather than absent: the attribute is read unconditionally when
+        # deciding which tools to mount, so leaving it unset makes this mode
+        # raise AttributeError instead of simply having no named datasources.
+        self._datasources = []
         self._connector_cache = OrderedDict()
         self._connector_cache_size = 0
         self._primary_connector = connector
@@ -1085,6 +1098,12 @@ class DBFuncTool:
 
         methods_to_convert.append(self.execute_sql)
 
+        # Only mount the uploads loader where there is a catalog to load into.
+        # Without the datasource every call would fail with "not configured", so
+        # on a CLI install this would be a tool that exists only to error.
+        if LOCAL_FILES_DATASOURCE in self._datasources:
+            methods_to_convert.append(self.load_file_as_table)
+
         if self._configured_supports("database"):
             bound_tools.append(self.to_function_tool(self.list_databases))
 
@@ -1533,39 +1552,62 @@ class DBFuncTool:
 
     # ------------------------------------------------- uploaded data files
 
-    def _reject_file_reading_sql(self, sql: str, datasource: Optional[str]) -> Optional[FuncToolResult]:
-        """Refuse model-authored SQL that reads files directly, on the uploads catalog.
+    def _reject_unsafe_uploads_sql(self, sql: str, datasource: Optional[str]) -> Optional[FuncToolResult]:
+        """Confine model-authored SQL on the uploads catalog to reads of its own tables.
 
-        The uploads catalog is a DuckDB datasource with external file access
-        enabled — that is what makes a lazy VIEW over a spreadsheet possible.
-        The same capability, reached through a hand-written
-        ``read_csv_auto('/etc/passwd')``, would read anything the process can
-        see and route straight around the filesystem path policy, which is the
-        one boundary keeping the agent inside its project.
+        The catalog is a DuckDB datasource with external file access enabled —
+        that is what makes a lazy VIEW over a spreadsheet possible. The same
+        capability in hand-written SQL reaches every file the process can see,
+        including the shared tenant volume, routing around the filesystem path
+        policy that is the agent's only containment boundary.
+
+        Two gates, because a function-name check alone is not one:
+
+        * statement class — everything except SELECT / SHOW / DESCRIBE / EXPLAIN
+          is refused. ``ATTACH '/data/tenants/<other>/x.duckdb'`` and
+          ``COPY (...) TO '/path'`` are not function calls and would sail past a
+          name check while reading or writing outside the project entirely.
+          Nothing legitimate is lost: every write to this catalog comes from
+          ``load_file_as_table``, which uses its own connection.
+        * file-reading table functions inside an otherwise-valid read, since a
+          plain ``SELECT * FROM read_csv_auto('/etc/passwd')`` is a SELECT.
 
         Scoped to this datasource on purpose: a project that configures its own
         DuckDB datasource already had this reach before uploads existed, and
         silently narrowing it here would be an unrelated behaviour change.
-        ``load_file_as_table`` remains the sanctioned path, and the paths it
-        embeds in a VIEW are classified first.
         """
         resolved = datasource or self._default_datasource
         if resolved != LOCAL_FILES_DATASOURCE:
             return None
 
-        offenders = find_file_reading_functions(sql)
-        if not offenders:
-            return None
-        return FuncToolResult(
-            success=0,
-            error=(
-                f"{', '.join(offenders)} cannot be called directly on the "
-                f"'{LOCAL_FILES_DATASOURCE}' datasource. Use "
-                f"load_file_as_table(path=...) to register a file, then query the "
-                f"table it returns. Call list_tables(datasource="
-                f"'{LOCAL_FILES_DATASOURCE}') to see what is already registered."
-            ),
+        from datus.utils.sql_utils import parse_sql_type
+
+        hint = (
+            f"Only read queries are allowed on the '{LOCAL_FILES_DATASOURCE}' "
+            f"datasource. Register a file with load_file_as_table(path=...) and "
+            f"query the table it returns; call list_tables(datasource="
+            f"'{LOCAL_FILES_DATASOURCE}') to see what is registered."
         )
+
+        try:
+            sql_type = parse_sql_type(sql, "duckdb")
+        except Exception:
+            # Unparseable SQL fails closed: this gate is the boundary, so an
+            # unknown statement is refused rather than waved through.
+            sql_type = None
+        if sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+            return FuncToolResult(
+                success=0,
+                error=f"{'Unparseable statement' if sql_type is None else 'Write and DDL statements'} rejected. {hint}",
+            )
+
+        offenders = find_file_reading_functions(sql)
+        if offenders:
+            return FuncToolResult(
+                success=0,
+                error=f"{', '.join(offenders)} cannot be called directly. {hint}",
+            )
+        return None
 
     def _resolve_data_file(self, path: str):
         """Classify a user-supplied data-file path against the filesystem policy.
@@ -1580,11 +1622,12 @@ class DBFuncTool:
         from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
 
         agent_config = self.agent_config
-        root_path = ""
+        root_path = self._filesystem_root or ""
         datus_home = None
         allowlist = None
         if agent_config is not None:
-            root_path = getattr(agent_config, "project_root", "") or getattr(agent_config, "home", "") or ""
+            if not root_path:
+                root_path = getattr(agent_config, "project_root", "") or getattr(agent_config, "home", "") or ""
             allowlist = getattr(agent_config, "filesystem_allowlist", None) or None
             path_manager = getattr(agent_config, "path_manager", None)
             if path_manager is not None:
@@ -1667,6 +1710,18 @@ class DBFuncTool:
             if not target.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
 
+            # Legacy single-connector mode returns the primary connector for ANY
+            # requested datasource, so without this the CREATE VIEW / COMMENT ON
+            # would land in the user's real database. The tool is not mounted in
+            # that mode, but a Python caller can still reach it.
+            if LOCAL_FILES_DATASOURCE not in self._datasources:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Datasource '{LOCAL_FILES_DATASOURCE}' is not configured, so uploaded "
+                        f"files cannot be registered in this deployment."
+                    ),
+                )
             connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
             exclusive = getattr(connector, "exclusive_connection", None)
             if exclusive is None:
@@ -1782,7 +1837,7 @@ class DBFuncTool:
             if looks_like_sql_file_ref(sql_stripped):
                 sql = self._read_sql_from_file(sql_stripped)
 
-            guard_error = self._reject_file_reading_sql(sql, datasource)
+            guard_error = self._reject_unsafe_uploads_sql(sql, datasource)
             if guard_error is not None:
                 return guard_error
 

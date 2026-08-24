@@ -393,3 +393,65 @@ class TestInspectSpreadsheet:
         source = _write_workbook(tmp_path / "s.xlsx")
         with pytest.raises(DataFileError):
             inspect_file(source, connection=excel_connection, sheet="Nope")
+
+
+class TestExtentComesFromValuesNotFormatting:
+    """``worksheet.max_row`` reports the sheet *dimension*, which counts any cell
+    carrying only formatting. Trusting it reintroduces exactly the padding bug the
+    exact range exists to prevent, from a cause no author would think to look for:
+    someone bolded a blank cell.
+    """
+
+    def _sheet_with_styled_blank(self, path, blank_cell="B200"):
+        from openpyxl.styles import Font
+
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "S"
+        sheet.append(["region", "qty"])
+        sheet.append(["east", 3])
+        sheet.append(["west", 5])
+        sheet[blank_cell].font = Font(bold=True)
+        workbook.save(path)
+        return path
+
+    def test_styled_blank_cell_does_not_inflate_the_range(self, tmp_path, excel_connection):
+        source = self._sheet_with_styled_blank(tmp_path / "styled.xlsx")
+        loaded, _ = load_file(source, "styled.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+        assert loaded[0].used_range == "A1:B3"
+
+    def test_row_count_is_the_real_row_count(self, tmp_path, excel_connection):
+        source = self._sheet_with_styled_blank(tmp_path / "styled.xlsx")
+        loaded, _ = load_file(source, "styled.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+        assert loaded[0].row_count == 2
+
+    def test_no_phantom_null_group(self, tmp_path, excel_connection):
+        source = self._sheet_with_styled_blank(tmp_path / "styled.xlsx")
+        load_file(source, "styled.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+        groups = excel_connection.execute('SELECT region, count(*) FROM "styled_s" GROUP BY 1 ORDER BY 1').fetchall()
+        assert groups == [("east", 1), ("west", 1)]
+
+    def test_styled_blank_column_does_not_add_phantom_columns(self, tmp_path, excel_connection):
+        source = self._sheet_with_styled_blank(tmp_path / "styled.xlsx", blank_cell="E5")
+        loaded, _ = load_file(source, "styled.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+        assert loaded[0].preview_columns == ["region", "qty"]
+
+    def test_interior_blank_row_is_not_truncated(self, tmp_path, excel_connection):
+        """The other half of the trade-off: an exact range must not be paired with
+        DuckDB's inferred stop_at_empty, or a separator row silently drops every
+        group below it."""
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "S"
+        sheet.append(["region", "qty"])
+        sheet.append(["east", 1])
+        sheet.append([])
+        sheet.append(["west", 2])
+        sheet.append(["north", 3])
+        source = tmp_path / "gap.xlsx"
+        workbook.save(source)
+
+        loaded, _ = load_file(source, "gap.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+
+        regions = excel_connection.execute('SELECT region FROM "gap_s" WHERE region IS NOT NULL ORDER BY 1').fetchall()
+        assert regions == [("east",), ("north",), ("west",)]

@@ -2611,10 +2611,46 @@ class TestUploadsCatalogSqlGuard:
         # Rejected before touching the database at all.
         connector.execute_query.assert_not_called()
 
-    def test_allows_ordinary_sql_on_the_uploads_datasource(self):
+    def test_allows_ordinary_reads_on_the_uploads_datasource(self):
         tool, _ = self._make_tool()
         result = tool.execute_sql("SELECT region, sum(amount) FROM jeffshop_q3 GROUP BY 1", datasource="local_files")
         assert "load_file_as_table" not in (result.error or "")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "ATTACH '/data/tenants/other/x.duckdb' AS other",
+            "COPY (SELECT 1) TO '/tmp/exfil.csv'",
+            "CREATE TABLE t AS SELECT 1",
+            "DROP VIEW jeffshop_q3",
+            "INSTALL httpfs",
+            "EXPORT DATABASE '/tmp/dump'",
+        ],
+    )
+    def test_rejects_non_read_statements_on_the_uploads_datasource(self, sql):
+        """A function-name check alone is not a boundary: ATTACH and COPY TO are
+        not function calls, and both reach outside the project — ATTACH onto the
+        shared tenant volume, COPY TO writing anywhere the process can."""
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql(sql, datasource="local_files")
+
+        assert result.success == 0
+        assert "Only read queries are allowed" in result.error
+        connector.execute_ddl.assert_not_called()
+        connector.execute_query.assert_not_called()
+
+    def test_unparseable_sql_fails_closed_on_the_uploads_datasource(self):
+        tool, _ = self._make_tool()
+        result = tool.execute_sql("this is not sql at all ((", datasource="local_files")
+        assert result.success == 0
+
+    def test_writes_still_allowed_on_other_datasources(self):
+        """The tightening is scoped to the uploads catalog; a project's own
+        datasource keeps whatever posture it had."""
+        tool, _ = self._make_tool(datasources=("warehouse", "local_files"), default="warehouse")
+        result = tool.execute_sql("CREATE TABLE t AS SELECT 1", datasource="warehouse")
+        assert "Only read queries are allowed" not in (result.error or "")
 
     def test_guard_applies_when_the_uploads_catalog_is_the_default(self):
         """Reached via the default route, not just an explicit datasource argument."""
@@ -2633,9 +2669,65 @@ class TestUploadsCatalogSqlGuard:
 
 
 class TestLoadFileAsTableIsExposed:
+    """Two different surfaces, and only one of them is what the model sees.
+
+    ``all_tools_name()`` feeds VALID_TOOL_METHODS and the permission registry;
+    ``available_tools()`` is the list actually handed to the LLM and is
+    hand-curated, not derived from the former. A tool present in the first and
+    absent from the second is registered, permissioned, catalogued — and
+    uncallable.
+    """
+
+    def _make_tool(self, datasources):
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector = Mock()
+        connector.dialect = "postgresql"
+        connector.get_databases.return_value = []
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config.current_datasource = datasources[0]
+        config.current_db_configs.return_value = {name: Mock(type="postgresql") for name in datasources}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config)
+
     def test_registered_on_the_agent_tool_surface(self):
         """VALID_TOOL_METHODS and the permission registry both derive from this."""
         assert "load_file_as_table" in DBFuncTool.all_tools_name()
 
     def test_not_treated_as_an_internal_dispatch_helper(self):
         assert "load_file_as_table" not in DBFuncTool._INTERNAL_SQL_METHODS
+
+    def test_mounted_for_the_llm_when_the_uploads_catalog_exists(self):
+        tool = self._make_tool(["warehouse", "local_files"])
+        assert "load_file_as_table" in [item.name for item in tool.available_tools()]
+
+    def test_not_mounted_without_an_uploads_catalog(self):
+        """On a CLI install there is no catalog to load into, so the tool would
+        exist only to return "datasource not configured"."""
+        tool = self._make_tool(["warehouse"])
+        assert "load_file_as_table" not in [item.name for item in tool.available_tools()]
+
+    def test_single_connector_mode_still_builds_its_tool_list(self):
+        """Legacy single-connector mode names no datasources at all; the mount
+        check must not assume the attribute exists."""
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = []
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(connector)
+
+        names = [item.name for item in tool.available_tools()]
+        assert "execute_sql" in names
+        assert "load_file_as_table" not in names
