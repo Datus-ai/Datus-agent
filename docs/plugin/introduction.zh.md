@@ -183,7 +183,7 @@ datus plugin disable internal-admin
 在不允许 agent 修改 `agent.yml` 的托管环境中，对应的 setup skill 不会显示。此时需要由
 管理员完成配置。
 
-## 权限
+## 权限 {#permissions}
 
 Agent 运行的插件命令会经过 Datus 权限系统。插件可以将自己的命令标记为：
 
@@ -255,5 +255,6 @@ agent:
 
 ## 下一步
 
+- 阅读插件指南：[Airflow](airflow.zh.md)、[MWAA](mwaa.zh.md) 和 [S3](s3.zh.md)。
 - 使用 `datus-plugin-development` skill [开发插件](development.zh.md)。
 - 了解 [skills](../skills/introduction.zh.md) 的发现和使用方式。
