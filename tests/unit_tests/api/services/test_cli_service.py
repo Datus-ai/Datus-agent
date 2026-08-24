@@ -271,6 +271,20 @@ class TestCLIServiceConnectorSerialization:
         # And released once the statement is done, so the next request can run.
         assert cli_svc._connector_lock(ds).locked() is False
 
+    def test_execution_target_rejects_when_no_datasource_is_configured(self, cli_svc):
+        cli_svc.current_datasource = None
+
+        with pytest.raises(ValueError, match="No database connection available"):
+            cli_svc._execution_target(None)
+
+    def test_execution_target_rejects_a_current_datasource_with_no_connection(self, cli_svc):
+        """Symmetric with the non-current branch, which also refuses rather than
+        handing back a connector the caller would dereference."""
+        cli_svc.current_db_connector = None
+
+        with pytest.raises(ValueError, match="No database connection available"):
+            cli_svc._execution_target(None)
+
     def test_execution_target_opens_and_remembers_another_datasource(self, cli_svc, real_agent_config):
         current = real_agent_config.current_datasource
         cli_svc.agent_config.services.datasources["second"] = cli_svc.agent_config.services.datasources[current]

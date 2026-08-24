@@ -1240,6 +1240,22 @@ class TestGetTablesColumnsBounds:
         assert first is svc._schema_lock_for(current)
         assert first is not svc._schema_lock_for("second")
 
+    def test_locks_tolerate_an_instance_built_without_init(self):
+        """The contract the lazy init exists for.
+
+        Parts of this suite build the service via ``__new__`` to skip its heavy
+        constructor, and cli_service was broken exactly this way once — the
+        accessors have to stand up a dict on first use rather than assume one.
+        """
+        svc = DatasourceService.__new__(DatasourceService)
+
+        lock = svc._schema_lock_for("prod")
+        gate = svc._prefetch_gate_for("prod")
+
+        assert lock is svc._schema_lock_for("prod")
+        assert gate is svc._prefetch_gate_for("prod")
+        assert lock is not svc._schema_lock_for("lake")
+
     def test_the_gate_is_released_for_the_next_batch(self, real_agent_config):
         svc = DatasourceService(agent_config=real_agent_config)
 
