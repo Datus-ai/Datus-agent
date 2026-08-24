@@ -4089,10 +4089,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#getting-started" class="md-nav__link">
+  <a href="#how-datus-works" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Getting Started
+        How Datus works
       
     </span>
   </a>
@@ -4100,10 +4100,115 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#important-topics" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Important Topics
+        Features
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#automated-semantic-modeling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automated semantic modeling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metric-qa-and-attribution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metric Q&amp;A and attribution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-context-engine-that-sharpens-with-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A context engine that sharpens with use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#subagent-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subagent delivery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plugin-ecosystem-and-governance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plugin ecosystem and governance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting started
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interfaces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explore-the-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explore the docs
       
     </span>
   </a>
@@ -4136,73 +4241,172 @@
 
 
 <h1 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">&para;</a></h1>
-<p><strong><a href="https://github.com/Datus-ai/Datus-agent">Datus</a></strong> is an open-source data engineering agent that builds <strong>evolvable context</strong> for your data systems. Unlike traditional tools that merely move data, Datus captures, learns, and evolves the knowledge surrounding your data—transforming metadata, reference SQL, semantic models, and metrics into a living knowledge base that grounds AI queries and eliminates hallucinations.</p>
-<p>With Datus, data engineers shift from writing repetitive SQL to building reusable, AI-ready context. Every query, correction, and domain rule becomes long-term memory—enabling specialized subagents that deliver accurate, domain-aware analytics to your entire organization.</p>
-<p><img alt="Datus architecture" src="assets/home_architecture.png" /></p>
-<p><strong>Three Entry Points for Different Users</strong></p>
+<p><strong><a href="https://github.com/Datus-ai/Datus-agent">Datus</a></strong> is the open-source data engineering agent for the modern data stack: one agent that connects your warehouse, catalog, semantic layer, and BI, grounded in an evolvable context engine your team owns.</p>
+<p>Datus handles SQL authoring and validation, semantic model and metric construction, and the generation of pipelines, reports, and dashboards. Every run and every correction settles into context, which steadily raises the accuracy of its output. The whole stack stays open and flexible: databases, BI, schedulers, LLMs, and your team's own tools all connect through standard interfaces.</p>
+<h2 id="how-datus-works">How Datus works<a class="headerlink" href="#how-datus-works" title="Permanent link">&para;</a></h2>
+<p>The quality of an agent's answers is set by the quality of the context it receives. Datus therefore concentrates on accumulating and reusing context; the diagram shows the full loop:</p>
+<p><img alt="How Datus works" src="assets/how_it_works.svg" /></p>
+<p>The diagram reads in two halves. The front half is the data engineer's work: exploring data, building context, and modeling semantics; its output is reusable assets. The back half is how the organization consumes those assets: subagents turn them into a service anyone can question.</p>
+<p>The handoff is not one-way either: every correction an analyst makes flows back, and the assets thicken with use.</p>
+<ol>
+<li><strong>Explore</strong>: no groundwork required. Chat with your database in the <a href="cli/chat_command/">CLI</a>, referencing tables with <code>@table</code> and files with <code>@file</code>, and get familiar with the data as you go.</li>
+<li><strong>Build context</strong>: <a href="skills/init/"><code>/init</code></a> scans the current project, and <code>/bootstrap</code> and <a href="skills/build_kb/"><code>/build-kb</code></a> collect the knowledge scattered across schemas, SQL history, and documents into the <a href="knowledge_base/introduction/">knowledge base</a>; this is the raw material for all the accuracy that follows.</li>
+<li><strong>Model semantics</strong>: the <a href="subagent/semantic_modeling/">semantic modeling subagent</a> mines datasets, semantic models, and metrics from your schema and SQL history, validates them, and registers them in the semantic layer; business definitions gain a single, executable form.</li>
+<li><strong>Create subagents</strong>: with <code>/agent</code>, package the curated context, tools, and rules into a <a href="subagent/customized_subagent/">subagent for one business domain</a>; from this step on, the assets become a service others can use directly.</li>
+<li><strong>Deliver</strong>: analysts ask where they already work, whether that is the browser, Slack/Feishu, or the IDE (see <a href="#interfaces">interfaces</a>); <a href="subagent/ask_metrics/">AskMetrics</a> answers from metric definitions, and <a href="subagent/gen_visual_report/">reports and dashboards</a> are generated right in the conversation.</li>
+<li><strong>Measure</strong>: <a href="benchmark/benchmark_manual/">benchmark</a> SQL accuracy on BIRD, Spider 2.0-Snow, or <a href="configuration/benchmark/">your own datasets</a>, turning what context adds into a quantified number.</li>
+</ol>
+<p>Corrections, feedback, and success stories from stage 5 flow back into the context of stage 2. The assets grow more complete with use, rather than starting to age the day they are built.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<p>Accuracy comes from two places: the semantic layer turns business definitions into executable form, and the context engine keeps the knowledge produced during use. Subagents deliver those assets to the people who use them, and the plugin ecosystem plus governance let the whole system plug into an existing stack and run under control in production.</p>
+<h3 id="automated-semantic-modeling">Automated semantic modeling<a class="headerlink" href="#automated-semantic-modeling" title="Permanent link">&para;</a></h3>
+<p>The agent reads your database schema and SQL history, generates <a href="https://dosi.datus.ai/">OSI</a> semantic models and metric definitions, validates them, and registers them in the semantic layer, with no hand-written YAML.</p>
+<p>Execution belongs to the <a href="https://dosi.datus.ai/">Dosi</a> engine: one semantic model compiles into SQL for 13+ database dialects. Dosi is an independent program you can also run as a CLI, REST server, or MCP server; see the <a href="adapters/dosi_semantic_adapter/">Dosi semantic adapter</a>.</p>
+<p><img alt="Semantic modeling: from schema and SQL history to a validated semantic model" src="assets/semantic_modeling_session.svg" /></p>
+<h3 id="metric-qa-and-attribution">Metric Q&amp;A and attribution<a class="headerlink" href="#metric-qa-and-attribution" title="Permanent link">&para;</a></h3>
+<p><a href="subagent/ask_metrics/">AskMetrics</a> answers business questions from metric definitions instead of improvising SQL, and when a metric moves, <code>attribution_analyze</code> quantifies each dimension's contribution.</p>
+<p><img alt="A metric Q&amp;A session: question, semantic-layer tool calls, attribution result" src="assets/metric_qa_session.svg" /></p>
+<h3 id="a-context-engine-that-sharpens-with-use">A context engine that sharpens with use<a class="headerlink" href="#a-context-engine-that-sharpens-with-use" title="Permanent link">&para;</a></h3>
+<p>The <a href="getting_started/contextual_data_engineering/">context engine</a> gathers schema metadata, reference SQL, and business rules, organized in a business-domain tree with vector retrieval on top. Every correction made during use is written back into the <a href="knowledge_base/introduction/">knowledge base</a>, so later answers keep getting more accurate.</p>
+<p><img alt="Building context: schema crawling, reference SQL indexing, the subject tree" src="assets/context_engine_session.svg" /></p>
+<h3 id="subagent-delivery">Subagent delivery<a class="headerlink" href="#subagent-delivery" title="Permanent link">&para;</a></h3>
+<p>Curate context, tools, and rules for one business domain and package them as a <a href="subagent/customized_subagent/">dedicated chatbot</a> that analysts use directly.</p>
 <ul>
-<li><strong><a href="cli/introduction/">Datus-CLI</a></strong>: An AI-powered command-line interface for data engineers—think "Claude Code for data engineers." Write SQL, build subagents, and construct context interactively.</li>
-<li><strong><a href="web_chatbot/introduction/">Datus-Chat</a></strong>: A web chatbot providing multi-turn conversations with built-in feedback mechanisms (upvotes, issue reports, success stories) for data analysts.</li>
-<li><strong><a href="API/introduction/">Datus-API</a></strong>: RESTful APIs for other agents or applications that need stable, accurate data services. See <a href="API/deployment/">Deployment</a> and <a href="API/chat/">Chat</a>.</li>
+<li>Analysts ask from the browser, Slack/Feishu, or the IDE; <a href="subagent/gen_visual_report/">reports and dashboards</a> are generated in the conversation and previewed locally, with no SaaS backend.</li>
+<li><a href="subagent/builtin_subagents/">Built-in subagents</a> also cover engineering tasks such as cross-database migration, ETL job generation, and wide-table builds, with <a href="adapters/scheduler_adapters/">Airflow</a> orchestration.</li>
 </ul>
-<p><strong>Two Execution Modes</strong></p>
+<p><img alt="Create a subagent and serve it through six entry points" src="assets/subagent_delivery_session.svg" /></p>
+<h3 id="plugin-ecosystem-and-governance">Plugin ecosystem and governance<a class="headerlink" href="#plugin-ecosystem-and-governance" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><a href="subagent/introduction/">Agentic Mode</a></strong>: Ideal for ad-hoc development and exploratory workflows. Flexible, conversational, and context-aware through specialized subagents.</li>
-<li><strong><a href="workflow/introduction/">Workflow Mode</a></strong>: Optimized for production scenarios requiring high stability and orchestration. Workflows can use subagents as nodes for complex pipelines.</li>
+<li>The <a href="plugin/introduction/">plugin</a> framework connects third-party platforms and in-house tools to the agent: one <code>datus-plugin.yml</code> manifest declares CLI commands, skills, and prompt context, activated per project.</li>
+<li>Adapters cover <a href="adapters/db_adapters/">15 databases</a> and 10+ LLM providers, and Datus ships both an <a href="integration/mcp/">MCP</a> server and client; <a href="skills/introduction/">skills</a> follow the agentskills.io convention and install from a marketplace.</li>
+<li>Governance covers tiered permission profiles, statement-level <a href="configuration/sql_policy/">SQL authorization</a> with AI pre-review, bash confined to an OS-level sandbox, and <a href="develop/observability/">traces</a> exportable to any OTLP platform.</li>
 </ul>
-<p><strong>Context Engine at the Core</strong></p>
-<p>The heart of Datus is its <strong><a href="knowledge_base/introduction/">Context Engine</a></strong>, which combines human expertise with AI capabilities:</p>
+<p><img alt="Open ecosystem: install a plugin, connect the stack you already run" src="assets/ecosystem_plugins.svg" /></p>
+<h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
+<p><img alt="Datus Architecture" src="assets/datus_architecture.svg" /></p>
+<p>The architecture has four layers, matching the diagram above:</p>
 <ul>
-<li>Automatically captures <a href="knowledge_base/metadata/">metadata</a>, <a href="knowledge_base/semantic_model/">semantic models</a>, <a href="knowledge_base/metrics/">metrics</a>, <a href="knowledge_base/reference_sql/">reference SQL</a>, <a href="knowledge_base/reference_template/">reference templates</a>, documents, and success stories</li>
-<li>Supports human-in-the-loop curation and refinement</li>
-<li>Powers both subagents and workflows with rich, domain-specific context</li>
+<li><strong>Delivery</strong>: six entry points (CLI, web chatbot, REST API, MCP, IM gateway, and VS Code) that share one agent backend.</li>
+<li><strong>Intelligence</strong>: the chat agent plans and reasons, subagents handle specialized tasks, skills and plugins add tools, and governance applies here. Interactive requests run in agentic mode, where the agent plans its own steps; benchmark and batch runs use <a href="workflow/introduction/">workflow mode</a>, which executes a predefined plan of nodes.</li>
+<li><strong>Semantic layer and context</strong>: the asset layer the agent builds. One half is semantic models and metrics, executed by Dosi or MetricFlow; the other half is <a href="knowledge_base/introduction/">context</a>: schema metadata, reference SQL, knowledge, and memory. Retrieval combines business-domain trees with vector search, and <a href="configuration/storage/">storage</a> defaults to embedded LanceDB and SQLite, with PostgreSQL as the option for teams that share context.</li>
+<li><strong>Data and tool plane</strong>: the databases, BI platforms, schedulers, and LLM providers reached through adapters.</li>
 </ul>
-<p><strong>Flexible Integration Layer</strong></p>
-<p>Datus integrates seamlessly with your existing stack:</p>
-<ul>
-<li><strong>LLMs</strong>: OpenAI, Claude, DeepSeek, Qwen, Kimi, OpenRouter, and more (<a href="configuration/agent/">Configuration</a>)</li>
-<li><strong>Data Warehouses</strong>: StarRocks, Snowflake, DuckDB, SQLite, PostgreSQL, and others (<a href="configuration/datasources/">Datasource Configuration</a>, <a href="adapters/db_adapters/">Database Adapters</a>)</li>
-<li><strong>Semantic Layers</strong>: <a href="metricflow/introduction/">MetricFlow</a> support for metric definitions and queries</li>
-<li><strong>Extensibility</strong>: Add custom integrations via <a href="cli/mcp_extensions/">MCP</a> (Model Context Protocol)</li>
-</ul>
-<h2 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h2>
-<p>Get your Datus Agent up and running in minutes.</p>
+<h2 id="getting-started">Getting started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h2>
+<p>The first run needs no database of your own: the install bundles the California Schools sample dataset with its datasource <code>california_schools</code> pre-registered. Linux or macOS:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+</span></code></pre></div>
+<p>Open a new shell and run <code>datus</code>, then:</p>
+<ol>
+<li><code>/model</code> to configure an LLM</li>
+<li><code>/datasource</code> to add your own datasource (skip it to stay on the bundled sample)</li>
+<li><code>/init</code> (optional) to scan the current project</li>
+</ol>
+<p>Manual install works too: <code>pip install datus-agent</code> (Python 3.12+). Configuration has two levels: a global <code>agent.yml</code> for the main settings, and a per-project <code>.datus/config.yml</code> for overrides such as the active model and default datasource (see the <a href="configuration/introduction/">configuration docs</a>).</p>
+<p>The <a href="getting_started/contextual_data_engineering/#part-2-hands-on-tutorial-california-schools">end-to-end tutorial</a> runs the full loop on the sample data, building context through metric Q&amp;A, in about ten minutes:</p>
 <div class="admonition tip">
-<p class="admonition-title">Start Here</p>
-<p><a class="md-button md-button--primary" href="getting_started/Quickstart/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m13.13 22.19-1.63-3.83c1.57-.58 3.04-1.36 4.4-2.27zM5.64 12.5l-3.83-1.63 6.1-2.77C7 9.46 6.22 10.93 5.64 12.5M21.61 2.39S16.66.269 11 5.93c-2.19 2.19-3.5 4.6-4.35 6.71-.28.75-.09 1.57.46 2.13l2.13 2.12c.55.56 1.37.74 2.12.46A19.1 19.1 0 0 0 18.07 13c5.66-5.66 3.54-10.61 3.54-10.61m-7.07 7.07c-.78-.78-.78-2.05 0-2.83s2.05-.78 2.83 0c.77.78.78 2.05 0 2.83s-2.05.78-2.83 0m-5.66 7.07-1.41-1.41zM6.24 22l3.64-3.64c-.34-.09-.67-.24-.97-.45L4.83 22zM2 22h1.41l4.77-4.76-1.42-1.41L2 20.59zm0-2.83 4.09-4.08c-.21-.3-.36-.62-.45-.97L2 17.76z"/></svg></span> <strong>Quickstart Guide</strong></a></p>
+<p class="admonition-title">Go deeper</p>
+<p><a class="md-button md-button--primary" href="getting_started/Quickstart/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m13.13 22.19-1.63-3.83c1.57-.58 3.04-1.36 4.4-2.27zM5.64 12.5l-3.83-1.63 6.1-2.77C7 9.46 6.22 10.93 5.64 12.5M21.61 2.39S16.66.269 11 5.93c-2.19 2.19-3.5 4.6-4.35 6.71-.28.75-.09 1.57.46 2.13l2.13 2.12c.55.56 1.37.74 2.12.46A19.1 19.1 0 0 0 18.07 13c5.66-5.66 3.54-10.61 3.54-10.61m-7.07 7.07c-.78-.78-.78-2.05 0-2.83s2.05-.78 2.83 0c.77.78.78 2.05 0 2.83s-2.05.78-2.83 0m-5.66 7.07-1.41-1.41zM6.24 22l3.64-3.64c-.34-.09-.67-.24-.97-.45L4.83 22zM2 22h1.41l4.77-4.76-1.42-1.41L2 20.59zm0-2.83 4.09-4.08c-.21-.3-.36-.62-.45-.97L2 17.76z"/></svg></span> <strong>Quickstart Guide</strong></a>
+<a class="md-button" href="getting_started/contextual_data_engineering/#part-2-hands-on-tutorial-california-schools"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 1 9l11 6 9-4.91V17h2V9M5 13.18v4L12 21l7-3.82v-4L12 17z"/></svg></span> <strong>End-to-end Tutorial</strong></a></p>
 </div>
-<p>Discover how Datus leverages contextual data engineering from your data assets to continuously learn and improve, then walk through the bundled California Schools tutorial in the same page.</p>
-<div class="admonition info">
-<p class="admonition-title">Learn Key Concepts &amp; Try the Tutorial</p>
-<p><a class="md-button" href="getting_started/contextual_data_engineering/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 21.5c-1.35-.85-3.8-1.5-5.5-1.5-1.65 0-3.35.3-4.75 1.05-.1.05-.15.05-.25.05-.25 0-.5-.25-.5-.5V6c.6-.45 1.25-.75 2-1 1.11-.35 2.33-.5 3.5-.5 1.95 0 4.05.4 5.5 1.5 1.45-1.1 3.55-1.5 5.5-1.5 1.17 0 2.39.15 3.5.5.75.25 1.4.55 2 1v14.6c0 .25-.25.5-.5.5-.1 0-.15 0-.25-.05-1.4-.75-3.1-1.05-4.75-1.05-1.7 0-4.15.65-5.5 1.5M12 8v11.5c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5V7c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5m1 3.5c1.11-.68 2.6-1 4.5-1 .91 0 1.76.09 2.5.28V9.23c-.87-.15-1.71-.23-2.5-.23q-2.655 0-4.5.84zm4.5.17c-1.71 0-3.21.26-4.5.79v1.69c1.11-.65 2.6-.99 4.5-.99 1.04 0 1.88.08 2.5.24v-1.5c-.87-.16-1.71-.23-2.5-.23m2.5 2.9c-.87-.16-1.71-.24-2.5-.24-1.83 0-3.33.27-4.5.8v1.69c1.11-.66 2.6-.99 4.5-.99 1.04 0 1.88.08 2.5.24z"/></svg></span> <strong>Contextual Data Engineering</strong></a>
-<a class="md-button" href="getting_started/contextual_data_engineering/#part-2--hands-on-tutorial-california-schools"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 1 9l11 6 9-4.91V17h2V9M5 13.18v4L12 21l7-3.82v-4L12 17z"/></svg></span> <strong>Hands-on Tutorial</strong></a></p>
+<p>Pipeline and migration work can start from the <a href="getting_started/data_engineering_quickstart/">Data Engineering Quickstart</a>; for BI-centered scenarios, see <a href="getting_started/dashboard_copilot/">Dashboard Copilot</a>.</p>
+<h2 id="interfaces">Interfaces<a class="headerlink" href="#interfaces" title="Permanent link">&para;</a></h2>
+<p>All six entry points share one agent backend and one body of context: assets built in the CLI apply equally when an analyst asks from the browser or Slack. In the table, <code>demo</code> is a sample datasource name for the commands that take <code>--datasource</code>; create one first with <code>/datasource</code>, or substitute <code>california_schools</code> to use the bundled sample.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Command</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="cli/introduction/"><strong>CLI</strong></a> (interactive REPL)</td>
+<td><code>datus --datasource demo</code></td>
+<td>Data engineers exploring data, building context, creating subagents</td>
+</tr>
+<tr>
+<td><a href="web_chatbot/introduction/"><strong>Web Chatbot</strong></a> (FastAPI + React)</td>
+<td><code>datus --web --datasource demo</code></td>
+<td>Analysts chatting with subagents via browser (<code>http://localhost:8501</code>)</td>
+</tr>
+<tr>
+<td><a href="API/introduction/"><strong>REST API</strong></a> (FastAPI)</td>
+<td><code>datus-api --datasource demo</code></td>
+<td>Applications consuming data services via REST (<code>http://localhost:8000</code>)</td>
+</tr>
+<tr>
+<td><a href="integration/mcp/"><strong>MCP Server</strong></a></td>
+<td><code>datus-mcp --datasource demo</code></td>
+<td>MCP-compatible clients (Claude Desktop, Cursor, etc.)</td>
+</tr>
+<tr>
+<td><a href="gateway/introduction/"><strong>IM Gateway</strong></a></td>
+<td><code>datus-gateway</code></td>
+<td>Analysts talking to subagents in Slack or Feishu/Lark</td>
+</tr>
+<tr>
+<td><a href="vscode_extension/introduction/"><strong>VS Code</strong></a> (Datus Studio)</td>
+<td>connects to <code>datus --web</code></td>
+<td>Catalog explorer, chat panel, SQL results &amp; AI charts in the IDE</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Print mode</p>
+<p>Print mode streams JSON to stdout for scripting and CI: <code>datus -p "your question" --datasource demo</code>.</p>
 </div>
-<h2 id="important-topics">Important Topics<a class="headerlink" href="#important-topics" title="Permanent link">&para;</a></h2>
+<h2 id="explore-the-docs">Explore the docs<a class="headerlink" href="#explore-the-docs" title="Permanent link">&para;</a></h2>
 <div class="grid cards">
 <ul>
 <li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 19v-3h8v3zm-4.5-6L2.47 7h4.24l4.96 4.95c.58.59.58 1.55 0 2.12L6.74 19H2.5z"/></svg></span> <strong>Datus CLI</strong></p>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 0 3 7l1.63 1.27L12 14l7.36-5.73L21 7zm7.37 10.73L12 16.47l-7.38-5.73L3 12l9 7 9-7zm0 5L12 21.47l-7.38-5.73L3 17l9 7 9-7z"/></svg></span> <strong>Semantic Layer</strong></p>
 <hr />
-<p>Command-line interface for local development and real-time preview of your data workflows.</p>
-<p><a href="cli/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Learn more</a></p>
+<p>How semantic models and metrics are generated, stored, and executed by Dosi or MetricFlow.</p>
+<p><a href="adapters/semantic_adapters/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Semantic adapters</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.5 15.5c0 1.11-.89 2-2 2s-2-.89-2-2 .9-2 2-2 2 .9 2 2m-9-2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.89 2-2-.89-2-2-2M23 15v3c0 .55-.45 1-1 1h-1v1c0 1.11-.89 2-2 2H5a2 2 0 0 1-2-2v-1H2c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1h1c0-3.87 3.13-7 7-7h1V5.73c-.6-.34-1-.99-1-1.73 0-1.1.9-2 2-2s2 .9 2 2c0 .74-.4 1.39-1 1.73V7h1c3.87 0 7 3.13 7 7h1c.55 0 1 .45 1 1m-2 1h-2v-2c0-2.76-2.24-5-5-5h-4c-2.76 0-5 2.24-5 5v2H3v1h2v3h14v-3h2z"/></svg></span> <strong>Subagents</strong></p>
+<hr />
+<p>Package context, tools, and rules for one domain into a chatbot analysts can use directly.</p>
+<p><a href="subagent/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Explore subagents</a></p>
 </li>
 <li>
 <p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4M4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4m0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4"/></svg></span> <strong>Knowledge Base</strong></p>
 <hr />
-<p>Centralized repository for organizing and managing your data assets and documentation.</p>
+<p>The context engine's storage: metadata, semantic models, metrics, reference SQL, and memory.</p>
 <p><a href="knowledge_base/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Browse knowledge base</a></p>
 </li>
 <li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17.5 15.5c0 1.11-.89 2-2 2s-2-.89-2-2 .9-2 2-2 2 .9 2 2m-9-2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.89 2-2-.89-2-2-2M23 15v3c0 .55-.45 1-1 1h-1v1c0 1.11-.89 2-2 2H5a2 2 0 0 1-2-2v-1H2c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1h1c0-3.87 3.13-7 7-7h1V5.73c-.6-.34-1-.99-1-1.73 0-1.1.9-2 2-2s2 .9 2 2c0 .74-.4 1.39-1 1.73V7h1c3.87 0 7 3.13 7 7h1c.55 0 1 .45 1 1m-2 1h-2v-2c0-2.76-2.24-5-5-5h-4c-2.76 0-5 2.24-5 5v2H3v1h2v3h14v-3h2z"/></svg></span> <strong>Subagent System</strong></p>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M22 13.5c0 1.76-1.3 3.22-3 3.46V20a2 2 0 0 1-2 2h-3.8v-.3a2.7 2.7 0 0 0-2.7-2.7c-1.5 0-2.7 1.21-2.7 2.7v.3H4a2 2 0 0 1-2-2v-3.8h.3C3.79 16.2 5 15 5 13.5s-1.21-2.7-2.7-2.7H2V7a2 2 0 0 1 2-2h3.04c.24-1.7 1.7-3 3.46-3s3.22 1.3 3.46 3H17a2 2 0 0 1 2 2v3.04c1.7.24 3 1.7 3 3.46M17 15h1.5a1.5 1.5 0 0 0 1.5-1.5 1.5 1.5 0 0 0-1.5-1.5H17V7h-5V5.5A1.5 1.5 0 0 0 10.5 4 1.5 1.5 0 0 0 9 5.5V7H4v2.12c1.76.68 3 2.38 3 4.38s-1.25 3.7-3 4.38V20h2.12a4.7 4.7 0 0 1 4.38-3c2 0 3.7 1.25 4.38 3H17z"/></svg></span> <strong>Plugins</strong></p>
 <hr />
-<p>Extend Datus with specialized subagents for different data engineering tasks and workflows.</p>
-<p><a href="subagent/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Explore subagents</a></p>
+<p>Connect third-party platforms and in-house tools through a single manifest.</p>
+<p><a href="plugin/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Learn about plugins</a></p>
 </li>
 <li>
-<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 16v-3c0-1.11-.89-2-2-2h-6V8h2V2H9v6h2v3H5c-1.11 0-2 .89-2 2v3H1v6h6v-6H5v-3h6v3H9v6h6v-6h-2v-3h6v3h-2v6h6v-6zM11 4h2v2h-2zM5 20H3v-2h2zm8 0h-2v-2h2zm8 0h-2v-2h2z"/></svg></span> <strong>Workflow Management</strong></p>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 19v-3h8v3zm-4.5-6L2.47 7h4.24l4.96 4.95c.58.59.58 1.55 0 2.12L6.74 19H2.5z"/></svg></span> <strong>CLI</strong></p>
 <hr />
-<p>Design and orchestrate complex data pipelines with configurable workflow builder.</p>
-<p><a href="workflow/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Explore workflows</a></p>
+<p>The interactive REPL: chat, context, and execution commands, MCP extensions, and plan mode.</p>
+<p><a href="cli/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> CLI reference</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m21.71 20.29-1.42 1.42a1 1 0 0 1-1.41 0L7 9.85A3.8 3.8 0 0 1 6 10a4 4 0 0 1-3.78-5.3l2.54 2.54.53-.53 1.42-1.42.53-.53L4.7 2.22A4 4 0 0 1 10 6a3.8 3.8 0 0 1-.15 1l11.86 11.88a1 1 0 0 1 0 1.41M2.29 18.88a1 1 0 0 0 0 1.41l1.42 1.42a1 1 0 0 0 1.41 0l5.47-5.46-2.83-2.83M20 2l-4 2v2l-2.17 2.17 2 2L18 8h2l2-4Z"/></svg></span> <strong>Skills</strong></p>
+<hr />
+<p>Built-in and installable skills, including project init, knowledge extraction, and memory organization.</p>
+<p><a href="skills/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Browse skills</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 1 4 4 4 4 0 0 1-4 4 4 4 0 0 1-4-4 4 4 0 0 1 4-4m0 2a2 2 0 0 0-2 2 2 2 0 0 0 2 2 2 2 0 0 0 2-2 2 2 0 0 0-2-2m-2 12c-.25 0-.46-.18-.5-.42l-.37-2.65c-.63-.25-1.17-.59-1.69-.99l-2.49 1.01c-.22.08-.49 0-.61-.22l-2-3.46a.493.493 0 0 1 .12-.64l2.11-1.66L4.5 12l.07-1-2.11-1.63a.493.493 0 0 1-.12-.64l2-3.46c.12-.22.39-.31.61-.22l2.49 1c.52-.39 1.06-.73 1.69-.98l.37-2.65c.04-.24.25-.42.5-.42h4c.25 0 .46.18.5.42l.37 2.65c.63.25 1.17.59 1.69.98l2.49-1c.22-.09.49 0 .61.22l2 3.46c.13.22.07.49-.12.64L19.43 11l.07 1-.07 1 2.11 1.63c.19.15.25.42.12.64l-2 3.46c-.12.22-.39.31-.61.22l-2.49-1c-.52.39-1.06.73-1.69.98l-.37 2.65c-.04.24-.25.42-.5.42zm1.25-18-.37 2.61c-1.2.25-2.26.89-3.03 1.78L5.44 7.35l-.75 1.3L6.8 10.2a5.55 5.55 0 0 0 0 3.6l-2.12 1.56.75 1.3 2.43-1.04c.77.88 1.82 1.52 3.01 1.76l.37 2.62h1.52l.37-2.61c1.19-.25 2.24-.89 3.01-1.77l2.43 1.04.75-1.3-2.12-1.55c.4-1.17.4-2.44 0-3.61l2.11-1.55-.75-1.3-2.41 1.04a5.42 5.42 0 0 0-3.03-1.77L12.75 4z"/></svg></span> <strong>Configuration</strong></p>
+<hr />
+<p>Datasources, models, semantic layer, SQL policy, storage, and everything else in <code>agent.yml</code>.</p>
+<p><a href="configuration/introduction/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Configure Datus</a></p>
+</li>
+<li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 16a3 3 0 0 1-3-3c0-1.12.61-2.1 1.5-2.61l9.71-5.62-5.53 9.58c-.5.98-1.51 1.65-2.68 1.65m0-13c1.81 0 3.5.5 4.97 1.32l-2.1 1.21C14 5.19 13 5 12 5a8 8 0 0 0-8 8c0 2.21.89 4.21 2.34 5.65h.01c.39.39.39 1.02 0 1.41s-1.03.39-1.42.01A9.97 9.97 0 0 1 2 13 10 10 0 0 1 12 3m10 10c0 2.76-1.12 5.26-2.93 7.07-.39.38-1.02.38-1.41-.01a.996.996 0 0 1 0-1.41A7.95 7.95 0 0 0 20 13c0-1-.19-2-.54-2.9L20.67 8C21.5 9.5 22 11.18 22 13"/></svg></span> <strong>Benchmark</strong></p>
+<hr />
+<p>Measure SQL accuracy on BIRD, Spider 2.0-Snow, or datasets you define yourself.</p>
+<p><a href="benchmark/benchmark_manual/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Run benchmarks</a></p>
 </li>
 </ul>
 </div>
