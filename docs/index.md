@@ -11,8 +11,8 @@ Datus handles SQL authoring and validation, semantic model and metric constructi
 The diagram reads top to bottom: who uses Datus, what the agent is made of, and what it connects to.
 
 - **Three entry points, by role**: data engineers work in [Datus-CLI](cli/introduction.md) to explore data and build assets; analysts ask through [Datus-Chat](web_chatbot/introduction.md) on the web, in Slack/Feishu, or in VS Code, and their feedback flows back into the agent; other agents and applications consume [Datus-API](API/introduction.md) over REST and MCP.
-- **The agent core**: [subagents](subagent/introduction.md) package curated context, tools, and rules for one business domain, [skills](skills/introduction.md) add packaged tools, and [plugins](plugin/introduction.md) connect third-party and in-house tools. Underneath sits the [context engine](knowledge_base/introduction.md): metadata, metrics, reference SQL, knowledge, and local files, retrieved through business-domain trees plus vector search, with [storage](configuration/storage.md) on embedded LanceDB and SQLite and PostgreSQL for teams that share context.
-- **Connected systems**: LLM providers, data warehouses, the [Dosi](https://dosi.datus.ai/) semantic layer, job schedulers, BI tools, and MCP servers and clients, all reached through adapters.
+- **The agent core**: [subagents](subagent/introduction.md) package curated context, tools, and rules for one business domain, and [skills](skills/introduction.md) add packaged tools. Underneath sits the [context engine](knowledge_base/introduction.md): metadata, metrics, reference SQL, knowledge, and local files, retrieved through business-domain trees plus vector search, with [storage](configuration/storage.md) on embedded LanceDB and SQLite and PostgreSQL for teams that share context.
+- **Connected systems**: LLM providers, data warehouses, the [Dosi](https://dosi.datus.ai/) semantic layer, job schedulers, BI tools, and MCP servers and clients, reached through adapters and through [plugins](plugin/introduction.md) that bring third-party and in-house tools into the agent.
 
 ## Features
 

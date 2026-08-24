@@ -11,8 +11,8 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 整体架构自上而下分三段：谁在用、Agent 由什么组成、连接哪些系统，与上图对应：
 
 - **按角色划分的三个入口**：数据工程师在 [Datus-CLI](cli/introduction.zh.md) 里探索数据、构建资产；分析师通过 [Datus-Chat](web_chatbot/introduction.zh.md)(Web、Slack/飞书、VS Code)提问，使用中的反馈会回流进 Agent；其他 Agent 和应用经 [Datus-API](API/introduction.zh.md)(REST、MCP)消费。
-- **Agent 核心**：[Subagent](subagent/introduction.zh.md) 为单个业务域打包配好的上下文、工具和规则，[Skill](skills/introduction.zh.md) 提供打包的扩展工具，[Plugin](plugin/introduction.zh.md) 接入第三方和公司内部工具；底座是[上下文引擎](knowledge_base/introduction.zh.md)：元数据、指标、参考 SQL、知识与本地文件，检索用业务域树加向量召回，[存储](configuration/storage.zh.md)默认内嵌 LanceDB 和 SQLite，团队共享上下文时可换 PostgreSQL。
-- **连接的系统**：LLM、数据仓库、[Dosi](https://dosi.datus.ai/) 语义层、作业调度、BI 工具与 MCP 服务端/客户端，均经适配器接入。
+- **Agent 核心**：[Subagent](subagent/introduction.zh.md) 为单个业务域打包配好的上下文、工具和规则，[Skill](skills/introduction.zh.md) 提供打包的扩展工具；底座是[上下文引擎](knowledge_base/introduction.zh.md)：元数据、指标、参考 SQL、知识与本地文件，检索用业务域树加向量召回，[存储](configuration/storage.zh.md)默认内嵌 LanceDB 和 SQLite，团队共享上下文时可换 PostgreSQL。
+- **连接的系统**：LLM、数据仓库、[Dosi](https://dosi.datus.ai/) 语义层、作业调度、BI 工具与 MCP 服务端/客户端，经适配器接入；[Plugin](plugin/introduction.zh.md) 则把第三方平台和公司内部工具接进 Agent。
 
 ## 核心能力
 
