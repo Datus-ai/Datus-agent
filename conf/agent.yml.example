@@ -128,7 +128,12 @@ agent:
   #   # order: deny (also matches wrapped commands like ``xargs rm``) →
   #   # safety ceiling (bash -c / sudo / $() / redirection / background & /
   #   # loops & subshells never auto-allow statically) → ask → allow →
-  #   # default (ask). A command chained with ``|``, ``&&``, ``||`` or ``;`` is
+  #   # default (ask). Two redirections are exempt from that ceiling because
+  #   # they name no path and so cannot do anything the argv could not:
+  #   # file-descriptor duplication (``2>&1``, ``>&2``, ``<&0``) and a
+  #   # ``/dev/null`` target (``2>/dev/null``, ``&>/dev/null``). Any other
+  #   # redirection still requires confirmation. A command chained with
+  #   # ``|``, ``&&``, ``||`` or ``;`` is
   #   # judged per sub-command: it auto-runs only if every sub-command is
   #   # allowed, and any denied sub-command blocks the whole chain. A
   #   # safety-ceiling ASK is still eligible for ``auto_review`` above, which
