@@ -21,9 +21,10 @@ from datus.models.mcp_utils import _safe_connect_server, multiple_mcp_servers
 class FakeServer:
     """Minimal stand-in for an agents-SDK MCP server."""
 
-    def __init__(self, *, hang: bool = False, fail_times: int = 0):
+    def __init__(self, *, hang: bool = False, fail_times: int = 0, hang_exit: bool = False):
         self.hang = hang
         self.fail_times = fail_times
+        self.hang_exit = hang_exit
         self.enter_calls = 0
         self.exit_calls = 0
 
@@ -37,6 +38,8 @@ class FakeServer:
 
     async def __aexit__(self, exc_type, exc, tb):
         self.exit_calls += 1
+        if self.hang_exit:
+            await asyncio.sleep(3600)
         return False
 
 
@@ -85,8 +88,37 @@ class TestSafeConnectServer:
             ):
                 pytest.fail("should never connect")
 
-        # The backoff is clamped to what is left of the budget, not slept whole.
-        assert time.monotonic() - started < 1.0
+        # The backoff is clamped to what is left of the budget, not slept whole:
+        # 50ms of deadline plus scheduler slack, nowhere near the 5s backoff.
+        assert time.monotonic() - started < 0.5
+
+    @pytest.mark.asyncio
+    async def test_hanging_teardown_does_not_outlive_the_deadline(self, monkeypatch):
+        # A transport that blocks on close would otherwise hang the connect
+        # phase just as thoroughly as one that blocks on the handshake.
+        monkeypatch.setattr(mcp_utils, "CLEANUP_TIMEOUT_SECONDS", 3600.0)
+        server = FakeServer(fail_times=99, hang_exit=True)
+        started = time.monotonic()
+
+        with pytest.raises(ConnectionError):
+            async with _safe_connect_server(
+                "stuck-close", server, max_retries=2, connect_timeout=1.0, deadline=started + 0.05
+            ):
+                pytest.fail("should never connect")
+
+        assert server.exit_calls >= 1
+        assert time.monotonic() - started < 0.5
+
+    @pytest.mark.asyncio
+    async def test_used_session_teardown_is_not_bounded(self):
+        # The cap covers salvage of a failed handshake, never the close of a
+        # session the caller actually worked with.
+        server = FakeServer()
+
+        async with _safe_connect_server("ok", server, max_retries=1, connect_timeout=0.05) as connected:
+            assert connected is server
+
+        assert server.exit_calls == 1
 
     @pytest.mark.asyncio
     async def test_retry_then_success(self):

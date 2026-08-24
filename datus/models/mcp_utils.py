@@ -24,6 +24,9 @@ logger = get_logger(__name__)
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 15.0
 DEFAULT_CONNECT_BUDGET_SECONDS = 30.0
 RETRY_BACKOFF_SECONDS = 1.0
+# Tearing down a half-open transport can block on the same read that never
+# answered, so the salvage attempt gets a bound of its own.
+CLEANUP_TIMEOUT_SECONDS = 5.0
 
 _CANCEL_SCOPE_ERROR = "Attempted to exit cancel scope in a different task than it was entered in"
 
@@ -55,13 +58,31 @@ def connect_budget_seconds() -> float:
     return _env_float("DATUS_MCP_CONNECT_BUDGET", DEFAULT_CONNECT_BUDGET_SECONDS)
 
 
-async def _close_quietly(server_name: str, server: "MCPServer") -> None:
+def _cleanup_timeout(deadline: Optional[float]) -> float:
+    """How long a failed attempt may spend closing the transport."""
+    if deadline is None:
+        return CLEANUP_TIMEOUT_SECONDS
+    return max(0.0, min(CLEANUP_TIMEOUT_SECONDS, deadline - time.monotonic()))
+
+
+async def _close_quietly(server_name: str, server: "MCPServer", timeout: Optional[float] = None) -> None:
     """Best-effort teardown; MCP transports raise noisy anyio errors when closed
-    from a task other than the one that opened them."""
+    from a task other than the one that opened them.
+
+    ``timeout`` bounds the teardown itself. It is passed when salvaging a failed
+    handshake — where the transport is already misbehaving — and left off for a
+    session the caller actually used, whose close must not be truncated.
+    """
     try:
-        await server.__aexit__(None, None, None)
+        if timeout is None:
+            await server.__aexit__(None, None, None)
+        else:
+            async with asyncio.timeout(timeout):
+                await server.__aexit__(None, None, None)
     except asyncio.CancelledError:
         raise
+    except TimeoutError:
+        logger.debug(f"Timed out closing MCP server {server_name} after {timeout:.1f}s; abandoning it")
     except RuntimeError as e:
         if _CANCEL_SCOPE_ERROR in str(e):
             logger.debug(f"Suppressed cancel scope error while closing MCP server {server_name}")
@@ -123,11 +144,11 @@ async def _safe_connect_server(
             logger.error(
                 f"Timeout connecting to MCP server {server_name} after {attempt_timeout:.1f}s (attempt {attempt + 1})"
             )
-            await _close_quietly(server_name, server)
+            await _close_quietly(server_name, server, timeout=_cleanup_timeout(deadline))
         except Exception as e:
             last_error = e
             logger.error(f"Failed to connect MCP server {server_name} (attempt {attempt + 1}): {str(e)}")
-            await _close_quietly(server_name, server)
+            await _close_quietly(server_name, server, timeout=_cleanup_timeout(deadline))
         else:
             logger.info(f"MCP server {server_name} connected successfully")
             try:
