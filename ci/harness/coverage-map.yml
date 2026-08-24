@@ -921,6 +921,9 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/plugin/introduction.md
+          - docs/plugin/airflow.md
+          - docs/plugin/mwaa.md
+          - docs/plugin/s3.md
         entrypoints:
           - "CLI: datus <plugin> subcommand dispatch"
           - Plugin profile resolution and project pins
