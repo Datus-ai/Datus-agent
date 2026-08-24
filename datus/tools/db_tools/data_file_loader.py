@@ -704,7 +704,64 @@ def summarize_view(connection: Any, table: str) -> List[Dict[str, Any]]:
     for row in cursor.fetchall():
         record = dict(zip(names, row))
         profile.append({key: _jsonable(value) for key, value in record.items() if key in keep})
+    _annotate_text_dates(connection, table, profile)
     return profile
+
+
+def _annotate_text_dates(connection: Any, table: str, profile: List[Dict[str, Any]]) -> None:
+    """Mark VARCHAR columns that hold nothing but dates, with the cast to use.
+
+    A spreadsheet column of dates typed as text stays VARCHAR: ``read_xlsx``
+    converts a real date *cell* by its number format, but text is text. Every
+    date function then fails to bind — ``strftime(order_date, '%Y-%m')`` reports
+    a candidate-function error naming types, not the fix — and the model burns a
+    round trip per attempt working out that a cast was needed.
+
+    The cast is *verified*, not guessed from the column name or from SUMMARIZE's
+    min/max: those are the lexical extremes, so a mixed column can show ISO ends
+    and non-date values in between, and a hint that NULLs rows is worse than no
+    hint. Only a column where every value parses gets annotated.
+
+    Deliberately a hint and not a cast baked into the view: DuckDB re-expands a
+    view's ``SELECT *`` per query, which is what makes a column added to the file
+    later show up without reloading. Freezing an explicit projection to carry
+    casts would trade that away, and it would buy little — TRY_CAST accepts only
+    ISO-ish text (``8/31/2017`` and ``20170701`` both fail), which is exactly the
+    text that already sorts and compares correctly as-is.
+    """
+    candidates = [
+        column["column_name"] for column in profile if str(column.get("column_type", "")).upper() == "VARCHAR"
+    ]
+    if not candidates:
+        return
+
+    selects = []
+    for index, name in enumerate(candidates):
+        quoted = quote_identifier(name)
+        selects.append(f"count({quoted}) AS n{index}")
+        selects.append(
+            f"count(*) FILTER (WHERE {quoted} IS NOT NULL AND TRY_CAST({quoted} AS TIMESTAMP) IS NULL) AS bad{index}"
+        )
+        selects.append(
+            f"count(*) FILTER (WHERE TRY_CAST({quoted} AS TIMESTAMP)::TIME <> TIME '00:00:00') AS clock{index}"
+        )
+    try:
+        row = connection.execute(f"SELECT {', '.join(selects)} FROM {quote_identifier(table)}").fetchone()
+    except Exception as exc:
+        # A profile without hints is still a usable profile, so this stays
+        # advisory: never fail a load over it.
+        logger.debug("Could not probe %s for text date columns: %s", table, exc)
+        return
+    if row is None:
+        return
+
+    by_name = {column["column_name"]: column for column in profile}
+    for index, name in enumerate(candidates):
+        non_null, unparsed, with_clock = row[index * 3], row[index * 3 + 1], row[index * 3 + 2]
+        if not non_null or unparsed:
+            continue
+        target = "TIMESTAMP" if with_clock else "DATE"
+        by_name[name]["cast_hint"] = f"text {target.lower()}s: CAST({name} AS {target}) to use date functions"
 
 
 def preview_view(connection: Any, table: str, limit: int = PREVIEW_ROW_LIMIT) -> Tuple[List[str], List[List[Any]]]:
@@ -759,16 +816,21 @@ def ownership_tag(rel_path: str, sheet: Optional[str]) -> str:
 
 
 def registered_objects(connection: Any) -> Dict[str, Optional[str]]:
-    """Every name in the catalog mapped to its ownership comment (``None`` if unset)."""
-    try:
-        rows = connection.execute(
-            "SELECT view_name, comment FROM duckdb_views() WHERE database_name != 'system' "
-            "UNION ALL "
-            "SELECT table_name, comment FROM duckdb_tables() WHERE database_name != 'system'"
-        ).fetchall()
-    except Exception as exc:  # pragma: no cover - fresh/empty catalog
-        logger.debug("Could not enumerate uploads catalog: %s", exc)
-        return {}
+    """Every name in the catalog mapped to its ownership comment (``None`` if unset).
+
+    Failures propagate. An empty catalog is a legitimate answer that this
+    returns as ``{}`` — a fresh database answers both queries with zero rows,
+    no error — so swallowing an exception into the same ``{}`` erases the only
+    difference that matters to the caller. The SQL guard reads "no names" as
+    "no table reference can be authorised" and refuses the query, which turns
+    an unreadable catalog into a confident, wrong, and very actionable-looking
+    "that table is not registered" about a table that is registered.
+    """
+    rows = connection.execute(
+        "SELECT view_name, comment FROM duckdb_views() WHERE database_name != 'system' "
+        "UNION ALL "
+        "SELECT table_name, comment FROM duckdb_tables() WHERE database_name != 'system'"
+    ).fetchall()
     return {row[0]: row[1] for row in rows}
 
 

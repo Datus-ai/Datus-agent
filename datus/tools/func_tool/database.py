@@ -1674,7 +1674,7 @@ class DBFuncTool:
             )
 
         try:
-            registered = list(registered_objects(self._uploads_connection()))
+            registered = list(self._registered_uploads())
         except Exception as exc:
             # No catalog reading means no way to authorise a reference, and this
             # gate is the boundary — so refuse rather than skip it.
@@ -1692,14 +1692,24 @@ class DBFuncTool:
             )
         return None
 
-    def _uploads_connection(self):
-        """Raw connection to the uploads catalog, for authorising a query."""
+    def _registered_uploads(self) -> Dict[str, Optional[str]]:
+        """Names the uploads catalog holds, read while holding the connector lock.
+
+        The read has to happen *inside* ``exclusive_connection``. Handing the
+        connection out and querying it afterwards races every other caller on
+        the same connector, and an LLM emitting parallel tool calls makes that
+        the normal case, not a corner: ``DuckDBPyConnection`` is not thread-safe,
+        so concurrent ``execute`` either returns another statement's rows or
+        segfaults the process. Returning the wrong rows is the worse outcome —
+        a short read looks like an empty catalog, which this gate then reports
+        as "table is not registered" about a table that is registered.
+        """
         connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
         exclusive = getattr(connector, "exclusive_connection", None)
         if exclusive is None:
             raise RuntimeError(f"Datasource '{LOCAL_FILES_DATASOURCE}' is not a DuckDB datasource")
         with exclusive() as connection:
-            return connection
+            return registered_objects(connection)
 
     def _resolve_data_file(self, path: str):
         """Classify a user-supplied data-file path against the filesystem policy.
@@ -1852,6 +1862,16 @@ class DBFuncTool:
                         f"so uploaded files cannot be registered in this deployment."
                     ),
                 )
+
+            # The tool schema types this as an integer, so a model with nothing to
+            # say sends 0 rather than omitting the key — the same way it sends ""
+            # for sheet and encoding, and observed in real traffic. Rows are
+            # 1-based, so 0 can only mean "unspecified"; taken literally it fails
+            # every sheet with "header_row must be 1 or greater" and the file
+            # reads as unloadable. A negative value is a real mistake and still
+            # reports as one.
+            if header_row == 0:
+                header_row = None
 
             with exclusive() as connection:
                 if inspect_only:
