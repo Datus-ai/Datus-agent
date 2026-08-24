@@ -925,17 +925,22 @@ class TestGetTablesColumns:
             -5,
             float("inf"),  # YAML `.inf` — what an operator writes for "no limit"
             "inf",
-            0.5,  # would truncate to a limit of 0 and reject every batch
+            0.5,  # truncates to 0, so falls back for being non-positive
+            True,  # YAML `true`/`yes`/`on`; bool is an int subclass, so -> 1
         ],
-        ids=["text", "null", "zero", "negative", "inf", "inf-text", "fraction"],
+        ids=["text", "null", "zero", "negative", "inf", "inf-text", "fraction", "yaml-true"],
     )
     def test_a_bad_limit_falls_back_instead_of_breaking(self, real_agent_config, limit):
-        """A typo in agent.yml must not take the endpoint down."""
+        """A typo in agent.yml must not take the endpoint down.
+
+        Two tables on purpose: several of these values coerce to a bound of 1,
+        which a single-table batch could not tell apart from the real default.
+        """
         svc = DatasourceService(agent_config=real_agent_config)
         svc.agent_config.api_config = {"max_prefetch_tables": limit}
-        result = svc.get_tables_columns(["schools"])
+        result = svc.get_tables_columns(["schools", "frpm"])
         assert result.success is True
-        assert [t.table for t in result.data.tables] == ["schools"]
+        assert [t.table for t in result.data.tables] == ["schools", "frpm"]
 
     @pytest.mark.parametrize(
         "budget",
@@ -981,11 +986,16 @@ class TestGetTablesColumnsBounds:
 
     def test_stops_once_the_budget_is_spent(self, real_agent_config):
         svc = DatasourceService(agent_config=real_agent_config)
-        svc.agent_config.api_config = {"prefetch_budget_seconds": 1e-9}
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
         spy = MagicMock(wraps=svc.current_db_connector.get_schema)
         svc.current_db_connector.get_schema = spy
 
-        result = svc.get_tables_columns(["schools", "frpm"])
+        # A fake clock rather than a tiny budget: a real one relies on two
+        # consecutive monotonic() readings differing, which they do not on a
+        # platform whose clock resolution is coarse (~15.6ms on Windows).
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
 
         # An exhausted budget omits tables rather than failing the batch.
         assert result.success is True
@@ -995,9 +1005,12 @@ class TestGetTablesColumnsBounds:
     def test_omitted_tables_stay_fetchable(self, real_agent_config):
         """What a bound leaves out, the client can still ask for one at a time."""
         svc = DatasourceService(agent_config=real_agent_config)
-        svc.agent_config.api_config = {"prefetch_budget_seconds": 1e-9}
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
 
-        assert svc.get_tables_columns(["schools"]).data.tables == []
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            assert svc.get_tables_columns(["schools"]).data.tables == []
+
         detail = svc.get_table_schema("schools")
 
         assert detail.success is True
