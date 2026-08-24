@@ -46,7 +46,12 @@ dependencies = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
-    "litellm>=1.67.4.post1,<2",
+    # Upper bound tracks the ``httpx[socks]==0.27.2`` pin above: litellm 1.83.1+ requires
+    # ``httpx==0.28.1`` / ``httpx>=0.28``, so nothing above 1.83.0 can ever be selected.
+    # Without the bound, pip backtracks from the newest release through ~90 versions and
+    # source-builds the 1.92-1.95 sdists, which ship no macOS or Windows wheels — minutes
+    # stuck on "Preparing metadata". Lift this bound only together with the httpx pin.
+    "litellm>=1.67.4.post1,<1.83.1",
     "pydantic>=2.11.7,<3.0",
     "lancedb==0.34.0",
     # This library is required by lancedb
