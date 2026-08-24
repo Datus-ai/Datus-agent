@@ -148,7 +148,7 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
             # can still ``LOAD`` them.
             extension_dir = os.environ.get("DATUS_DUCKDB_EXTENSION_DIRECTORY", "").strip()
             if extension_dir:
-                self.connection.execute(f"SET extension_directory='{extension_dir}'")
+                self.connection.execute(f"SET extension_directory={self._sql_literal(extension_dir)}")
 
             if self.memory_limit:
                 self.connection.execute(f"SET memory_limit='{self.memory_limit}'")
@@ -182,8 +182,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
           same database file with a different configuration"), so callers must
           share this connector's single connection.
         """
-        self.connect()
+        # Lock first, then connect inside it. ``connect()`` takes the same
+        # RLock re-entrantly, and holding it across both steps is what stops a
+        # concurrent ``close()`` from landing between them and handing the caller
+        # a ``None`` connection.
         with self._lock:
+            self.connect()
             yield self.connection
 
     @staticmethod

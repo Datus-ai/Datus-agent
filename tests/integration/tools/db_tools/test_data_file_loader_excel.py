@@ -44,9 +44,16 @@ def connection(tmp_path):
 def excel_connection(connection):
     """A connection with the ``excel`` extension loaded.
 
-    ``LOAD`` first so a pre-baked extension directory (the production posture)
-    is used as-is without reaching the network; ``INSTALL`` only as the fallback
-    for a developer machine that has never fetched it.
+    ``LOAD`` first, and in CI that is the only step: the workflow installs the
+    extension once up front and points
+    ``DATUS_DUCKDB_EXTENSION_DIRECTORY`` at it, so these tests reach no network
+    — which is the same posture as the runtime image, where the extension is
+    baked for pods with no egress.
+
+    ``INSTALL`` remains as the fallback for a developer machine that has never
+    fetched it. It is not wrapped in a skip: an environment where the extension
+    can be neither loaded nor fetched should fail loudly, because that is
+    precisely the breakage this feature is most likely to hit in production.
     """
     try:
         connection.execute("LOAD excel")
@@ -455,3 +462,103 @@ class TestExtentComesFromValuesNotFormatting:
 
         regions = excel_connection.execute('SELECT region FROM "gap_s" WHERE region IS NOT NULL ORDER BY 1').fetchall()
         assert regions == [("east",), ("north",), ("west",)]
+
+
+class TestFormulaCellsCountTowardsExtent:
+    """The mirror of the padding bug, and just as silent.
+
+    ``data_only=True`` yields the *cached* value of a formula cell, and a
+    workbook written by a library rather than by Excel has no cached values at
+    all. Reading bounds that way makes a trailing formula row look empty, so the
+    range stops short and the rows are dropped with nothing to indicate it.
+    """
+
+    def _sheet_with_uncached_formula(self, path):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "S"
+        sheet.append(["region", "qty"])
+        sheet.append(["east", 3])
+        sheet.append(["west", 5])
+        # openpyxl writes the formula but no cached result, exactly like any
+        # spreadsheet produced without Excel ever opening it.
+        sheet["A4"] = "=A2"
+        sheet["B4"] = "=SUM(B2:B3)"
+        workbook.save(path)
+        return path
+
+    def test_trailing_formula_row_is_inside_the_range(self, tmp_path, excel_connection):
+        source = self._sheet_with_uncached_formula(tmp_path / "f.xlsx")
+        loaded, _ = load_file(source, "f.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+        assert loaded[0].used_range == "A1:B4"
+
+    def test_the_formula_row_is_not_dropped(self, tmp_path, excel_connection):
+        source = self._sheet_with_uncached_formula(tmp_path / "f.xlsx")
+        loaded, _ = load_file(source, "f.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+        assert loaded[0].row_count == 3
+
+    def test_a_formula_only_column_still_counts(self, tmp_path, excel_connection):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "S"
+        sheet.append(["a", "b", "total"])
+        sheet.append([1, 2, None])
+        sheet["C2"] = "=A2+B2"
+        source = tmp_path / "g.xlsx"
+        workbook.save(source)
+
+        loaded, _ = load_file(source, "g.xlsx", connection=excel_connection, conversion_cache_dir=tmp_path)
+
+        assert loaded[0].preview_columns == ["a", "b", "total"]
+
+
+class TestLegacyXlsSheets:
+    """A ``.xls`` has sheets like any other workbook.
+
+    Treating the file as one unit made ``sheet`` a silent no-op, because
+    ``pandas.read_excel`` defaults to the first worksheet — a caller asking for
+    the second one received the first one's data, which is worse than an error.
+    """
+
+    def _multi_sheet_xls(self, path):
+        book = xlwt.Workbook()
+        first = book.add_sheet("First")
+        first.write(0, 0, "a")
+        first.write(1, 0, 1)
+        second = book.add_sheet("Second")
+        second.write(0, 0, "b")
+        second.write(1, 0, 99)
+        book.save(str(path))
+        return path
+
+    def test_every_sheet_becomes_its_own_table(self, tmp_path, connection):
+        source = self._multi_sheet_xls(tmp_path / "multi.xls")
+
+        loaded, _ = load_file(source, "multi.xls", connection=connection, conversion_cache_dir=tmp_path)
+
+        assert sorted(item.sheet for item in loaded) == ["First", "Second"]
+
+    def test_requesting_a_sheet_returns_that_sheet(self, tmp_path, connection):
+        source = self._multi_sheet_xls(tmp_path / "multi.xls")
+
+        loaded, _ = load_file(source, "multi.xls", connection=connection, conversion_cache_dir=tmp_path, sheet="Second")
+
+        assert [item.sheet for item in loaded] == ["Second"]
+        assert loaded[0].preview_columns == ["b"]
+        assert connection.execute(f'SELECT * FROM "{loaded[0].table}"').fetchall() == [(99,)]
+
+    def test_unknown_sheet_names_the_available_ones(self, tmp_path, connection):
+        source = self._multi_sheet_xls(tmp_path / "multi.xls")
+        with pytest.raises(DataFileError) as excinfo:
+            load_file(source, "multi.xls", connection=connection, conversion_cache_dir=tmp_path, sheet="Nope")
+        assert "First" in str(excinfo.value)
+
+    def test_each_sheet_caches_its_own_conversion(self, tmp_path, connection):
+        """One cache entry per sheet — keying on the file alone would have the
+        second sheet overwrite the first."""
+        source = self._multi_sheet_xls(tmp_path / "multi.xls")
+        cache = tmp_path / "conv"
+
+        load_file(source, "multi.xls", connection=connection, conversion_cache_dir=cache)
+
+        assert len(list(cache.glob("*.parquet"))) == 2

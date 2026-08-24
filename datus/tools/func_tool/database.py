@@ -1757,6 +1757,14 @@ class DBFuncTool:
                     ),
                 )
 
+            # Registering a file creates objects in the catalog, so it belongs
+            # with the other write entry points under the read-only contract.
+            # ``inspect_only`` creates nothing and stays available.
+            if not inspect_only:
+                refusal = self._refuse_write_if_read_only("load_file_as_table")
+                if refusal is not None:
+                    return refusal
+
             resolved = self._resolve_data_file(path)
             target = resolved.resolved
             if not target.exists():

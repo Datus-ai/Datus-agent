@@ -2605,6 +2605,11 @@ class TestUploadsCatalogSqlGuard:
             "SELECT read_text('/etc/hosts')",
             "SELECT * FROM glob('/**')",
             "SELECT * FROM (SELECT * FROM read_csv_auto('/etc/passwd')) t",
+            # SQL is case-insensitive and tolerates space before the paren, so a
+            # gate that is not would be trivially sidestepped.
+            "SELECT * FROM READ_CSV_AUTO('/etc/passwd')",
+            "SELECT * FROM Read_Csv_Auto('/etc/passwd')",
+            "SELECT * FROM read_csv_auto ('/etc/passwd')",
         ],
     )
     def test_rejects_file_reading_sql_on_the_uploads_datasource(self, sql):
@@ -2618,9 +2623,23 @@ class TestUploadsCatalogSqlGuard:
         connector.execute_query.assert_not_called()
 
     def test_allows_ordinary_reads_of_registered_tables(self):
-        tool, _ = self._make_tool()
+        """Asserting only "no rejection message" would also pass if the query
+        never ran, so check it reached the connector."""
+        tool, connector = self._make_tool()
+
         result = tool.execute_sql("SELECT region, sum(amount) FROM jeffshop_q3 GROUP BY 1", datasource="local_files")
+
         assert "not a table registered" not in (result.error or "")
+        connector.execute_query.assert_called()
+
+    def test_a_column_named_like_a_reader_is_not_mistaken_for_one(self):
+        """The function gate matches ``name(``; a bare identifier must not trip it."""
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql("SELECT read_csv_auto FROM jeffshop_q3", datasource="local_files")
+
+        assert "cannot be called directly" not in (result.error or "")
+        connector.execute_query.assert_called()
 
     @pytest.mark.parametrize(
         "sql",
@@ -2690,9 +2709,12 @@ class TestUploadsCatalogSqlGuard:
     def test_writes_still_allowed_on_other_datasources(self):
         """The tightening is scoped to the uploads catalog; a project's own
         datasource keeps whatever posture it had."""
-        tool, _ = self._make_tool(datasources=("warehouse", "local_files"), default="warehouse")
+        tool, connector = self._make_tool(datasources=("warehouse", "local_files"), default="warehouse")
+
         result = tool.execute_sql("CREATE TABLE t AS SELECT 1", datasource="warehouse")
+
         assert "Only read queries are allowed" not in (result.error or "")
+        connector.execute_ddl.assert_called()
 
     def test_guard_applies_when_the_uploads_catalog_is_the_default(self):
         """Reached via the default route, not just an explicit datasource argument."""

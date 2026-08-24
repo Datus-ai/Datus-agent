@@ -13,6 +13,8 @@ which is a real external dependency, so those live in
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import duckdb
 import pandas as pd
 import pytest
@@ -496,3 +498,21 @@ class TestUnresolvedTableReferences:
 
     def test_matching_is_case_insensitive(self):
         assert unresolved_table_references("SELECT * FROM SALES", self.KNOWN) == []
+
+
+class TestConversionCacheLocation:
+    def test_falls_back_to_a_temp_dir_when_the_catalog_has_no_directory(self):
+        """An in-memory or unnamed catalog has nothing to sit beside, and the
+        process working directory is not ours to write into."""
+        import tempfile
+
+        from datus.tools.db_tools.data_file_loader import default_conversion_cache_dir
+
+        resolved = default_conversion_cache_dir("")
+        assert resolved.is_absolute()
+        assert str(resolved).startswith(tempfile.gettempdir())
+
+    def test_sits_beside_a_file_backed_catalog(self):
+        from datus.tools.db_tools.data_file_loader import default_conversion_cache_dir
+
+        assert default_conversion_cache_dir("/var/x/local_files.duckdb") == Path("/var/x/_conversions")

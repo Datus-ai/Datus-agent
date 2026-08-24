@@ -46,6 +46,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import tempfile
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -350,7 +351,12 @@ def sheet_bounds(path: Path, sheet: str) -> Tuple[int, int]:
     """
     from openpyxl import load_workbook
 
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    # ``data_only=False`` so a formula cell counts even when the workbook carries
+    # no cached value for it — a file written by a library rather than by Excel
+    # has none. With ``data_only=True`` such a cell reads as ``None``, the row
+    # falls outside the bounds, and the data is silently dropped: the mirror
+    # image of the padding bug this function exists to prevent.
+    workbook = load_workbook(path, read_only=True, data_only=False)
     try:
         if sheet not in workbook.sheetnames:
             raise DataFileError(f"Sheet {sheet!r} not found in {path.name}. Available: {workbook.sheetnames}")
@@ -396,10 +402,10 @@ def _probe_grid(connection: Any, path: Path, sheet: str, max_row: int, max_colum
 def detect_header_row(grid: Sequence[Sequence[Any]]) -> Optional[int]:
     """1-based index of the most plausible header row in a probed grid.
 
-    Heuristic: the first row that has at least two non-empty cells and is
-    followed by a row of equal or greater width. A title row fails it (one cell)
-    and a blank spacer fails it (zero cells), which covers the shape that broke
-    the naive read — title, blank, header, data.
+    Heuristic: the first row with at least two non-empty cells whose following
+    row — when there is one — also has at least two. A title row fails it (one
+    cell) and a blank spacer fails it (zero cells), which covers the shape that
+    broke the naive read: title, blank, header, data.
     """
 
     def width(row: Sequence[Any]) -> int:
@@ -455,14 +461,37 @@ def _xlsx_scan(path: Path, sheet: str, header_row: int, max_row: int, max_column
     return scan, used_range
 
 
-def convert_legacy_xls(path: Path, cache_dir: Path) -> Path:
-    """Convert a legacy ``.xls`` to Parquet and return the Parquet path.
+def enumerate_xls_sheets(path: Path) -> List[str]:
+    """Sheet names of a legacy ``.xls`` workbook, in workbook order."""
+    try:
+        import xlrd
+    except ImportError as exc:  # pragma: no cover - dependency is declared
+        raise DataFileError(
+            "Reading legacy .xls requires the 'xlrd' package, which is not installed in this environment."
+        ) from exc
 
-    DuckDB cannot read BIFF at all, so this is the only way in. The conversion
-    is cached next to the pod-local catalog and re-run whenever the source is
-    newer, which is the one place in this module that needs an explicit
-    staleness check — every other format is read lazily and is therefore always
-    current.
+    try:
+        book = xlrd.open_workbook(str(path), on_demand=True)
+    except Exception as exc:
+        raise DataFileError(f"Failed to read legacy .xls file {path.name}: {exc}") from exc
+    try:
+        return list(book.sheet_names())
+    finally:
+        book.release_resources()
+
+
+def convert_legacy_xls(path: Path, cache_dir: Path, sheet: Optional[str] = None) -> Path:
+    """Convert one sheet of a legacy ``.xls`` to Parquet and return that path.
+
+    DuckDB cannot read BIFF at all, so this is the only way in. ``sheet`` is not
+    optional in spirit: ``pandas.read_excel`` defaults to the *first* worksheet,
+    so a caller asking for a specific sheet of a multi-sheet workbook would
+    silently receive a different one's data — wrong answers rather than an error.
+
+    The conversion is cached next to the pod-local catalog and re-run whenever
+    the source is newer, which is the one place in this module needing an
+    explicit staleness check: every other format is read lazily and is therefore
+    always current.
     """
     try:
         import pandas as pd
@@ -471,19 +500,20 @@ def convert_legacy_xls(path: Path, cache_dir: Path) -> Path:
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     stat = path.stat()
-    cached = cache_dir / f"{path.stem}_{_short_hash(str(path))}_{int(stat.st_mtime_ns)}_{stat.st_size}.parquet"
+    identity = _short_hash(str(path), sheet or "")
+    cached = cache_dir / f"{path.stem}_{identity}_{int(stat.st_mtime_ns)}_{stat.st_size}.parquet"
     if cached.exists():
         return cached
 
-    # Stale conversions of the same source (older mtime/size) are dead weight.
-    for old in cache_dir.glob(f"{path.stem}_{_short_hash(str(path))}_*.parquet"):
+    # Stale conversions of the same source+sheet (older mtime/size) are dead weight.
+    for stale in cache_dir.glob(f"{path.stem}_{identity}_*.parquet"):
         try:
-            old.unlink()
+            stale.unlink()
         except OSError:  # pragma: no cover - best effort
-            logger.debug("Could not remove stale xls conversion %s", old)
+            logger.debug("Could not remove stale xls conversion %s", stale)
 
     try:
-        frame = pd.read_excel(path, engine="xlrd")
+        frame = pd.read_excel(path, engine="xlrd", sheet_name=sheet if sheet is not None else 0)
     except ImportError as exc:
         raise DataFileError(
             "Reading legacy .xls requires the 'xlrd' package, which is not installed in this environment."
@@ -764,6 +794,9 @@ def load_file(
                     skipped.append(SkippedSheet(name, "sheet is empty"))
                     continue
                 resolved_header = header_row
+                if resolved_header is not None and resolved_header < 1:
+                    skipped.append(SkippedSheet(name, f"header_row must be 1 or greater, got {resolved_header}"))
+                    continue
                 if resolved_header is None:
                     grid = _probe_grid(connection, path, name, max_row, max_column)
                     resolved_header = detect_header_row(grid)
@@ -819,7 +852,15 @@ def load_file(
     elif suffix in _JSON_SUFFIXES:
         scan = _json_scan(path)
     elif suffix in _LEGACY_EXCEL_SUFFIXES:
-        scan = _parquet_scan(convert_legacy_xls(path, conversion_cache_dir))
+        return _load_legacy_xls(
+            path,
+            rel_path,
+            connection=connection,
+            conversion_cache_dir=conversion_cache_dir,
+            sheet=sheet,
+            materialize=materialize,
+            existing=existing,
+        )
     else:
         raise DataFileError(_unsupported_message(path))
 
@@ -845,10 +886,76 @@ def load_file(
     return loaded, skipped
 
 
+def _load_legacy_xls(
+    path: Path,
+    rel_path: str,
+    *,
+    connection: Any,
+    conversion_cache_dir: Path,
+    sheet: Optional[str],
+    materialize: bool,
+    existing: Dict[str, Optional[str]],
+) -> Tuple[List[LoadedTable], List[SkippedSheet]]:
+    """One table per sheet, matching the ``.xlsx`` path.
+
+    A legacy workbook has sheets like any other, so treating the file as a single
+    unit made ``sheet`` a no-op — a caller asking for the second sheet silently
+    got the first one's data. Each sheet converts to its own Parquet file.
+    """
+    sheets = enumerate_xls_sheets(path)
+    if sheet is not None:
+        if sheet not in sheets:
+            raise DataFileError(f"Sheet {sheet!r} not found in {path.name}. Available: {sheets}")
+        targets = [(sheets.index(sheet), sheet)]
+    else:
+        targets = list(enumerate(sheets))
+
+    loaded: List[LoadedTable] = []
+    skipped: List[SkippedSheet] = []
+    for index, name in targets:
+        try:
+            parquet = convert_legacy_xls(path, conversion_cache_dir, sheet=name)
+            tag = ownership_tag(rel_path, name)
+            table = build_table_name(
+                rel_path=rel_path,
+                sheet=name if len(sheets) > 1 else None,
+                sheet_index=index,
+                taken=_names_owned_by_others(existing, tag),
+            )
+            _create_view(connection, table, _parquet_scan(parquet), materialize, tag)
+            existing[table] = tag
+            loaded.append(
+                _finish_table(
+                    connection,
+                    table=table,
+                    source_file=rel_path,
+                    sheet=name,
+                    header_row=None,
+                    used_range=None,
+                    materialized=materialize,
+                )
+            )
+        except DataFileError as exc:
+            skipped.append(SkippedSheet(name, str(exc)))
+        except Exception as exc:
+            logger.info("Skipping sheet %s of %s: %s", name, rel_path, exc)
+            skipped.append(SkippedSheet(name, (str(exc).splitlines() or [repr(exc)])[0]))
+
+    if not loaded and skipped:
+        reasons = "; ".join(f"{item.sheet}: {item.reason}" for item in skipped)
+        raise DataFileError(f"No readable sheet in {path.name} ({reasons})")
+    return loaded, skipped
+
+
 def default_conversion_cache_dir(db_path: str) -> Path:
     """Where ``.xls`` → Parquet conversions live: next to the DuckDB catalog.
 
     Same lifetime and same locality as the catalog itself, so a pod losing one
     loses the other and both rebuild together.
     """
-    return Path(os.path.dirname(db_path) or ".") / "_conversions"
+    parent = os.path.dirname(db_path)
+    if not parent:
+        # An in-memory or unnamed catalog has no directory to sit beside, and the
+        # process working directory is not ours to write into.
+        return Path(tempfile.gettempdir()) / "datus_xls_conversions"
+    return Path(parent) / "_conversions"
