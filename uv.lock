@@ -713,6 +713,7 @@ dependencies = [
     { name = "openai" },
     { name = "openai-agents", extra = ["litellm"] },
     { name = "openinference-instrumentation-openai-agents" },
+    { name = "openpyxl" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
@@ -735,6 +736,7 @@ dependencies = [
     { name = "textual", extra = ["syntax"] },
     { name = "uvicorn" },
     { name = "wcmatch" },
+    { name = "xlrd" },
     { name = "xlsxwriter" },
 ]
 
@@ -767,6 +769,7 @@ dev = [
     { name = "setuptools" },
     { name = "tqdm" },
     { name = "twine" },
+    { name = "xlwt" },
 ]
 
 [package.metadata]
@@ -798,6 +801,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.8.0,<2.45.0" },
     { name = "openai-agents", extras = ["litellm"], specifier = "==0.7.0" },
     { name = "openinference-instrumentation-openai-agents", specifier = "==1.6.2" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
@@ -820,6 +824,7 @@ requires-dist = [
     { name = "textual", extras = ["syntax"], specifier = "==5.1.1" },
     { name = "uvicorn", specifier = ">=0.24.0" },
     { name = "wcmatch", specifier = ">=10.0" },
+    { name = "xlrd", specifier = ">=2.0.1" },
     { name = "xlsxwriter", specifier = ">=3.2.2" },
 ]
 
@@ -852,6 +857,7 @@ dev = [
     { name = "setuptools", specifier = ">=80.9.0" },
     { name = "tqdm", specifier = ">=4.27.0" },
     { name = "twine", specifier = ">=6.1.0" },
+    { name = "xlwt", specifier = ">=1.3.0" },
 ]
 
 [[package]]
@@ -962,10 +968,10 @@ name = "datus-semantic-dosi"
 version = "0.1.1"
 source = { url = "https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz", subdirectory = "datus-semantic-dosi" }
 dependencies = [
-    { name = "datus-semantic-core" },
-    { name = "dosi-engine" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
+    { name = "datus-semantic-core", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "dosi-engine", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "pydantic", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "pyyaml", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
 ]
 sdist = { hash = "sha256:15b44b45de856cdb0d35fb201308a55207bef37e298502b1a7515fcd37762f3d" }
 
@@ -1105,11 +1111,10 @@ wheels = [
 
 [[package]]
 name = "dosi-engine"
-version = "0.1.3"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/38/66/770310f428e2d1027beae23ada55693c27753a648005fc28c6320f470c31/dosi_engine-0.1.3.tar.gz", hash = "sha256:9ecca996a22dd7201aaa7a17c7cc14fe74f71c1c889d56600203c9968b7d0994", size = 342792, upload-time = "2026-08-13T03:38:07.2Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/62/d75f43e6bedfe635e4bed4ec192eb80b3c53c76a25bd5259f766ba411fdf/dosi_engine-0.1.3-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:fade14f986af8779905baa16848547fd3aecc96da8794fed7185f277a823b9d0", size = 31317023, upload-time = "2026-08-13T03:38:05.336Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/67/0f801d7a0f4bfc7608e856d203444650e84edfbd9ec7e4ffc6505ccd30a6/dosi_engine-0.1.6-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a70baca8287bf97aa20d1c1e4a1af1bd9757de883be57dfd510539dd61a8f1d2", size = 34517496, upload-time = "2026-08-18T11:08:48.49Z" },
 ]
 
 [[package]]
@@ -1153,6 +1158,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/89/d5/c0d8d0a4ca3ffea92266f33d92a375e2794820ad89f9be97cf0c9a9697d0/duckdb_engine-0.17.0.tar.gz", hash = "sha256:396b23869754e536aa80881a92622b8b488015cf711c5a40032d05d2cf08f3cf", size = 48054, upload-time = "2025-03-29T09:49:17.663Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/a2/e90242f53f7ae41554419b1695b4820b364df87c8350aa420b60b20cab92/duckdb_engine-0.17.0-py3-none-any.whl", hash = "sha256:3aa72085e536b43faab635f487baf77ddc5750069c16a2f8d9c6c3cb6083e979", size = 49676, upload-time = "2025-03-29T09:49:15.564Z" },
+]
+
+[[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
 ]
 
 [[package]]
@@ -2658,6 +2672,18 @@ wheels = [
 ]
 
 [[package]]
+name = "openpyxl"
+version = "3.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.42.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4032,8 +4058,8 @@ name = "secretstorage"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "jeepney", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/31/9f/11ef35cf1027c1339552ea7bfe6aaa74a8516d8b5caf6e7d338daf54fd80/secretstorage-3.4.0.tar.gz", hash = "sha256:c46e216d6815aff8a8a18706a2fbfd8d53fcbb0dce99301881687a1b0289ef7c", size = 19748, upload-time = "2025-09-09T16:42:13.859Z" }
 wheels = [
@@ -4922,12 +4948,30 @@ wheels = [
 ]
 
 [[package]]
+name = "xlrd"
+version = "2.0.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/5a/377161c2d3538d1990d7af382c79f3b2372e880b65de21b01b1a2b78691e/xlrd-2.0.2.tar.gz", hash = "sha256:08b5e25de58f21ce71dc7db3b3b8106c1fa776f3024c54e45b45b374e89234c9", size = 100167, upload-time = "2025-06-14T08:46:39.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/62/c8d562e7766786ba6587d09c5a8ba9f718ed3fa8af7f4553e8f91c36f302/xlrd-2.0.2-py2.py3-none-any.whl", hash = "sha256:ea762c3d29f4cca48d82df517b6d89fbce4db3107f9d78713e48cd321d5c9aa9", size = 96555, upload-time = "2025-06-14T08:46:37.766Z" },
+]
+
+[[package]]
 name = "xlsxwriter"
 version = "3.2.9"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/46/2c/c06ef49dc36e7954e55b802a8b231770d286a9758b3d936bd1e04ce5ba88/xlsxwriter-3.2.9.tar.gz", hash = "sha256:254b1c37a368c444eac6e2f867405cc9e461b0ed97a3233b2ac1e574efb4140c", size = 215940, upload-time = "2025-09-16T00:16:21.63Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/0c/3662f4a66880196a590b202f0db82d919dd2f89e99a27fadef91c4a33d41/xlsxwriter-3.2.9-py3-none-any.whl", hash = "sha256:9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3", size = 175315, upload-time = "2025-09-16T00:16:20.108Z" },
+]
+
+[[package]]
+name = "xlwt"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/06/97/56a6f56ce44578a69343449aa5a0d98eefe04085d69da539f3034e2cd5c1/xlwt-1.3.0.tar.gz", hash = "sha256:c59912717a9b28f1a3c2a98fd60741014b06b043936dcecbc113eaaada156c88", size = 153929, upload-time = "2017-08-22T06:47:16.498Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/48/def306413b25c3d01753603b1a222a011b8621aed27cd7f89cbc27e6b0f4/xlwt-1.3.0-py2.py3-none-any.whl", hash = "sha256:a082260524678ba48a297d922cc385f58278b8aa68741596a87de01a9c628b2e", size = 99981, upload-time = "2017-08-22T06:47:15.281Z" },
 ]
 
 [[package]]

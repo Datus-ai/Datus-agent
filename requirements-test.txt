@@ -390,14 +390,17 @@ datus-semantic-core==0.2.3 \
     --hash=sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d \
     --hash=sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42
     # via
+    #   datus-semantic-dosi
     #   datus-semantic-metricflow
     #   datus-semantic-osi
+datus-semantic-dosi @ https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz#subdirectory=datus-semantic-dosi ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:15b44b45de856cdb0d35fb201308a55207bef37e298502b1a7515fcd37762f3d
 datus-semantic-metricflow==0.2.12 \
     --hash=sha256:02c9977e5260e175c2a42bfbaf1aa99b8115906c639f87748fc03de512a43395 \
     --hash=sha256:8253df9353e95c1dd7d60bbdbb5bc3a5b3295ee75d39a80f5003f820f03c8cc4
-datus-semantic-osi==0.1.4 \
-    --hash=sha256:35ee658090cbfd65fc2c82d1ba94665d8bf82bf13cd8b48d9ba7bf50ad397e6c \
-    --hash=sha256:568724d70afb599ba3cd638ab3f038b6ff6b321ae76dd01c8026ca35c0911460
+datus-semantic-osi==0.1.7 \
+    --hash=sha256:589cf79a66d958395f37497498d283a7759b4d7e526aaff7a5f35212539373c4 \
+    --hash=sha256:679a666aa91413f313eef636b2ee3020634365c75afbbf7cc8ab60db7fb65f89
 datus-storage-base==0.1.5 \
     --hash=sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c \
     --hash=sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3
@@ -416,6 +419,9 @@ docutils==0.22.2 \
     --hash=sha256:9fdb771707c8784c8f2728b67cb2c691305933d68137ef95a75db5f4dfbc213d \
     --hash=sha256:b0e98d679283fc3bb0ead8a5da7f501baa632654e7056e9c5846842213d674d8
     # via readme-renderer
+dosi-engine==0.1.6 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:a70baca8287bf97aa20d1c1e4a1af1bd9757de883be57dfd510539dd61a8f1d2
+    # via datus-semantic-dosi
 duckdb==1.5.2 \
     --hash=sha256:0b291786014df1133f8f18b9df4d004484613146e858d71a21791e0fcca16cf4 \
     --hash=sha256:2a1de4f4d454b8c97aec546c82003fc834d3422ce4bc6a19902f3462ef293bed \
@@ -494,14 +500,11 @@ greenlet==3.2.4 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or 
     --hash=sha256:44358b9bf66c8576a9f57a590d5f5d6e72fa4228b763d0e43fee6d3b06d3a337 \
     --hash=sha256:49a30d5fda2507ae77be16479bdb62a660fa51b1eb4928b524975b3bde77b3c0 \
     --hash=sha256:554b03b6e73aaabec3745364d6239e9e012d64c68ccd0b8430c64ccc14939a8b \
-    --hash=sha256:5c9320971821a7cb77cfab8d956fa8e39cd07ca44b6070db358ceb7f8797c8c9 \
     --hash=sha256:6e343822feb58ac4d0a1211bd9399de2b3a04963ddeec21530fc426cc121f19b \
     --hash=sha256:710638eb93b1fa52823aa91bf75326f9ecdfd5e0466f00789246a5280f4ba0fc \
     --hash=sha256:a7d4e128405eea3814a12cc2605e0e6aedb4035bf32697f72deca74de4105e02 \
     --hash=sha256:abbf57b5a870d30c4675928c37278493044d7c14378350b3aa5d484fa65575f0 \
-    --hash=sha256:b4a1870c51720687af7fa3e7cda6d08d801dae660f75a76f3845b642b4da6ee1 \
     --hash=sha256:c17b6b34111ea72fc5a4e4beec9711d2226285f0386ea83477cbb97c30a3f3a5 \
-    --hash=sha256:c5111ccdc9c88f423426df3fd1811bfc40ed66264d35aa373420a34377efc98a \
     --hash=sha256:c60a6d84229b271d44b70fb6e5fa23781abb5d742af7b808ae3f6efd7c9c60f6 \
     --hash=sha256:ca7f6f1f2649b89ce02f6f229d7c19f680a6238af656f61e0115b24857917929 \
     --hash=sha256:cd3c8e693bff0fff6ba55f140bf390fa92c994083f838fece0f63be121334945 \
@@ -1036,6 +1039,7 @@ pydantic==2.12.3 \
     # via
     #   datus-metricflow
     #   datus-semantic-core
+    #   datus-semantic-dosi
     #   datus-semantic-metricflow
     #   datus-semantic-osi
     #   fastapi
@@ -1209,6 +1213,7 @@ pyyaml==6.0.1 \
     # via
     #   datus-metricflow
     #   datus-semantic-core
+    #   datus-semantic-dosi
     #   datus-semantic-osi
     #   langsmith-fetch
     #   pre-commit
@@ -1690,6 +1695,9 @@ wrapt==1.17.3 \
     --hash=sha256:f66eb08feaa410fe4eebd17f2a2c8e2e46d3476e9f8c783daa8e09e0faa666d0 \
     --hash=sha256:fbd3c8319de8e1dc79d346929cd71d523622da527cca14e0c1d257e31c2b8b10
     # via langfuse
+xlwt==1.3.0 \
+    --hash=sha256:a082260524678ba48a297d922cc385f58278b8aa68741596a87de01a9c628b2e \
+    --hash=sha256:c59912717a9b28f1a3c2a98fd60741014b06b043936dcecbc113eaaada156c88
 xxhash==3.6.0 \
     --hash=sha256:01262da8798422d0685f7cef03b2bd3f4f46511b02830861df548d7def4402ad \
     --hash=sha256:01362c4331775398e7bb34e3ab403bc9ee9f7c497bc7dee6272114055277dd3c \

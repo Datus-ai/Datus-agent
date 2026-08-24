@@ -41,6 +41,12 @@ dependencies = [
     "tantivy>=0.22.2",
     "aiohttp>=3.11.16",
     "xlsxwriter>=3.2.2",
+    # Spreadsheet ingestion (``load_file_as_table``). DuckDB's excel extension
+    # reads sheet *contents* but cannot enumerate sheet names or report the used
+    # range, both of which are needed to build a correct VIEW; openpyxl supplies
+    # them. xlrd covers legacy .xls, which DuckDB does not support at all.
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0.1",
     "openai-agents[litellm]==0.7.0",
     "openinference-instrumentation-openai-agents==1.6.2",
     "opentelemetry-api>=1.20.0",
@@ -198,6 +204,9 @@ dev = [
     "pytest-cov>=7.0.0",
     "chardet>=3.0.2,<6",
     "diff-cover>=10.2.0",
+    # Writes legacy .xls fixtures. Only a *writer* is needed for tests; the
+    # runtime reads .xls through xlrd, which is a real dependency.
+    "xlwt>=1.3.0",
 ]
 ci = [
     "datus-storage-postgresql>=0.1.5",

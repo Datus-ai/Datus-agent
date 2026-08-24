@@ -80,6 +80,13 @@ _NORMAL_RULES = [
     _rule("db_tools", "describe_*", PermissionLevel.ALLOW),
     _rule("db_tools", "get_*", PermissionLevel.ALLOW),
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
+    # Registering an uploaded file as a view is read-only in every sense the
+    # user cares about: the source path is classified against the filesystem
+    # policy first, the file is only read, and the view lands in a private
+    # per-project catalog that holds nothing but view definitions. Falling
+    # through to ``default=ASK`` would prompt for what is effectively "open the
+    # file the user just asked about".
+    _rule("db_tools", "load_file_as_table", PermissionLevel.ALLOW),
     # bi read + destructive deny
     _rule("bi_tools", "list_*", PermissionLevel.ALLOW),
     _rule("bi_tools", "get_*", PermissionLevel.ALLOW),

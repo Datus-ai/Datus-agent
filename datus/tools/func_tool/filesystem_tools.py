@@ -26,6 +26,16 @@ from datus.utils.memory_loader import apply_single_replacement
 
 logger = get_logger(__name__)
 
+#: Extensions whose bytes are never usefully readable as text. Left to the
+#: generic UTF-8 path these produce ``Cannot read binary file``, which tells the
+#: model *that* it failed but not what to do instead — in practice it then burns
+#: turns on ``bash cat`` and friends. ``load_file_as_table`` is the real answer
+#: for all of them, so say so.
+#:
+#: ``.csv``/``.tsv`` are deliberately absent: they are text, ``read_file``
+#: genuinely works on them, and small ones are cheaper to just read.
+_TABULAR_BINARY_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xls", ".xlsb", ".parquet", ".ods"})
+
 
 class FilesystemConfig:
     """Configuration for filesystem operations.
@@ -277,6 +287,19 @@ class FilesystemFuncTool(BaseTool):
 
             if not target_path.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
+
+            suffix = target_path.suffix.lower()
+            if suffix in _TABULAR_BINARY_EXTENSIONS:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Cannot read {suffix} as text: {resolved.display} is a binary "
+                        f"spreadsheet/columnar file. Call "
+                        f"load_file_as_table(path={resolved.display!r}) instead — it exposes "
+                        f"each sheet as a queryable table, then query it with "
+                        f"execute_sql(..., datasource='local_files')."
+                    ),
+                )
 
             max_bytes = self.config.max_file_size
             use_slice = offset > 0 or limit > 0

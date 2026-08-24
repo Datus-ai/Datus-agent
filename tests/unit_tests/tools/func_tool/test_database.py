@@ -2559,3 +2559,83 @@ class TestMcpFactoriesHonorDeploymentReadOnly:
         tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=False))
 
         assert tool.read_only is False
+
+
+class TestUploadsCatalogSqlGuard:
+    """``execute_sql`` must not let model-authored SQL read arbitrary files.
+
+    The uploads catalog is a DuckDB datasource with external file access on —
+    that is what makes a lazy view over a spreadsheet work. Reached through a
+    hand-written ``read_csv_auto('/etc/passwd')`` the same capability reads
+    anything the process can see, routing around the filesystem path policy that
+    is the agent's only containment boundary.
+    """
+
+    def _make_tool(self, *, datasources=("local_files",), default="local_files"):
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.get_databases.return_value = []
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config.current_datasource = default
+        config.current_db_configs.return_value = {name: Mock(type="duckdb") for name in datasources}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config), connector
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM read_csv_auto('/etc/passwd')",
+            "SELECT * FROM read_parquet('/data/secret.parquet')",
+            "SELECT * FROM read_xlsx('/tmp/other.xlsx')",
+            "SELECT read_text('/etc/hosts')",
+            "SELECT * FROM glob('/**')",
+            "SELECT * FROM (SELECT * FROM read_csv_auto('/etc/passwd')) t",
+        ],
+    )
+    def test_rejects_file_reading_sql_on_the_uploads_datasource(self, sql):
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql(sql, datasource="local_files")
+
+        assert result.success == 0
+        assert "load_file_as_table" in result.error
+        # Rejected before touching the database at all.
+        connector.execute_query.assert_not_called()
+
+    def test_allows_ordinary_sql_on_the_uploads_datasource(self):
+        tool, _ = self._make_tool()
+        result = tool.execute_sql("SELECT region, sum(amount) FROM jeffshop_q3 GROUP BY 1", datasource="local_files")
+        assert "load_file_as_table" not in (result.error or "")
+
+    def test_guard_applies_when_the_uploads_catalog_is_the_default(self):
+        """Reached via the default route, not just an explicit datasource argument."""
+        tool, connector = self._make_tool()
+        result = tool.execute_sql("SELECT * FROM read_csv_auto('/etc/passwd')")
+        assert result.success == 0
+        assert "load_file_as_table" in result.error
+        connector.execute_query.assert_not_called()
+
+    def test_other_datasources_are_left_alone(self):
+        """A project's own DuckDB datasource had this reach before uploads existed;
+        narrowing it here would be an unrelated behaviour change."""
+        tool, _ = self._make_tool(datasources=("warehouse", "local_files"), default="warehouse")
+        result = tool.execute_sql("SELECT * FROM read_csv_auto('/data/lake/x.csv')", datasource="warehouse")
+        assert "load_file_as_table" not in (result.error or "")
+
+
+class TestLoadFileAsTableIsExposed:
+    def test_registered_on_the_agent_tool_surface(self):
+        """VALID_TOOL_METHODS and the permission registry both derive from this."""
+        assert "load_file_as_table" in DBFuncTool.all_tools_name()
+
+    def test_not_treated_as_an_internal_dispatch_helper(self):
+        assert "load_file_as_table" not in DBFuncTool._INTERNAL_SQL_METHODS

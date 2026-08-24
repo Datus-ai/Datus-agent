@@ -11,6 +11,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from agents import Tool
@@ -28,6 +29,16 @@ from datus.tools.db_tools.capabilities import (
     get_dialect_operations,
     get_effective_capabilities,
     supports_namespace,
+)
+from datus.tools.db_tools.data_file_loader import (
+    LOCAL_FILES_DATASOURCE,
+    DataFileError,
+    default_conversion_cache_dir,
+    find_file_reading_functions,
+    inspect_file,
+    load_file,
+    quote_identifier,
+    registered_objects,
 )
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
@@ -1520,6 +1531,197 @@ class DBFuncTool:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return FuncToolResult(success=0, error=error_msg)
 
+    # ------------------------------------------------- uploaded data files
+
+    def _reject_file_reading_sql(self, sql: str, datasource: Optional[str]) -> Optional[FuncToolResult]:
+        """Refuse model-authored SQL that reads files directly, on the uploads catalog.
+
+        The uploads catalog is a DuckDB datasource with external file access
+        enabled — that is what makes a lazy VIEW over a spreadsheet possible.
+        The same capability, reached through a hand-written
+        ``read_csv_auto('/etc/passwd')``, would read anything the process can
+        see and route straight around the filesystem path policy, which is the
+        one boundary keeping the agent inside its project.
+
+        Scoped to this datasource on purpose: a project that configures its own
+        DuckDB datasource already had this reach before uploads existed, and
+        silently narrowing it here would be an unrelated behaviour change.
+        ``load_file_as_table`` remains the sanctioned path, and the paths it
+        embeds in a VIEW are classified first.
+        """
+        resolved = datasource or self._default_datasource
+        if resolved != LOCAL_FILES_DATASOURCE:
+            return None
+
+        offenders = find_file_reading_functions(sql)
+        if not offenders:
+            return None
+        return FuncToolResult(
+            success=0,
+            error=(
+                f"{', '.join(offenders)} cannot be called directly on the "
+                f"'{LOCAL_FILES_DATASOURCE}' datasource. Use "
+                f"load_file_as_table(path=...) to register a file, then query the "
+                f"table it returns. Call list_tables(datasource="
+                f"'{LOCAL_FILES_DATASOURCE}') to see what is already registered."
+            ),
+        )
+
+    def _resolve_data_file(self, path: str):
+        """Classify a user-supplied data-file path against the filesystem policy.
+
+        ``load_file_as_table`` embeds the resolved path into a VIEW definition,
+        so this is the only point where the path is checked — everything after it
+        is DuckDB reading whatever it was handed. Only INTERNAL (inside the
+        project) and WHITELIST (operator-granted) paths pass; HIDDEN and EXTERNAL
+        are refused, with HIDDEN reported as "not found" to preserve the
+        invisibility of ``.datus`` internals.
+        """
+        from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
+
+        agent_config = self.agent_config
+        root_path = ""
+        datus_home = None
+        allowlist = None
+        if agent_config is not None:
+            root_path = getattr(agent_config, "project_root", "") or getattr(agent_config, "home", "") or ""
+            allowlist = getattr(agent_config, "filesystem_allowlist", None) or None
+            path_manager = getattr(agent_config, "path_manager", None)
+            if path_manager is not None:
+                try:
+                    datus_home = str(path_manager.datus_home)
+                except Exception:
+                    datus_home = None
+        root = Path(root_path).expanduser().resolve(strict=False) if root_path else Path.cwd()
+
+        resolved = classify_path(path, root_path=root, datus_home=datus_home, allowlist=allowlist)
+        if resolved.zone in (PathZone.HIDDEN, PathZone.EXTERNAL):
+            if resolved.zone == PathZone.HIDDEN:
+                raise DataFileError(f"File not found: {resolved.display}")
+            raise DataFileError(
+                f"{resolved.display} is outside the project workspace. Upload the file "
+                f"into the project's files before loading it."
+            )
+        return resolved
+
+    @mcp_tool()
+    def load_file_as_table(
+        self,
+        path: str,
+        sheet: Optional[str] = "",
+        header_row: Optional[int] = None,
+        materialize: bool = False,
+        inspect_only: bool = False,
+    ) -> FuncToolResult:
+        """
+        Register an uploaded data file as queryable SQL table(s).
+
+        Use this for any spreadsheet or columnar data file the user refers to —
+        ``read_file`` cannot read them, and for anything beyond a handful of rows
+        you want SQL anyway (aggregation, joins against the project's own
+        database, charting).
+
+        Supported: ``.xlsx``, ``.xlsm``, ``.xls``, ``.csv``, ``.tsv``,
+        ``.parquet``, ``.json``, ``.jsonl``. Each sheet of a spreadsheet becomes
+        its own table; other formats produce one table.
+
+        The registration is a lazy view over the file, so it is cheap and
+        idempotent. Call it again at the start of any analysis rather than
+        reasoning about staleness: for CSV/Parquet/JSON every query already re-reads
+        the file, and for spreadsheets a reload is what picks up rows appended since
+        the last load. Query the result with
+        ``execute_sql(sql=..., datasource='local_files')``; the tables are also
+        visible to ``list_tables`` / ``describe_table`` on that datasource. Note
+        those tables live in a *different* datasource than the project's own
+        database, so a query cannot join across the two in one statement.
+
+        Args:
+            path: Path to the data file, relative to the project workspace.
+            sheet: Spreadsheets only — load just this sheet instead of all of them.
+            header_row: Spreadsheets only — 1-based row holding the column names.
+                Omit to auto-detect. Pass it when the detected header (reported
+                back as ``header_row``) picked up a title or a blank row: the
+                symptom is column names that read like a sentence, or a row count
+                far larger than the real data.
+            materialize: Copy the data into a real table instead of a view. Only
+                worth it for a large file queried repeatedly; the copy is a
+                snapshot and stops tracking edits to the file.
+            inspect_only: Register nothing; return the sheet list and the raw
+                un-parsed top-left cells. Use it to work out the right
+                ``header_row`` for an awkward layout.
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[dict]): On success, ``datasource``,
+                    ``dialect``, ``tables`` (each with its name, source sheet,
+                    detected ``header_row``, row count, per-column profile and a
+                    row preview), any ``skipped_sheets``, and ``example_sql``.
+        """
+        try:
+            resolved = self._resolve_data_file(path)
+            target = resolved.resolved
+            if not target.exists():
+                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+            if not target.is_file():
+                return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
+
+            connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
+            exclusive = getattr(connector, "exclusive_connection", None)
+            if exclusive is None:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Datasource '{LOCAL_FILES_DATASOURCE}' is not a DuckDB datasource, "
+                        f"so uploaded files cannot be registered in this deployment."
+                    ),
+                )
+
+            with exclusive() as connection:
+                if inspect_only:
+                    details = inspect_file(target, connection=connection, sheet=sheet or None)
+                    return FuncToolResult(result=details)
+
+                loaded, skipped = load_file(
+                    target,
+                    resolved.display,
+                    connection=connection,
+                    conversion_cache_dir=default_conversion_cache_dir(getattr(connector, "db_path", "")),
+                    sheet=sheet or None,
+                    header_row=header_row,
+                    materialize=materialize,
+                    existing_objects=registered_objects(connection),
+                )
+
+            result: Dict[str, Any] = {
+                "datasource": LOCAL_FILES_DATASOURCE,
+                "dialect": "duckdb",
+                "tables": [item.to_dict() for item in loaded],
+            }
+            if skipped:
+                result["skipped_sheets"] = [item.to_dict() for item in skipped]
+            if loaded:
+                first = loaded[0]
+                result["example_sql"] = (
+                    f"SELECT * FROM {quote_identifier(first.table)} LIMIT 10"
+                    if not first.preview_columns
+                    else f"SELECT {quote_identifier(first.preview_columns[0])}, count(*) AS n "
+                    f"FROM {quote_identifier(first.table)} GROUP BY 1 ORDER BY 2 DESC"
+                )
+                result["usage"] = (
+                    f"Query these with execute_sql(sql=..., datasource='{LOCAL_FILES_DATASOURCE}'). "
+                    f"Quote any identifier that is not plain ASCII, e.g. "
+                    f'SELECT "金额" FROM {first.table}.'
+                )
+            return FuncToolResult(result=result)
+
+        except DataFileError as e:
+            return FuncToolResult(success=0, error=str(e))
+        except Exception as e:
+            logger.error(f"load_file_as_table failed for {path}: {e}", exc_info=True)
+            return FuncToolResult(success=0, error=f"Failed to load {path}: {e}")
+
     @mcp_tool()
     def execute_sql(
         self,
@@ -1579,6 +1781,10 @@ class DBFuncTool:
             sql_stripped = sql.strip()
             if looks_like_sql_file_ref(sql_stripped):
                 sql = self._read_sql_from_file(sql_stripped)
+
+            guard_error = self._reject_file_reading_sql(sql, datasource)
+            if guard_error is not None:
+                return guard_error
 
             connector = self._get_connector(datasource, database)
             sql_type = parse_sql_type(sql, connector.dialect)
