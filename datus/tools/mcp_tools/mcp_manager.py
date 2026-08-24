@@ -520,7 +520,12 @@ class MCPManager:
         headers["Accept"] = "text/event-stream"
 
         server_params = MCPServerSseParams(url=url, headers=headers, timeout=timeout, sse_read_timeout=timeout)
-        server_instance = MCPServerSse(params=server_params, client_session_timeout_seconds=60, tool_filter=tool_filter)
+        # ``client_session_timeout_seconds`` bounds the JSON-RPC handshake; a
+        # hard-coded value here ignored the user's ``timeout`` and let a URL
+        # that answers HTML instead of MCP hang the caller for a full minute.
+        server_instance = MCPServerSse(
+            params=server_params, client_session_timeout_seconds=timeout, tool_filter=tool_filter
+        )
         details = {"url": url, "headers_count": len(headers) if headers else 0, "timeout": timeout}
         return server_instance, details
 
@@ -544,7 +549,7 @@ class MCPManager:
             terminate_on_close=True,
         )
         server_instance = MCPServerStreamableHttp(
-            params=server_params, client_session_timeout_seconds=60, tool_filter=tool_filter
+            params=server_params, client_session_timeout_seconds=timeout, tool_filter=tool_filter
         )
         details = {"url": url, "headers_count": len(merged_headers), "timeout": timeout}
         return server_instance, details
