@@ -2818,6 +2818,83 @@ class TestUploadsCatalogSqlGuard:
         # Rejected before touching the database at all.
         connector.execute_query.assert_not_called()
 
+    def test_catalog_is_read_while_the_connector_lock_is_held(self):
+        """The whole read, not just the handle, has to be inside the lock.
+
+        Regression: the guard took the connection out of ``exclusive_connection``
+        and queried it afterwards. ``DuckDBPyConnection`` is not thread-safe, and
+        an LLM emitting parallel tool calls makes concurrent reads the normal
+        case — observed in a real session as batches of N parallel ``execute_sql``
+        where exactly N-1 were refused as "not a table registered" for a table
+        that was registered, and under sustained load as a segfault.
+        """
+        import contextlib
+
+        from datus.tools.db_tools.db_manager import DBManager
+
+        held = []
+        # Recorded rather than asserted inside the mock: the guard wraps the read
+        # in ``except Exception``, so an assert raised in here would be swallowed
+        # and the test would pass against the very bug it exists to catch.
+        locked_during_read = []
+        catalog = Mock()
+
+        def execute(*args, **kwargs):
+            locked_during_read.append(bool(held))
+            result = Mock()
+            result.fetchall.return_value = [("jeffshop_q3", None)]
+            return result
+
+        catalog.execute.side_effect = execute
+
+        @contextlib.contextmanager
+        def exclusive():
+            held.append(True)
+            try:
+                yield catalog
+            finally:
+                held.pop()
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.get_databases.return_value = []
+        connector.exclusive_connection = exclusive
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(manager, agent_config=config)
+
+        result = tool.execute_sql("SELECT * FROM jeffshop_q3", datasource="local_files")
+
+        assert locked_during_read, "the guard never read the catalog"
+        assert all(locked_during_read), "catalog read happened outside exclusive_connection()"
+        assert "not a table registered" not in (result.error or "")
+
+    def test_unreadable_catalog_is_not_reported_as_an_unregistered_table(self):
+        """A failed catalog read must not read as "your table does not exist".
+
+        The two are opposite instructions to the model: one says retry, the other
+        says the registration it just did was a no-op — so it re-registers, re-lists,
+        and re-runs the same query. Distinguishable only if the read is allowed to
+        fail rather than returning an empty catalog.
+        """
+        tool, _ = self._make_tool()
+        tool._get_connector = Mock(side_effect=RuntimeError("database is locked"))
+
+        result = tool.execute_sql("SELECT * FROM jeffshop_q3", datasource="local_files")
+
+        assert result.success == 0
+        assert "unavailable" in result.error
+        assert "not a table registered" not in result.error
+
     def test_allows_ordinary_reads_of_registered_tables(self):
         """Asserting only "no rejection message" would also pass if the query
         never ran, so check it reached the connector."""
@@ -3096,3 +3173,67 @@ class TestFilesystemRootPlumbing:
                     line = text.count("\n", 0, match.start()) + 1
                     offenders.append(f"{path.name}:{line}")
         assert offenders == [], f"DBFuncTool built without filesystem_root: {offenders}"
+
+
+class TestHeaderRowNormalisation:
+    """``header_row`` is the one optional the tool schema types as a number, so
+    the "unspecified" value a model sends is 0 rather than an omitted key."""
+
+    def _tool(self):
+        import contextlib
+
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.db_path = "/tmp/local_files.duckdb"
+        connector.get_databases.return_value = []
+        connector.exclusive_connection = lambda: contextlib.nullcontext(Mock())
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config._client_source = "web"
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config)
+
+    def _capture(self, tmp_path, **kwargs):
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        book = tmp_path / "book.xlsx"
+        book.write_bytes(b"")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        captured = {}
+
+        def load_file(*_args, **call_kwargs):
+            captured.update(call_kwargs)
+            return [], []
+
+        with (
+            patch("datus.tools.func_tool.database.load_file", side_effect=load_file),
+            patch("datus.tools.func_tool.database.registered_objects", return_value={}),
+        ):
+            tool.load_file_as_table(path="book.xlsx", **kwargs)
+        return captured
+
+    def test_zero_means_unspecified(self, tmp_path):
+        """Rows are 1-based, so 0 taken literally fails every sheet with
+        "header_row must be 1 or greater" and the whole file reads as unloadable.
+        Observed in real traffic: the session's inspect call carried
+        ``header_row: 0``, where it happened to be ignored."""
+        assert self._capture(tmp_path, header_row=0)["header_row"] is None
+
+    def test_a_real_header_row_is_passed_through(self, tmp_path):
+        assert self._capture(tmp_path, header_row=3)["header_row"] == 3
+
+    def test_a_negative_row_is_still_a_mistake(self, tmp_path):
+        """Not folded into "unspecified": nothing sends -1 by accident, and
+        silently auto-detecting would hide a caller bug."""
+        assert self._capture(tmp_path, header_row=-1)["header_row"] == -1

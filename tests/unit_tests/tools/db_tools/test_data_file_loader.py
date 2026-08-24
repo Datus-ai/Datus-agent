@@ -31,6 +31,7 @@ from datus.tools.db_tools.data_file_loader import (
     ownership_tag,
     registered_objects,
     sanitize_identifier,
+    summarize_view,
     unresolved_table_references,
 )
 
@@ -658,3 +659,123 @@ class TestCsvEncoding:
 
     def test_an_unreadable_file_does_not_raise(self, tmp_path):
         assert detect_csv_encoding(tmp_path / "absent.csv") == "utf-8"
+
+
+# ------------------------------------------------------------------- catalog
+
+
+class TestRegisteredObjects:
+    def test_empty_catalog_is_an_empty_mapping(self, connection):
+        assert registered_objects(connection) == {}
+
+    def test_a_failed_read_is_not_an_empty_catalog(self):
+        """The two must not collapse into the same value.
+
+        Callers treat "no names" as "nothing is registered": the SQL guard turns
+        it into a refusal naming the table the model just registered. Swallowing
+        the error made an unreadable catalog indistinguishable from an empty one,
+        which sent the model re-registering and re-querying in a loop.
+        """
+
+        class Broken:
+            def execute(self, *_args, **_kwargs):
+                raise RuntimeError("Connection Error: connection has been closed")
+
+        with pytest.raises(RuntimeError):
+            registered_objects(Broken())
+
+
+# ----------------------------------------------------------- text date hints
+
+
+class TestTextDateHints:
+    """A spreadsheet's dates typed as text stay VARCHAR, and every date function
+    then fails to bind. The profile says which cast to use, verified per column."""
+
+    def _profile(self, connection, values, *, literal_type="VARCHAR"):
+        rows = ", ".join("(NULL)" if value is None else f"('{value}')" for value in values)
+        connection.execute(f"CREATE VIEW v AS SELECT CAST(d AS {literal_type}) AS d FROM (VALUES {rows}) t(d)")
+        return {column["column_name"]: column for column in summarize_view(connection, "v")}["d"]
+
+    def test_all_iso_dates_are_flagged_for_a_date_cast(self, connection):
+        column = self._profile(connection, ["2017-07-01", "2017-08-31"])
+        assert column["column_type"] == "VARCHAR"
+        assert column["cast_hint"] == 'text dates: CAST("d" AS DATE) to use date functions'
+
+    def test_a_clock_component_asks_for_a_timestamp_cast(self, connection):
+        column = self._profile(connection, ["2017-07-01 09:30:00", "2017-07-02 00:00:00"])
+        assert column["cast_hint"] == 'text timestamps: CAST("d" AS TIMESTAMP) to use date functions'
+
+    def test_nulls_do_not_block_the_hint(self, connection):
+        column = self._profile(connection, ["2017-07-01", None, "2017-08-31"])
+        assert "cast_hint" in column
+
+    def test_one_unparseable_value_withholds_the_hint(self, connection):
+        """SUMMARIZE reports the *lexical* min/max, so a mixed column can show ISO
+        ends. A hint whose cast NULLs rows is worse than no hint, so the check is
+        every value, not the extremes."""
+        column = self._profile(connection, ["2017-07-01", "n/a", "2017-08-31"])
+        assert "cast_hint" not in column
+
+    def test_ordinary_text_is_not_flagged(self, connection):
+        column = self._profile(connection, ["Brooklyn", "Philadelphia"])
+        assert "cast_hint" not in column
+
+    def test_an_all_null_column_is_not_flagged(self, connection):
+        column = self._profile(connection, [None, None])
+        assert "cast_hint" not in column
+
+    def test_a_column_already_typed_as_a_date_gets_no_hint(self, connection):
+        column = self._profile(connection, ["2017-07-01"], literal_type="DATE")
+        assert column["column_type"] == "DATE"
+        assert "cast_hint" not in column
+
+    def test_the_hint_is_runnable_for_a_header_with_a_space(self, connection):
+        """The hint exists to be copied into a query, and spreadsheet headers have
+        spaces in them. Unquoted, ``CAST(order date AS DATE)`` is a parser error."""
+        connection.execute("""CREATE VIEW v AS SELECT * FROM (VALUES ('2017-07-01')) t("order date")""")
+        hint = {column["column_name"]: column for column in summarize_view(connection, "v")}["order date"]["cast_hint"]
+
+        expression = hint.split(": ", 1)[1].rsplit(" to use", 1)[0]
+        assert expression == 'CAST("order date" AS DATE)'
+        # Runs, rather than merely looking quoted.
+        assert connection.execute(f"SELECT strftime({expression}, '%Y-%m') FROM v").fetchone()[0] == "2017-07"
+
+    def test_space_padded_dates_still_get_the_hint(self, connection):
+        """Validity is tested against DATE, not TIMESTAMP — they are not ordered
+        the way they look. ``TRY_CAST('2017-07-01 ' AS TIMESTAMP)`` is NULL while
+        ``AS DATE`` is not, so gating on TIMESTAMP withheld the hint from exactly
+        the space-padded text that turns up in cells and aligned CSV exports."""
+        column = self._profile(connection, ["  2017-07-01  ", "2017-08-31 "])
+
+        assert column["cast_hint"] == 'text dates: CAST("d" AS DATE) to use date functions'
+
+    def test_a_clock_mixed_with_padded_dates_falls_back_to_date(self, connection):
+        """TIMESTAMP would NULL the padded rows; DATE is valid for every row.
+        Losing a time beats losing a row."""
+        column = self._profile(connection, ["2017-07-01 09:30:00", "2017-07-02 "])
+
+        assert "AS DATE)" in column["cast_hint"]
+
+    def test_hints_survive_the_probe_batch_boundary(self, connection):
+        """The probe runs in batches, so the row-offset arithmetic restarts per
+        batch. A column past the first boundary must still be annotated, and
+        annotated with *its own* result."""
+        from datus.tools.db_tools.data_file_loader import _DATE_PROBE_BATCH
+
+        width = _DATE_PROBE_BATCH * 2 + 3
+        # Every column is a date except one placed past the first boundary.
+        odd_one = _DATE_PROBE_BATCH + 5
+        values = [f"'not-a-date{i}' AS c{i}" if i == odd_one else f"'2017-07-01' AS c{i}" for i in range(width)]
+        connection.execute(f"CREATE VIEW wide AS SELECT {', '.join(values)} FROM range(3)")
+
+        profile = {column["column_name"]: column for column in summarize_view(connection, "wide")}
+
+        assert len(profile) == width
+        assert "cast_hint" not in profile[f"c{odd_one}"]
+        assert all("cast_hint" in profile[f"c{i}"] for i in range(width) if i != odd_one)
+
+    def test_a_bare_year_is_not_a_date(self, connection):
+        """``TRY_CAST('2017' AS DATE)`` is NULL, so a year column stays un-hinted."""
+        column = self._profile(connection, ["2017", "2018"])
+        assert "cast_hint" not in column
