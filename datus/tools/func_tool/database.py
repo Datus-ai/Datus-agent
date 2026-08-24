@@ -1707,7 +1707,10 @@ class DBFuncTool:
         connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
         exclusive = getattr(connector, "exclusive_connection", None)
         if exclusive is None:
-            raise RuntimeError(f"Datasource '{LOCAL_FILES_DATASOURCE}' is not a DuckDB datasource")
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{LOCAL_FILES_DATASOURCE}' is not a DuckDB datasource",
+            )
         with exclusive() as connection:
             return registered_objects(connection)
 

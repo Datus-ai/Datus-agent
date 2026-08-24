@@ -700,11 +700,11 @@ class TestTextDateHints:
     def test_all_iso_dates_are_flagged_for_a_date_cast(self, connection):
         column = self._profile(connection, ["2017-07-01", "2017-08-31"])
         assert column["column_type"] == "VARCHAR"
-        assert column["cast_hint"] == "text dates: CAST(d AS DATE) to use date functions"
+        assert column["cast_hint"] == 'text dates: CAST("d" AS DATE) to use date functions'
 
     def test_a_clock_component_asks_for_a_timestamp_cast(self, connection):
         column = self._profile(connection, ["2017-07-01 09:30:00", "2017-07-02 00:00:00"])
-        assert column["cast_hint"] == "text timestamps: CAST(d AS TIMESTAMP) to use date functions"
+        assert column["cast_hint"] == 'text timestamps: CAST("d" AS TIMESTAMP) to use date functions'
 
     def test_nulls_do_not_block_the_hint(self, connection):
         column = self._profile(connection, ["2017-07-01", None, "2017-08-31"])
@@ -729,6 +729,17 @@ class TestTextDateHints:
         column = self._profile(connection, ["2017-07-01"], literal_type="DATE")
         assert column["column_type"] == "DATE"
         assert "cast_hint" not in column
+
+    def test_the_hint_is_runnable_for_a_header_with_a_space(self, connection):
+        """The hint exists to be copied into a query, and spreadsheet headers have
+        spaces in them. Unquoted, ``CAST(order date AS DATE)`` is a parser error."""
+        connection.execute("""CREATE VIEW v AS SELECT * FROM (VALUES ('2017-07-01')) t("order date")""")
+        hint = {column["column_name"]: column for column in summarize_view(connection, "v")}["order date"]["cast_hint"]
+
+        expression = hint.split(": ", 1)[1].rsplit(" to use", 1)[0]
+        assert expression == 'CAST("order date" AS DATE)'
+        # Runs, rather than merely looking quoted.
+        assert connection.execute(f"SELECT strftime({expression}, '%Y-%m') FROM v").fetchone()[0] == "2017-07"
 
     def test_a_bare_year_is_not_a_date(self, connection):
         """``TRY_CAST('2017' AS DATE)`` is NULL, so a year column stays un-hinted."""

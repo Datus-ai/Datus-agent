@@ -761,7 +761,11 @@ def _annotate_text_dates(connection: Any, table: str, profile: List[Dict[str, An
         if not non_null or unparsed:
             continue
         target = "TIMESTAMP" if with_clock else "DATE"
-        by_name[name]["cast_hint"] = f"text {target.lower()}s: CAST({name} AS {target}) to use date functions"
+        # Quoted unconditionally, like ``example_sql`` does: the hint exists to be
+        # copied into a query, and a spreadsheet header with a space in it (or a
+        # dash, or a reserved word) makes the bare form a parser error.
+        expression = f"CAST({quote_identifier(name)} AS {target})"
+        by_name[name]["cast_hint"] = f"text {target.lower()}s: {expression} to use date functions"
 
 
 def preview_view(connection: Any, table: str, limit: int = PREVIEW_ROW_LIMIT) -> Tuple[List[str], List[List[Any]]]:
