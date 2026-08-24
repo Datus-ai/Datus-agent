@@ -492,6 +492,25 @@ agent:
       - ~/.datus/skills
       - ./skills
 
+  api:
+    # Bounds on the HTTP API's datasource access. All three exist because a
+    # single metadata or SQL round-trip can run for seconds on a real warehouse,
+    # and these requests run on a shared thread pool.
+    #
+    # How long POST /sql/execute waits for its datasource's connector before
+    # giving up with DATASOURCE_BUSY. The connector is shared per datasource and
+    # carries mutable database context, so statements on one datasource run one
+    # at a time; without a bound, a queue would pin worker threads that every
+    # other request needs too. Nothing is executed on timeout, so even a write
+    # is safe to retry.
+    sql_queue_budget_seconds: 30
+    # Largest batch POST /table/columns will accept (autocomplete prefetch).
+    max_prefetch_tables: 500
+    # How long one prefetch batch may spend resolving uncached tables before it
+    # returns what it has. Tables it did not reach are simply omitted, and the
+    # client re-asks per table.
+    prefetch_budget_seconds: 3
+
   autocomplete:
     # After switching / adding / editing a datasource, refresh the LanceDB
     # schema index in the background so @Table completion reflects new

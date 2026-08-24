@@ -878,6 +878,55 @@ class TestCreateAgent:
         assert result.success is True
         assert result.data["name"] == "test_new_agent"
 
+    async def test_create_agent_binds_the_named_datasource(self, real_agent_config, agent_yml_with_singleton):
+        """`datasource_name` must reach `scoped_context.datasource`.
+
+        Ignoring it bound the agent to the active datasource instead of the one
+        the caller asked for — the same name the caller scoped its `catalogs`
+        against, so the scope would be matched on the wrong warehouse.
+        """
+        from datus.api.models.agent_models import CreateAgentInput
+
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="agent_on_second",
+                type="gen_sql",
+                tools=["db_tools"],
+                datasource_name="second",
+            ),
+            real_agent_config,
+        )
+
+        assert result.success is True
+        agent = real_agent_config.agentic_nodes["agent_on_second"]
+        assert agent["scoped_context"]["datasource"] == "second"
+        # `datasource_name` selects the binding; it is not itself a stored field.
+        # A regression could bind correctly and still write it to the entry.
+        assert "datasource_name" not in agent
+
+    async def test_create_agent_rejects_an_unbound_datasource(self, real_agent_config, agent_yml_with_singleton):
+        """Better than silently binding to the current one."""
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="agent_nowhere",
+                type="gen_sql",
+                tools=["db_tools"],
+                datasource_name="not_bound",
+            ),
+            real_agent_config,
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_DATASOURCE"
+        assert "not_bound" in result.errorMessage
+
     async def test_create_agent_duplicate_name_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects duplicate agent name."""
         from datus.api.models.agent_models import CreateAgentInput
@@ -1158,6 +1207,88 @@ class TestEditAgent:
             assert "cross_path_agent" not in (home_data.get("agent", {}).get("agentic_nodes") or {})
         finally:
             agent_config_loader.CONFIGURATION_MANAGER = None
+
+    async def test_edit_agent_rebinds_on_datasource_name_alone(self, real_agent_config, agent_yml_with_singleton):
+        """An edit carrying only ``datasource_name`` must move the binding.
+
+        The field is excluded from ``model_dump`` (it is not a persisted
+        column), which also hid it from the "did anything change" check — so
+        this edit reached the no-op return and reported success while leaving the
+        agent bound where it was.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        svc = AgentService()
+        await svc.create_agent(CreateAgentInput(name="rebind_me", type="gen_sql"), real_agent_config)
+
+        result = await svc.edit_agent(
+            EditAgentInput(id="rebind_me", name="rebind_me", datasource_name="second"),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            entry = yaml.safe_load(f)["agent"]["agentic_nodes"]["rebind_me"]
+        assert entry["scoped_context"]["datasource"] == "second"
+        # And it is still not a column.
+        assert "datasource_name" not in entry
+
+    async def test_edit_agent_keeps_the_saved_binding_when_unnamed(self, real_agent_config, agent_yml_with_singleton):
+        """Editing catalogs must not silently rebind to the active datasource.
+
+        ``EditAgentInput`` says an omitted ``datasource_name`` leaves the binding
+        untouched. Resolving the active datasource ahead of the saved one meant an
+        agent bound to B was rebound to A by any scope edit made while A was
+        current.
+        """
+        import yaml
+
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        svc = AgentService()
+        await svc.create_agent(
+            CreateAgentInput(name="stay_on_second", type="gen_sql", datasource_name="second"),
+            real_agent_config,
+        )
+
+        # Only catalogs change; the active datasource is still `current`.
+        result = await svc.edit_agent(
+            EditAgentInput(id="stay_on_second", name="stay_on_second", catalogs=["main.*"]),
+            real_agent_config,
+        )
+        assert result.success is True
+
+        with open(agent_yml_with_singleton) as f:
+            entry = yaml.safe_load(f)["agent"]["agentic_nodes"]["stay_on_second"]
+        assert entry["scoped_context"]["datasource"] == "second"
+
+    async def test_edit_agent_rejects_an_unbound_datasource_name(self, real_agent_config, agent_yml_with_singleton):
+        """An explicitly named datasource the config does not declare is refused.
+
+        Otherwise the edit stores an undeclared datasource and returns success,
+        leaving an agent whose scope can never match.
+        """
+        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
+
+        svc = AgentService()
+        await svc.create_agent(CreateAgentInput(name="reject_edit", type="gen_sql"), real_agent_config)
+
+        result = await svc.edit_agent(
+            EditAgentInput(id="reject_edit", name="reject_edit", datasource_name="not_bound"),
+            real_agent_config,
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_DATASOURCE"
+        assert "not_bound" in result.errorMessage
 
     async def test_edit_agent_persists_description_as_agent_description(
         self, real_agent_config, agent_yml_with_singleton

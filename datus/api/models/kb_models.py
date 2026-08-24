@@ -55,6 +55,14 @@ class BootstrapKbInput(BaseModel):
             "Expected values follow `datus-agent bootstrap-kb`: `table`, `view`, `mv`, or `full`."
         ),
     )
+    datasource: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which configured datasource to index. Null means the project's current one. "
+            "Each datasource has its own metadata and its own KB rows, so a project bound to "
+            "several needs one bootstrap per datasource."
+        ),
+    )
     catalog: str = Field(
         default="",
         description=(

@@ -3,6 +3,7 @@ API routes for Table and SemanticModel endpoints.
 """
 
 import asyncio
+from typing import Optional
 
 from fastapi import APIRouter, Query
 
@@ -22,6 +23,9 @@ from datus.api.models.table_models import (
 
 router = APIRouter(prefix="/api/v1", tags=["table"])
 
+# Pre-configured parameter to avoid definition-time evaluation in defaults.
+DATASOURCE_QUERY = Query("", description="Datasource to resolve the table against; empty means the current one")
+
 
 # ========== Table Endpoints ==========
 
@@ -38,9 +42,12 @@ async def get_table_detail(
         ...,
         description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
     ),
+    datasource: Optional[str] = DATASOURCE_QUERY,
 ) -> Result[GetTableDetailData]:
     """Get table detail."""
-    return await asyncio.to_thread(svc.datasource.get_table_schema, table)
+    # Normalized here so an omitted query param and an explicit empty one both
+    # mean "the current datasource" to the service.
+    return await asyncio.to_thread(svc.datasource.get_table_schema, table, datasource or None)
 
 
 @router.post(
@@ -55,7 +62,7 @@ async def get_tables_columns(
     svc: ServiceDep,
 ) -> Result[GetTablesColumnsData]:
     """Batch table columns."""
-    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables)
+    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables, request.datasource)
 
 
 # ========== SemanticModel Endpoints ==========

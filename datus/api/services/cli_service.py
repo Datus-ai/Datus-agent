@@ -31,11 +31,40 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.tools.db_tools.db_manager import DBManager
+from datus.utils.config_utils import coerce_positive_seconds
+from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import ErrorCode as DbErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
+<<<<<<< HEAD
+=======
+#: Statement types the console may send straight to the connector.
+#:
+#: Deliberately an allow-list of *identified* writes. ``UNKNOWN`` is absent:
+#: anything the parser could not place must fall to the enforced path, where it
+#: is refused — the alternative is that a syntax the dialect accepts but sqlglot
+#: does not becomes an unfiltered read.
+# Fallback for ``agent.api.sql_queue_budget_seconds`` (see conf/agent.yml.example),
+# used when a deployment's yaml predates the setting. Long enough to ride out a
+# normal interactive query, short enough that a queue cannot pin to_thread
+# workers indefinitely.
+_DEFAULT_SQL_QUEUE_BUDGET_SECONDS = 30.0
+
+_WRITE_SQL_TYPES = frozenset(
+    {
+        SQLType.INSERT,
+        SQLType.UPDATE,
+        SQLType.DELETE,
+        SQLType.MERGE,
+        SQLType.DDL,
+        SQLType.CONTENT_SET,
+    }
+)
+
+>>>>>>> b9f8253 ([Feature] Address table metadata and SQL execution per datasource (#1342))
 
 class CLIService:
     """Service for handling CLI command operations."""
@@ -69,11 +98,38 @@ class CLIService:
 
         # Initialize database connection
         self.current_db_connector = None
+<<<<<<< HEAD
+=======
+        # Connectors for the project's other bound datasources, opened on first
+        # use. The IDE console addresses one by name per request, and opening
+        # every bound warehouse at startup would cost seconds per project.
+        self._datasource_connectors: Dict[str, Any] = {}
+        # One lock per datasource, held across ``switch_context`` + execute.
+        #
+        # A connector is shared by every request on its datasource and carries
+        # mutable catalog/database context, while ``_execute_sql_sync`` runs in
+        # worker threads — so two interleaved requests could each execute under
+        # the other's database. Serializing per datasource is the same trade
+        # ``DatasourceService._schema_lock`` already makes for the same reason:
+        # a queued query beats a query answered from the wrong database.
+        self._connector_locks: Dict[str, threading.Lock] = {}
+        self._db_tool_cache: Optional[func_tool_mod.DBFuncTool] = None
+        # `_execute_sql_sync` runs under `asyncio.to_thread`, so two clicks on
+        # Run can reach the lazy build below at the same time and each pay for
+        # a DBManager and three RAG indexes.
+        self._db_tool_lock = threading.Lock()
+>>>>>>> b9f8253 ([Feature] Address table metadata and SQL execution per datasource (#1342))
         if self.agent_config:
             self._initialize_connection()
 
         # Track running SQL execution tasks: {task_id: asyncio.Task}
         self._sql_tasks: Dict[str, asyncio.Task] = {}
+        # A thread-safe stop signal per task, because cancelling the asyncio task
+        # cannot reach the worker thread it dispatched: a worker parked in
+        # ``execution_lock.acquire()`` keeps waiting, then acquires and runs. For
+        # a write that means the statement lands *after* stop_execute_sql told
+        # the caller it stopped.
+        self._sql_cancels: Dict[str, threading.Event] = {}
         self._sql_tasks_lock = threading.Lock()
 
     def _initialize_connection(self):
@@ -94,25 +150,243 @@ class CLIService:
             except Exception as e:
                 logger.warning(f"Failed to initialize database connection: {e}")
 
+    def _execution_target(self, datasource: Optional[str] = None) -> tuple[str, Any]:
+        """``(datasource, connector)`` this statement should run against.
+
+        Defaults to the project's current datasource. An unknown name is an
+        error rather than a fall-through: silently running the statement on a
+        different warehouse than the editor's tab is showing is how a query
+        returns plausible rows from the wrong place.
+        """
+        key = (datasource or "").strip() or (self.current_datasource or "")
+        if not key:
+            raise DatusException(
+                DbErrorCode.DB_CONNECTION_FAILED,
+                message_args={"error_message": "No database connection available"},
+            )
+
+        if key == self.current_datasource:
+            if not self.current_db_connector:
+                raise DatusException(
+                    DbErrorCode.DB_CONNECTION_FAILED,
+                    message_args={"error_message": "No database connection available"},
+                )
+            return key, self.current_db_connector
+
+        configs = getattr(self.agent_config, "datasource_configs", {}) or {}
+        if key not in configs:
+            raise DatusException(
+                DbErrorCode.COMMON_UNSUPPORTED, message_args={"field_name": "datasource", "your_value": key}
+            )
+
+        cached = self._datasource_connectors.get(key)
+        if cached is None:
+            # Whatever the db manager raises for a declared-but-unreachable
+            # datasource reaches the caller as the structured database error, so
+            # one exception type maps to one error response.
+            try:
+                _db_name, connector = self.db_manager.first_conn_with_name(key)
+            except DatusException:
+                raise
+            except Exception as e:  # noqa: BLE001 — normalized for the caller
+                raise DatusException(
+                    DbErrorCode.DB_CONNECTION_FAILED,
+                    message_args={"error_message": f"datasource '{key}' is unreachable: {e}"},
+                ) from e
+            if connector is None:
+                raise DatusException(
+                    DbErrorCode.DB_CONNECTION_FAILED,
+                    message_args={"error_message": f"datasource '{key}' has no usable connection"},
+                )
+            # Only cached once known good. Caching a None turned the next
+            # request's `connector.dialect` into an AttributeError.
+            cached = connector
+            self._datasource_connectors[key] = cached
+        return key, cached
+
+    def _connector_lock(self, datasource: str) -> threading.Lock:
+        """The lock guarding one datasource's shared connector.
+
+        Tolerates an instance built without ``__init__`` (which the policy tests
+        do), and needs no lock of its own: ``dict.setdefault`` resolves the
+        create-vs-reuse race itself, so two threads asking at once still get the
+        same lock.
+        """
+        locks = getattr(self, "_connector_locks", None)
+        if locks is None:
+            locks = {}
+            self._connector_locks = locks
+        return locks.setdefault(datasource, threading.Lock())
+
     def _cleanup_sql_task(self, task_id: str) -> None:
-        """Remove a completed SQL task from the tracking dict."""
+        """Remove a completed SQL task from the tracking dicts."""
         with self._sql_tasks_lock:
             self._sql_tasks.pop(task_id, None)
+            self._sql_cancels.pop(task_id, None)
 
+<<<<<<< HEAD
     def _execute_sql_sync(self, request: ExecuteSQLInput, task_id: str) -> Result[ExecuteSQLData]:
+=======
+    def _execute_sql_sync(
+        self,
+        request: ExecuteSQLInput,
+        task_id: str,
+        policy_context: Optional[Dict[str, Any]] = None,
+        cancelled: Optional[threading.Event] = None,
+    ) -> Result[ExecuteSQLData]:
+>>>>>>> b9f8253 ([Feature] Address table metadata and SQL execution per datasource (#1342))
         """Synchronous SQL execution logic (runs in a thread)."""
         try:
-            if not self.current_db_connector:
+            try:
+                datasource, connector = self._execution_target(request.datasource)
+            except DatusException as e:
                 return Result(
                     success=False,
                     errorCode=ErrorCode.DATABASE_CONNECTION_ERROR,
-                    errorMessage="No database connection available",
+                    errorMessage=str(e),
                 )
 
+<<<<<<< HEAD
+=======
+            # Deployment-wide read-only posture. This route reaches the connector
+            # directly (see ``.execute`` below) and never touches DBFuncTool, so
+            # the ``execute_sql`` tool gate does not cover it — without this check
+            # a hardened deployment would still expose arbitrary SQL here. The
+            # rules come from the same helper the tool path uses so the two
+            # entry points cannot disagree.
+            #
+            # Read per request rather than snapshotted: CLIService is built from
+            # the shared service-level config, so a host hardening it at runtime
+            # takes effect without rebuilding the service. Placed before
+            # ``switch_context`` so a request about to be refused does not mutate
+            # connector state.
+            #
+            # Still needed after the statement-type dispatch below, and this is
+            # the reason: that dispatch sends identified single writes straight
+            # to ``current_db_connector.execute`` and only reads through
+            # ``execute_read_enforced``. So a write never reaches DBFuncTool and
+            # never meets the tool-layer read-only gate — this check is the only
+            # thing standing in front of it. Refusing here also means the write
+            # branch is simply unreachable on a hardened deployment.
+            if getattr(self.agent_config, "sql_read_only", False):
+                from datus.utils.sql_utils import (
+                    READ_ONLY_MULTI_STATEMENT,
+                    READ_ONLY_NON_READ,
+                    READ_ONLY_WRITABLE_PRAGMA,
+                    parse_sql_statement_kind,
+                    validate_read_only_sql,
+                )
+
+                dialect = getattr(connector, "dialect", "") or ""
+                violation, sql_type = validate_read_only_sql(request.sql_query, dialect)
+                if violation:
+                    # The helper returns a code, not prose, so each entry point
+                    # words its own refusal. This route answers an HTTP client
+                    # rather than a model, so it names the setting that caused
+                    # the refusal.
+                    reason = {
+                        READ_ONLY_MULTI_STATEMENT: (
+                            "Multi-statement SQL is not allowed. Please submit one query at a time."
+                        ),
+                        READ_ONLY_NON_READ: (
+                            f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
+                            f"Detected SQL type: {sql_type.value}"
+                        ),
+                        READ_ONLY_WRITABLE_PRAGMA: "Writable PRAGMA statements are not allowed in read-only mode.",
+                    }[violation]
+                    # Same structured shape as the DBFuncTool refusal in
+                    # ``database._refuse_write_if_read_only`` so an operator can
+                    # filter both entry points on one field set — including the
+                    # finer statement kind, since ``ddl`` alone cannot tell them
+                    # whether a caller tried to CREATE or to DROP. ``source`` is
+                    # always "deployment" here: this route has no per-agent
+                    # read-only posture to distinguish it from.
+                    logger.warning(
+                        "POST /sql/execute rejected by read-only policy",
+                        sql_type=parse_sql_statement_kind(request.sql_query, dialect) or sql_type.value,
+                        database=request.database_name or "",
+                        source="deployment",
+                        rule=violation,
+                    )
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_READ_ONLY,
+                        errorMessage=(f"This deployment is read-only (agent.sql_read_only). {reason}"),
+                    )
+
+            # Held from the context switch through the execute below: the
+            # connector is shared across requests on this datasource and its
+            # catalog/database context is mutable, so releasing in between lets
+            # another request run under this one's database (or this one under
+            # theirs). Acquired after the read-only refusal above so a rejected
+            # request never queues behind a running query.
+            #
+            # Bounded, because waiting here is not free: this runs on an
+            # ``asyncio.to_thread`` worker, and the default executor has only
+            # ``min(32, cpu + 4)`` of them. A few slow queries queued on one
+            # datasource could otherwise starve every other to_thread caller in
+            # the process — table detail, catalog listing, the agent's own tool
+            # calls. Timing out also bounds how long a cancelled request keeps a
+            # worker: ``stop_execute_sql`` cancels the asyncio task, which cannot
+            # interrupt a thread parked in ``acquire()``.
+            api_config = getattr(self.agent_config, "api_config", {}) or {}
+            wait_budget = coerce_positive_seconds(
+                api_config.get("sql_queue_budget_seconds"), _DEFAULT_SQL_QUEUE_BUDGET_SECONDS
+            )
+            execution_lock = self._connector_lock(datasource)
+            if not execution_lock.acquire(timeout=wait_budget):
+                logger.warning(
+                    "POST /sql/execute gave up waiting for the datasource connector",
+                    datasource=datasource,
+                    waited_seconds=wait_budget,
+                )
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.DATASOURCE_BUSY,
+                    errorMessage=(
+                        f"Datasource '{datasource}' is busy with another statement "
+                        f"(waited {wait_budget:g}s). Nothing was executed — try again."
+                    ),
+                )
+            try:
+                # The one point a queued statement can still be stopped. The
+                # await in `execute_sql` is already gone by now — cancelling it
+                # never reached this thread — so without this check a write the
+                # caller was told had stopped would execute here.
+                if cancelled is not None and cancelled.is_set():
+                    logger.info("SQL execution cancelled while queued for the datasource connector", task_id=task_id)
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                        errorMessage="SQL execution was cancelled",
+                    )
+                return self._execute_resolved_sql(request, task_id, policy_context, datasource, connector)
+            finally:
+                execution_lock.release()
+
+        except Exception as e:
+            logger.error(f"Failed to execute SQL: {e}")
+            return Result(
+                success=False,
+                errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                errorMessage=str(e),
+            )
+
+    def _execute_resolved_sql(
+        self,
+        request: ExecuteSQLInput,
+        task_id: str,
+        policy_context: Optional[Dict[str, Any]],
+        datasource: str,
+        connector: Any,
+    ) -> Result[ExecuteSQLData]:
+        """Run one statement on an already-resolved connector, under its lock."""
+        try:
+>>>>>>> b9f8253 ([Feature] Address table metadata and SQL execution per datasource (#1342))
             # Switch to the requested database/catalog context before executing.
             if request.database_name:
-                catalog = getattr(self.current_db_connector, "catalog_name", "") or ""
-                self.current_db_connector.switch_context(
+                catalog = getattr(connector, "catalog_name", "") or ""
+                connector.switch_context(
                     catalog_name=catalog,
                     database_name=request.database_name,
                 )
@@ -134,10 +408,58 @@ class CLIService:
 
             # Execute the query
             start_time = time.time()
+<<<<<<< HEAD
             result = self.current_db_connector.execute(
                 input_params={"sql_query": request.sql_query},
                 result_format=request.result_format,
             )
+=======
+            sql_type = parse_sql_type(request.sql_query, connector.dialect)
+            is_write = sql_type in _WRITE_SQL_TYPES and is_single_statement(request.sql_query)
+
+            if is_write and policy_context:
+                # A write can carry a read: `CREATE TABLE mine AS SELECT * FROM
+                # orders` copies the rows a policy just filtered into a table no
+                # policy covers. The plugin cannot help — it hooks reads only —
+                # so on a project that has policies at all, a write that embeds
+                # a query is refused here.
+                reads = write_statement_reads_data(request.sql_query, connector.dialect)
+                if reads:
+                    message = (
+                        "This project has row-level policies, so a write statement that "
+                        "reads from a query is not allowed here — it would copy filtered "
+                        "rows into a table no policy covers. Create views and derived "
+                        "tables on the database side instead."
+                    )
+                    # Every other exit from here closes the action it opened;
+                    # returning without doing so leaves it PROCESSING forever
+                    # and the refusal never reaches the history.
+                    actions.update_action_by_id(
+                        sql_action.action_id,
+                        status=ActionStatus.FAILED,
+                        output={"error": message},
+                        messages=f"SQL execution refused: {message}",
+                    )
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                        errorMessage=message,
+                    )
+
+            if is_write:
+                result = connector.execute(
+                    input_params={"sql_query": request.sql_query},
+                    result_format=request.result_format,
+                )
+            else:
+                result = self._db_tool().execute_read_enforced(
+                    request.sql_query,
+                    connector,
+                    datasource=datasource,
+                    result_format=request.result_format,
+                    policy_context=policy_context,
+                )
+>>>>>>> b9f8253 ([Feature] Address table metadata and SQL execution per datasource (#1342))
             end_time = time.time()
             exec_time = end_time - start_time
 
@@ -241,10 +563,15 @@ class CLIService:
         via ``stop_execute_sql()``. Otherwise a server-generated UUID is used.
         """
         task_id = request.execute_task_id or str(uuid.uuid4())
+        cancelled = threading.Event()
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
+<<<<<<< HEAD
                 return await asyncio.to_thread(self._execute_sql_sync, request, task_id)
+=======
+                return await asyncio.to_thread(self._execute_sql_sync, request, task_id, policy_context, cancelled)
+>>>>>>> b9f8253 ([Feature] Address table metadata and SQL execution per datasource (#1342))
             except asyncio.CancelledError:
                 logger.info(f"SQL execution task cancelled: {task_id}")
                 return Result(
@@ -264,6 +591,7 @@ class CLIService:
                 )
             task = asyncio.create_task(_run())
             self._sql_tasks[task_id] = task
+            self._sql_cancels[task_id] = cancelled
 
         return await task
 
@@ -278,6 +606,7 @@ class CLIService:
         """
         with self._sql_tasks_lock:
             task = self._sql_tasks.get(task_id)
+            cancelled = self._sql_cancels.get(task_id)
 
         if not task:
             return Result(
@@ -296,6 +625,10 @@ class CLIService:
                 data=StopExecuteSQLData(execute_task_id=task_id, stopped=False),
             )
 
+        # Raised before cancelling: the worker checks it once it owns the lock,
+        # which is the only place a queued statement can still be stopped.
+        if cancelled is not None:
+            cancelled.set()
         task.cancel()
         logger.info(f"Cancellation requested for SQL execution task: {task_id}")
         return Result(
