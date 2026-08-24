@@ -74,6 +74,21 @@ class TestSafeConnectServer:
         assert server.enter_calls < 5
 
     @pytest.mark.asyncio
+    async def test_retry_backoff_never_outlives_the_deadline(self, monkeypatch):
+        monkeypatch.setattr(mcp_utils, "RETRY_BACKOFF_SECONDS", 5.0)
+        server = FakeServer(fail_times=99)
+        started = time.monotonic()
+
+        with pytest.raises(ConnectionError):
+            async with _safe_connect_server(
+                "flaky", server, max_retries=3, connect_timeout=1.0, deadline=started + 0.05
+            ):
+                pytest.fail("should never connect")
+
+        # The backoff is clamped to what is left of the budget, not slept whole.
+        assert time.monotonic() - started < 1.0
+
+    @pytest.mark.asyncio
     async def test_retry_then_success(self):
         server = FakeServer(fail_times=1)
 
@@ -142,4 +157,11 @@ class TestEnvOverrides:
 
     def test_non_positive_env_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("DATUS_MCP_CONNECT_TIMEOUT", "0")
+        assert mcp_utils.connect_timeout_seconds() == mcp_utils.DEFAULT_CONNECT_TIMEOUT_SECONDS
+
+    @pytest.mark.parametrize("raw", ["inf", "-inf", "nan"])
+    def test_non_finite_env_falls_back_to_default(self, monkeypatch, raw):
+        # `nan` compares False against every bound and `inf` is positive, so
+        # both would otherwise become a timeout that never fires.
+        monkeypatch.setenv("DATUS_MCP_CONNECT_TIMEOUT", raw)
         assert mcp_utils.connect_timeout_seconds() == mcp_utils.DEFAULT_CONNECT_TIMEOUT_SECONDS

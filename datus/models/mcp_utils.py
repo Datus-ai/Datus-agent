@@ -3,12 +3,16 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
+import math
 import os
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Optional
 
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from agents.mcp import MCPServer
 
 logger = get_logger(__name__)
 
@@ -33,7 +37,9 @@ def _env_float(name: str, default: float) -> float:
     except ValueError:
         logger.warning(f"Ignoring non-numeric {name}={raw!r}, falling back to {default}s")
         return default
-    if value <= 0:
+    # `nan <= 0` is False and `inf` is positive, so both slip past a plain
+    # sign check and reach asyncio.timeout() as a deadline that never fires.
+    if not math.isfinite(value) or value <= 0:
         logger.warning(f"Ignoring non-positive {name}={raw!r}, falling back to {default}s")
         return default
     return value
@@ -49,7 +55,7 @@ def connect_budget_seconds() -> float:
     return _env_float("DATUS_MCP_CONNECT_BUDGET", DEFAULT_CONNECT_BUDGET_SECONDS)
 
 
-async def _close_quietly(server_name: str, server: Any) -> None:
+async def _close_quietly(server_name: str, server: "MCPServer") -> None:
     """Best-effort teardown; MCP transports raise noisy anyio errors when closed
     from a task other than the one that opened them."""
     try:
@@ -68,11 +74,11 @@ async def _close_quietly(server_name: str, server: Any) -> None:
 @asynccontextmanager
 async def _safe_connect_server(
     server_name: str,
-    server,
+    server: "MCPServer",
     max_retries: int = 3,
     connect_timeout: Optional[float] = None,
     deadline: Optional[float] = None,
-):
+) -> AsyncGenerator["MCPServer", None]:
     """Context-managed safe MCP server connection.
 
     Args:
@@ -134,11 +140,22 @@ async def _safe_connect_server(
             return
 
         if attempt < max_retries - 1:
-            try:
-                await asyncio.sleep(RETRY_BACKOFF_SECONDS)
-            except asyncio.CancelledError:
-                logger.debug(f"MCP server {server_name} retry cancelled")
-                raise
+            backoff = RETRY_BACKOFF_SECONDS
+            if deadline is not None:
+                # Sleeping past the deadline would push the caller's first
+                # token out beyond the cap the budget promises.
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.warning(f"MCP server {server_name}: connect budget exhausted, giving up")
+                    break
+                backoff = min(backoff, remaining)
+
+            if backoff > 0:
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    logger.debug(f"MCP server {server_name} retry cancelled")
+                    raise
 
     raise last_error if last_error else TimeoutError(f"Could not connect MCP server {server_name} within budget")
 
