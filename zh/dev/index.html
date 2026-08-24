@@ -4092,7 +4092,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        工作方式
+        架构
       
     </span>
   </a>
@@ -4175,7 +4175,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        架构
+        工作方式
       
     </span>
   </a>
@@ -4243,20 +4243,14 @@
 <h1 id="_1">介绍<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <p><strong><a href="https://github.com/Datus-ai/Datus-agent">Datus</a></strong> 是面向现代数据栈的开源数据工程 Agent：用一个 Agent 连接数据仓库、数据目录、语义层和 BI，底座是一套沉淀在团队自己手里的可演进上下文引擎(evolvable context engine)。</p>
 <p>Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数据管道、报告和看板的生成；每一次执行与修正都会沉淀为上下文，持续提升后续输出的准确性。整个体系在生态上保持开放与灵活：数据库、BI、调度、LLM 乃至团队自己的工具，都能以标准方式接入。</p>
-<h2 id="_2">工作方式<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Agent 回答的质量，取决于它拿到的上下文质量。Datus 因此把重点放在上下文的沉淀与复用上，下图是完整的循环：</p>
-<p><img alt="Datus 工作方式" src="assets/how_it_works.svg" /></p>
-<p>图分前后两半。前半段是数据工程师的工作：探索数据、构建上下文、完成语义建模，产出可复用的资产；后半段是组织对资产的消费：subagent 把它们变成任何人都能提问的服务。</p>
-<p>两半之间也不是单向交付：分析师的每次修正都会回流，资产随使用不断变厚。</p>
-<ol>
-<li><strong>探索</strong>：不需要任何前置建设，在 <a href="cli/chat_command/">CLI</a> 里直接与数据库对话，用 <code>@table</code> 引用表、<code>@file</code> 引用文件，边问边熟悉数据。</li>
-<li><strong>构建上下文</strong>：<a href="skills/init/"><code>/init</code></a> 扫描当前项目，<code>/bootstrap</code> 和 <a href="skills/build_kb/"><code>/build-kb</code></a> 把散落在 schema、历史 SQL 和文档里的知识收进<a href="knowledge_base/introduction/">知识库</a>；这是后面一切准确性的原料。</li>
-<li><strong>语义建模</strong>：语义建模 subagent 从 schema 和历史 SQL 中挖掘数据集、<a href="knowledge_base/semantic_model/">语义模型</a>与<a href="knowledge_base/metrics/">指标</a>，校验后注册进语义层；业务口径从此有了唯一的、可执行的定义。</li>
-<li><strong>创建 Subagent</strong>：用 <code>/agent</code> 把配好的上下文、工具和规则打包成<a href="subagent/customized_subagent/">面向单个业务域的 subagent</a>；资产从这一步开始变成别人可以直接使用的服务。</li>
-<li><strong>交付</strong>：分析师在自己习惯的地方提问，浏览器、Slack/飞书或 IDE 都可以(见<a href="#interfaces">接入方式</a>)；<a href="subagent/ask_metrics/">AskMetrics</a> 依据指标定义回答，<a href="subagent/gen_visual_report/">报告和看板</a>在对话里直接生成。</li>
-<li><strong>度量</strong>：用 <a href="benchmark/benchmark_manual/">benchmark</a> 在 BIRD、Spider 2.0-Snow 或<a href="configuration/benchmark/">自定义数据集</a>上度量 SQL 准确率，把上下文带来的提升变成可量化的数字。</li>
-</ol>
-<p>第 5 步产生的修正、反馈和成功案例会回流进第 2 步的上下文。资产在使用中越来越完整，而不是建成之日就开始过时。</p>
+<h2 id="_2">架构<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p><img alt="Datus 架构" src="assets/datus_architecture.svg" /></p>
+<p>整体架构自上而下分三段：谁在用、Agent 由什么组成、连接哪些系统，与上图对应：</p>
+<ul>
+<li><strong>按角色划分的三个入口</strong>：数据工程师在 <a href="cli/introduction/">Datus-CLI</a> 里探索数据、构建资产；分析师通过 <a href="web_chatbot/introduction/">Datus-Chat</a>(Web、Slack/飞书、VS Code)提问，使用中的反馈会回流进 Agent；其他 Agent 和应用经 <a href="API/introduction/">Datus-API</a>(REST、MCP)消费。</li>
+<li><strong>Agent 核心</strong>：<a href="subagent/introduction/">Subagent</a> 为单个业务域打包配好的上下文、工具和规则，<a href="skills/introduction/">Skill</a> 提供打包的扩展工具，<a href="plugin/introduction/">Plugin</a> 接入第三方和公司内部工具；底座是<a href="knowledge_base/introduction/">上下文引擎</a>：元数据、指标、参考 SQL、知识与本地文件，检索用业务域树加向量召回，<a href="configuration/storage/">存储</a>默认内嵌 LanceDB 和 SQLite，团队共享上下文时可换 PostgreSQL。</li>
+<li><strong>连接的系统</strong>：LLM、数据仓库、<a href="https://dosi.datus.ai/">Dosi</a> 语义层、作业调度、BI 工具与 MCP 服务端/客户端，均经适配器接入。</li>
+</ul>
 <h2 id="_3">核心能力<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>准确率来自两处：语义层把业务口径变成可执行的定义，上下文引擎把使用中产生的知识留存下来。Subagent 负责把这些资产交付给使用的人，Plugin 生态与治理让整套体系能接入现有技术栈，并在生产环境中受控运行。</p>
 <h3 id="_4">语义建模自动化<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
@@ -4283,15 +4277,20 @@
 <li>治理上，权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，<a href="develop/observability/">trace</a> 可导出到任意 OTLP 平台。</li>
 </ul>
 <p><img alt="开放生态：安装 plugin，接入现有技术栈" src="assets/ecosystem_plugins.svg" /></p>
-<h2 id="_7">架构<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
-<p><img alt="Datus 架构" src="assets/datus_architecture.svg" /></p>
-<p>整体架构自上而下分四层，与上图对应：</p>
-<ul>
-<li><strong>交付层</strong>：CLI、Web 聊天、REST API、MCP、IM 网关和 VS Code 六个入口，共享同一个 Agent 后端。</li>
-<li><strong>智能层</strong>：Chat Agent 负责规划和推理，subagent 处理专项任务，Skill 与 Plugin 提供扩展工具，治理机制也作用在这一层。交互请求走 Agentic 模式，步骤由 Agent 自行规划；benchmark 和批量任务走 <a href="workflow/introduction/">Workflow 模式</a>，按预定义的节点计划执行。</li>
-<li><strong>语义层与上下文</strong>：Agent 构建的资产层。一半是语义模型与指标，由 Dosi 或 MetricFlow 执行；另一半是<a href="knowledge_base/introduction/">上下文</a>，包括 schema 元数据、参考 SQL、知识与记忆。检索用业务域树加向量召回；<a href="configuration/storage/">存储</a>默认是内嵌的 LanceDB 和 SQLite，团队需要共享上下文时可换成 PostgreSQL。</li>
-<li><strong>数据与工具层</strong>：经适配器连接的数据库、BI 平台、调度系统与 LLM 提供商。</li>
-</ul>
+<h2 id="_7">工作方式<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p>Agent 回答的质量，取决于它拿到的上下文质量。Datus 因此把重点放在上下文的沉淀与复用上，下图是完整的循环：</p>
+<p><img alt="Datus 工作方式" src="assets/how_it_works.svg" /></p>
+<p>图分前后两半。前半段是数据工程师的工作：探索数据、构建上下文、完成语义建模，产出可复用的资产；后半段是组织对资产的消费：subagent 把它们变成任何人都能提问的服务。</p>
+<p>两半之间也不是单向交付：分析师的每次修正都会回流，资产随使用不断变厚。</p>
+<ol>
+<li><strong>探索</strong>：不需要任何前置建设，在 <a href="cli/chat_command/">CLI</a> 里直接与数据库对话，用 <code>@table</code> 引用表、<code>@file</code> 引用文件，边问边熟悉数据。</li>
+<li><strong>构建上下文</strong>：<a href="skills/init/"><code>/init</code></a> 扫描当前项目，<code>/bootstrap</code> 和 <a href="skills/build_kb/"><code>/build-kb</code></a> 把散落在 schema、历史 SQL 和文档里的知识收进<a href="knowledge_base/introduction/">知识库</a>；这是后面一切准确性的原料。</li>
+<li><strong>语义建模</strong>：语义建模 subagent 从 schema 和历史 SQL 中挖掘数据集、<a href="knowledge_base/semantic_model/">语义模型</a>与<a href="knowledge_base/metrics/">指标</a>，校验后注册进语义层；业务口径从此有了唯一的、可执行的定义。</li>
+<li><strong>创建 Subagent</strong>：用 <code>/agent</code> 把配好的上下文、工具和规则打包成<a href="subagent/customized_subagent/">面向单个业务域的 subagent</a>；资产从这一步开始变成别人可以直接使用的服务。</li>
+<li><strong>交付</strong>：分析师在自己习惯的地方提问，浏览器、Slack/飞书或 IDE 都可以(见<a href="#interfaces">接入方式</a>)；<a href="subagent/ask_metrics/">AskMetrics</a> 依据指标定义回答，<a href="subagent/gen_visual_report/">报告和看板</a>在对话里直接生成。</li>
+<li><strong>度量</strong>：用 <a href="benchmark/benchmark_manual/">benchmark</a> 在 BIRD、Spider 2.0-Snow 或<a href="configuration/benchmark/">自定义数据集</a>上度量 SQL 准确率，把上下文带来的提升变成可量化的数字。</li>
+</ol>
+<p>第 5 步产生的修正、反馈和成功案例会回流进第 2 步的上下文。资产在使用中越来越完整，而不是建成之日就开始过时。</p>
 <h2 id="_8">快速开始<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <p>第一次运行不需要准备自己的数据库：安装自带 California Schools 示例数据集，数据源 <code>california_schools</code> 已预注册。Linux 或 macOS：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
@@ -4363,7 +4362,7 @@
 <li>
 <p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 0 3 7l1.63 1.27L12 14l7.36-5.73L21 7zm7.37 10.73L12 16.47l-7.38-5.73L3 12l9 7 9-7zm0 5L12 21.47l-7.38-5.73L3 17l9 7 9-7z"/></svg></span> <strong>语义层</strong></p>
 <hr />
-<p>语义模型与指标如何生成、存储，并由 Dosi 或 MetricFlow 执行。</p>
+<p>语义模型与指标如何生成、存储，并由 Dosi 引擎执行。</p>
 <p><a href="adapters/semantic_adapters/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> 语义适配器</a></p>
 </li>
 <li>
