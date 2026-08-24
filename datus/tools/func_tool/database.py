@@ -1429,6 +1429,327 @@ class DBFuncTool:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return FuncToolResult(success=0, error=error_msg)
 
+<<<<<<< HEAD
+=======
+    # ------------------------------------------------- uploaded data files
+
+    def _reject_unsafe_uploads_sql(self, sql: str, datasource: Optional[str]) -> Optional[FuncToolResult]:
+        """Confine model-authored SQL on the uploads catalog to reads of its own tables.
+
+        The catalog is a DuckDB datasource with external file access enabled —
+        that is what makes a lazy VIEW over a spreadsheet possible. The same
+        capability in hand-written SQL reaches every file the process can see,
+        including the shared tenant volume, routing around the filesystem path
+        policy that is the agent's only containment boundary.
+
+        Three gates. The last is a whitelist, because a blacklist of
+        file-reading syntax cannot be completed:
+
+        * statement class — everything except SELECT / SHOW / DESCRIBE / EXPLAIN
+          is refused. ``ATTACH '/data/tenants/<other>/x.duckdb'`` and
+          ``COPY (...) TO '/path'`` are not function calls and would sail past a
+          name check while reading or writing outside the project entirely.
+          Nothing legitimate is lost: every write to this catalog comes from
+          ``load_file_as_table``, which uses its own connection.
+        * named file-reading functions, which also covers a reader called where
+          a *value* goes rather than where a table goes — that leaves no table
+          reference for the next gate to inspect.
+        * every table reference must resolve to an object the catalog already
+          holds. DuckDB's replacement scan reads a bare path as a table —
+          ``SELECT * FROM '/data/tenants/other/x.parquet'``, globs included —
+          with no function call for a name check to see, and it parses as a
+          plain SELECT. Requiring resolution closes that, closes every
+          file-reading function at once, and closes whatever DuckDB adds next.
+
+        Scoped to this datasource on purpose: a project that configures its own
+        DuckDB datasource already had this reach before uploads existed, and
+        silently narrowing it here would be an unrelated behaviour change.
+        """
+        resolved = datasource or self._default_datasource
+        if resolved != LOCAL_FILES_DATASOURCE:
+            return None
+
+        from datus.utils.sql_utils import parse_sql_type
+
+        hint = (
+            f"Only read queries are allowed on the '{LOCAL_FILES_DATASOURCE}' "
+            f"datasource. Register a file with load_file_as_table(path=...) and "
+            f"query the table it returns; call list_tables(datasource="
+            f"'{LOCAL_FILES_DATASOURCE}') to see what is registered."
+        )
+
+        try:
+            sql_type = parse_sql_type(sql, "duckdb")
+        except Exception:
+            # Unparseable SQL fails closed: this gate is the boundary, so an
+            # unknown statement is refused rather than waved through.
+            sql_type = None
+        if sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+            return FuncToolResult(
+                success=0,
+                error=f"{'Unparseable statement' if sql_type is None else 'Write and DDL statements'} rejected. {hint}",
+            )
+
+        # Cheap, and it covers a syntactic position the resolution check below
+        # cannot see: a reader called where a *value* goes rather than where a
+        # table goes leaves no table reference behind. It also gives a better
+        # message for the common ``FROM read_csv_auto(...)`` shape.
+        offenders = find_file_reading_functions(sql)
+        if offenders:
+            return FuncToolResult(
+                success=0,
+                error=f"{', '.join(offenders)} cannot be called directly. {hint}",
+            )
+
+        try:
+            registered = list(self._registered_uploads())
+        except Exception as exc:
+            # No catalog reading means no way to authorise a reference, and this
+            # gate is the boundary — so refuse rather than skip it.
+            logger.warning("Could not read the uploads catalog to authorise SQL: %s", exc)
+            return FuncToolResult(success=0, error=f"Uploads catalog is unavailable. {hint}")
+
+        offenders = unresolved_table_references(sql, registered)
+        if offenders:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"{', '.join(offenders)} is not a table registered on the "
+                    f"'{LOCAL_FILES_DATASOURCE}' datasource. {hint}"
+                ),
+            )
+        return None
+
+    def _registered_uploads(self) -> Dict[str, Optional[str]]:
+        """Names the uploads catalog holds, read while holding the connector lock.
+
+        The read has to happen *inside* ``exclusive_connection``. Handing the
+        connection out and querying it afterwards races every other caller on
+        the same connector, and an LLM emitting parallel tool calls makes that
+        the normal case, not a corner: ``DuckDBPyConnection`` is not thread-safe,
+        so concurrent ``execute`` either returns another statement's rows or
+        segfaults the process. Returning the wrong rows is the worse outcome —
+        a short read looks like an empty catalog, which this gate then reports
+        as "table is not registered" about a table that is registered.
+        """
+        connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
+        exclusive = getattr(connector, "exclusive_connection", None)
+        if exclusive is None:
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message=f"Datasource '{LOCAL_FILES_DATASOURCE}' is not a DuckDB datasource",
+            )
+        with exclusive() as connection:
+            return registered_objects(connection)
+
+    def _resolve_data_file(self, path: str):
+        """Classify a user-supplied data-file path against the filesystem policy.
+
+        ``load_file_as_table`` embeds the resolved path into a VIEW definition,
+        so this is the only point where the path is checked — everything after it
+        is DuckDB reading whatever it was handed. Only INTERNAL (inside the
+        project) and WHITELIST (operator-granted) paths pass; HIDDEN and EXTERNAL
+        are refused, with HIDDEN reported as "not found" to preserve the
+        invisibility of ``.datus`` internals.
+        """
+        from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
+
+        agent_config = self.agent_config
+        root_path = self._filesystem_root or ""
+        datus_home = None
+        allowlist = None
+        if agent_config is not None:
+            if not root_path:
+                root_path = getattr(agent_config, "project_root", "") or getattr(agent_config, "home", "") or ""
+            allowlist = getattr(agent_config, "filesystem_allowlist", None) or None
+            path_manager = getattr(agent_config, "path_manager", None)
+            if path_manager is not None:
+                try:
+                    datus_home = str(path_manager.datus_home)
+                except Exception:
+                    datus_home = None
+        root = Path(root_path).expanduser().resolve(strict=False) if root_path else Path.cwd()
+
+        resolved = classify_path(path, root_path=root, datus_home=datus_home, allowlist=allowlist)
+        if resolved.zone in (PathZone.HIDDEN, PathZone.EXTERNAL):
+            if resolved.zone == PathZone.HIDDEN:
+                raise DataFileError(f"File not found: {resolved.display}")
+            raise DataFileError(
+                f"{resolved.display} is outside the project workspace. Upload the file "
+                f"into the project's files before loading it."
+            )
+        return resolved
+
+    @mcp_tool()
+    def load_file_as_table(
+        self,
+        path: str,
+        sheet: Optional[str] = "",
+        header_row: Optional[int] = None,
+        encoding: Optional[str] = "",
+        materialize: bool = False,
+        inspect_only: bool = False,
+    ) -> FuncToolResult:
+        """
+        Register an uploaded data file as queryable SQL table(s).
+
+        Use this for any spreadsheet or columnar data file the user refers to —
+        ``read_file`` cannot read them, and for anything beyond a handful of rows
+        you want SQL anyway (aggregation, joins against the project's own
+        database, charting).
+
+        Supported: ``.xlsx``, ``.xlsm``, ``.xls``, ``.csv``, ``.tsv``,
+        ``.parquet``, ``.json``, ``.jsonl``. Each sheet of a spreadsheet becomes
+        its own table; other formats produce one table.
+
+        The registration is a lazy view over the file, so it is cheap and
+        idempotent. Call it again at the start of any analysis rather than
+        reasoning about staleness: for CSV/Parquet/JSON every query already re-reads
+        the file, and for spreadsheets a reload is what picks up rows appended since
+        the last load. Query the result with
+        ``execute_sql(sql=..., datasource='local_files')``; the tables are also
+        visible to ``list_tables`` / ``describe_table`` on that datasource. Note
+        those tables live in a *different* datasource than the project's own
+        database, so a query cannot join across the two in one statement.
+
+        Args:
+            path: Path to the data file, relative to the project workspace.
+            sheet: Spreadsheets only — load just this sheet instead of all of them.
+            encoding: CSV/TSV only — override the detected text encoding. Detection
+                handles the common cases (UTF-8, a BOM, GB18030 from Excel on a
+                Chinese Windows); pass one of ``utf-8``, ``utf-16``, ``gb18030``,
+                ``big5``, ``shift_jis``, ``cp1252``, ``latin-1`` when the reported
+                ``encoding`` is wrong — the symptom is garbled text in the preview.
+            header_row: Spreadsheets only — 1-based row holding the column names.
+                Omit to auto-detect. Pass it when the detected header (reported
+                back as ``header_row``) picked up a title or a blank row: the
+                symptom is column names that read like a sentence, or a row count
+                far larger than the real data.
+            materialize: Copy the data into a real table instead of a view. Only
+                worth it for a large file queried repeatedly; the copy is a
+                snapshot and stops tracking edits to the file.
+            inspect_only: Register nothing; return the sheet list and the raw
+                un-parsed top-left cells. Use it to work out the right
+                ``header_row`` for an awkward layout.
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[dict]): On success, ``datasource``,
+                    ``dialect``, ``tables`` (each with its name, source sheet,
+                    detected ``header_row``, row count, per-column profile and a
+                    row preview), any ``skipped_sheets``, and ``example_sql``.
+        """
+        try:
+            # A vscode session's files live on the client; ``_resolve_workspace_root``
+            # deliberately reports "." there rather than leaking the daemon CWD, so
+            # any path resolved here would point at the wrong machine. Say that,
+            # instead of returning a "File not found" nobody can explain.
+            if getattr(self.agent_config, "_client_source", None) == "vscode":
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "load_file_as_table needs server-side access to the file, which a "
+                        "vscode session does not have — its workspace lives on the client. "
+                        "Ask the user to upload the file into the project on the web IDE."
+                    ),
+                )
+
+            # Registering a file creates objects in the catalog, so it belongs
+            # with the other write entry points under the read-only contract.
+            # ``inspect_only`` creates nothing and stays available.
+            if not inspect_only:
+                refusal = self._refuse_write_if_read_only("load_file_as_table")
+                if refusal is not None:
+                    return refusal
+
+            resolved = self._resolve_data_file(path)
+            target = resolved.resolved
+            if not target.exists():
+                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+            if not target.is_file():
+                return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
+
+            # Legacy single-connector mode returns the primary connector for ANY
+            # requested datasource, so without this the CREATE VIEW / COMMENT ON
+            # would land in the user's real database. The tool is not mounted in
+            # that mode, but a Python caller can still reach it.
+            if LOCAL_FILES_DATASOURCE not in self._datasources:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Datasource '{LOCAL_FILES_DATASOURCE}' is not configured, so uploaded "
+                        f"files cannot be registered in this deployment."
+                    ),
+                )
+            connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
+            exclusive = getattr(connector, "exclusive_connection", None)
+            if exclusive is None:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Datasource '{LOCAL_FILES_DATASOURCE}' is not a DuckDB datasource, "
+                        f"so uploaded files cannot be registered in this deployment."
+                    ),
+                )
+
+            # The tool schema types this as an integer, so a model with nothing to
+            # say sends 0 rather than omitting the key — the same way it sends ""
+            # for sheet and encoding, and observed in real traffic. Rows are
+            # 1-based, so 0 can only mean "unspecified"; taken literally it fails
+            # every sheet with "header_row must be 1 or greater" and the file
+            # reads as unloadable. A negative value is a real mistake and still
+            # reports as one.
+            if header_row == 0:
+                header_row = None
+
+            with exclusive() as connection:
+                if inspect_only:
+                    details = inspect_file(target, connection=connection, sheet=sheet or None)
+                    return FuncToolResult(result=details)
+
+                loaded, skipped = load_file(
+                    target,
+                    resolved.display,
+                    connection=connection,
+                    conversion_cache_dir=default_conversion_cache_dir(getattr(connector, "db_path", "")),
+                    sheet=sheet or None,
+                    header_row=header_row,
+                    encoding=encoding or None,
+                    materialize=materialize,
+                    existing_objects=registered_objects(connection),
+                )
+
+            result: Dict[str, Any] = {
+                "datasource": LOCAL_FILES_DATASOURCE,
+                "dialect": "duckdb",
+                "tables": [item.to_dict() for item in loaded],
+            }
+            if skipped:
+                result["skipped_sheets"] = [item.to_dict() for item in skipped]
+            if loaded:
+                first = loaded[0]
+                result["example_sql"] = (
+                    f"SELECT * FROM {quote_identifier(first.table)} LIMIT 10"
+                    if not first.preview_columns
+                    else f"SELECT {quote_identifier(first.preview_columns[0])}, count(*) AS n "
+                    f"FROM {quote_identifier(first.table)} GROUP BY 1 ORDER BY 2 DESC"
+                )
+                result["usage"] = (
+                    f"Query these with execute_sql(sql=..., datasource='{LOCAL_FILES_DATASOURCE}'). "
+                    f"Quote any identifier that is not plain ASCII, e.g. "
+                    f'SELECT "金额" FROM {first.table}.'
+                )
+            return FuncToolResult(result=result)
+
+        except DataFileError as e:
+            return FuncToolResult(success=0, error=str(e))
+        except Exception as e:
+            logger.error(f"load_file_as_table failed for {path}: {e}", exc_info=True)
+            return FuncToolResult(success=0, error=f"Failed to load {path}: {e}")
+
+>>>>>>> bb84920 ([BugFix] Serialise the uploads catalog read so parallel tool calls stop being refused (#1340))
     @mcp_tool()
     def execute_sql(
         self,

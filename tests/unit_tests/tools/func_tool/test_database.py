@@ -2077,3 +2077,629 @@ class TestDBFuncToolGuardEstimatedRows:
         tool = self._make_tool(connector)
 
         assert tool.guard_estimated_rows("SELECT 1", connector) is None
+<<<<<<< HEAD
+=======
+
+
+class TestExecuteSqlWriteLaundering:
+    """A write that carries a read must not run while a policy context exists.
+
+    `execute_sql` routes reads through `execute_read_enforced`, where the plugin
+    rewrites them — but DML and DDL went straight to the connector. So a caller
+    restricted to two stores could ask chat for
+    `CREATE TABLE mine AS SELECT * FROM orders` and end up owning every row the
+    policy withholds, in a table no policy covers. Found end-to-end, not by any
+    unit test: the console path had the same hole and was fixed on its own.
+    """
+
+    def _tool(self, connector, policy_context):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as sem,
+        ):
+            rag.return_value.schema_store.table_size.return_value = 0
+            sem.return_value.get_size.return_value = 0
+            # `_mock_agent_config`, not a bare `Mock()`: a bare Mock answers
+            # every attribute with a truthy Mock, so `sql_read_only` would read
+            # as on and these write-path assertions would fail for a reason
+            # unrelated to what they test.
+            config = _mock_agent_config()
+            config.active_model.return_value.model = "gpt-4o"
+            config.policy_context = policy_context
+            tool = DBFuncTool(connector, agent_config=config)
+        return tool
+
+    def _connector(self):
+        c = Mock()
+        c.dialect = "postgresql"
+        c.get_databases.return_value = []
+        c.execute_ddl.return_value = Mock(success=True)
+        c.execute_insert.return_value = Mock(success=True, row_count=1)
+        return c
+
+    SCOPED = {"row_filter": {"access_mode": "scoped", "store_ids": ["S001"]}}
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "CREATE TABLE mine AS SELECT * FROM orders",
+            "INSERT INTO mine SELECT * FROM orders",
+            # sqlglot cannot parse this and returns an opaque Command.
+            "CREATE TABLE mine AS TABLE orders",
+            "COPY orders TO '/tmp/orders.csv'",
+        ],
+    )
+    def test_a_write_that_reads_is_refused(self, sql):
+        connector = self._connector()
+        tool = self._tool(connector, self.SCOPED)
+
+        result = tool.execute_sql(sql)
+
+        assert result.success == 0
+        assert "row-level policies" in result.error
+        connector.execute_ddl.assert_not_called()
+        connector.execute_insert.assert_not_called()
+
+    def test_a_plain_write_still_runs(self):
+        """Enabling a policy must not turn the agent read-only."""
+        connector = self._connector()
+        tool = self._tool(connector, self.SCOPED)
+
+        result = tool.execute_sql("CREATE TABLE plain_t (id int)")
+
+        assert result.success == 1
+        connector.execute_ddl.assert_called_once()
+
+    def test_without_policies_the_same_write_is_allowed(self):
+        connector = self._connector()
+        tool = self._tool(connector, {})
+
+        result = tool.execute_sql("CREATE TABLE mine AS SELECT * FROM orders")
+
+        assert result.success == 1
+        connector.execute_ddl.assert_called_once()
+
+
+class TestMcpFactoriesHonorDeploymentReadOnly:
+    """``create_dynamic`` / ``create_static`` are the MCP server's construction
+    path (``mcp_server._create_context`` and ``_init_tools`` loop over the tool
+    registry and call them generically). Neither can pass ``read_only``, so this
+    is the path the deployment switch has to cover on its own — testing
+    ``__init__`` alone would miss it entirely.
+    """
+
+    @staticmethod
+    def _config(**attrs):
+        config = _mock_agent_config(**attrs)
+        config.project_name = "proj"
+        return config
+
+    def _build(self, factory, config):
+        manager = Mock()
+        manager.get_conn.return_value = Mock(dialect="sqlite")
+        with (
+            patch("datus.tools.func_tool.database.db_manager_instance", return_value=manager),
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG"),
+            patch("datus.tools.func_tool.database.metadata_fts_enabled", return_value=False),
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return factory(config)
+
+    def test_create_dynamic_inherits_deployment_read_only(self):
+        """``.read_only`` reports the posture the write paths will enforce, not
+        the constructor argument — the factory passes no ``read_only`` at all,
+        so anything reading the attribute would otherwise be told this MCP tool
+        is writable on a hardened deployment."""
+        tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=True))
+
+        assert tool.read_only is True
+        assert tool._read_only is False  # nothing passed it; the config supplied it
+
+    def test_create_static_inherits_deployment_read_only(self):
+        tool = self._build(DBFuncTool.create_static, self._config(sql_read_only=True))
+
+        assert tool.read_only is True
+
+    def test_create_dynamic_rejects_writes_end_to_end(self):
+        """The property is only meaningful if execute_sql actually refuses."""
+        tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=True))
+        connector = Mock()
+        connector.dialect = "sqlite"
+        tool._get_connector = Mock(return_value=connector)
+
+        result = tool.execute_sql("INSERT INTO users VALUES (1)")
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        connector.execute_insert.assert_not_called()
+
+    def test_create_dynamic_stays_writable_by_default(self):
+        tool = self._build(DBFuncTool.create_dynamic, self._config(sql_read_only=False))
+
+        assert tool.read_only is False
+
+
+class TestUploadsCatalogSqlGuard:
+    """``execute_sql`` must not let model-authored SQL read arbitrary files.
+
+    The uploads catalog is a DuckDB datasource with external file access on —
+    that is what makes a lazy view over a spreadsheet work. Reached through a
+    hand-written ``read_csv_auto('/etc/passwd')`` the same capability reads
+    anything the process can see, routing around the filesystem path policy that
+    is the agent's only containment boundary.
+    """
+
+    def _make_tool(self, *, datasources=("local_files",), default="local_files", registered=("jeffshop_q3",)):
+        import contextlib
+
+        from datus.tools.db_tools.db_manager import DBManager
+
+        catalog = Mock()
+        catalog.execute.return_value.fetchall.return_value = [(name, None) for name in registered]
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.get_databases.return_value = []
+        connector.exclusive_connection = lambda: contextlib.nullcontext(catalog)
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config.current_datasource = default
+        config.current_db_configs.return_value = {name: Mock(type="duckdb") for name in datasources}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config), connector
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM read_csv_auto('/etc/passwd')",
+            "SELECT * FROM read_parquet('/data/secret.parquet')",
+            "SELECT * FROM read_xlsx('/tmp/other.xlsx')",
+            "SELECT read_text('/etc/hosts')",
+            "SELECT * FROM glob('/**')",
+            "SELECT * FROM (SELECT * FROM read_csv_auto('/etc/passwd')) t",
+            # SQL is case-insensitive and tolerates space before the paren, so a
+            # gate that is not would be trivially sidestepped.
+            "SELECT * FROM READ_CSV_AUTO('/etc/passwd')",
+            "SELECT * FROM Read_Csv_Auto('/etc/passwd')",
+            "SELECT * FROM read_csv_auto ('/etc/passwd')",
+        ],
+    )
+    def test_rejects_file_reading_sql_on_the_uploads_datasource(self, sql):
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql(sql, datasource="local_files")
+
+        assert result.success == 0
+        assert "load_file_as_table" in result.error
+        # Rejected before touching the database at all.
+        connector.execute_query.assert_not_called()
+
+    def test_catalog_is_read_while_the_connector_lock_is_held(self):
+        """The whole read, not just the handle, has to be inside the lock.
+
+        Regression: the guard took the connection out of ``exclusive_connection``
+        and queried it afterwards. ``DuckDBPyConnection`` is not thread-safe, and
+        an LLM emitting parallel tool calls makes concurrent reads the normal
+        case — observed in a real session as batches of N parallel ``execute_sql``
+        where exactly N-1 were refused as "not a table registered" for a table
+        that was registered, and under sustained load as a segfault.
+        """
+        import contextlib
+
+        from datus.tools.db_tools.db_manager import DBManager
+
+        held = []
+        # Recorded rather than asserted inside the mock: the guard wraps the read
+        # in ``except Exception``, so an assert raised in here would be swallowed
+        # and the test would pass against the very bug it exists to catch.
+        locked_during_read = []
+        catalog = Mock()
+
+        def execute(*args, **kwargs):
+            locked_during_read.append(bool(held))
+            result = Mock()
+            result.fetchall.return_value = [("jeffshop_q3", None)]
+            return result
+
+        catalog.execute.side_effect = execute
+
+        @contextlib.contextmanager
+        def exclusive():
+            held.append(True)
+            try:
+                yield catalog
+            finally:
+                held.pop()
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.get_databases.return_value = []
+        connector.exclusive_connection = exclusive
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(manager, agent_config=config)
+
+        result = tool.execute_sql("SELECT * FROM jeffshop_q3", datasource="local_files")
+
+        assert locked_during_read, "the guard never read the catalog"
+        assert all(locked_during_read), "catalog read happened outside exclusive_connection()"
+        assert "not a table registered" not in (result.error or "")
+
+    def test_unreadable_catalog_is_not_reported_as_an_unregistered_table(self):
+        """A failed catalog read must not read as "your table does not exist".
+
+        The two are opposite instructions to the model: one says retry, the other
+        says the registration it just did was a no-op — so it re-registers, re-lists,
+        and re-runs the same query. Distinguishable only if the read is allowed to
+        fail rather than returning an empty catalog.
+        """
+        tool, _ = self._make_tool()
+        tool._get_connector = Mock(side_effect=RuntimeError("database is locked"))
+
+        result = tool.execute_sql("SELECT * FROM jeffshop_q3", datasource="local_files")
+
+        assert result.success == 0
+        assert "unavailable" in result.error
+        assert "not a table registered" not in result.error
+
+    def test_allows_ordinary_reads_of_registered_tables(self):
+        """Asserting only "no rejection message" would also pass if the query
+        never ran, so check it reached the connector."""
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql("SELECT region, sum(amount) FROM jeffshop_q3 GROUP BY 1", datasource="local_files")
+
+        assert "not a table registered" not in (result.error or "")
+        connector.execute_query.assert_called()
+
+    def test_a_column_named_like_a_reader_is_not_mistaken_for_one(self):
+        """The function gate matches ``name(``; a bare identifier must not trip it."""
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql("SELECT read_csv_auto FROM jeffshop_q3", datasource="local_files")
+
+        assert "cannot be called directly" not in (result.error or "")
+        connector.execute_query.assert_called()
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM '/data/tenants/other/proj/x.parquet'",
+            "SELECT * FROM '/data/tenants/*/**/*.csv'",
+            "SELECT a.k FROM jeffshop_q3 a JOIN '/tmp/y.parquet' b ON a.k = b.k",
+        ],
+    )
+    def test_rejects_a_bare_path_used_as_a_table(self, sql):
+        """DuckDB's replacement scan reads the file with no function call to catch
+        and a statement that parses as a plain SELECT — the statement-class gate
+        and a function-name check both pass it."""
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql(sql, datasource="local_files")
+
+        assert result.success == 0
+        assert "not a table registered" in result.error
+        connector.execute_query.assert_not_called()
+
+    def test_rejects_an_unregistered_table_name(self):
+        tool, _ = self._make_tool()
+        result = tool.execute_sql("SELECT * FROM someone_elses_table", datasource="local_files")
+        assert result.success == 0
+
+    def test_fails_closed_when_the_catalog_cannot_be_read(self):
+        """Without the catalog there is no way to authorise a reference, and this
+        gate is the boundary."""
+        tool, connector = self._make_tool()
+        connector.exclusive_connection = Mock(side_effect=RuntimeError("catalog gone"))
+
+        result = tool.execute_sql("SELECT * FROM jeffshop_q3", datasource="local_files")
+
+        assert result.success == 0
+        assert "unavailable" in result.error
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "ATTACH '/data/tenants/other/x.duckdb' AS other",
+            "COPY (SELECT 1) TO '/tmp/exfil.csv'",
+            "CREATE TABLE t AS SELECT 1",
+            "DROP VIEW jeffshop_q3",
+            "INSTALL httpfs",
+            "EXPORT DATABASE '/tmp/dump'",
+        ],
+    )
+    def test_rejects_non_read_statements_on_the_uploads_datasource(self, sql):
+        """A function-name check alone is not a boundary: ATTACH and COPY TO are
+        not function calls, and both reach outside the project — ATTACH onto the
+        shared tenant volume, COPY TO writing anywhere the process can."""
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql(sql, datasource="local_files")
+
+        assert result.success == 0
+        assert "Only read queries are allowed" in result.error
+        connector.execute_ddl.assert_not_called()
+        connector.execute_query.assert_not_called()
+
+    def test_unparseable_sql_fails_closed_on_the_uploads_datasource(self):
+        tool, _ = self._make_tool()
+        result = tool.execute_sql("this is not sql at all ((", datasource="local_files")
+        assert result.success == 0
+
+    def test_writes_still_allowed_on_other_datasources(self):
+        """The tightening is scoped to the uploads catalog; a project's own
+        datasource keeps whatever posture it had."""
+        tool, connector = self._make_tool(datasources=("warehouse", "local_files"), default="warehouse")
+
+        result = tool.execute_sql("CREATE TABLE t AS SELECT 1", datasource="warehouse")
+
+        assert "Only read queries are allowed" not in (result.error or "")
+        connector.execute_ddl.assert_called()
+
+    def test_guard_applies_when_the_uploads_catalog_is_the_default(self):
+        """Reached via the default route, not just an explicit datasource argument."""
+        tool, connector = self._make_tool()
+        result = tool.execute_sql("SELECT * FROM read_csv_auto('/etc/passwd')")
+        assert result.success == 0
+        assert "load_file_as_table" in result.error
+        connector.execute_query.assert_not_called()
+
+    def test_other_datasources_are_left_alone(self):
+        """A project's own DuckDB datasource had this reach before uploads existed;
+        narrowing it here would be an unrelated behaviour change."""
+        tool, _ = self._make_tool(datasources=("warehouse", "local_files"), default="warehouse")
+        result = tool.execute_sql("SELECT * FROM read_csv_auto('/data/lake/x.csv')", datasource="warehouse")
+        assert "load_file_as_table" not in (result.error or "")
+
+
+class TestLoadFileAsTableIsExposed:
+    """Two different surfaces, and only one of them is what the model sees.
+
+    ``all_tools_name()`` feeds VALID_TOOL_METHODS and the permission registry;
+    ``available_tools()`` is the list actually handed to the LLM and is
+    hand-curated, not derived from the former. A tool present in the first and
+    absent from the second is registered, permissioned, catalogued — and
+    uncallable.
+    """
+
+    def _make_tool(self, datasources):
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector = Mock()
+        connector.dialect = "postgresql"
+        connector.get_databases.return_value = []
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config.current_datasource = datasources[0]
+        config.current_db_configs.return_value = {name: Mock(type="postgresql") for name in datasources}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config)
+
+    def test_registered_on_the_agent_tool_surface(self):
+        """VALID_TOOL_METHODS and the permission registry both derive from this."""
+        assert "load_file_as_table" in DBFuncTool.all_tools_name()
+
+    def test_not_treated_as_an_internal_dispatch_helper(self):
+        assert "load_file_as_table" not in DBFuncTool._INTERNAL_SQL_METHODS
+
+    def test_mounted_for_the_llm_when_the_uploads_catalog_exists(self):
+        tool = self._make_tool(["warehouse", "local_files"])
+        assert "load_file_as_table" in [item.name for item in tool.available_tools()]
+
+    def test_not_mounted_without_an_uploads_catalog(self):
+        """On a CLI install there is no catalog to load into, so the tool would
+        exist only to return "datasource not configured"."""
+        tool = self._make_tool(["warehouse"])
+        assert "load_file_as_table" not in [item.name for item in tool.available_tools()]
+
+    def test_single_connector_mode_still_builds_its_tool_list(self):
+        """Legacy single-connector mode names no datasources at all; the mount
+        check must not assume the attribute exists."""
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = []
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(connector)
+
+        names = [item.name for item in tool.available_tools()]
+        assert "execute_sql" in names
+        assert "load_file_as_table" not in names
+
+
+class TestVscodeSessionsAreRefused:
+    """A vscode session's workspace lives on the client, so there is no
+    server-side path to resolve — ``_resolve_workspace_root`` reports "." there
+    rather than leaking the daemon CWD. Resolving against that would produce a
+    "File not found" nobody can explain.
+    """
+
+    def _make_tool(self, client_source):
+        import contextlib
+
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.get_databases.return_value = []
+        connector.exclusive_connection = lambda: contextlib.nullcontext(Mock())
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config._client_source = client_source
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config)
+
+    def test_vscode_gets_an_explanation_not_a_missing_file(self):
+        tool = self._make_tool("vscode")
+
+        result = tool.load_file_as_table(path="book.xlsx")
+
+        assert result.success == 0
+        assert "vscode" in result.error
+        assert "not found" not in result.error.lower()
+
+    def test_web_sessions_are_unaffected(self):
+        tool = self._make_tool("web")
+        result = tool.load_file_as_table(path="definitely-absent.xlsx")
+        assert "vscode" not in (result.error or "")
+
+
+class TestFilesystemRootPlumbing:
+    """``load_file_as_table`` resolves relative paths against this anchor, and it
+    must be the same one the node's filesystem tools use — otherwise a path the
+    model just got back from ``glob`` lands somewhere else.
+    """
+
+    def test_explicit_root_wins_over_project_root(self, tmp_path):
+        from datus.tools.db_tools.db_manager import DBManager
+
+        (tmp_path / "here.csv").write_text("a\n1\n")
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = Mock(dialect="duckdb", get_databases=Mock(return_value=[]))
+        config = _mock_agent_config()
+        config.project_root = str(tmp_path / "elsewhere")
+        config.filesystem_allowlist = None
+        config.path_manager = None
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(manager, agent_config=config, filesystem_root=str(tmp_path))
+
+        resolved = tool._resolve_data_file("here.csv")
+        assert resolved.resolved == (tmp_path / "here.csv")
+
+    def test_every_node_construction_site_passes_the_anchor(self):
+        """A site that forgets it is the whole failure mode, and there are
+        nineteen of them across eleven files — so it is asserted rather than left
+        to review. Reads the sources instead of booting every node: what
+        regresses is a new construction site, and that is a diff between two
+        lists.
+
+        Deliberately not solved by a shared factory: several node tests patch
+        ``<module>.DBFuncTool`` as their seam, and routing construction elsewhere
+        breaks that seam for reasons unrelated to what they test.
+        """
+        import pathlib
+        import re
+
+        node_dir = pathlib.Path(__file__).resolve().parents[4] / "datus" / "agent" / "node"
+        offenders = []
+        for path in sorted(node_dir.glob("*.py")):
+            text = path.read_text()
+            for match in re.finditer(r"DBFuncTool\(", text):
+                # Slice out this call's argument list by paren balance.
+                start_index = match.end()
+                depth, index = 1, start_index
+                while index < len(text) and depth:
+                    depth += (text[index] == "(") - (text[index] == ")")
+                    index += 1
+                if "filesystem_root" not in text[start_index:index]:
+                    line = text.count("\n", 0, match.start()) + 1
+                    offenders.append(f"{path.name}:{line}")
+        assert offenders == [], f"DBFuncTool built without filesystem_root: {offenders}"
+
+
+class TestHeaderRowNormalisation:
+    """``header_row`` is the one optional the tool schema types as a number, so
+    the "unspecified" value a model sends is 0 rather than an omitted key."""
+
+    def _tool(self):
+        import contextlib
+
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.db_path = "/tmp/local_files.duckdb"
+        connector.get_databases.return_value = []
+        connector.exclusive_connection = lambda: contextlib.nullcontext(Mock())
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config._client_source = "web"
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config)
+
+    def _capture(self, tmp_path, **kwargs):
+        from types import SimpleNamespace
+
+        tool = self._tool()
+        book = tmp_path / "book.xlsx"
+        book.write_bytes(b"")
+        tool._resolve_data_file = lambda path: SimpleNamespace(resolved=book, display=path)
+        captured = {}
+
+        def load_file(*_args, **call_kwargs):
+            captured.update(call_kwargs)
+            return [], []
+
+        with (
+            patch("datus.tools.func_tool.database.load_file", side_effect=load_file),
+            patch("datus.tools.func_tool.database.registered_objects", return_value={}),
+        ):
+            tool.load_file_as_table(path="book.xlsx", **kwargs)
+        return captured
+
+    def test_zero_means_unspecified(self, tmp_path):
+        """Rows are 1-based, so 0 taken literally fails every sheet with
+        "header_row must be 1 or greater" and the whole file reads as unloadable.
+        Observed in real traffic: the session's inspect call carried
+        ``header_row: 0``, where it happened to be ignored."""
+        assert self._capture(tmp_path, header_row=0)["header_row"] is None
+
+    def test_a_real_header_row_is_passed_through(self, tmp_path):
+        assert self._capture(tmp_path, header_row=3)["header_row"] == 3
+
+    def test_a_negative_row_is_still_a_mistake(self, tmp_path):
+        """Not folded into "unspecified": nothing sends -1 by accident, and
+        silently auto-detecting would hide a caller bug."""
+        assert self._capture(tmp_path, header_row=-1)["header_row"] == -1
+>>>>>>> bb84920 ([BugFix] Serialise the uploads catalog read so parallel tool calls stop being refused (#1340))
