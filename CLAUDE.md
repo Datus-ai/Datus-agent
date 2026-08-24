@@ -4,7 +4,7 @@
 
 AI-powered data-analysis agent: NL → SQL, multi-DB, RAG knowledge base, MCP protocol.
 
-- **Stack**: Python 3.12+, OpenAI Agents SDK + LiteLLM, LanceDB, FastAPI, FastMCP, Streamlit
+- **Stack**: Python 3.12+, OpenAI Agents SDK + LiteLLM, LanceDB, FastAPI, FastMCP
 - **Package manager**: uv · **License**: Apache-2.0
 
 ## Build & Run
