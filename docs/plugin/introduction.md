@@ -278,5 +278,7 @@ and tool safeguards. The default is `true`.
 
 ## Next steps
 
+- Browse the plugin guides: [Airflow](airflow.md), [MWAA](mwaa.md), and
+  [S3](s3.md).
 - [Develop a plugin](development.md) with the `datus-plugin-development` skill.
 - Learn how [skills](../skills/introduction.md) are discovered and used.
