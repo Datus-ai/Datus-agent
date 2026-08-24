@@ -125,6 +125,12 @@ class CLIService:
 
         # Track running SQL execution tasks: {task_id: asyncio.Task}
         self._sql_tasks: Dict[str, asyncio.Task] = {}
+        # A thread-safe stop signal per task, because cancelling the asyncio task
+        # cannot reach the worker thread it dispatched: a worker parked in
+        # ``execution_lock.acquire()`` keeps waiting, then acquires and runs. For
+        # a write that means the statement lands *after* stop_execute_sql told
+        # the caller it stopped.
+        self._sql_cancels: Dict[str, threading.Event] = {}
         self._sql_tasks_lock = threading.Lock()
 
     def _initialize_connection(self):
@@ -214,15 +220,17 @@ class CLIService:
         return locks.setdefault(datasource, threading.Lock())
 
     def _cleanup_sql_task(self, task_id: str) -> None:
-        """Remove a completed SQL task from the tracking dict."""
+        """Remove a completed SQL task from the tracking dicts."""
         with self._sql_tasks_lock:
             self._sql_tasks.pop(task_id, None)
+            self._sql_cancels.pop(task_id, None)
 
     def _execute_sql_sync(
         self,
         request: ExecuteSQLInput,
         task_id: str,
         policy_context: Optional[Dict[str, Any]] = None,
+        cancelled: Optional[threading.Event] = None,
     ) -> Result[ExecuteSQLData]:
         """Synchronous SQL execution logic (runs in a thread)."""
         try:
@@ -336,6 +344,17 @@ class CLIService:
                     ),
                 )
             try:
+                # The one point a queued statement can still be stopped. The
+                # await in `execute_sql` is already gone by now — cancelling it
+                # never reached this thread — so without this check a write the
+                # caller was told had stopped would execute here.
+                if cancelled is not None and cancelled.is_set():
+                    logger.info("SQL execution cancelled while queued for the datasource connector", task_id=task_id)
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                        errorMessage="SQL execution was cancelled",
+                    )
                 return self._execute_resolved_sql(request, task_id, policy_context, datasource, connector)
             finally:
                 execution_lock.release()
@@ -566,10 +585,11 @@ class CLIService:
         via ``stop_execute_sql()``. Otherwise a server-generated UUID is used.
         """
         task_id = request.execute_task_id or str(uuid.uuid4())
+        cancelled = threading.Event()
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
-                return await asyncio.to_thread(self._execute_sql_sync, request, task_id, policy_context)
+                return await asyncio.to_thread(self._execute_sql_sync, request, task_id, policy_context, cancelled)
             except asyncio.CancelledError:
                 logger.info(f"SQL execution task cancelled: {task_id}")
                 return Result(
@@ -589,6 +609,7 @@ class CLIService:
                 )
             task = asyncio.create_task(_run())
             self._sql_tasks[task_id] = task
+            self._sql_cancels[task_id] = cancelled
 
         return await task
 
@@ -603,6 +624,7 @@ class CLIService:
         """
         with self._sql_tasks_lock:
             task = self._sql_tasks.get(task_id)
+            cancelled = self._sql_cancels.get(task_id)
 
         if not task:
             return Result(
@@ -621,6 +643,10 @@ class CLIService:
                 data=StopExecuteSQLData(execute_task_id=task_id, stopped=False),
             )
 
+        # Raised before cancelling: the worker checks it once it owns the lock,
+        # which is the only place a queued statement can still be stopped.
+        if cancelled is not None:
+            cancelled.set()
         task.cancel()
         logger.info(f"Cancellation requested for SQL execution task: {task_id}")
         return Result(

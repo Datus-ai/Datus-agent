@@ -1,6 +1,7 @@
 """Tests for datus.api.services.cli_service — CLI command operations."""
 
 import asyncio
+import contextlib
 import uuid
 from unittest.mock import patch
 
@@ -354,6 +355,38 @@ class TestCLIServiceConnectorSerialization:
         result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
 
         assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_a_statement_cancelled_while_queued_never_executes(self, cli_svc, real_agent_config):
+        """stop_execute_sql must actually stop a queued statement.
+
+        Cancelling the asyncio task cannot interrupt the worker thread it
+        dispatched: a worker parked in `execution_lock.acquire()` keeps waiting,
+        then acquires and runs. For a write that means the statement landing
+        *after* the caller was told it stopped.
+        """
+        cli_svc.agent_config.api_config = {"sql_queue_budget_seconds": 5}
+        held = cli_svc._connector_lock(real_agent_config.current_datasource)
+        held.acquire()
+
+        with patch.object(cli_svc, "_execute_resolved_sql") as ran:
+            task = asyncio.create_task(
+                cli_svc.execute_sql(ExecuteSQLInput(sql_query="DELETE FROM schools", execute_task_id="queued-1"))
+            )
+            # Let the worker reach the lock and park there.
+            while "queued-1" not in cli_svc._sql_tasks:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.05)
+
+            stop = await cli_svc.stop_execute_sql("queued-1")
+            assert stop.success is True
+
+            held.release()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        # The point of the fix: told it stopped, so it must not have run.
+        ran.assert_not_called()
 
     def test_lock_is_per_datasource(self, cli_svc, real_agent_config):
         """Different datasources must not block each other."""
