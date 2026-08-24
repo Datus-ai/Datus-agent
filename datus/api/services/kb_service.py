@@ -96,6 +96,24 @@ class KbService:
             )
             return
 
+        # Resolved here, before the first component runs, for two reasons: the
+        # datasource setter raises for a name the project has not bound, and by
+        # the time a component is running the SSE headers are out — an exception
+        # from inside this generator breaks the stream instead of reaching the
+        # client as an error it can read. Computed once and reused; cloning the
+        # config per component was pure waste.
+        try:
+            config = self._config_for(request)
+        except Exception as e:  # noqa: BLE001 — surfaced to the client below
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=str(e),
+                payload={"components": summary},
+            )
+            return
+
         for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
             if cancel_event.is_set():
                 yield self._make_event(
@@ -109,7 +127,7 @@ class KbService:
             # Stream BatchEvents from the queue in real-time while the thread runs.
             trace_component = comp_name.value if hasattr(comp_name, "value") else str(comp_name)
             trace_ctx = build_bootstrap_trace_context(
-                datasource=self._config_for(request).current_datasource,
+                datasource=config.current_datasource,
                 components=[trace_component],
                 strategy=request.strategy,
                 stream_id=stream_id,
@@ -130,6 +148,7 @@ class KbService:
                         loop,
                         cancel_event,
                         project_root,
+                        config=config,
                         authoring_scope=authoring_scope,
                     )
 
@@ -236,9 +255,12 @@ class KbService:
         cancel_event: asyncio.Event,
         project_root: str,
         *,
+        config: Optional[AgentConfig] = None,
         authoring_scope: Optional[str] = None,
     ) -> dict:
-        config = self._config_for(request)
+        # Resolved once by the caller, which is also where a bad datasource is
+        # turned into a readable failure event rather than a broken SSE stream.
+        config = config if config is not None else self._config_for(request)
         strategy = request.strategy
         pool_size = 1
         dir_path = config.rag_storage_path()

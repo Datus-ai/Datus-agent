@@ -182,6 +182,54 @@ class TestCLIServiceExecuteSQL:
         assert datasource == real_agent_config.current_datasource
         assert connector is cli_svc.current_db_connector
 
+    def test_execution_target_reports_an_unreachable_datasource_as_valueerror(self, cli_svc, real_agent_config):
+        """A declared-but-unreachable datasource must not escape as DatusException.
+
+        `_execute_sql_sync` only catches ValueError; anything else loses its
+        DATABASE_CONNECTION_ERROR code to the generic handler.
+        """
+        from unittest.mock import patch
+
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        # `datasource_configs` is a property that copies, so registration has to
+        # go through `services.datasources`.
+        cli_svc.agent_config.services.datasources["broken"] = cli_svc.agent_config.services.datasources[
+            real_agent_config.current_datasource
+        ]
+        with patch.object(
+            cli_svc.db_manager,
+            "first_conn_with_name",
+            side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
+        ):
+            with pytest.raises(ValueError, match="no usable connection"):
+                cli_svc._execution_target("broken")
+
+        # And nothing unusable was remembered for the next request.
+        assert "broken" not in cli_svc._datasource_connectors
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_on_an_unreachable_datasource_keeps_its_error_code(self, cli_svc, real_agent_config):
+        from unittest.mock import patch
+
+        from datus.api.models.config_models import ErrorCode as ApiErrorCode
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        # `datasource_configs` is a property that copies, so registration has to
+        # go through `services.datasources`.
+        cli_svc.agent_config.services.datasources["broken"] = cli_svc.agent_config.services.datasources[
+            real_agent_config.current_datasource
+        ]
+        with patch.object(
+            cli_svc.db_manager,
+            "first_conn_with_name",
+            side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
+        ):
+            result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1", datasource="broken"))
+
+        assert result.success is False
+        assert result.errorCode == ApiErrorCode.DATABASE_CONNECTION_ERROR
+
 
 class TestCLIServiceStopExecuteSQL:
     """Tests for stop_execute_sql."""

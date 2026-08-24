@@ -201,7 +201,21 @@ class DatasourceService:
         if cached is not None:
             return cached
 
-        db_name, connector = self.db_manager.first_conn_with_name(key)
+        try:
+            # Declared but unreachable raises DatusException, not ValueError, so
+            # normalize it — every caller of this method reports ValueError as a
+            # clean error response.
+            db_name, connector = self.db_manager.first_conn_with_name(key)
+        except ValueError:
+            raise
+        except Exception as e:  # noqa: BLE001 — normalized for the callers
+            raise ValueError(f"Datasource {key!r} has no usable connection: {e}") from e
+
+        # Symmetric with the current-datasource branch above, which rejects a
+        # missing connector rather than handing one back.
+        if connector is None:
+            raise ValueError(f"Datasource {key!r} has no usable connection")
+
         entry = (connector, connector.database_name or db_name or "")
         self._datasource_connectors[key] = entry
         return entry

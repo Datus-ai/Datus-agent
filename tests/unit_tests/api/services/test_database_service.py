@@ -658,8 +658,12 @@ class TestPerDatasourceResolution:
         assert keys and all(k.startswith(f"{current}\t") for k in keys)
 
         # A second datasource asking for the same table name must miss.
+        # `datasource_configs` is a property that copies, so the registration has
+        # to go through `services.datasources` — otherwise `_connector_for`
+        # rejects "other" as unknown and this would pass for the wrong reason.
+        svc.agent_config.services.datasources["other"] = svc.agent_config.services.datasources[current]
         svc._datasource_connectors["other"] = (svc.current_db_connector, "california_schools")
-        svc.agent_config.datasource_configs["other"] = svc.agent_config.datasource_configs[current]
+        assert svc._connector_for("other")[0] is svc.current_db_connector
         assert svc._cached_columns("frpm", "other") is None
         assert svc._cached_columns("frpm", current) is not None
 

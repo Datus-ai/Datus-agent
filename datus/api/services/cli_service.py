@@ -150,7 +150,19 @@ class CLIService:
 
         cached = self._datasource_connectors.get(key)
         if cached is None:
-            _db_name, cached = self.db_manager.first_conn_with_name(key)
+            try:
+                # Declared in the config but unreachable raises DatusException,
+                # not ValueError — without this the caller's `except ValueError`
+                # misses it and the failure loses its DATABASE_CONNECTION_ERROR
+                # code to the generic handler.
+                _db_name, connector = self.db_manager.first_conn_with_name(key)
+            except Exception as e:  # noqa: BLE001 — normalized for the caller
+                raise ValueError(f"Datasource '{key}' has no usable connection: {e}") from e
+            if connector is None:
+                raise ValueError(f"Datasource '{key}' has no usable connection")
+            # Only cached once known good. Caching a None turned the next
+            # request's `connector.dialect` into an AttributeError.
+            cached = connector
             self._datasource_connectors[key] = cached
         return key, cached
 

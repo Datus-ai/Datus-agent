@@ -64,6 +64,27 @@ class DatasourceConfig(BaseModel):
     catalog: Optional[str] = Field(None, description="Database catalog (for databases that support catalogs)")
 
 
+class DatasourceSummary(BaseModel):
+    """One configured datasource, with nothing a caller does not need to name it.
+
+    Deliberately NOT ``DatasourceConfig``: that carries the decrypted password,
+    the credential-bearing ``uri`` and the Snowflake key passphrase. Listing the
+    datasources is something every client that renders a catalog does, on every
+    project entry — so it must not be a path that hands out credentials.
+    """
+
+    name: str = Field(..., description="Datasource (namespace) name")
+    type: str = Field(..., description="Datasource type (postgresql, starrocks, ...)")
+    is_current: bool = Field(False, description="Whether this is the project's current datasource")
+
+
+class DatasourceListData(BaseModel):
+    """Data for the datasource roster."""
+
+    datasources: list[DatasourceSummary] = Field(..., description="Configured datasources")
+    current_datasource: str = Field("", description="The project's current datasource")
+
+
 class StorageConfig(BaseModel):
     """Storage configuration for RAG."""
 

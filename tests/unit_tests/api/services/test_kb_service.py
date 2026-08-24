@@ -368,6 +368,7 @@ class TestKbServiceBootstrapStream:
             cancel_event,
             project_root,
             *,
+            config=None,
             authoring_scope=None,
         ):
             calls.append((component, authoring_scope))
@@ -748,7 +749,9 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
     )
     calls = []
 
-    def fake_run_component(request, component, queue, loop, cancel_event, project_root, *, authoring_scope=None):
+    def fake_run_component(
+        request, component, queue, loop, cancel_event, project_root, *, config=None, authoring_scope=None
+    ):
         assert authoring_scope is None
         calls.append((component, request.subject_tree, project_root))
         return {
