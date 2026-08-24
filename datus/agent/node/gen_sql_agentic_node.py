@@ -201,6 +201,9 @@ class GenSQLAgenticNode(AgenticNode):
             database_name: The physical database to bind to.
         """
         self.db_func_tool = DBFuncTool(
+            # Same anchor the filesystem tools use, so a path the model got
+            # from glob resolves identically in load_file_as_table.
+            filesystem_root=self._resolve_workspace_root(),
             agent_config=self.agent_config,
             default_database=database_name,
             sub_agent_name=self.node_config.get("system_prompt"),
@@ -287,6 +290,9 @@ class GenSQLAgenticNode(AgenticNode):
         """Setup database tools."""
         try:
             self.db_func_tool = DBFuncTool(
+                # Same anchor the filesystem tools use, so a path the model got
+                # from glob resolves identically in load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
                 default_database=self._input_database(),
                 sub_agent_name=self.node_config.get("system_prompt"),
@@ -330,6 +336,9 @@ class GenSQLAgenticNode(AgenticNode):
             db_tool = self.db_func_tool
             if not db_tool:
                 db_tool = DBFuncTool(
+                    # Same anchor the filesystem tools use, so a path the model got
+                    # from glob resolves identically in load_file_as_table.
+                    filesystem_root=self._resolve_workspace_root(),
                     agent_config=self.agent_config,
                     default_database=self._input_database(),
                     sub_agent_name=self.node_config.get("system_prompt"),
@@ -459,6 +468,9 @@ class GenSQLAgenticNode(AgenticNode):
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
+                        # Same anchor the filesystem tools use, so a path the model got
+                        # from glob resolves identically in load_file_as_table.
+                        filesystem_root=self._resolve_workspace_root(),
                         agent_config=self.agent_config,
                         default_database=self._input_database(),
                         sub_agent_name=self.node_config.get("system_prompt"),
@@ -481,6 +493,9 @@ class GenSQLAgenticNode(AgenticNode):
                     db_tool = self.db_func_tool
                     if not db_tool:
                         db_tool = DBFuncTool(
+                            # Same anchor the filesystem tools use, so a path the model got
+                            # from glob resolves identically in load_file_as_table.
+                            filesystem_root=self._resolve_workspace_root(),
                             agent_config=self.agent_config,
                             default_database=self._input_database(),
                             sub_agent_name=self.node_config.get("system_prompt"),

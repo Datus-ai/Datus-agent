@@ -254,6 +254,57 @@ def find_file_reading_functions(sql: str) -> List[str]:
     return found
 
 
+def unresolved_table_references(sql: str, known: Sequence[str]) -> List[str]:
+    """Table references in ``sql`` that do not name a registered catalog object.
+
+    A whitelist, deliberately, because a blacklist of file-reading syntax cannot
+    be completed. DuckDB's *replacement scan* reads a path written directly as a
+    table — ``SELECT * FROM '/data/tenants/other/x.parquet'``, globs included —
+    with no function call anywhere for a name check to catch (verified against
+    1.5.2: reads the file, parses as a plain SELECT). Requiring every reference
+    to resolve to something the catalog already holds closes that, closes every
+    file-reading function at once, and closes whatever DuckDB adds next.
+
+    sqlglot lowers a quoted path into an ``Identifier``, so paths and real table
+    names are the same node type — the difference is only that a path is not in
+    ``known``. CTE names defined in the same statement resolve too.
+
+    Returns the offending reference names; empty means every reference resolved.
+    An unparseable statement returns a sentinel so the caller can fail closed.
+    """
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        tree = sqlglot.parse_one(sql, dialect="duckdb")
+    except Exception:
+        return ["<unparseable>"]
+    if tree is None:
+        return ["<unparseable>"]
+
+    allowed = {name.lower() for name in known}
+    allowed.update(cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE))
+
+    offenders: List[str] = []
+    for table in tree.find_all(exp.Table):
+        name = table.name
+        if not name:
+            # A table *function* (``read_csv_auto(...)``, ``duckdb_views()``)
+            # carries its name on the inner node, not on the Table. Treating it
+            # as unnamed would exempt exactly the constructs this is here to
+            # catch, including any reader DuckDB adds later.
+            inner = table.this
+            name = getattr(inner, "name", "") or ""
+            if not name:
+                if "<unnamed table expression>" not in offenders:
+                    offenders.append("<unnamed table expression>")
+                continue
+            name = f"{name}()"
+        if name.lower().removesuffix("()") not in allowed and name not in offenders:
+            offenders.append(name)
+    return offenders
+
+
 # ------------------------------------------------------------------- openpyxl
 
 

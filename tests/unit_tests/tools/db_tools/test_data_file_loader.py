@@ -28,6 +28,7 @@ from datus.tools.db_tools.data_file_loader import (
     ownership_tag,
     registered_objects,
     sanitize_identifier,
+    unresolved_table_references,
 )
 
 
@@ -431,3 +432,67 @@ class TestInspectFile:
         source.write_bytes(b"x")
         with pytest.raises(DataFileError):
             inspect_file(source, connection=connection)
+
+
+class TestUnresolvedTableReferences:
+    """The uploads guard is a whitelist because a blacklist cannot be completed.
+
+    DuckDB's replacement scan reads a bare path written where a table goes —
+    verified against 1.5.2, absolute paths and globs both — with no function call
+    anywhere and a statement that parses as a plain SELECT. Requiring every
+    reference to resolve to a registered object closes that, closes every
+    file-reading function at once, and closes whatever DuckDB adds next.
+    """
+
+    KNOWN = ["jeffshop_q3", "sales"]
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM '/data/tenants/other/x.parquet'",
+            "SELECT * FROM '/data/tenants/*/**/*.csv'",
+            "SELECT a.k FROM sales a JOIN '/tmp/y.parquet' b ON a.k = b.k",
+            "WITH x AS (SELECT * FROM '/tmp/z.csv') SELECT * FROM x",
+        ],
+    )
+    def test_rejects_a_path_used_as_a_table(self, sql):
+        assert unresolved_table_references(sql, self.KNOWN)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM read_csv_auto('/etc/passwd')",
+            "SELECT * FROM read_parquet('/x')",
+            "SELECT * FROM duckdb_views()",
+            "SELECT * FROM some_reader_duckdb_adds_later('/etc/passwd')",
+        ],
+    )
+    def test_rejects_table_functions_including_unknown_ones(self, sql):
+        """A table function carries its name on the inner node, not the Table, so
+        treating it as unnamed would exempt exactly what this must catch."""
+        assert unresolved_table_references(sql, self.KNOWN)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM sales",
+            "SELECT * FROM jeffshop_q3",
+            'SELECT * FROM local_files.main."jeffshop_q3"',
+            "SELECT store_name, sum(amount) FROM jeffshop_q3 GROUP BY 1",
+            "WITH x AS (SELECT 1 AS a) SELECT * FROM x",
+            "SELECT count(*) FROM sales WHERE k IN (SELECT k FROM jeffshop_q3)",
+            "SELECT 1",
+        ],
+    )
+    def test_allows_registered_tables_and_ctes(self, sql):
+        assert unresolved_table_references(sql, self.KNOWN) == []
+
+    def test_qualified_name_resolves_on_its_table_part(self):
+        assert unresolved_table_references("SELECT * FROM other_db.other_schema.sales", self.KNOWN) == []
+
+    def test_unparseable_sql_returns_a_sentinel(self):
+        """The caller fails closed on this rather than treating it as clean."""
+        assert unresolved_table_references("this is not sql ((", self.KNOWN) == ["<unparseable>"]
+
+    def test_matching_is_case_insensitive(self):
+        assert unresolved_table_references("SELECT * FROM SALES", self.KNOWN) == []

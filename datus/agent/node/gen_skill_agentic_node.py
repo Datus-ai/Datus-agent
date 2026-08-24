@@ -151,6 +151,9 @@ class SkillCreatorAgenticNode(AgenticNode):
         """Setup database tools (optional, for understanding schema when creating data-related skills)."""
         try:
             self.db_func_tool = DBFuncTool(
+                # Same anchor the filesystem tools use, so a path the model got
+                # from glob resolves identically in load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
                 sub_agent_name=self.get_node_name(),
             )

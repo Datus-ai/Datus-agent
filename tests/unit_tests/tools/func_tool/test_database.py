@@ -2571,12 +2571,18 @@ class TestUploadsCatalogSqlGuard:
     is the agent's only containment boundary.
     """
 
-    def _make_tool(self, *, datasources=("local_files",), default="local_files"):
+    def _make_tool(self, *, datasources=("local_files",), default="local_files", registered=("jeffshop_q3",)):
+        import contextlib
+
         from datus.tools.db_tools.db_manager import DBManager
+
+        catalog = Mock()
+        catalog.execute.return_value.fetchall.return_value = [(name, None) for name in registered]
 
         connector = Mock()
         connector.dialect = "duckdb"
         connector.get_databases.return_value = []
+        connector.exclusive_connection = lambda: contextlib.nullcontext(catalog)
         manager = Mock(spec=DBManager)
         manager.get_conn.return_value = connector
         config = _mock_agent_config()
@@ -2611,10 +2617,46 @@ class TestUploadsCatalogSqlGuard:
         # Rejected before touching the database at all.
         connector.execute_query.assert_not_called()
 
-    def test_allows_ordinary_reads_on_the_uploads_datasource(self):
+    def test_allows_ordinary_reads_of_registered_tables(self):
         tool, _ = self._make_tool()
         result = tool.execute_sql("SELECT region, sum(amount) FROM jeffshop_q3 GROUP BY 1", datasource="local_files")
-        assert "load_file_as_table" not in (result.error or "")
+        assert "not a table registered" not in (result.error or "")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM '/data/tenants/other/proj/x.parquet'",
+            "SELECT * FROM '/data/tenants/*/**/*.csv'",
+            "SELECT a.k FROM jeffshop_q3 a JOIN '/tmp/y.parquet' b ON a.k = b.k",
+        ],
+    )
+    def test_rejects_a_bare_path_used_as_a_table(self, sql):
+        """DuckDB's replacement scan reads the file with no function call to catch
+        and a statement that parses as a plain SELECT — the statement-class gate
+        and a function-name check both pass it."""
+        tool, connector = self._make_tool()
+
+        result = tool.execute_sql(sql, datasource="local_files")
+
+        assert result.success == 0
+        assert "not a table registered" in result.error
+        connector.execute_query.assert_not_called()
+
+    def test_rejects_an_unregistered_table_name(self):
+        tool, _ = self._make_tool()
+        result = tool.execute_sql("SELECT * FROM someone_elses_table", datasource="local_files")
+        assert result.success == 0
+
+    def test_fails_closed_when_the_catalog_cannot_be_read(self):
+        """Without the catalog there is no way to authorise a reference, and this
+        gate is the boundary."""
+        tool, connector = self._make_tool()
+        connector.exclusive_connection = Mock(side_effect=RuntimeError("catalog gone"))
+
+        result = tool.execute_sql("SELECT * FROM jeffshop_q3", datasource="local_files")
+
+        assert result.success == 0
+        assert "unavailable" in result.error
 
     @pytest.mark.parametrize(
         "sql",
@@ -2731,3 +2773,108 @@ class TestLoadFileAsTableIsExposed:
         names = [item.name for item in tool.available_tools()]
         assert "execute_sql" in names
         assert "load_file_as_table" not in names
+
+
+class TestVscodeSessionsAreRefused:
+    """A vscode session's workspace lives on the client, so there is no
+    server-side path to resolve — ``_resolve_workspace_root`` reports "." there
+    rather than leaking the daemon CWD. Resolving against that would produce a
+    "File not found" nobody can explain.
+    """
+
+    def _make_tool(self, client_source):
+        import contextlib
+
+        from datus.tools.db_tools.db_manager import DBManager
+
+        connector = Mock()
+        connector.dialect = "duckdb"
+        connector.get_databases.return_value = []
+        connector.exclusive_connection = lambda: contextlib.nullcontext(Mock())
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = connector
+        config = _mock_agent_config()
+        config._client_source = client_source
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(manager, agent_config=config)
+
+    def test_vscode_gets_an_explanation_not_a_missing_file(self):
+        tool = self._make_tool("vscode")
+
+        result = tool.load_file_as_table(path="book.xlsx")
+
+        assert result.success == 0
+        assert "vscode" in result.error
+        assert "not found" not in result.error.lower()
+
+    def test_web_sessions_are_unaffected(self):
+        tool = self._make_tool("web")
+        result = tool.load_file_as_table(path="definitely-absent.xlsx")
+        assert "vscode" not in (result.error or "")
+
+
+class TestFilesystemRootPlumbing:
+    """``load_file_as_table`` resolves relative paths against this anchor, and it
+    must be the same one the node's filesystem tools use — otherwise a path the
+    model just got back from ``glob`` lands somewhere else.
+    """
+
+    def test_explicit_root_wins_over_project_root(self, tmp_path):
+        from datus.tools.db_tools.db_manager import DBManager
+
+        (tmp_path / "here.csv").write_text("a\n1\n")
+        manager = Mock(spec=DBManager)
+        manager.get_conn.return_value = Mock(dialect="duckdb", get_databases=Mock(return_value=[]))
+        config = _mock_agent_config()
+        config.project_root = str(tmp_path / "elsewhere")
+        config.filesystem_allowlist = None
+        config.path_manager = None
+        config.current_datasource = "local_files"
+        config.current_db_configs.return_value = {"local_files": Mock(type="duckdb")}
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(manager, agent_config=config, filesystem_root=str(tmp_path))
+
+        resolved = tool._resolve_data_file("here.csv")
+        assert resolved.resolved == (tmp_path / "here.csv")
+
+    def test_every_node_construction_site_passes_the_anchor(self):
+        """A site that forgets it is the whole failure mode, and there are
+        nineteen of them across eleven files — so it is asserted rather than left
+        to review. Reads the sources instead of booting every node: what
+        regresses is a new construction site, and that is a diff between two
+        lists.
+
+        Deliberately not solved by a shared factory: several node tests patch
+        ``<module>.DBFuncTool`` as their seam, and routing construction elsewhere
+        breaks that seam for reasons unrelated to what they test.
+        """
+        import pathlib
+        import re
+
+        node_dir = pathlib.Path(__file__).resolve().parents[4] / "datus" / "agent" / "node"
+        offenders = []
+        for path in sorted(node_dir.glob("*.py")):
+            text = path.read_text()
+            for match in re.finditer(r"DBFuncTool\(", text):
+                # Slice out this call's argument list by paren balance.
+                start_index = match.end()
+                depth, index = 1, start_index
+                while index < len(text) and depth:
+                    depth += (text[index] == "(") - (text[index] == ")")
+                    index += 1
+                if "filesystem_root" not in text[start_index:index]:
+                    line = text.count("\n", 0, match.start()) + 1
+                    offenders.append(f"{path.name}:{line}")
+        assert offenders == [], f"DBFuncTool built without filesystem_root: {offenders}"

@@ -39,6 +39,7 @@ from datus.tools.db_tools.data_file_loader import (
     load_file,
     quote_identifier,
     registered_objects,
+    unresolved_table_references,
 )
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
@@ -1561,7 +1562,8 @@ class DBFuncTool:
         including the shared tenant volume, routing around the filesystem path
         policy that is the agent's only containment boundary.
 
-        Two gates, because a function-name check alone is not one:
+        Three gates. The last is a whitelist, because a blacklist of
+        file-reading syntax cannot be completed:
 
         * statement class — everything except SELECT / SHOW / DESCRIBE / EXPLAIN
           is refused. ``ATTACH '/data/tenants/<other>/x.duckdb'`` and
@@ -1569,8 +1571,15 @@ class DBFuncTool:
           name check while reading or writing outside the project entirely.
           Nothing legitimate is lost: every write to this catalog comes from
           ``load_file_as_table``, which uses its own connection.
-        * file-reading table functions inside an otherwise-valid read, since a
-          plain ``SELECT * FROM read_csv_auto('/etc/passwd')`` is a SELECT.
+        * named file-reading functions, which also covers a reader called where
+          a *value* goes rather than where a table goes — that leaves no table
+          reference for the next gate to inspect.
+        * every table reference must resolve to an object the catalog already
+          holds. DuckDB's replacement scan reads a bare path as a table —
+          ``SELECT * FROM '/data/tenants/other/x.parquet'``, globs included —
+          with no function call for a name check to see, and it parses as a
+          plain SELECT. Requiring resolution closes that, closes every
+          file-reading function at once, and closes whatever DuckDB adds next.
 
         Scoped to this datasource on purpose: a project that configures its own
         DuckDB datasource already had this reach before uploads existed, and
@@ -1601,13 +1610,44 @@ class DBFuncTool:
                 error=f"{'Unparseable statement' if sql_type is None else 'Write and DDL statements'} rejected. {hint}",
             )
 
+        # Cheap, and it covers a syntactic position the resolution check below
+        # cannot see: a reader called where a *value* goes rather than where a
+        # table goes leaves no table reference behind. It also gives a better
+        # message for the common ``FROM read_csv_auto(...)`` shape.
         offenders = find_file_reading_functions(sql)
         if offenders:
             return FuncToolResult(
                 success=0,
                 error=f"{', '.join(offenders)} cannot be called directly. {hint}",
             )
+
+        try:
+            registered = list(registered_objects(self._uploads_connection()))
+        except Exception as exc:
+            # No catalog reading means no way to authorise a reference, and this
+            # gate is the boundary — so refuse rather than skip it.
+            logger.warning("Could not read the uploads catalog to authorise SQL: %s", exc)
+            return FuncToolResult(success=0, error=f"Uploads catalog is unavailable. {hint}")
+
+        offenders = unresolved_table_references(sql, registered)
+        if offenders:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"{', '.join(offenders)} is not a table registered on the "
+                    f"'{LOCAL_FILES_DATASOURCE}' datasource. {hint}"
+                ),
+            )
         return None
+
+    def _uploads_connection(self):
+        """Raw connection to the uploads catalog, for authorising a query."""
+        connector = self._get_connector(LOCAL_FILES_DATASOURCE, "")
+        exclusive = getattr(connector, "exclusive_connection", None)
+        if exclusive is None:
+            raise RuntimeError(f"Datasource '{LOCAL_FILES_DATASOURCE}' is not a DuckDB datasource")
+        with exclusive() as connection:
+            return connection
 
     def _resolve_data_file(self, path: str):
         """Classify a user-supplied data-file path against the filesystem policy.
@@ -1703,6 +1743,20 @@ class DBFuncTool:
                     row preview), any ``skipped_sheets``, and ``example_sql``.
         """
         try:
+            # A vscode session's files live on the client; ``_resolve_workspace_root``
+            # deliberately reports "." there rather than leaking the daemon CWD, so
+            # any path resolved here would point at the wrong machine. Say that,
+            # instead of returning a "File not found" nobody can explain.
+            if getattr(self.agent_config, "_client_source", None) == "vscode":
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "load_file_as_table needs server-side access to the file, which a "
+                        "vscode session does not have — its workspace lives on the client. "
+                        "Ask the user to upload the file into the project on the web IDE."
+                    ),
+                )
+
             resolved = self._resolve_data_file(path)
             target = resolved.resolved
             if not target.exists():
