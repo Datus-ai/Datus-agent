@@ -48,7 +48,7 @@ _DONE = object()
 def _set_current_datasource(agent_config: AgentConfig, datasource: str) -> None:
     """Pin ``agent_config.current_datasource`` so storage classes scope correctly.
 
-    ``SemanticModelRAG`` / ``MetricRAG`` both read
+    ``SemanticDatasetRAG`` / ``MetricRAG`` both read
     this attribute at construction time, so callers must set it before
     instantiating any RAG. We avoid mutating it when ``datasource`` is
     falsy to keep the existing REPL state intact.

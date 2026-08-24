@@ -621,17 +621,6 @@ class TestMetricDbToYaml:
         assert "locked_metadata" not in result["metric"]
 
 
-class TestGetSemanticFilePath:
-    """Tests for _get_semantic_file_path helper."""
-
-    def test_no_semantic_model_returns_empty(self, real_agent_config):
-        """Returns empty string when no semantic model found."""
-        svc = ExplorerService(agent_config=real_agent_config)
-        path, error = svc._get_semantic_file_path(None, None, None, "nonexistent_table")
-        assert path == ""
-        assert error == "No semantic model found for provided parameters"
-
-
 class TestExplorerServiceHelpers:
     """Tests for ExplorerService helper methods."""
 
@@ -976,6 +965,13 @@ class TestExplorerServiceOSIAuthoring:
         "        source: jeff_shop.raw_orders\n"
         "        primary_key: [id]\n"
         "        fields:\n"
+        # Dosi will not resolve a column that no dataset declares, so the key
+        # column is a field in its own right rather than only a primary_key.
+        "          - name: id\n"
+        "            expression:\n"
+        "              dialects:\n"
+        "                - dialect: STARROCKS\n"
+        "                  expression: id\n"
         "          - name: order_total\n"
         "            expression:\n"
         "              dialects:\n"
@@ -994,20 +990,20 @@ class TestExplorerServiceOSIAuthoring:
     )
 
     def _osi_adapter(self, tmp_path):
-        # datus-semantic-osi is a guaranteed test dependency (dependency-groups
-        # dev in pyproject), so these run in CI rather than silently skipping.
-        from datus_semantic_osi.adapter import DatusOSIAdapter
-        from datus_semantic_osi.config import DatusOSIConfig
+        # Dosi is the only supported adapter for this OSI-shaped YAML; it is a
+        # test dependency, so these run in CI rather than silently skipping.
+        from datus_semantic_dosi.adapter import DosiAdapter
+        from datus_semantic_dosi.config import DosiConfig
 
         model_dir = tmp_path / "jeff_shop_live"
         model_dir.mkdir()
         (model_dir / "jeff_shop_live.yml").write_text(self.SAMPLE)
-        config = DatusOSIConfig(
+        config = DosiConfig(
             datasource="ds",
             semantic_models_path=str(tmp_path),
             db_config={"type": "starrocks"},
         )
-        return DatusOSIAdapter(config)
+        return DosiAdapter(config)
 
     def _wire(self, svc, monkeypatch, adapter, *, adapter_type="osi"):
         from types import SimpleNamespace
@@ -1286,3 +1282,199 @@ class TestExplorerServiceOSIAuthoring:
         )
         assert result.success is True, result.errorMessage
         assert kb_deleted["called"] is True  # stale KB row cleaned up
+<<<<<<< HEAD
+=======
+
+
+class TestExplorerServiceSubAgentScope:
+    """`sub_agent_name` is the second POSITIONAL parameter of all three RAGs.
+
+    Constructing them with `datasource_id=` by keyword alone silently skipped
+    it, so these reads were unscoped whatever the caller asked for.
+    """
+
+    def test_defaults_to_unscoped(self, real_agent_config):
+        svc = ExplorerService(agent_config=real_agent_config)
+
+        assert svc.sub_agent_name is None
+        assert svc.metric_rag.sub_agent_name is None
+        assert svc.metric_rag._sub_agent_filter is None
+
+    def test_name_reaches_every_rag(self, real_agent_config):
+        """The name has to reach each store, or a store reads unscoped.
+
+        The filter's contents are not asserted here: the explorer only holds
+        subject-scoped stores, whose filters resolve against the subject tree
+        and so stay empty on a bare test KB.
+        """
+        real_agent_config.agentic_nodes = {
+            **(real_agent_config.agentic_nodes or {}),
+            "analyst": {"scoped_context": {"metrics": "finance.revenue"}},
+        }
+
+        svc = ExplorerService(agent_config=real_agent_config, sub_agent_name="analyst")
+
+        assert svc.sub_agent_name == "analyst"
+        assert svc.metric_rag.sub_agent_name == "analyst"
+
+
+class TestExplorerServiceScopedReads:
+    """The reads must carry the scope down to storage, not just hold a name.
+
+    `SubjectTreeStore.list_entries` applies no sub-agent filter of its own, so a
+    bare call returns every entry under the node. Two of the routes this service
+    scopes — `get_subject_list` and `get_reference_sql` — used to call it that
+    way, which meant a scoped caller still received out-of-scope metric names,
+    reference-SQL names, and reference-SQL bodies.
+    """
+
+    @staticmethod
+    def _scoped_service(real_agent_config):
+        real_agent_config.agentic_nodes = {
+            **(real_agent_config.agentic_nodes or {}),
+            "analyst": {"scoped_context": {"tables": "finance.revenue", "metrics": "Finance.Revenue"}},
+        }
+        return ExplorerService(agent_config=real_agent_config, sub_agent_name="analyst")
+
+    @pytest.mark.asyncio
+    async def test_subject_list_passes_scope_to_metric_storage(self, real_agent_config):
+        svc = self._scoped_service(real_agent_config)
+        svc.subject_tree_store = MagicMock()
+        svc.subject_tree_store.get_tree_structure.return_value = {
+            "Finance": {"node_id": 1, "children": {}},
+        }
+        svc.metric_rag.storage = MagicMock()
+        svc.metric_rag.storage.list_entries.return_value = [{"name": "revenue"}]
+        svc.reference_sql_rag.reference_sql_storage = MagicMock()
+        svc.reference_sql_rag.reference_sql_storage.list_entries.return_value = []
+
+        await svc.get_subject_list()
+
+        conditions = svc.metric_rag.storage.list_entries.call_args.kwargs["extra_conditions"]
+        assert conditions == svc.metric_rag._sub_agent_conditions()
+
+    @pytest.mark.asyncio
+    async def test_subject_list_passes_scope_to_reference_sql_storage(self, real_agent_config):
+        svc = self._scoped_service(real_agent_config)
+        svc.subject_tree_store = MagicMock()
+        svc.subject_tree_store.get_tree_structure.return_value = {
+            "Finance": {"node_id": 1, "children": {}},
+        }
+        svc.metric_rag.storage = MagicMock()
+        svc.metric_rag.storage.list_entries.return_value = []
+        svc.reference_sql_rag.reference_sql_storage = MagicMock()
+        svc.reference_sql_rag.reference_sql_storage.list_entries.return_value = [{"name": "daily"}]
+
+        await svc.get_subject_list()
+
+        conditions = svc.reference_sql_rag.reference_sql_storage.list_entries.call_args.kwargs["extra_conditions"]
+        assert conditions == svc.reference_sql_rag._sub_agent_conditions()
+
+    @pytest.mark.asyncio
+    async def test_subject_list_drops_directories_emptied_by_the_scope(self, real_agent_config):
+        """A directory whose entries were all filtered out holds nothing this
+        caller may see, so naming it would leak another sub-agent's taxonomy."""
+        svc = self._scoped_service(real_agent_config)
+        svc.subject_tree_store = MagicMock()
+        svc.subject_tree_store.get_tree_structure.return_value = {
+            "OtherTeam": {"node_id": 2, "children": {}},
+        }
+        svc.metric_rag.storage = MagicMock()
+        svc.metric_rag.storage.list_entries.return_value = []
+        svc.reference_sql_rag.reference_sql_storage = MagicMock()
+        svc.reference_sql_rag.reference_sql_storage.list_entries.return_value = []
+
+        result = await svc.get_subject_list()
+
+        assert result.data.subjects == []
+
+    @pytest.mark.asyncio
+    async def test_unscoped_subject_list_keeps_empty_directories(self, real_agent_config):
+        """An unscoped caller owns the project: an empty directory is real
+        structure they created, not something to hide."""
+        svc = ExplorerService(agent_config=real_agent_config)
+        svc.subject_tree_store = MagicMock()
+        svc.subject_tree_store.get_tree_structure.return_value = {
+            "Empty": {"node_id": 3, "children": {}},
+        }
+        svc.metric_rag.storage = MagicMock()
+        svc.metric_rag.storage.list_entries.return_value = []
+        svc.reference_sql_rag.reference_sql_storage = MagicMock()
+        svc.reference_sql_rag.reference_sql_storage.list_entries.return_value = []
+
+        result = await svc.get_subject_list()
+
+        assert [node.name for node in result.data.subjects] == ["Empty"]
+
+    @pytest.mark.asyncio
+    async def test_get_reference_sql_passes_scope_to_storage(self, real_agent_config):
+        svc = self._scoped_service(real_agent_config)
+        svc.subject_tree_store = MagicMock()
+        svc.subject_tree_store.get_node_by_path.return_value = {"node_id": 1}
+        svc.reference_sql_rag.reference_sql_storage = MagicMock()
+        svc.reference_sql_rag.reference_sql_storage.list_entries.return_value = []
+
+        await svc.get_reference_sql(["Finance", "daily"])
+
+        conditions = svc.reference_sql_rag.reference_sql_storage.list_entries.call_args.kwargs["extra_conditions"]
+        assert conditions == svc.reference_sql_rag._sub_agent_conditions()
+
+
+class TestExplorerServiceSemanticScope:
+    """The semantic adapter reads the YAML source of truth, which knows nothing
+    about `scoped_context`. The metric name has to be resolved through the
+    scoped `MetricRAG` before the adapter is asked about it."""
+
+    @staticmethod
+    def _scoped_service(real_agent_config):
+        real_agent_config.agentic_nodes = {
+            **(real_agent_config.agentic_nodes or {}),
+            "analyst": {"scoped_context": {"tables": "finance.revenue"}},
+        }
+        return ExplorerService(agent_config=real_agent_config, sub_agent_name="analyst")
+
+    def test_unscoped_service_admits_every_metric(self, real_agent_config):
+        svc = ExplorerService(agent_config=real_agent_config)
+
+        assert svc._metric_is_in_scope(["Finance", "revenue"]) is True
+
+    def test_out_of_scope_metric_is_rejected(self, real_agent_config):
+        svc = self._scoped_service(real_agent_config)
+        svc.subject_tree_store = MagicMock()
+        svc.subject_tree_store.get_node_by_path.return_value = {"node_id": 1}
+        svc.metric_rag.storage = MagicMock()
+        svc.metric_rag.storage.list_entries.return_value = []  # filtered out by the scope
+
+        assert svc._metric_is_in_scope(["OtherTeam", "secret_metric"]) is False
+
+    def test_in_scope_metric_is_admitted(self, real_agent_config):
+        svc = self._scoped_service(real_agent_config)
+        svc.subject_tree_store = MagicMock()
+        svc.subject_tree_store.get_node_by_path.return_value = {"node_id": 1}
+        svc.metric_rag.storage = MagicMock()
+        svc.metric_rag.storage.list_entries.return_value = [{"name": "revenue"}]
+
+        assert svc._metric_is_in_scope(["Finance", "revenue"]) is True
+
+    @pytest.mark.asyncio
+    async def test_preview_metric_refuses_an_out_of_scope_metric(self, real_agent_config):
+        """And refuses before reaching the adapter — the adapter would happily
+        compile a metric this caller may not see."""
+        svc = self._scoped_service(real_agent_config)
+        svc._metric_is_in_scope = MagicMock(return_value=False)
+
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=["OtherTeam", "secret_metric"]))
+
+        assert result.success is False
+        assert "secret_metric" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_get_metric_dimensions_refuses_an_out_of_scope_metric(self, real_agent_config):
+        svc = self._scoped_service(real_agent_config)
+        svc._metric_is_in_scope = MagicMock(return_value=False)
+
+        result = await svc.get_metric_dimensions(SubjectPathInput(subject_path=["OtherTeam", "secret_metric"]))
+
+        assert result.success is False
+        assert "secret_metric" in result.errorMessage
+>>>>>>> cfac0a4 ([Refactor] Key the semantic projection on datasets so a table can be modelled more than once (#1327))

@@ -172,7 +172,7 @@ class TestFindMissingSemanticModels:
         result = find_missing_semantic_models(set(), config)
         assert result == []
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_all_models_exist(self, MockRAG):
         """When all semantic models exist, should return empty list."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
@@ -185,7 +185,7 @@ class TestFindMissingSemanticModels:
         result = find_missing_semantic_models({"users"}, config)
         assert result == []
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_missing_models_detected(self, MockRAG):
         """When semantic models are missing, should return those table names."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
@@ -198,7 +198,7 @@ class TestFindMissingSemanticModels:
         result = find_missing_semantic_models({"missing_table"}, config)
         assert "missing_table" in result
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_same_name_different_database_checked_by_hierarchy(self, MockRAG):
         """A qualified reference is resolved to its hierarchy before the existence check."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
@@ -217,7 +217,7 @@ class TestFindMissingSemanticModels:
         assert kwargs["database_name"] == "db2"
         assert kwargs["schema_name"] == "sales"
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_fully_qualified_name_existing(self, MockRAG):
         """A qualified reference that exists is not reported as missing."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
@@ -230,7 +230,7 @@ class TestFindMissingSemanticModels:
         result = find_missing_semantic_models({"mydb.public.orders"}, config)
         assert result == []
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_search_error_treated_as_missing(self, MockRAG):
         """Existence-check errors should treat the table as missing."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
@@ -243,7 +243,7 @@ class TestFindMissingSemanticModels:
         result = find_missing_semantic_models({"error_table"}, config)
         assert "error_table" in result
 
-    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    @patch("datus.storage.semantic_dataset.store.SemanticDatasetRAG")
     def test_db_config_error_does_not_abort_check(self, MockRAG):
         """A broken db config falls back to no hierarchy defaults instead of raising."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models

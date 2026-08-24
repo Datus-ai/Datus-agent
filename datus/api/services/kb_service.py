@@ -20,13 +20,12 @@ from datus.storage.reference_sql import ReferenceSqlRAG
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
     refresh_success_story_semantic_model_profile,
 )
 from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
-from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -60,6 +59,21 @@ class KbService:
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
         summary: dict[str, dict] = {}
+
+        # Components run one after another, so a set the request never had the
+        # right to ask for has to be refused before the first one writes. The
+        # refusal is emitted on "all" because consumers treat that component as
+        # the end of the stream, and it belongs to the request rather than to
+        # any single component.
+        if rejection := self._reject_unsupported_component_set(request):
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=rejection,
+                payload={"components": summary},
+            )
+            return
 
         for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
             if cancel_event.is_set():
@@ -217,10 +231,10 @@ class KbService:
 
         subject_tree = request.subject_tree
         try:
-            if strategy == "refresh-profile" and component != KbComponent.SEMANTIC_MODEL:
+            if strategy in {"refresh-profile", "sync-yaml"} and component != KbComponent.SEMANTIC_MODEL:
                 return {
                     "status": "failed",
-                    "message": "strategy=refresh-profile is only supported with semantic_model",
+                    "message": f"strategy={strategy} is only supported with semantic_model",
                 }
 
             if component == KbComponent.METADATA:
@@ -322,19 +336,24 @@ class KbService:
         args: types.SimpleNamespace,
         emit,
     ) -> dict:
-        rag = SemanticModelRAG(config)
+        rag = SemanticDatasetRAG(config)
         if strategy == "check":
-            profile_rag = TableSemanticProfileRAG(config)
             return {
                 "status": "success",
-                "message": (
-                    "semantic_model check completed, "
-                    f"semantic_object_count={rag.get_size()}, "
-                    f"table_semantic_profile_count={profile_rag.get_size()}"
-                ),
+                "message": (f"semantic_model check completed, semantic_dataset_count={rag.get_size()}"),
             }
+        if strategy == "sync-yaml":
+            from datus.storage.semantic_model.semantic_model_init import sync_semantic_yaml_tree
+
+            successful, message, synced = sync_semantic_yaml_tree(config, args.semantic_yaml or "")
+            if successful:
+                return {
+                    "status": "success",
+                    "message": f"{message}, semantic_dataset_count={SemanticDatasetRAG(config).get_size()}",
+                }
+            return {"status": "failed", "message": message, "synced": synced}
+
         if strategy == "refresh-profile":
-            profile_rag = TableSemanticProfileRAG(config)
             successful, error_message, changed = refresh_success_story_semantic_model_profile(
                 config,
                 args.semantic_yaml,
@@ -347,8 +366,7 @@ class KbService:
                     "message": (
                         "semantic_model profile refresh completed, "
                         f"changed_description_count={changed}, "
-                        f"semantic_object_count={rag.get_size()}, "
-                        f"table_semantic_profile_count={profile_rag.get_size()}"
+                        f"semantic_dataset_count={rag.get_size()}"
                     ),
                     "error": error_message,
                 }
@@ -359,7 +377,7 @@ class KbService:
         if successful:
             return {
                 "status": "success",
-                "message": f"semantic_model bootstrap completed, semantic_object_count={rag.get_size()}",
+                "message": f"semantic_model bootstrap completed, semantic_dataset_count={rag.get_size()}",
                 "error": error_message,
             }
         return {"status": "failed", "message": error_message}
@@ -421,7 +439,7 @@ class KbService:
             "status": "success",
             "message": (
                 "semantic_modeling bootstrap completed, "
-                f"semantic_object_count={details.get('semantic_object_count', 0)}, "
+                f"semantic_dataset_count={details.get('semantic_dataset_count', 0)}, "
                 f"metrics_count={details.get('metrics_count', 0)}, "
                 f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
                 f"authoring_scope={authoring_scope}"
@@ -598,6 +616,19 @@ class KbService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _reject_unsupported_component_set(request: BootstrapKbInput) -> Optional[str]:
+        """Describe why the whole request is invalid, or None when it is fine."""
+        if request.strategy not in {"refresh-profile", "sync-yaml"}:
+            return None
+        components = [
+            component.value if hasattr(component, "value") else str(component) for component in request.components
+        ]
+        unsupported = [component for component in components if component != KbComponent.SEMANTIC_MODEL.value]
+        if not unsupported:
+            return None
+        return f"strategy={request.strategy} is only supported with semantic_model, not {', '.join(unsupported)}"
+
+    @staticmethod
     def _component_execution_specs(request: BootstrapKbInput) -> list[tuple[str, list[str], Optional[str]]]:
         """Collapse semantic authoring aliases into one semantic_modeling execution."""
         components = [
@@ -611,7 +642,11 @@ class KbService:
         requested_semantic = list(
             dict.fromkeys(component for component in components if component in semantic_components)
         )
-        normalize_authoring = bool(requested_semantic) and request.strategy not in {"check", "refresh-profile"}
+        normalize_authoring = bool(requested_semantic) and request.strategy not in {
+            "check",
+            "refresh-profile",
+            "sync-yaml",
+        }
         if not normalize_authoring:
             return [(component, [component], None) for component in components]
 

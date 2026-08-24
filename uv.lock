@@ -743,7 +743,6 @@ ci = [
     { name = "datus-metricflow" },
     { name = "datus-semantic-dosi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "datus-semantic-metricflow" },
-    { name = "datus-semantic-osi" },
     { name = "datus-storage-postgresql" },
 ]
 dev = [
@@ -826,8 +825,12 @@ requires-dist = [
 ci = [
     { name = "datus-metricflow", specifier = ">=0.2.8" },
     { name = "datus-semantic-dosi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz", subdirectory = "datus-semantic-dosi" },
+<<<<<<< HEAD
     { name = "datus-semantic-metricflow", specifier = ">=0.2.14" },
     { name = "datus-semantic-osi", specifier = ">=0.1.4" },
+=======
+    { name = "datus-semantic-metricflow", specifier = ">=0.2.12" },
+>>>>>>> cfac0a4 ([Refactor] Key the semantic projection on datasets so a table can be modelled more than once (#1327))
     { name = "datus-storage-postgresql", specifier = ">=0.1.5" },
 ]
 dev = [
@@ -991,22 +994,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4e/35/527619414f39e8ecd5177551d7dd995adbeb3c80b07d9fdf0fd3290299d2/datus_semantic_metricflow-0.2.14.tar.gz", hash = "sha256:cce6487fdb8dcf2059471c106baa43c09629703c073e0f526c41de72ed6560db", size = 27914, upload-time = "2026-08-05T12:01:38.682Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/77/06/2b3261cf1f8c32eb77a65b9f24dabd6db91bdacad7b89487a019c6495b15/datus_semantic_metricflow-0.2.14-py3-none-any.whl", hash = "sha256:0a405a47b5f373c89107add4c4267564719dec8b6cbf8392d2a7b1b132fc9cd7", size = 30303, upload-time = "2026-08-05T12:01:37.677Z" },
-]
-
-[[package]]
-name = "datus-semantic-osi"
-version = "0.1.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "datus-semantic-core" },
-    { name = "jsonschema" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "sqlglot" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/44/72/ae56268df96cbeee0be47cab0add49042fbb67032b1080a1ccc930f8f1c1/datus_semantic_osi-0.1.7.tar.gz", hash = "sha256:679a666aa91413f313eef636b2ee3020634365c75afbbf7cc8ab60db7fb65f89", size = 90459, upload-time = "2026-08-05T12:07:14.406Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/f4/955fd796c8d742ec92c8a8854e91c7050c369b2d574bb1e883db1002c131/datus_semantic_osi-0.1.7-py3-none-any.whl", hash = "sha256:589cf79a66d958395f37497498d283a7759b4d7e526aaff7a5f35212539373c4", size = 71928, upload-time = "2026-08-05T12:07:13.479Z" },
 ]
 
 [[package]]

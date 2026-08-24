@@ -516,15 +516,17 @@ class TestDBFuncTool:
 
     def test_describe_table_includes_semantic_details(self, db_func_tool, mock_connector):
         """Semantic model details should enrich describe_table output."""
-        db_func_tool.has_semantic_models = True
-        db_func_tool._get_semantic_model = Mock(
-            return_value={
-                "semantic_model_name": "orders_model",
-                "description": "Orders semantic model",
-                "dimensions": [{"name": "customer_id", "expr": "customer_id"}],
-                "measures": [{"name": "total_sales"}],
-            }
-        )
+        db_func_tool.has_semantic_datasets = True
+        db_func_tool._semantic_datasets = Mock()
+        db_func_tool._semantic_datasets.get_table_projection.return_value = {
+            "semantic_model_name": "orders_model",
+            "dataset_name": "orders",
+            "source_table": "orders",
+            "description": "Orders semantic model",
+            "fields": [{"name": "customer_id", "expr": "customer_id", "is_dimension": True}],
+            "relationships": [],
+            "alternatives": [],
+        }
 
         result = db_func_tool.describe_table(table_name="orders")
 
@@ -848,7 +850,7 @@ class TestDBFuncTool:
                 return 0
 
         monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
-        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", StubSemanticRAG)
 
         class DummyModelConfig:
             model = "gpt-4o"
@@ -904,7 +906,7 @@ class TestScopedContextFromSubAgentConfig:
                 return 0
 
         monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
-        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", StubSemanticRAG)
 
         class DummyModelConfig:
             model = "gpt-4o"
@@ -1354,16 +1356,11 @@ class TestDBFuncToolIntegration:
         db_func_tool.has_schema = True
         db_func_tool.schema_rag = Mock()
         db_func_tool.schema_rag.search_similar.return_value = (self._build_metadata_batch(), self._build_sample_batch())
-        db_func_tool.has_semantic_models = True
-        db_func_tool._get_semantic_model = Mock(
-            return_value={
-                "semantic_model_name": "orders_model",
-                "description": "Orders summary",
-                "dimensions": ["order_id"],
-                "measures": ["total_amount"],
-                "identifiers": [],
-            }
-        )
+        db_func_tool.has_semantic_datasets = True
+        db_func_tool._semantic_datasets = Mock()
+        db_func_tool._semantic_datasets.list_datasets.return_value = [
+            {"semantic_model_name": "orders_model", "dataset_name": "orders", "description": "Orders summary"}
+        ]
 
         result = db_func_tool.search_table("orders table")
 
@@ -1373,11 +1370,9 @@ class TestDBFuncToolIntegration:
         assert metadata[0]["description"] == "Orders summary"
         assert metadata[0]["sample_rows"] == [{"id": 1, "total": 10}]
         assert "semantic_model_name" not in metadata[0]
-        assert "dimensions" not in metadata[0]
-        assert "measures" not in metadata[0]
-        assert "identifiers" not in metadata[0]
+        assert "dataset_name" not in metadata[0]
         assert "sample_data" not in result.result
-        db_func_tool._get_semantic_model.assert_called_once()
+        db_func_tool._semantic_datasets.list_datasets.assert_called_once()
 
     def test_search_table_uses_metadata_fts_rag_entrypoint(self, db_func_tool):
         """FTS metadata configs should query the metadata search_table API directly."""
@@ -1489,7 +1484,7 @@ class TestDBFuncToolMultiConnector:
                 return 0
 
         monkeypatch.setattr("datus.tools.func_tool.database.SchemaWithValueRAG", StubSchemaRAG)
-        monkeypatch.setattr("datus.tools.func_tool.database.SemanticModelRAG", StubSemanticRAG)
+        monkeypatch.setattr("datus.tools.func_tool.database.SemanticDatasetRAG", StubSemanticRAG)
 
     @pytest.fixture
     def mock_agent_config(self):

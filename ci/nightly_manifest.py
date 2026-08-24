@@ -47,7 +47,6 @@ PACKAGE_NAMES = (
     "datus-scheduler-airflow",
     "datus-semantic-core",
     "datus-semantic-metricflow",
-    "datus-semantic-osi",
     "datus-semantic-dosi",
 )
 

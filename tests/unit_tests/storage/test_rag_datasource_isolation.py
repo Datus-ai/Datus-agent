@@ -15,35 +15,38 @@ from typing import Any, Dict
 import pyarrow as pa
 
 from datus.storage.metric.store import MetricRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 
 
 def _make_table_object(suffix: str = "a", description: str = "") -> Dict[str, Any]:
-    """Return a minimal SemanticModelRAG-compatible table object."""
+    """Return a minimal SemanticDatasetRAG-compatible table object."""
 
     return {
-        "id": "table:orders",
-        "kind": "table",
-        "name": "orders",
-        "fq_name": "analytics.public.orders",
+        "id": "dataset:orders:orders",
+        "kind": "dataset",
         "semantic_model_name": "orders",
+        "dataset_name": "orders",
+        "name": "orders",
+        "source_table": "orders",
+        "source_query": "",
         "catalog_name": "default",
         "database_name": "analytics",
         "schema_name": "public",
-        "table_name": "orders",
         "description": description or f"Order table {suffix}",
-        "is_dimension": False,
-        "is_measure": False,
-        "is_entity_key": False,
-        "is_deprecated": False,
+        "ai_context_json": "",
+        "search_text": description or f"Order table {suffix}",
         "expr": "",
-        "column_type": "",
-        "agg": "",
-        "create_metric": False,
-        "agg_time_dimension": "",
-        "is_partition": False,
+        "field_type": "",
+        "is_dimension": False,
+        "is_time": False,
+        "is_primary_key": False,
         "time_granularity": "",
-        "entity": "",
+        "from_dataset": "",
+        "to_dataset": "",
+        "from_columns_json": "",
+        "to_columns_json": "",
+        "rel_type": "",
+        "join_type": "",
         "yaml_path": "",
         "updated_at": pa.scalar(0, type=pa.timestamp("ms")),
     }
@@ -69,19 +72,19 @@ def _rag_pair(real_agent_config, rag_cls):
 
 class TestRAGDatasourceRowScope:
     def test_semantic_model_same_business_id_isolated_by_datasource(self, real_agent_config):
-        rag_a, rag_b = _rag_pair(real_agent_config, SemanticModelRAG)
+        rag_a, rag_b = _rag_pair(real_agent_config, SemanticDatasetRAG)
 
         rag_a.upsert_batch([_make_table_object(description="orders from ds_a")])
         rag_b.upsert_batch([_make_table_object(description="orders from ds_b")])
 
-        results_a = rag_a.search_all()
-        results_b = rag_b.search_all()
+        results_a = rag_a.list_datasets(table_name="orders")
+        results_b = rag_b.list_datasets(table_name="orders")
 
         assert [row["description"] for row in results_a] == ["orders from ds_a"]
         assert [row["description"] for row in results_b] == ["orders from ds_b"]
 
     def test_semantic_model_truncate_deletes_only_current_datasource(self, real_agent_config):
-        rag_a, rag_b = _rag_pair(real_agent_config, SemanticModelRAG)
+        rag_a, rag_b = _rag_pair(real_agent_config, SemanticDatasetRAG)
 
         rag_a.upsert_batch([_make_table_object(description="orders from ds_a")])
         rag_b.upsert_batch([_make_table_object(description="orders from ds_b")])
@@ -89,7 +92,7 @@ class TestRAGDatasourceRowScope:
         rag_a.truncate()
 
         assert rag_a.get_size() == 0
-        assert [row["description"] for row in rag_b.search_all()] == ["orders from ds_b"]
+        assert [row["description"] for row in rag_b.list_datasets(table_name="orders")] == ["orders from ds_b"]
 
     def test_metric_same_business_id_isolated_by_datasource(self, real_agent_config):
         rag_a, rag_b = _rag_pair(real_agent_config, MetricRAG)

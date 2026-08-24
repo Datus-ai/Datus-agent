@@ -8,7 +8,7 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.node_models import Metric, SqlTask
 from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.storage.metric.store import MetricRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 from tests.conftest import load_acceptance_config
@@ -110,28 +110,29 @@ class TestRag:
         return rag
 
     @pytest.fixture
-    def semantic_rag(self, agent_config: AgentConfig) -> SemanticModelRAG:
-        rag = SemanticModelRAG(agent_config)
+    def semantic_rag(self, agent_config: AgentConfig) -> SemanticDatasetRAG:
+        rag = SemanticDatasetRAG(agent_config)
         # Populate with test data
         test_models = [
             {
-                "id": "table:test_semantic_model",
-                "kind": "table",
+                "id": "dataset:test_model:test_semantic_model",
+                "kind": "dataset",
                 "name": "test_semantic_model",
-                "fq_name": "test_semantic_model",
+                "dataset_name": "test_semantic_model",
                 "semantic_model_name": "test_model",
                 "description": "Test semantic model for testing",
+                "search_text": "Test semantic model for testing",
                 "catalog_name": "",
                 "database_name": "",
                 "schema_name": "",
-                "table_name": "test_semantic_model",
+                "source_table": "test_semantic_model",
                 "yaml_path": "/test/path",
             }
         ]
         rag.storage.store_batch(test_models)
         return rag
 
-    def test_pure_scalar_query(self, metrics_rag: MetricRAG, semantic_rag: SemanticModelRAG):
+    def test_pure_scalar_query(self, metrics_rag: MetricRAG, semantic_rag: SemanticDatasetRAG):
         semantic_rag.storage._ensure_table_ready()
         result = semantic_rag.storage.table.search_all()
         assert hasattr(result, "__len__"), f"Expected sized collection from search_all, got {type(result)}"
