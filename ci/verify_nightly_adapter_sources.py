@@ -36,8 +36,8 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-scheduler-airflow": "datus-scheduler-adapters/datus-scheduler-airflow",
     "datus-semantic-core": "datus-semantic-adapter/datus-semantic-core",
     "datus-semantic-metricflow": "datus-semantic-adapter/datus-semantic-metricflow",
-    "datus-semantic-osi": "datus-semantic-adapter/datus-semantic-osi",
     "datus-semantic-dosi": "datus-semantic-adapter/datus-semantic-dosi",
+    "datus-semantic-osi": "datus-semantic-adapter/datus-semantic-osi",
     "datus-storage-base": "datus-storage-adapters/datus-storage-base",
     "datus-storage-postgresql": "datus-storage-adapters/datus-storage-postgresql",
 }
@@ -138,14 +138,14 @@ def verify_semantic_adapter_imports() -> list[str]:
         errors.append(f"datus-semantic-metricflow import failed: {exc}")
 
     try:
-        importlib.import_module("datus_semantic_osi")
-    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
-        errors.append(f"datus-semantic-osi import failed: {exc}")
-
-    try:
         importlib.import_module("datus_semantic_dosi")
     except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
         errors.append(f"datus-semantic-dosi import failed: {exc}")
+
+    try:
+        importlib.import_module("datus_semantic_osi")
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        errors.append(f"datus-semantic-osi import failed: {exc}")
 
     return errors
 

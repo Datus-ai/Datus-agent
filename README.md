@@ -87,6 +87,13 @@ pip install datus-agent
 datus
 ```
 
+`uv` resolves this dependency set in seconds and is the recommended alternative — `pip` can spend several minutes backtracking through `litellm` releases when installing versions up to 0.3.9:
+
+```bash
+pip install uv
+uv pip install datus-agent --system
+```
+
 After the REPL starts, run `/model` to configure an LLM, `/datasource` to add a datasource, and (optionally) `/init` to generate `AGENTS.md` for the current project. For detailed guidance, see the [Quickstart Guide](https://docs.datus.ai/getting_started/Quickstart/).
 
 ### Four Ways to Use Datus

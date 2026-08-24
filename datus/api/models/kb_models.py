@@ -36,12 +36,14 @@ class BootstrapKbInput(BaseModel):
             "`reference_sql` indexes reusable SQL files."
         ),
     )
-    strategy: Literal["overwrite", "check", "incremental", "refresh-profile"] = Field(
+    strategy: Literal["overwrite", "check", "incremental", "refresh-profile", "sync-yaml"] = Field(
         default="incremental",
         description=(
             "Update strategy. `check` inspects existing data without rebuilding where supported, "
             "`overwrite` clears and rebuilds, `incremental` appends or updates changed entries, "
-            "and `refresh-profile` updates profile-derived descriptions in an existing semantic YAML. "
+            "`refresh-profile` updates profile-derived descriptions in an existing semantic YAML, "
+            "and `sync-yaml` re-projects authored semantic YAML into the knowledge base without any LLM call "
+            "(omit `semantic_yaml` to sync every file of the active datasource). "
             "For `semantic_modeling`, `overwrite` and `incremental` are compatibility aliases: both preserve "
             "sibling artifacts and fully reconcile each selected semantic-model YAML."
         ),

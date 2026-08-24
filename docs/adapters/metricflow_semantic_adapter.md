@@ -7,6 +7,7 @@ The MetricFlow semantic adapter connects Datus Agent to existing MetricFlow-nati
 > authoring is available only through `semantic_modeling` in Dosi projects.
 
 Use this adapter when MetricFlow YAML remains the source format maintained by external users or automation.
+MetricFlow is no longer installed or selected by default; configure it explicitly.
 
 ## Installation
 
@@ -30,7 +31,7 @@ agent:
       metricflow:
         timeout: 300
         config_path: ./conf/agent.yml   # optional advanced override
-        default: true
+        default: true                   # explicit selection when several adapters exist
 ```
 
 `config_path` is optional. In normal use, Datus builds the MetricFlow runtime config from:

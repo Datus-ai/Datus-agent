@@ -16,7 +16,7 @@
 语义模型定义基础 schema 层。从 0.2.4 版本开始，它们独立运行：
 
 - **语义模型**（本文档）：包含维度、度量和实体关系的 schema 扩展
-  - 存储：LanceDB 中的 `semantic_model` 表
+  - 存储：知识库中的 `semantic_dataset` 表
   - 目的：帮助 agent 理解表结构以生成临时 SQL
 
 - **指标**（参见 [metrics.zh.md](metrics.zh.md)）：构建在语义模型之上的业务计算
@@ -27,19 +27,24 @@
 
 ## 存储结构
 
-语义模型对象按字段级别存储：
+每个编写对象一行。dataset 行由 `(semantic_model, dataset)` 标识；
+field 行在此之上再加自身名称；relationship 行由
+`(semantic_model, relationship)` 标识：
 
 ```python
-# 存储的对象（kind 字段）:
-- "table": 表级元数据
-- "column": 列级元数据，带语义标记
-- "entity": 关系的实体定义
+# 行的 kind:
+- "dataset": 一个授权的 dataset，绑定到物理表或可复用查询
+- "field": dataset 的一个字段
+- "relationship": semantic model 的一条关系
 
-# 列的语义标记:
-- is_dimension: 用于分组/过滤的列
-- is_measure: 用于聚合的列
-- is_entity_key: 用于表连接的列
+# field 行上的标记:
+- is_dimension: 可用于分组/过滤
+- is_time: dataset 的时间维度
+- is_primary_key: 属于 dataset 的主键
 ```
+
+一张物理表可以被多个 dataset 建模（分属不同的 semantic model）。query-backed 的 dataset
+不带 `source_table`，因此不会被误当成同名的真实表。
 
 ## 使用方法
 
@@ -60,6 +65,12 @@ datus-agent bootstrap-kb \
     --components semantic_model \
     --semantic_yaml path/to/semantic_model.yaml
 
+# 将已授权的 YAML 重新投影进知识库（不调用 LLM）
+datus-agent bootstrap-kb \
+    --datasource <your_datasource> \
+    --components semantic_model \
+    --kb_update_strategy sync-yaml
+
 # 刷新已有 YAML 中的观测 profile 描述
 datus-agent bootstrap-kb \
     --datasource <your_datasource> \
@@ -77,7 +88,11 @@ datus-agent bootstrap-kb \
 | `--components` | ✅ | 要初始化的组件 | `semantic_model` |
 | `--success_story` | ⚠️ | 包含历史 SQLs 的 CSV 文件。从 SQL 历史生成和 `refresh-profile` 都需要。 | `success_story.csv` |
 | `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件。从 YAML 导入和 `refresh-profile` 都需要。 | `semantic_model.yaml` |
-| `--kb_update_strategy` | ❌ | 更新策略。默认是 `check`；`refresh-profile` 仅支持 `semantic_model` 组件。 | `check`/`overwrite`/`incremental`/`refresh-profile` |
+| `--kb_update_strategy` | ❌ | 更新策略。默认是 `check`；`refresh-profile` 与 `sync-yaml` 仅支持 `semantic_model` 组件。 | `check`/`overwrite`/`incremental`/`refresh-profile`/`sync-yaml` |
+
+`sync-yaml` 把已授权的语义 YAML 重新投影进知识库。`subject/semantic_models/<datasource>/` 下的 YAML 是唯一真相源，
+该策略逐个文件将其重放进存储——不调用 LLM、不访问数仓，可安全重复执行。传 `--semantic_yaml` 可只同步单个文件或
+子目录；不传则同步当前 datasource 的全部文件。手工改完 YAML 后，或升级导致存储结构变化需要重建投影时使用。
 
 `refresh-profile` 会原地更新已有 Dosi/OSI 语义模型 YAML（MetricFlow YAML 会被拒绝）。它会根据 `--success_story` 中的历史 SQL
 重新做有界、只读的数据 profile，替换表和字段 description 中生成的 `Observed profile:` 片段，并把更新后的 YAML
@@ -177,7 +192,7 @@ Agent 处理流程：
 /subject <domain>/<layer1>/<layer2>
 
 # 搜索语义对象
-search_semantic_objects(query="customer revenue", kinds=["table", "column"])
+search_semantic_objects(query_text="customer revenue", kinds=["dataset", "field"])
 ```
 
 ## 总结

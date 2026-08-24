@@ -3,7 +3,6 @@ Explorer service for catalog and subject tree management.
 """
 
 import asyncio
-import os
 from typing import TYPE_CHECKING, List, Optional
 
 from datus.api.models.base_models import Result
@@ -62,7 +61,6 @@ class ExplorerService:
 
         self.metric_rag = None
         self.reference_sql_rag = None
-        self.semantic_model_rag = None
         self.subject_tree_store = None
         if not self.datasource_id:
             logger.info("ExplorerService initialized without datasource; subject tree is empty until one is selected")
@@ -71,14 +69,12 @@ class ExplorerService:
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
         from datus.storage.registry import get_subject_tree_store
-        from datus.storage.semantic_model.store import SemanticModelRAG
 
         # ``sub_agent_name`` is the second positional parameter of all three;
         # passing datasource_id by keyword alone silently skipped it, which is
         # why these reads were unscoped no matter what the caller asked for.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
         self.reference_sql_rag = ReferenceSqlRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
-        self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name, datasource_id=self.datasource_id)
         self.subject_tree_store = get_subject_tree_store(
             project=agent_config.project_name,
             datasource_id=self.datasource_id,
@@ -324,60 +320,6 @@ class ExplorerService:
         from datus.storage.reference_sql.init_utils import gen_reference_sql_id
 
         return gen_reference_sql_id(sql)
-
-    def _get_semantic_file_path(
-        self,
-        catalog_name: Optional[str],
-        database_name: Optional[str],
-        schema_name: Optional[str],
-        table_name: Optional[str],
-    ) -> tuple:
-        """Get semantic file path from parameters.
-
-        Args:
-            catalog_name: Optional catalog name
-            database_name: Optional database name
-            schema_name: Optional schema name
-            table_name: Optional table name (semantic model name)
-
-        Returns:
-            tuple: (semantic_file_path, error_message)
-                If successful, error_message is None
-                If failed, semantic_file_path is empty string
-        """
-        try:
-            # Reuse the instance built in __init__ rather than constructing a
-            # fresh one: a local build would drop ``sub_agent_name`` and hand
-            # back semantic models from outside the sub-agent's scope, which is
-            # exactly the leak this scoping exists to close.
-            semantic_rag = self.semantic_model_rag
-            if semantic_rag is None:
-                return "", "No datasource is selected; select a datasource first"
-            current_db_config = self.agent_config.current_db_config()
-
-            # Use provided params or fall back to current DB config
-            semantic_models = semantic_rag.get_semantic_model(
-                catalog_name=catalog_name or current_db_config.catalog or "",
-                database_name=database_name or current_db_config.database or "",
-                schema_name=schema_name or current_db_config.schema or "",
-                table_name=table_name or "",
-            )
-
-            if not semantic_models or len(semantic_models) == 0:
-                return "", "No semantic model found for provided parameters"
-
-            semantic_file_path = semantic_models[0].get("semantic_file_path", "")
-
-            if not semantic_file_path:
-                return "", "Semantic model has no file path"
-
-            if not os.path.exists(semantic_file_path):
-                return "", f"Semantic file not found: {semantic_file_path}"
-
-            return semantic_file_path, None
-
-        except Exception as e:
-            return "", f"Failed to get semantic file path: {str(e)}"
 
     async def get_subject_list(self) -> Result[SubjectListData]:
         """Get nested subject tree structure.

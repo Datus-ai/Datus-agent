@@ -134,7 +134,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 - 已安装 `datus`（参见[快速开始](Quickstart.zh.md)）
 - 在 `datus` 内通过 `/model` 配置好 LLM provider；选择器会把凭据写入 `~/.datus/conf/agent.yml`
-- 通过 `/services semantic` 配置 MetricFlow 语义层适配器；CLI 会在保存该服务配置时自动安装缺失的 `datus-semantic-metricflow` 包
+- 使用默认的 Dosi 语义层适配器；交互式启动且未配置语义适配器时，Datus 会自动安装，也可以通过 `/services semantic` 显式选择
 
 不需要下载或手动 `cp` 任何文件。首次启动 `datus` 在没有配置时会自动 bootstrap `~/.datus/`：
 
@@ -408,7 +408,7 @@ datus-agent multi-round-benchmark \
 | 组件 | 你完成的事情 |
 |---|---|
 | 元数据 bootstrap | 索引了 schema、列描述与采样行 |
-| 语义模型 bootstrap | 基于成功案例生成 MetricFlow YAML |
+| 语义模型 bootstrap | 基于成功案例生成 Dosi 语义模型 |
 | 指标 bootstrap | 抽取业务指标并落入主题树 |
 | Reference SQL bootstrap | 19 个 SQL 文件被摘要、连接、索引 |
 | 子代理 | 两个工具集差异明显的范围化代理 |

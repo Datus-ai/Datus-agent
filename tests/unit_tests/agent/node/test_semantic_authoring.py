@@ -19,14 +19,14 @@ from datus.agent.node.semantic_authoring import (
     resolve_authoring_format,
     resolve_semantic_adapter_type,
     validate_osi_authoring_document,
-    validate_osi_core_document,
 )
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
 @pytest.fixture(autouse=True)
-def _stub_osi_schema_validation(monkeypatch):
-    monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
+def _accept_any_authoring_document(monkeypatch):
+    """Target selection is what these exercise; the validator is covered on its own."""
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", lambda document, **kwargs: None)
 
 
 def _agent_config(adapter):
@@ -58,27 +58,14 @@ def _write_osi_model(tmp_path, filename, model_name, datasets):
     return target
 
 
-def test_validate_osi_core_document_uses_canonical_validator(monkeypatch):
-    class FakeOSIValidationError(Exception):
-        pass
+def test_validate_authoring_document_refuses_a_query_only_project(monkeypatch):
+    """Dosi is the only adapter that authors, so there is no validator to fall
+    back to — validating a document that will never be written misleads."""
+    monkeypatch.undo()
 
-    profile_module = ModuleType("datus_semantic_osi.profile")
-    errors_module = ModuleType("datus_semantic_osi.errors")
-    package_module = ModuleType("datus_semantic_osi")
-    package_module.__path__ = []
-    errors_module.OSIValidationError = FakeOSIValidationError
-    profile_module.validate_osi_core_schema = lambda document: None
-    monkeypatch.setitem(sys.modules, "datus_semantic_osi", package_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_osi.profile", profile_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_osi.errors", errors_module)
+    message = semantic_authoring.validate_osi_authoring_document({"version": "x"}, semantic_adapter="metricflow")
 
-    assert validate_osi_core_document({"version": "valid"}) is None
-
-    def reject(document):
-        raise FakeOSIValidationError("schema mismatch")
-
-    profile_module.validate_osi_core_schema = reject
-    assert validate_osi_core_document({"version": "invalid"}) == "schema mismatch"
+    assert message == semantic_authoring.QUERY_ONLY_MIGRATION_MESSAGE
 
 
 def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
@@ -338,9 +325,9 @@ def test_osi_target_refuses_to_reuse_an_occupied_filename_with_a_different_model
     assert "already occupied" in target["reason"]
 
 
-def test_defaults_to_metricflow_when_unknown():
-    assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_METRICFLOW
-    assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_METRICFLOW
+def test_defaults_to_dosi_when_unknown():
+    assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_OSI
+    assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_OSI
 
 
 def test_resolution_propagates_agent_config_errors():

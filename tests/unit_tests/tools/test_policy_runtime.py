@@ -137,7 +137,7 @@ def test_invalid_runtime_decision_fails_closed(monkeypatch):
 def make_db_tool(connector, agent_config):
     with (
         patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
-        patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        patch("datus.tools.func_tool.database.SemanticDatasetRAG") as mock_sem,
     ):
         mock_rag.return_value.schema_store.table_size.return_value = 0
         mock_sem.return_value.get_size.return_value = 0

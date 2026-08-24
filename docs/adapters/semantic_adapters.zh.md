@@ -1,6 +1,6 @@
 # 语义层适配器
 
-Datus Agent 通过语义层适配器，把指标生成、校验、发现和查询连接到具体的语义层实现。
+Datus Agent 通过语义层适配器，把语义创作、校验、发现和查询连接到具体的语义层实现。Dosi 是默认适配器，也是唯一支持创作的适配器；MetricFlow 与 OSI 仅在显式配置时用于查询兼容。
 
 本文是适配器总览。具体适配器请看：
 
@@ -10,27 +10,31 @@ Datus Agent 通过语义层适配器，把指标生成、校验、发现和查�
 
 ## 概述
 
-语义层适配器提供统一接口，用于：
+三个语义层适配器都提供统一的查询接口，用于：
 
 - 列出可执行指标
 - 获取指标可用维度
 - 查询指标值
-- 发布前校验语义资产
+- 校验已有语义资产
+
+Dosi 额外提供语义创作生命周期，用于：
+
+- 发布前校验创作的语义资产
 - 将已校验的语义资产同步到 Datus Knowledge Base
 
 当前支持三个适配器：
 
-| 适配器 | 包名 | Authoring format | 执行后端 | 状态 |
-|--------|------|------------------|----------|------|
-| MetricFlow | `datus-semantic-metricflow` | MetricFlow YAML | MetricFlow | 可用 |
-| OSI | `datus-semantic-osi` | strict OSI core YAML + DATUS custom extensions | 默认 MetricFlow | 可用 |
-| Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | 原生 Dosi engine | 可用 |
+| 适配器 | 包名 | 源格式 | 执行后端 | Datus 模式 |
+|--------|------|--------|----------|------------|
+| Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | 原生 Dosi engine | 默认；创作 + 查询 |
+| MetricFlow | `datus-semantic-metricflow` | MetricFlow YAML | MetricFlow | 显式配置；仅查询 |
+| OSI | `datus-semantic-osi[metricflow]` | strict OSI core YAML + DATUS custom extensions | MetricFlow | 显式配置；仅查询 |
 
-MetricFlow、OSI 和 Dosi 是并列的 semantic adapter。区别在于用户和生成 agent 维护的源格式，以及模型的执行方式：
+三个 adapter 共用查询接口，但不再共用创作入口：
 
-- MetricFlow 模式直接编写 MetricFlow YAML。
-- OSI 模式编写 OSI core YAML，由 `datus-semantic-osi` 编译到 Datus Semantic IR，再降低到 MetricFlow。
-- Dosi 模式编写相同的 OSI 格式，但由 Rust engine 直接编译、规划和执行。
+- Dosi 创作 strict OSI-compatible YAML，并由 Rust engine 直接编译、规划和执行。
+- MetricFlow 加载已有 MetricFlow YAML，用于校验、发现和查询。
+- OSI 加载已有 OSI core YAML，编译到 Datus Semantic IR，再降低到 MetricFlow 查询。
 
 ## 架构
 
@@ -63,13 +67,12 @@ datus-agent
 agent:
   services:
     semantic_layer:
-      metricflow:
+      dosi:
         default: true
 
-      osi:
-        execution_backend: metricflow
+      metricflow: {}  # 可选的查询兼容
 
-      dosi: {}
+      osi: {}         # 可选的查询兼容；安装 osi[metricflow]
 ```
 
 `services.semantic_layer` 下的 key 必须等于 adapter type，例如 `metricflow`、`osi` 或 `dosi`。如果同时写了 `type:` 字段，其值必须与 key 一致。
@@ -95,19 +98,19 @@ agent:
 适合使用 MetricFlow 的情况：
 
 - 已经有 MetricFlow YAML
-- 希望生成文件就是 MetricFlow 原生格式
-- 团队会直接查看或维护 MetricFlow 资产
+- 团队在 Datus 之外维护这些资产
+- 迁移期间仍需通过 Datus 查询它们
 
 适合使用 OSI 的情况：
 
 - 希望源文件遵循 OSI core schema
 - 希望 Datus 执行提示隔离在 `custom_extensions` 中
-- 希望 LLM 生成时避免 `measure_proxy`、`type_params`、`data_source` 等后端 YAML 字段
-- 当前仍希望通过 MetricFlow 执行
+- 已有 OSI 资产需要继续通过 MetricFlow 查询
 
 适合使用 Dosi 的情况：
 
-- 希望继续使用相同的 strict OSI authoring 流程
+- 要开始新的语义创作或修改已有模型
+- 希望继续使用 strict OSI authoring 流程
 - 模型以 aggregate、ratio 和 expression 指标为主
 - 希望使用原生 Join 规划、fan-out 防护和执行，不依赖 MetricFlow
 

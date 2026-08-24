@@ -150,3 +150,19 @@ MetricFlow tables are created in the `mf_nightly` schema within the existing
 | DuckDB | `ADAPTERS_METRICFLOW_DUCKDB=1` | none | DB file auto-generated in tmp dir |
 | MySQL | `ADAPTERS_METRICFLOW_MYSQL=1` | same as `ADAPTERS_MYSQL` vars | tables in `test` DB |
 | PostgreSQL | `ADAPTERS_METRICFLOW_PG=1` | same as `ADAPTERS_PG` vars | tables in `mf_nightly` schema |
+
+---
+
+## OSI Query Compatibility Tests
+
+OSI remains available as an explicitly configured, query-only adapter. Its
+nightly smoke test installs `datus-semantic-osi[metricflow]` and verifies model
+validation, discovery, SQL dry-run, and live query execution through the
+MetricFlow backend using DuckDB.
+
+```bash
+ADAPTERS_OSI_DUCKDB=1 uv run pytest tests/integration/adapters/test_semantic_osi_duckdb.py -v
+```
+
+No container or connection environment variables are required; the database
+file is created in a pytest tmp directory.

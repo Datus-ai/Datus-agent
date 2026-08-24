@@ -349,13 +349,15 @@ class BaseEmbeddingStore(StorageBase):
         """
         Create a vector index (IVF_PQ or IVF_FLAT) for the table to optimize vector search.
 
+        The IVF sizing below is tuning for backends that build an inverted-file
+        index; it travels as **kwargs so backends with a different index family
+        (pgvector builds HNSW) take the column and metric and ignore the rest.
+
         Args:
             metric (str): Distance metric for vector search ('cosine', 'l2', or 'dot').
                 Default: 'cosine'.
         """
         self._ensure_table_ready()
-        if not self._supports_runtime_indexing():
-            return
         try:
             row_count = self.table.count_rows()
             logger.debug(f"Creating vector index for {self.table_name} with {row_count} rows")
@@ -708,10 +710,6 @@ class BaseEmbeddingStore(StorageBase):
 
     # -- Convenience methods for subclasses --
 
-    def _supports_runtime_indexing(self) -> bool:
-        """Return whether vector and scalar indexes are managed at runtime."""
-        return hasattr(self.table, "create_scalar_index") and type(self.table).__name__.startswith("Lance")
-
     def _supports_fts_indexing(self) -> bool:
         """Return whether the backend implements the shared FTS capability."""
         supports_fts = getattr(self.table, "supports_fts", None)
@@ -720,8 +718,6 @@ class BaseEmbeddingStore(StorageBase):
     def _create_scalar_index(self, column: str) -> None:
         """Create a scalar index on the given column."""
         self._ensure_table_ready()
-        if not self._supports_runtime_indexing():
-            return
         try:
             self.table.create_scalar_index(column)
         except Exception as e:

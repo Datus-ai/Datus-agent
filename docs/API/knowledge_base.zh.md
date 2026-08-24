@@ -13,7 +13,7 @@
 | 字段                  | 类型      | 默认值          | 说明 |
 |----------------------|----------|----------------|------|
 | `components`         | string[] | _（必填）_       | 要构建的组件：`metadata`、`semantic_model`、`metrics`、`reference_sql` |
-| `strategy`           | string   | `incremental`  | `check`（仅检查）、`overwrite`（重建）、`incremental`（增量更新）或 `refresh-profile`（仅语义模型） |
+| `strategy`           | string   | `incremental`  | `check`（仅检查）、`overwrite`（重建）、`incremental`（增量更新）、`refresh-profile`（仅语义模型）或 `sync-yaml`（仅语义模型；重放已授权 YAML，不调用 LLM） |
 | `schema_linking_type`| string   | `full`         | metadata 专用：`table`、`view`、`mv`、`full` |
 | `catalog`            | string   | `""`           | 支持 catalog 的引擎的 metadata catalog 过滤，例如 StarRocks；Snowflake 需要留空 |
 | `database_name`      | string   | `""`           | metadata 数据库过滤 |
@@ -23,6 +23,9 @@
 | `sql_dir`            | string?  | `null`         | 项目根目录的相对路径，指向 `.sql` 文件目录 |
 
 **响应**：`text/event-stream`，参见下方 [SSE 事件格式](#sse-events)。
+
+`strategy=sync-yaml` 仅在 `components` 恰好为 `["semantic_model"]` 时有效。它不调用 LLM，直接把已授权的 YAML
+重放进存储；不传 `semantic_yaml` 则同步当前 datasource 的全部文件。
 
 `strategy=refresh-profile` 仅在 `components` 恰好为 `["semantic_model"]` 时有效。它要求同时传入 `semantic_yaml`
 和 `success_story`，会用有界、只读的数据 profile 刷新已有 MetricFlow 或 OSI YAML 中生成的 `Observed profile:`

@@ -34,6 +34,7 @@ from datus.api.services.chat_task_manager import (
 from datus.configuration.agent_config import AgentConfig
 from datus.models.session_manager import SessionManager, session_matches_agent
 from datus.schemas.action_history import ActionRole, ActionStatus
+from datus.utils.config_utils import coerce_positive_int
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
@@ -46,22 +47,6 @@ logger = get_logger(__name__)
 # request path — clients that omit ``limit`` entirely — stays bounded.
 _DEFAULT_SESSION_PAGE_SIZE = 50
 _DEFAULT_MAX_SESSION_PAGE_SIZE = 200
-
-
-def _positive_int(raw: Any, fallback: int) -> int:
-    """Coerce a config value or caller-supplied page size to a positive int.
-
-    Both operator YAML and direct (non-HTTP) callers are untrusted here: a
-    missing key, ``null``, a non-numeric string, or a non-positive number all
-    fall back to *fallback* rather than producing an empty or reversed page.
-    ``OverflowError`` is caught alongside the usual pair because YAML ``.inf``
-    parses to float infinity, which ``int()`` refuses to convert.
-    """
-    try:
-        value = int(raw)
-    except (TypeError, ValueError, OverflowError):
-        return fallback
-    return value if value > 0 else fallback
 
 
 class ChatService:
@@ -159,16 +144,16 @@ class ChatService:
         """
         try:
             api_config = getattr(self.agent_config, "api_config", {}) or {}
-            max_page_size = _positive_int(api_config.get("max_session_page_size"), _DEFAULT_MAX_SESSION_PAGE_SIZE)
+            max_page_size = coerce_positive_int(api_config.get("max_session_page_size"), _DEFAULT_MAX_SESSION_PAGE_SIZE)
             default_page_size = min(
-                _positive_int(api_config.get("default_session_page_size"), _DEFAULT_SESSION_PAGE_SIZE),
+                coerce_positive_int(api_config.get("default_session_page_size"), _DEFAULT_SESSION_PAGE_SIZE),
                 max_page_size,
             )
             # A non-positive ``limit`` is treated as unspecified rather than
             # passed through: the route pins ``ge=1``, but a direct caller
             # passing -1 would otherwise slice ``all_ids[offset:-1]`` and
             # enrich nearly every session — the exact cost this bounds.
-            page_size = min(_positive_int(limit, default_page_size), max_page_size)
+            page_size = min(coerce_positive_int(limit, default_page_size), max_page_size)
             # Likewise the route pins ``ge=0``; clamp again for non-HTTP callers,
             # since a negative offset would silently slice from the tail.
             offset = max(offset, 0)

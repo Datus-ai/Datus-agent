@@ -12,7 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
 
 from agents import Tool
 from datus_db_core import BaseSqlConnector
@@ -23,8 +23,7 @@ from datus.schemas.node_models import ExecuteSQLResult
 from datus.storage.kb_retrieval import metadata_fts_enabled
 from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.tools.db_tools.capabilities import (
     get_dialect_operations,
     get_effective_capabilities,
@@ -52,6 +51,25 @@ from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
+
+# One warning per project is enough: DBFuncTool is rebuilt per session and per
+# sub-agent, and repeating this on every construction would bury it.
+_STALE_PROJECTION_WARNED: Set[str] = set()
+
+
+def _warn_once_if_projection_is_stale(agent_config: Any) -> None:
+    """Tell the user their semantic YAML has not been projected yet."""
+    project = str(getattr(agent_config, "project_name", "") or "")
+    if project in _STALE_PROJECTION_WARNED:
+        return
+    try:
+        from datus.storage.semantic_dataset.store import SYNC_YAML_HINT, semantic_projection_is_stale
+
+        if semantic_projection_is_stale(agent_config):
+            _STALE_PROJECTION_WARNED.add(project)
+            logger.warning(SYNC_YAML_HINT)
+    except Exception as exc:  # noqa: BLE001 - a hint must never break tool setup
+        logger.debug(f"Unable to check the semantic dataset projection: {exc}")
 
 
 @dataclass
@@ -208,23 +226,21 @@ class DBFuncTool:
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
 
-        self._semantic_storage = SemanticModelRAG(agent_config, sub_agent_name) if agent_config else None
-        self._table_semantic_profiles = None
+        self._semantic_datasets = None
         if agent_config and isinstance(getattr(agent_config, "project_name", ""), str):
             try:
-                self._table_semantic_profiles = TableSemanticProfileRAG(agent_config, sub_agent_name)
+                self._semantic_datasets = SemanticDatasetRAG(agent_config, sub_agent_name)
             except Exception as exc:
-                logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
+                logger.debug(f"Failed to initialize semantic dataset storage: {exc}")
         self.has_schema = self._has_schema_storage()
 
-        self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
         try:
-            self.has_table_semantic_profiles = (
-                self._table_semantic_profiles is not None and self._table_semantic_profiles.get_size() > 0
-            )
+            self.has_semantic_datasets = self._semantic_datasets is not None and self._semantic_datasets.get_size() > 0
         except Exception:
-            self._table_semantic_profiles = None
-            self.has_table_semantic_profiles = False
+            self._semantic_datasets = None
+            self.has_semantic_datasets = False
+        if not self.has_semantic_datasets and agent_config is not None:
+            _warn_once_if_projection_is_stale(agent_config)
 
     @property
     def policy_context(self) -> Dict[str, Any]:
@@ -614,50 +630,79 @@ class DBFuncTool:
         }
         return ScopedTablePattern(raw=token, **values)
 
-    def _get_semantic_model(
-        self, catalog: str = "", database: str = "", schema: str = "", table_name: str = ""
-    ) -> Dict[str, Any]:
-        if not self.has_semantic_models:
-            return {}
-        result = self._semantic_storage.get_semantic_model(
+    def _list_table_semantic_datasets(
+        self,
+        catalog: str = "",
+        database: str = "",
+        schema: str = "",
+        table_name: str = "",
+        semantic_model: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Every semantic dataset bound to one physical table, primary first."""
+        if self._semantic_datasets is None:
+            return []
+        rows = self._semantic_datasets.list_datasets(
             catalog_name=catalog,
             database_name=database,
             schema_name=schema,
             table_name=table_name,
+            semantic_model=semantic_model,
             select_fields=[
-                "semantic_model_name",
-                "dimensions",
-                "measures",
-                "description",
-                "identifiers",
-            ],
-        )
-        logger.info(f"get_semantic_model result: {result}")
-        return result if result is not None else {}
-
-    def _get_table_semantic_profile(
-        self, catalog: str = "", database: str = "", schema: str = "", table_name: str = ""
-    ) -> Dict[str, Any]:
-        if self._table_semantic_profiles is None:
-            return {}
-        result = self._table_semantic_profiles.get_profile(
-            catalog_name=catalog,
-            database_name=database,
-            schema_name=schema,
-            table_name=table_name,
-            select_fields=[
-                "table_name",
                 "semantic_model_name",
                 "dataset_name",
-                "data_source_name",
                 "description",
-                "ai_context_json",
-                "columns_json",
-                "relationships_json",
+                "yaml_path",
             ],
         )
-        logger.info(f"get_table_semantic_profile result: {result}")
-        return result if result is not None else {}
+        logger.info(f"list_table_semantic_datasets for {table_name!r}: {len(rows)} dataset(s)")
+        return rows
+
+    def _table_semantic_model_names(self, coordinate: "TableCoordinate") -> List[str]:
+        """Names of every semantic model describing one table, in lookup order."""
+        rows = self._list_table_semantic_datasets(
+            coordinate.catalog, coordinate.database, coordinate.schema, coordinate.table
+        )
+        return [str(row.get("semantic_model_name") or "") for row in rows if row.get("semantic_model_name")]
+
+    def _get_table_semantic_projection(
+        self,
+        catalog: str = "",
+        database: str = "",
+        schema: str = "",
+        table_name: str = "",
+        semantic_model: str = "",
+    ) -> Dict[str, Any]:
+        """The primary dataset for one table, with its fields and relationships."""
+        if self._semantic_datasets is None:
+            return {}
+        projection = self._semantic_datasets.get_table_projection(
+            catalog_name=catalog,
+            database_name=database,
+            schema_name=schema,
+            table_name=table_name,
+            semantic_model=semantic_model,
+        )
+        return projection or {}
+
+    def _semantic_description_for_row(self, metadata_row: Dict[str, Any]) -> str:
+        """Business description for one search hit, or "" when it has none.
+
+        Reads the primary semantic dataset, so search_table and describe_table
+        agree on which model speaks for a table. A table modelled by several
+        semantic models is legitimate, so this lookup must never fail the
+        search — it only ever contributes a description.
+        """
+        try:
+            datasets = self._list_table_semantic_datasets(
+                metadata_row.get("catalog_name", ""),
+                metadata_row.get("database_name", ""),
+                metadata_row.get("schema_name", ""),
+                metadata_row.get("table_name", ""),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to read semantic datasets for {metadata_row.get('table_name')!r}: {e}")
+            return ""
+        return str(datasets[0].get("description") or "") if datasets else ""
 
     @staticmethod
     def _decode_profile_json(value: Any, default: Any) -> Any:
@@ -672,53 +717,93 @@ class DBFuncTool:
         except (TypeError, ValueError):
             return default
 
-    def _apply_table_semantic_profile(self, result_data: Dict[str, Any], profile: Dict[str, Any]) -> None:
-        """Attach a table semantic profile to describe_table output."""
+    @staticmethod
+    def _semantic_field_role(field: Dict[str, Any]) -> str:
+        """Name the role a field plays, from the flags stored on its row."""
+        if field.get("is_primary_key"):
+            return "primary_key"
+        if field.get("is_time"):
+            return "time_dimension"
+        if field.get("is_dimension"):
+            return "dimension"
+        return "field"
+
+    def _apply_table_semantic_profile(self, result_data: Dict[str, Any], projection: Dict[str, Any]) -> None:
+        """Attach one semantic dataset to describe_table output.
+
+        Descriptions, column enrichment and relationships all come from the
+        primary dataset alone. OSI relationships reference dataset names, which
+        are local to their semantic model, so merging two models would assert a
+        join graph that exists in neither. Any further datasets are surfaced as
+        navigation under ``table.alternatives`` instead, and the caller can pull
+        one up in full by passing ``semantic_model``.
+        """
 
         columns = result_data.get("columns", [])
-        semantic_columns = self._decode_profile_json(profile.get("columns_json"), [])
-        relationships = self._decode_profile_json(profile.get("relationships_json"), [])
-        ai_context = self._decode_profile_json(profile.get("ai_context_json"), None)
+        semantic_fields = projection.get("fields") or []
+        alternatives = projection.get("alternatives") or []
+        ai_context = self._decode_profile_json(projection.get("ai_context_json"), None)
 
         table = {
             "name": (
-                profile.get("dataset_name")
-                or profile.get("data_source_name")
-                or profile.get("table_name")
-                or profile.get("semantic_model_name")
-                or ""
+                projection.get("dataset_name") or projection.get("semantic_model_name") or projection.get("name") or ""
             ),
-            "description": profile.get("description", ""),
+            "description": projection.get("description", ""),
         }
         if ai_context not in (None, "", [], {}):
             table["ai_context"] = ai_context
+        if alternatives:
+            table["semantic_model"] = projection.get("semantic_model_name", "")
+            table["alternatives"] = [
+                {
+                    "semantic_model": alternative.get("semantic_model_name", ""),
+                    "dataset": alternative.get("dataset_name", ""),
+                    "description": alternative.get("description", ""),
+                    "yaml_path": alternative.get("yaml_path", ""),
+                }
+                for alternative in alternatives
+            ]
         result_data["table"] = table
         result_data["semantic"] = {
-            "relationships": relationships,
+            "relationships": [
+                {
+                    key: value
+                    for key, value in {
+                        "name": relationship.get("name", ""),
+                        "type": relationship.get("rel_type", ""),
+                        "join_type": relationship.get("join_type", ""),
+                        "from_dataset": relationship.get("from_dataset", ""),
+                        "to_dataset": relationship.get("to_dataset", ""),
+                        "from_columns": self._decode_profile_json(relationship.get("from_columns_json"), []),
+                        "to_columns": self._decode_profile_json(relationship.get("to_columns_json"), []),
+                        "ai_context": self._decode_profile_json(relationship.get("ai_context_json"), None),
+                    }.items()
+                    if value not in (None, "", [], {})
+                }
+                for relationship in projection.get("relationships") or []
+            ],
         }
 
-        if not isinstance(semantic_columns, list):
-            return
-        semantic_lookup = {}
-        for semantic_col in semantic_columns:
-            if not isinstance(semantic_col, dict):
+        semantic_lookup: Dict[str, Dict[str, Any]] = {}
+        for field in semantic_fields:
+            if not isinstance(field, dict):
                 continue
             for key in ("expr", "name"):
-                value = semantic_col.get(key)
+                value = field.get(key)
                 if value:
-                    semantic_lookup.setdefault(str(value).strip("`").lower(), semantic_col)
+                    semantic_lookup.setdefault(str(value).strip("`").lower(), field)
 
         for col in columns:
             col_name = str(col.get("name", "")).lower()
-            semantic_col = semantic_lookup.get(col_name)
-            if not semantic_col:
+            field = semantic_lookup.get(col_name)
+            if not field:
                 continue
-            role = semantic_col.get("role") or ""
-            description = semantic_col.get("description") or ""
-            col["semantic_role"] = role
-            col["is_dimension"] = role in ("dimension", "time_dimension")
-            if semantic_col.get("ai_context") not in (None, "", [], {}):
-                col["ai_context"] = semantic_col.get("ai_context")
+            description = field.get("description") or ""
+            field_ai_context = self._decode_profile_json(field.get("ai_context_json"), None)
+            col["semantic_role"] = self._semantic_field_role(field)
+            col["is_dimension"] = bool(field.get("is_dimension"))
+            if field_ai_context not in (None, "", [], {}):
+                col["ai_context"] = field_ai_context
             if description:
                 col["semantic_description"] = description
                 col["comment"] = description
@@ -1203,16 +1288,10 @@ class DBFuncTool:
             if not metadata_rows:
                 return FuncToolResult(success=1, result=result_dict)
 
-            if self.has_semantic_models:
-                for metadata_row in metadata_rows:
-                    semantic_model = self._get_semantic_model(
-                        metadata_row["catalog_name"],
-                        metadata_row["database_name"],
-                        metadata_row["schema_name"],
-                        metadata_row["table_name"],
-                    )
-                    if semantic_model:
-                        metadata_row["description"] = semantic_model.get("description", "")
+            for metadata_row in metadata_rows:
+                description = self._semantic_description_for_row(metadata_row)
+                if description:
+                    metadata_row["description"] = description
 
             sample_rows_by_identifier = self._sample_rows_by_identifier(sample_values)
             result_dict["metadata"] = [
@@ -1368,6 +1447,7 @@ class DBFuncTool:
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
         datasource: Optional[str] = "",
+        semantic_model: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Fetch detailed column metadata, enriched with Semantic Model information.
@@ -1379,6 +1459,10 @@ class DBFuncTool:
             database: Optional database override.
             schema_name: Optional schema override.
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
+            semantic_model: Optional semantic model to read the table's meaning from. Use it when
+                `table.alternatives` shows the table is modelled by more than one semantic model
+                and you want another one's view; defaults to the primary dataset. Naming a model
+                that does not describe this table fails with the list of models that do.
 
         Returns:
             FuncToolResult with a dictionary containing:
@@ -1394,11 +1478,19 @@ class DBFuncTool:
               - is_dimension (bool): Whether this column is a dimension in semantic model
                 (semantic fields only present if semantic model exists)
             - table (dict, optional): Table-level metadata from semantic model (only if model exists):
-              - name (str): Name of the table
+              - name (str): Name of the dataset modelling this table
               - description (str): Table description from semantic model
               - ai_context (dict/list/str, optional): Extra LLM-facing business guidance
+              - semantic_model (str, optional): Which semantic model the meaning above came from.
+                Only present when the table is modelled more than once.
+              - alternatives (list, optional): Other semantic models describing this same table, each
+                with semantic_model, dataset, description and yaml_path. Only present when the table
+                is modelled more than once. Re-call with `semantic_model` to read one of them; the
+                views are never merged, since each model's relationships are only valid within it.
             - semantic (dict, optional): LLM-facing semantic hints:
-              - relationships (list): Relevant dataset/data-source relationships
+              - relationships (list): Relationships of the dataset above, each with name, type,
+                join_type, from_dataset, to_dataset, from_columns and to_columns. Endpoints are
+                dataset names local to that one semantic model.
         """
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
@@ -1467,78 +1559,38 @@ class DBFuncTool:
 
             # 3. Enrich with Semantic Model Info if available
             result_data = {"columns": columns}
-            profile_applied = False
 
+            requested_model = str(semantic_model or "").strip()
             try:
-                profile = self._get_table_semantic_profile(
+                projection = self._get_table_semantic_projection(
                     coordinate.catalog,
                     coordinate.database,
                     coordinate.schema,
                     coordinate.table,
+                    semantic_model=requested_model,
                 )
-                if profile:
+                if projection:
                     logger.debug(
-                        "Found table semantic profile: %s",
-                        profile.get("dataset_name") or profile.get("data_source_name") or "unknown",
+                        "Found semantic dataset %s (%d alternative(s))",
+                        projection.get("dataset_name") or "unknown",
+                        len(projection.get("alternatives") or []),
                     )
-                    self._apply_table_semantic_profile(result_data, profile)
-                    profile_applied = True
+                    self._apply_table_semantic_profile(result_data, projection)
+                elif requested_model:
+                    # Silently dropping to physical columns would read as "this
+                    # table has no semantic model", sending the caller to guess
+                    # at raw columns when the name is merely misspelled.
+                    modelled_by = self._table_semantic_model_names(coordinate)
+                    if modelled_by:
+                        return FuncToolResult(
+                            success=0,
+                            error=(
+                                f"Semantic model '{requested_model}' does not describe table '{table_name}'. "
+                                f"It is modelled by: {', '.join(modelled_by)}."
+                            ),
+                        )
             except Exception as e:
                 logger.warning(f"Failed to get table semantic profile for {table_name}: {e}")
-
-            if self.has_semantic_models and not profile_applied:
-                try:
-                    logger.debug("Checking for semantic models")
-                    # Use coordinate values (resolved and stripped) for lookup
-                    model = self._get_semantic_model(
-                        coordinate.catalog,
-                        coordinate.database,
-                        coordinate.schema,
-                        coordinate.table,
-                    )
-
-                    if model:
-                        logger.debug(f"Found semantic model: {model.get('semantic_model_name', 'unknown')}")
-
-                        # Add table-level metadata unless the authoring-format
-                        # profile already provided a richer table projection.
-                        result_data.setdefault(
-                            "table",
-                            {
-                                "name": model.get("semantic_model_name", ""),
-                                "description": model.get("description", ""),
-                            },
-                        )
-
-                        # Create lookup map using expr (physical column) as key, fallback to name
-                        # expr is the actual column name/expression, name is the semantic name
-                        dimensions = model.get("dimensions", [])
-
-                        # Build map: physical_col_name -> dimension_data
-                        dim_map = {(d.get("expr") or d.get("name", "")).lower(): d for d in dimensions}
-
-                        logger.debug(f"Semantic map: {len(dim_map)} dimensions")
-
-                        # Enrich columns with dimension info
-                        if dim_map:
-                            for col in columns:
-                                col_name = col["name"].lower()
-
-                                if col_name in dim_map:
-                                    dim_data = dim_map[col_name]
-                                    col["is_dimension"] = True
-                                    if dim_data.get("description"):
-                                        col.setdefault("semantic_description", dim_data.get("description"))
-                                        col["comment"] = dim_data.get("description")
-                                else:
-                                    col.setdefault("is_dimension", False)
-                        else:
-                            logger.debug("No dimensions defined in model")
-                    else:
-                        logger.debug("No semantic model found for this table")
-                except Exception as e:
-                    # If semantic model lookup fails, just log and continue with physical schema only
-                    logger.warning(f"Failed to get semantic model for {table_name}: {e}")
 
             logger.info(f"describe_table succeeded for {table_name}, returning {len(columns)} columns")
             return FuncToolResult(result=result_data)
