@@ -912,9 +912,26 @@ class AgentService:
         }
         # Bind the subagent to the active datasource (mirrors the wizard so
         # ``SubAgentConfig.is_in_datasource`` can gate task delegation at runtime).
-        # ``request.datasource_id`` wins when set; otherwise fall back to the
-        # AgentConfig's current datasource.
-        datasource = request.datasource_id or getattr(agent_config, "current_datasource", "") or ""
+        # ``request.datasource_id`` wins when set, then ``datasource_name``;
+        # otherwise fall back to the AgentConfig's current datasource.
+        #
+        # The two are the same thing here: a datasource is addressed by its
+        # namespace key in a standalone agent, and the SaaS-side ids the name
+        # form exists for do not reach this service. Honouring it matters
+        # anyway — silently ignoring a field the request set would bind the
+        # agent to a different warehouse than the caller asked for.
+        datasource = (
+            request.datasource_id
+            or (getattr(request, "datasource_name", None) or "")
+            or getattr(agent_config, "current_datasource", "")
+            or ""
+        )
+        if datasource and datasource not in getattr(agent_config, "datasource_configs", {}):
+            return Result(
+                success=False,
+                errorCode="INVALID_DATASOURCE",
+                errorMessage=f"Unknown datasource '{datasource}'",
+            )
         subject_buckets = (
             _classify_subject_paths(
                 agent_config,
@@ -1091,7 +1108,13 @@ class AgentService:
         # API ``description`` lands on the runtime-visible ``agent_description``
         # key; drop any legacy flat ``description`` left over from older edits
         # so the read path doesn't see two competing values.
-        update_data = request.model_dump(exclude={"id", "name", "prompt_template", "channels"}, exclude_none=True)
+        # ``datasource_name`` is not a persisted field — it selects the binding
+        # resolved below. Left in, ``agent.update(update_data)`` would write it
+        # as a bogus top-level key on the sub-agent's yaml.
+        update_data = request.model_dump(
+            exclude={"id", "name", "prompt_template", "channels", "datasource_name"},
+            exclude_none=True,
+        )
         if "description" in update_data:
             update_data["agent_description"] = update_data.pop("description")
             agent.pop("description", None)
@@ -1137,7 +1160,15 @@ class AgentService:
             # fall back to "no datasource → all metrics" and silently
             # mis-bucket subjects against a binding that's about to be
             # re-persisted by ``_build_scoped_context``.
-            datasource = getattr(agent_config, "current_datasource", "") or base_ctx.get("datasource") or ""
+            # A request that names a datasource re-points the binding; that has
+            # to win over the config's current one, or an edit would silently
+            # rebind the agent back to the active datasource.
+            datasource = (
+                (getattr(request, "datasource_name", None) or "")
+                or getattr(agent_config, "current_datasource", "")
+                or base_ctx.get("datasource")
+                or ""
+            )
             subject_buckets = None
             if subjects_input is not None:
                 subject_buckets = _classify_subject_paths(

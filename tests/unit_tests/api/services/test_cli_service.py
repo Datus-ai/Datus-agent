@@ -1,7 +1,9 @@
 """Tests for datus.api.services.cli_service — CLI command operations."""
 
 import asyncio
+import time
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -229,6 +231,69 @@ class TestCLIServiceExecuteSQL:
 
         assert result.success is False
         assert result.errorCode == ApiErrorCode.DATABASE_CONNECTION_ERROR
+
+
+class TestCLIServiceConnectorSerialization:
+    """The shared connector's mutable database context must not leak between
+    concurrent requests."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_on_one_datasource_do_not_interleave(self, cli_svc):
+        """Two requests that each switch database must not overlap.
+
+        The connector is shared per datasource and `switch_context` mutates it,
+        so an interleave would run one request's SQL against the other's
+        database — a wrong answer with no error.
+        """
+        import threading
+
+        overlapping = []
+        active = {"n": 0}
+        guard = threading.Lock()
+        real = cli_svc._execute_resolved_sql
+
+        def tracked(*args, **kwargs):
+            with guard:
+                active["n"] += 1
+                overlapping.append(active["n"])
+            try:
+                time.sleep(0.05)
+                return real(*args, **kwargs)
+            finally:
+                with guard:
+                    active["n"] -= 1
+
+        with patch.object(cli_svc, "_execute_resolved_sql", side_effect=tracked):
+            await asyncio.gather(
+                cli_svc.execute_sql(
+                    ExecuteSQLInput(
+                        sql_query="SELECT COUNT(*) FROM schools",
+                        database_name="california_schools",
+                        execute_task_id="a",
+                    )
+                ),
+                cli_svc.execute_sql(
+                    ExecuteSQLInput(
+                        sql_query="SELECT COUNT(*) FROM schools",
+                        database_name="california_schools",
+                        execute_task_id="b",
+                    )
+                ),
+            )
+
+        assert max(overlapping) == 1, f"requests overlapped: {overlapping}"
+
+    def test_lock_is_per_datasource(self, cli_svc, real_agent_config):
+        """Different datasources must not block each other."""
+        cli_svc.agent_config.services.datasources["other"] = cli_svc.agent_config.services.datasources[
+            real_agent_config.current_datasource
+        ]
+
+        first = cli_svc._connector_lock(real_agent_config.current_datasource)
+        second = cli_svc._connector_lock("other")
+
+        assert first is not second
+        assert first is cli_svc._connector_lock(real_agent_config.current_datasource)
 
 
 class TestCLIServiceStopExecuteSQL:

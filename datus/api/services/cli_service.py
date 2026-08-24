@@ -97,6 +97,15 @@ class CLIService:
         # use. The IDE console addresses one by name per request, and opening
         # every bound warehouse at startup would cost seconds per project.
         self._datasource_connectors: Dict[str, Any] = {}
+        # One lock per datasource, held across ``switch_context`` + execute.
+        #
+        # A connector is shared by every request on its datasource and carries
+        # mutable catalog/database context, while ``_execute_sql_sync`` runs in
+        # worker threads — so two interleaved requests could each execute under
+        # the other's database. Serializing per datasource is the same trade
+        # ``DatasourceService._schema_lock`` already makes for the same reason:
+        # a queued query beats a query answered from the wrong database.
+        self._connector_locks: Dict[str, threading.Lock] = {}
         self._db_tool_cache: Optional[func_tool_mod.DBFuncTool] = None
         # `_execute_sql_sync` runs under `asyncio.to_thread`, so two clicks on
         # Run can reach the lazy build below at the same time and each pay for
@@ -165,6 +174,20 @@ class CLIService:
             cached = connector
             self._datasource_connectors[key] = cached
         return key, cached
+
+    def _connector_lock(self, datasource: str) -> threading.Lock:
+        """The lock guarding one datasource's shared connector.
+
+        Tolerates an instance built without ``__init__`` (which the policy tests
+        do), and needs no lock of its own: ``dict.setdefault`` resolves the
+        create-vs-reuse race itself, so two threads asking at once still get the
+        same lock.
+        """
+        locks = getattr(self, "_connector_locks", None)
+        if locks is None:
+            locks = {}
+            self._connector_locks = locks
+        return locks.setdefault(datasource, threading.Lock())
 
     def _cleanup_sql_task(self, task_id: str) -> None:
         """Remove a completed SQL task from the tracking dict."""
@@ -254,6 +277,37 @@ class CLIService:
                         errorMessage=(f"This deployment is read-only (agent.sql_read_only). {reason}"),
                     )
 
+            # Held from the context switch through the execute below: the
+            # connector is shared across requests on this datasource and its
+            # catalog/database context is mutable, so releasing in between lets
+            # another request run under this one's database (or this one under
+            # theirs). Acquired after the read-only refusal above so a rejected
+            # request never queues behind a running query.
+            execution_lock = self._connector_lock(datasource)
+            execution_lock.acquire()
+            try:
+                return self._execute_resolved_sql(request, task_id, policy_context, datasource, connector)
+            finally:
+                execution_lock.release()
+
+        except Exception as e:
+            logger.error(f"Failed to execute SQL: {e}")
+            return Result(
+                success=False,
+                errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                errorMessage=str(e),
+            )
+
+    def _execute_resolved_sql(
+        self,
+        request: ExecuteSQLInput,
+        task_id: str,
+        policy_context: Optional[Dict[str, Any]],
+        datasource: str,
+        connector: Any,
+    ) -> Result[ExecuteSQLData]:
+        """Run one statement on an already-resolved connector, under its lock."""
+        try:
             # Switch to the requested database/catalog context before executing.
             if request.database_name:
                 catalog = getattr(connector, "catalog_name", "") or ""
