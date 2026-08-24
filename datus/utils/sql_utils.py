@@ -9,6 +9,7 @@ import sqlglot
 from sqlglot import expressions
 from sqlglot.expressions import CTE, Table
 
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType, SQLType
 from datus.utils.loggings import get_logger
 
@@ -927,6 +928,42 @@ _DDL_KIND_KEYWORDS: Dict[str, str] = {
     "TRUNCATE": "truncate",
     "RENAME": "alter",
 }
+
+
+def deployment_read_only_refusal(agent_config: Any, sql: str, dialect: str) -> Optional[str]:
+    """Refusal message when ``agent.sql_read_only`` forbids ``sql``, else ``None``.
+
+    For the paths that reach a connector directly instead of going through
+    ``DBFuncTool`` — the workflow ``execute_sql`` node and the output tool's
+    revised-SQL check. Those bypass every tool-layer gate, so without this the
+    deployment-wide switch simply does not apply to them, and the promise in
+    ``docs/configuration/sql_policy.md`` that no entry point may run a non-read
+    statement is false.
+
+    Lives here, next to the checks themselves, so the next direct-connector
+    caller has one obvious thing to call rather than a fourth hand-rolled copy
+    of the same rule. ``agent_config`` is read duck-typed: several of these
+    callers accept host-supplied or partially built configs.
+
+    A single message rather than one per violation code: these callers answer a
+    workflow, not a model that might retry differently, and the specific code is
+    logged for the operator instead.
+    """
+    if not coerce_bool(getattr(agent_config, "sql_read_only", False), False):
+        return None
+    violation, sql_type = validate_read_only_sql(sql, dialect)
+    if not violation:
+        return None
+    logger.warning(
+        "workflow SQL rejected by read-only policy",
+        sql_type=sql_type.value,
+        source="deployment",
+        rule=violation,
+    )
+    return (
+        "This deployment is read-only (agent.sql_read_only): only single "
+        f"SELECT/SHOW/DESCRIBE/EXPLAIN statements may run. Detected: {sql_type.value}."
+    )
 
 
 def parse_sql_statement_kind(sql: str, dialect: str = "") -> str:

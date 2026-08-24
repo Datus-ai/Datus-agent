@@ -15,6 +15,7 @@ from datus.utils.sql_utils import (
     _is_escaped,
     _match_dollar_tag,
     _metadata_pattern,
+    deployment_read_only_refusal,
     extract_table_names,
     format_sql_to_pretty,
     is_single_statement,
@@ -2044,3 +2045,81 @@ class TestValidateReadOnlySql:
         """Callers log the type; it must be the real one, not a placeholder."""
         assert validate_read_only_sql("DROP TABLE users", "sqlite")[1] == SQLType.DDL
         assert validate_read_only_sql("INSERT INTO t VALUES (1)", "sqlite")[1] == SQLType.INSERT
+
+
+class TestDeploymentReadOnlyRefusal:
+    """The guard for paths that reach a connector without going through
+    ``DBFuncTool`` — the workflow ``execute_sql`` node and the output tool's
+    revised-SQL check.
+
+    Those bypass every tool-layer gate, so before this the deployment-wide
+    switch did not apply to them at all, and `POST /workflows/run` makes that
+    pipeline API-reachable.
+    """
+
+    class _Config:
+        def __init__(self, sql_read_only):
+            self.sql_read_only = sql_read_only
+
+    def test_the_switch_off_is_a_no_op(self):
+        """The default posture must be untouched — this runs on the workflow
+        path, which is write-capable by design."""
+        assert deployment_read_only_refusal(self._Config(False), "DROP TABLE t", "sqlite") is None
+
+    def test_a_config_without_the_attribute_is_a_no_op(self):
+        """Duck-typed on purpose: several of these callers take host-supplied or
+        partially built configs."""
+        assert deployment_read_only_refusal(object(), "DROP TABLE t", "sqlite") is None
+
+    @pytest.mark.parametrize("value", ["false", "no", "off", "0", ""])
+    def test_a_yaml_string_false_stays_off(self, value):
+        """`bool("false")` is True, so a naive cast here would refuse every
+        write on a deployment that never asked to be read-only."""
+        assert deployment_read_only_refusal(self._Config(value), "DROP TABLE t", "sqlite") is None
+
+    @pytest.mark.parametrize("sql", ["SELECT 1", "SHOW TABLES", "EXPLAIN SELECT 1", "DESCRIBE users"])
+    def test_reads_still_run_when_hardened(self, sql):
+        assert deployment_read_only_refusal(self._Config(True), sql, "sqlite") is None
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "CREATE TABLE t2 (a int)",
+            "TRUNCATE TABLE t",
+        ],
+    )
+    def test_writes_are_refused_when_hardened(self, sql):
+        refusal = deployment_read_only_refusal(self._Config(True), sql, "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    @pytest.mark.parametrize("value", [True, "true", "yes", "on", "1"])
+    def test_a_yaml_string_true_turns_it_on(self, value):
+        refusal = deployment_read_only_refusal(self._Config(value), "DROP TABLE t", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_a_write_smuggled_behind_a_read_is_refused(self):
+        """`parse_sql_type` reads only the first statement, so this arrives as a
+        SELECT; the shared shape check is what catches it."""
+        refusal = deployment_read_only_refusal(self._Config(True), "SELECT 1; DROP TABLE t", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_unparseable_input_is_refused(self):
+        """Fail closed: a dialect syntax sqlglot cannot place must not become an
+        unchecked statement."""
+        refusal = deployment_read_only_refusal(self._Config(True), "%%not sql%%", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_the_message_names_the_detected_type(self):
+        """An operator reading the refusal should not have to re-parse the SQL
+        to learn what was rejected."""
+        refusal = deployment_read_only_refusal(self._Config(True), "DROP TABLE t", "sqlite")
+
+        assert "ddl" in refusal
