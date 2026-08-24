@@ -25,6 +25,10 @@ class ErrorCode(str, Enum):
     SQL_READ_ONLY = "SQL_READ_ONLY"
     TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"
     DATABASE_CONNECTION_ERROR = "DATABASE_CONNECTION_ERROR"
+    # A datasource's shared connector was busy for longer than the caller was
+    # allowed to wait. Distinct from SQL_EXECUTION_ERROR: the statement was
+    # never sent, so retrying is safe even for a write.
+    DATASOURCE_BUSY = "DATASOURCE_BUSY"
     CONTEXT_COMMAND_ERROR = "CONTEXT_COMMAND_ERROR"
     CHAT_COMMAND_ERROR = "CHAT_COMMAND_ERROR"
     INTERNAL_COMMAND_ERROR = "INTERNAL_COMMAND_ERROR"
@@ -62,6 +66,27 @@ class DatasourceConfig(BaseModel):
     password: str = Field(..., description="Database password")
     database: str = Field(..., description="Database name")
     catalog: Optional[str] = Field(None, description="Database catalog (for databases that support catalogs)")
+
+
+class DatasourceSummary(BaseModel):
+    """One configured datasource, with nothing a caller does not need to name it.
+
+    Deliberately NOT ``DatasourceConfig``: that carries the decrypted password,
+    the credential-bearing ``uri`` and the Snowflake key passphrase. Listing the
+    datasources is something every client that renders a catalog does, on every
+    project entry — so it must not be a path that hands out credentials.
+    """
+
+    name: str = Field(..., description="Datasource (namespace) name")
+    type: str = Field(..., description="Datasource type (postgresql, starrocks, ...)")
+    is_current: bool = Field(False, description="Whether this is the project's current datasource")
+
+
+class DatasourceListData(BaseModel):
+    """Data for the datasource roster."""
+
+    datasources: list[DatasourceSummary] = Field(..., description="Configured datasources")
+    current_datasource: str = Field("", description="The project's current datasource")
 
 
 class StorageConfig(BaseModel):

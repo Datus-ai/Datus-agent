@@ -298,6 +298,53 @@ class TestKbServiceBatchEventToSse:
 class TestKbServiceBootstrapStream:
     """Tests for bootstrap_stream — the main async generator."""
 
+    async def test_an_unbound_datasource_becomes_a_readable_failure_event(self, real_agent_config):
+        """Not a broken stream.
+
+        The datasource setter raises for a name the project has not bound. Left
+        to happen inside the component loop, the exception escapes the async
+        generator after the SSE headers are already out, so the client sees the
+        stream die rather than a failure it can display.
+        """
+        import asyncio
+
+        svc = KbService(agent_config=real_agent_config)
+        request = BootstrapKbInput(components=["metadata"], strategy="check", datasource="not_bound")
+
+        events = []
+        async for event in svc.bootstrap_stream(request, "s", asyncio.Event(), str(real_agent_config.home)):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0].component == "all"
+        assert events[0].stage == BatchStage.TASK_FAILED
+        assert "not_bound" in (events[0].error or "")
+
+    async def test_the_current_datasource_is_not_cloned(self, real_agent_config):
+        """Naming the current datasource (or none) reuses the shared config."""
+        svc = KbService(agent_config=real_agent_config)
+
+        assert svc._config_for(BootstrapKbInput(components=["metadata"])) is real_agent_config
+        assert (
+            svc._config_for(BootstrapKbInput(components=["metadata"], datasource=real_agent_config.current_datasource))
+            is real_agent_config
+        )
+
+    async def test_another_datasource_gets_its_own_config(self, real_agent_config):
+        """A clone, not a mutation: the shared config is read concurrently by
+        every other request, and the KB stores scope their rows by
+        `current_datasource` — so indexing one datasource must not be able to
+        write another's."""
+        svc = KbService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        clone = svc._config_for(BootstrapKbInput(components=["metadata"], datasource="second"))
+
+        assert clone is not real_agent_config
+        assert clone.current_datasource == "second"
+        assert real_agent_config.current_datasource == current
+
     async def test_bootstrap_stream_metadata_check(self, real_agent_config):
         """bootstrap_stream with metadata check strategy yields events and completes."""
         import asyncio
@@ -368,9 +415,14 @@ class TestKbServiceBootstrapStream:
             cancel_event,
             project_root,
             *,
+            config=None,
             authoring_scope=None,
         ):
-            calls.append((component, authoring_scope))
+            # Record the forwarded config, not just the component: a double
+            # that drops it would pass even if bootstrap_stream stopped
+            # forwarding the pre-resolved one, which is the datasource-isolation
+            # contract.
+            calls.append((component, authoring_scope, getattr(config, "current_datasource", None)))
             return {"status": "success", "message": "done", "details": {}}
 
         with patch.object(svc, "_run_component", side_effect=fake_run_component):
@@ -384,7 +436,7 @@ class TestKbServiceBootstrapStream:
                 )
             ]
 
-        assert calls == [("semantic_model", "full")]
+        assert calls == [("semantic_model", "full", real_agent_config.current_datasource)]
         summary = events[-1].payload["components"]
         assert set(summary) == {"semantic_model", "metrics"}
         assert summary["metrics"]["details"]["shared_execution"] == "semantic_model"
@@ -748,8 +800,11 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
     )
     calls = []
 
-    def fake_run_component(request, component, queue, loop, cancel_event, project_root, *, authoring_scope=None):
+    def fake_run_component(
+        request, component, queue, loop, cancel_event, project_root, *, config=None, authoring_scope=None
+    ):
         assert authoring_scope is None
+        assert config is not None and config.current_datasource == real_agent_config.current_datasource
         calls.append((component, request.subject_tree, project_root))
         return {
             "status": "success",

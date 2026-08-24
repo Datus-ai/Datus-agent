@@ -1,6 +1,7 @@
 """Service for knowledge base bootstrap with SSE streaming."""
 
 import asyncio
+import copy
 import types
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -43,6 +44,26 @@ class KbService:
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
 
+    def _config_for(self, request: BootstrapKbInput) -> AgentConfig:
+        """The config this bootstrap runs under.
+
+        A project bound to several datasources has separate metadata and
+        separate KB rows per datasource (the stores scope rows by
+        ``current_datasource``), so indexing one must not be able to write
+        another's. Returns a copy with the datasource switched rather than
+        mutating the shared config, which is cached per project and read
+        concurrently by every other request.
+        """
+        requested = (getattr(request, "datasource", None) or "").strip()
+        if not requested or requested == self.agent_config.current_datasource:
+            return self.agent_config
+
+        clone = copy.copy(self.agent_config)
+        # Raises for a datasource the project has not bound — better than
+        # silently indexing the current one under the requested name.
+        clone.current_datasource = requested
+        return clone
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -75,6 +96,24 @@ class KbService:
             )
             return
 
+        # Resolved here, before the first component runs, for two reasons: the
+        # datasource setter raises for a name the project has not bound, and by
+        # the time a component is running the SSE headers are out — an exception
+        # from inside this generator breaks the stream instead of reaching the
+        # client as an error it can read. Computed once and reused; cloning the
+        # config per component was pure waste.
+        try:
+            config = self._config_for(request)
+        except Exception as e:  # noqa: BLE001 — surfaced to the client below
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=str(e),
+                payload={"components": summary},
+            )
+            return
+
         for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
             if cancel_event.is_set():
                 yield self._make_event(
@@ -88,7 +127,7 @@ class KbService:
             # Stream BatchEvents from the queue in real-time while the thread runs.
             trace_component = comp_name.value if hasattr(comp_name, "value") else str(comp_name)
             trace_ctx = build_bootstrap_trace_context(
-                datasource=self.agent_config.current_datasource,
+                datasource=config.current_datasource,
                 components=[trace_component],
                 strategy=request.strategy,
                 stream_id=stream_id,
@@ -109,6 +148,7 @@ class KbService:
                         loop,
                         cancel_event,
                         project_root,
+                        config=config,
                         authoring_scope=authoring_scope,
                     )
 
@@ -215,9 +255,12 @@ class KbService:
         cancel_event: asyncio.Event,
         project_root: str,
         *,
+        config: Optional[AgentConfig] = None,
         authoring_scope: Optional[str] = None,
     ) -> dict:
-        config = self.agent_config
+        # Resolved once by the caller, which is also where a bad datasource is
+        # turned into a readable failure event rather than a broken SSE stream.
+        config = config if config is not None else self._config_for(request)
         strategy = request.strategy
         pool_size = 1
         dir_path = config.rag_storage_path()
