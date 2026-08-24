@@ -93,6 +93,10 @@ class CLIService:
 
         # Initialize database connection
         self.current_db_connector = None
+        # Connectors for the project's other bound datasources, opened on first
+        # use. The IDE console addresses one by name per request, and opening
+        # every bound warehouse at startup would cost seconds per project.
+        self._datasource_connectors: Dict[str, Any] = {}
         self._db_tool_cache: Optional[func_tool_mod.DBFuncTool] = None
         # `_execute_sql_sync` runs under `asyncio.to_thread`, so two clicks on
         # Run can reach the lazy build below at the same time and each pay for
@@ -123,6 +127,33 @@ class CLIService:
             except Exception as e:
                 logger.warning(f"Failed to initialize database connection: {e}")
 
+    def _execution_target(self, datasource: Optional[str] = None) -> tuple[str, Any]:
+        """``(datasource, connector)`` this statement should run against.
+
+        Defaults to the project's current datasource. An unknown name is an
+        error rather than a fall-through: silently running the statement on a
+        different warehouse than the editor's tab is showing is how a query
+        returns plausible rows from the wrong place.
+        """
+        key = (datasource or "").strip() or (self.current_datasource or "")
+        if not key:
+            raise ValueError("No database connection available")
+
+        if key == self.current_datasource:
+            if not self.current_db_connector:
+                raise ValueError("No database connection available")
+            return key, self.current_db_connector
+
+        configs = getattr(self.agent_config, "datasource_configs", {}) or {}
+        if key not in configs:
+            raise ValueError(f"Unknown datasource '{key}'")
+
+        cached = self._datasource_connectors.get(key)
+        if cached is None:
+            _db_name, cached = self.db_manager.first_conn_with_name(key)
+            self._datasource_connectors[key] = cached
+        return key, cached
+
     def _cleanup_sql_task(self, task_id: str) -> None:
         """Remove a completed SQL task from the tracking dict."""
         with self._sql_tasks_lock:
@@ -136,11 +167,13 @@ class CLIService:
     ) -> Result[ExecuteSQLData]:
         """Synchronous SQL execution logic (runs in a thread)."""
         try:
-            if not self.current_db_connector:
+            try:
+                datasource, connector = self._execution_target(request.datasource)
+            except ValueError as e:
                 return Result(
                     success=False,
                     errorCode=ErrorCode.DATABASE_CONNECTION_ERROR,
-                    errorMessage="No database connection available",
+                    errorMessage=str(e),
                 )
 
             # Deployment-wide read-only posture. This route reaches the connector
@@ -172,7 +205,7 @@ class CLIService:
                     validate_read_only_sql,
                 )
 
-                dialect = getattr(self.current_db_connector, "dialect", "") or ""
+                dialect = getattr(connector, "dialect", "") or ""
                 violation, sql_type = validate_read_only_sql(request.sql_query, dialect)
                 if violation:
                     # The helper returns a code, not prose, so each entry point
@@ -211,8 +244,8 @@ class CLIService:
 
             # Switch to the requested database/catalog context before executing.
             if request.database_name:
-                catalog = getattr(self.current_db_connector, "catalog_name", "") or ""
-                self.current_db_connector.switch_context(
+                catalog = getattr(connector, "catalog_name", "") or ""
+                connector.switch_context(
                     catalog_name=catalog,
                     database_name=request.database_name,
                 )
@@ -250,7 +283,7 @@ class CLIService:
             # rejected there, which is the same answer it gave before any of
             # this existed.
             start_time = time.time()
-            sql_type = parse_sql_type(request.sql_query, self.current_db_connector.dialect)
+            sql_type = parse_sql_type(request.sql_query, connector.dialect)
             is_write = sql_type in _WRITE_SQL_TYPES and is_single_statement(request.sql_query)
 
             if is_write and policy_context:
@@ -259,7 +292,7 @@ class CLIService:
                 # policy covers. The plugin cannot help — it hooks reads only —
                 # so on a project that has policies at all, a write that embeds
                 # a query is refused here.
-                reads = write_statement_reads_data(request.sql_query, self.current_db_connector.dialect)
+                reads = write_statement_reads_data(request.sql_query, connector.dialect)
                 if reads:
                     message = (
                         "This project has row-level policies, so a write statement that "
@@ -283,15 +316,15 @@ class CLIService:
                     )
 
             if is_write:
-                result = self.current_db_connector.execute(
+                result = connector.execute(
                     input_params={"sql_query": request.sql_query},
                     result_format=request.result_format,
                 )
             else:
                 result = self._db_tool().execute_read_enforced(
                     request.sql_query,
-                    self.current_db_connector,
-                    datasource=self.current_datasource or "",
+                    connector,
+                    datasource=datasource,
                     result_format=request.result_format,
                     policy_context=policy_context,
                 )

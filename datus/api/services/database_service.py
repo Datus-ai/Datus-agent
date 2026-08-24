@@ -81,8 +81,16 @@ class DatasourceService:
 
         self.current_db_connector = None
         self.current_db_name = None
-        # In-memory column cache keyed by resolved table identity, so repeated
-        # table/detail + autocomplete prefetch requests don't re-hit the source.
+        # Connectors for the project's non-current datasources, resolved on
+        # demand. A project can bind several, and the catalog tree, table detail
+        # and SQL execution all address one by name — but only the current one is
+        # worth opening up front, since a warehouse listing costs seconds.
+        self._datasource_connectors: dict[str, tuple[BaseSqlConnector, str]] = {}
+        # In-memory column cache keyed by datasource + resolved table identity,
+        # so repeated table/detail + autocomplete prefetch requests don't re-hit
+        # the source. The datasource has to be part of the key: two bound
+        # warehouses routinely hold a same-named table, and without it the second
+        # one would serve the first one's columns.
         # The lock serializes the not-thread-safe connector across concurrent
         # asyncio.to_thread detail/batch requests.
         self._columns_cache: dict[str, list[ColumnInfo]] = {}
@@ -159,6 +167,44 @@ class DatasourceService:
                 logger.warning(f"Failed to initialize database connection: {e}")
                 self.current_db_connector = None
                 self.current_db_name = None
+
+    def resolve_datasource(self, datasource: Optional[str] = None) -> str:
+        """Normalize a requested datasource name, falling back to the current one."""
+        return (datasource or "").strip() or (self.current_datasource or "")
+
+    def _connector_for(self, datasource: Optional[str] = None) -> tuple[BaseSqlConnector, str]:
+        """``(connector, database_name)`` for one of the project's datasources.
+
+        The current datasource keeps using the connection opened at startup;
+        anything else is opened on first use and remembered, because DBManager
+        resolves a fresh wrapper per call and the column cache keys off the
+        datasource name rather than the object.
+
+        Raises ValueError for a name the config does not declare — callers turn
+        that into an error response rather than silently answering from the
+        wrong warehouse, which is what falling back to the current one would do.
+        """
+        key = self.resolve_datasource(datasource)
+        if not key:
+            raise ValueError("No datasource configured")
+
+        if key == self.current_datasource:
+            if self.current_db_connector is None:
+                raise ValueError(f"Datasource {key!r} has no usable connection")
+            return self.current_db_connector, self.current_db_name or ""
+
+        configs = getattr(self.agent_config, "datasource_configs", {}) or {}
+        if key not in configs:
+            raise ValueError(f"Unknown datasource {key!r}")
+
+        cached = self._datasource_connectors.get(key)
+        if cached is not None:
+            return cached
+
+        db_name, connector = self.db_manager.first_conn_with_name(key)
+        entry = (connector, connector.database_name or db_name or "")
+        self._datasource_connectors[key] = entry
+        return entry
 
     def _get_connection_info(
         self,
@@ -407,24 +453,42 @@ class DatasourceService:
                 )
 
             # Get connections from the specified datasource
-            datasource = request.datasource_id or self.current_datasource
+            datasource = self.resolve_datasource(request.datasource_id)
+            configs = getattr(self.agent_config, "datasource_configs", {}) or {}
+            # Refuse an unknown name instead of quietly listing the current
+            # datasource under it: a client rendering several datasources side by
+            # side would file the answer under the wrong tree node.
+            if datasource and datasource not in configs:
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.INVALID_PARAMETERS,
+                    errorMessage=f"Unknown datasource '{datasource}'",
+                )
+
             connections = self.db_manager.get_connections(datasource)
 
             databases = []
             # Handle both single connector and dictionary of connectors
             if isinstance(connections, dict):
-                for _ds_id, connector in connections.items():
-                    db_info = self._get_connection_info(connector, _ds_id, request)
+                for _db_name, connector in connections.items():
+                    db_info = self._get_connection_info(connector, _db_name, request)
                     databases.extend(db_info)
             else:
                 # Single connector case
                 db_info = self._get_connection_info(connections, datasource, request)
                 databases.extend(db_info)
 
+            # Stamped here rather than at each of the six DatabaseInfo call
+            # sites: every row in this response came from the one datasource
+            # resolved above.
+            for info in databases:
+                info.datasource = datasource
+
             data = ListDatabasesData(
                 databases=databases,
                 total_count=len(databases),
                 current_database=self.current_db_name,
+                current_datasource=datasource,
             )
 
             return Result(success=True, data=data)
@@ -437,50 +501,70 @@ class DatasourceService:
                 errorMessage=str(e),
             )
 
-    def _resolve_table_identity(self, full_path: str) -> tuple[str, str, str, str]:
+    def _resolve_table_identity(
+        self,
+        full_path: str,
+        connector: BaseSqlConnector,
+        default_database: str,
+    ) -> tuple[str, str, str, str]:
         """Resolve a dotted reference to (catalog, database, schema, table).
 
         Connector defaults fill in whatever the caller left out. For StarRocks
-        that is catalog.database.table, with no schema level.
+        that is catalog.database.table, with no schema level. The connector is
+        passed in rather than read off ``self`` because the reference may address
+        a datasource other than the current one — and the defaults that complete
+        a partial name differ per connection profile.
         """
-        name_parts = parse_table_name_parts(full_path, self.current_db_connector.get_type())
-        catalog_name = name_parts["catalog_name"] or getattr(self.current_db_connector, "catalog_name", "")
-        database_name = (
-            name_parts["database_name"] or self.current_db_name or getattr(self.current_db_connector, "database", "")
-        )
-        schema_name = name_parts["schema_name"] or getattr(self.current_db_connector, "schema_name", "")
+        name_parts = parse_table_name_parts(full_path, connector.get_type())
+        catalog_name = name_parts["catalog_name"] or getattr(connector, "catalog_name", "")
+        database_name = name_parts["database_name"] or default_database or getattr(connector, "database", "")
+        schema_name = name_parts["schema_name"] or getattr(connector, "schema_name", "")
         return catalog_name, database_name, schema_name, name_parts["table_name"]
 
-    def _cached_columns(self, full_path: str) -> Optional[list[ColumnInfo]]:
+    def _cache_key(self, datasource: str, identity: tuple[str, str, str, str]) -> str:
+        """Column-cache key. The datasource leads: two bound warehouses commonly
+        hold a same-named table, and a shared key would serve one's columns for
+        the other."""
+        catalog_name, database_name, schema_name, table_name = identity
+        return f"{datasource}\t{catalog_name}.{database_name}.{schema_name}.{table_name}"
+
+    def _cached_columns(self, full_path: str, datasource: Optional[str] = None) -> Optional[list[ColumnInfo]]:
         """Columns already in the cache for this reference, without touching the source."""
         try:
-            catalog_name, database_name, schema_name, table_name = self._resolve_table_identity(full_path)
+            connector, default_database = self._connector_for(datasource)
+            identity = self._resolve_table_identity(full_path, connector, default_database)
         except Exception:
-            # Unparseable name — let the per-table path report it.
+            # Unparseable name or unresolvable datasource — let the per-table
+            # path report it.
             return None
-        return self._columns_cache.get(f"{catalog_name}.{database_name}.{schema_name}.{table_name}")
+        return self._columns_cache.get(self._cache_key(self.resolve_datasource(datasource), identity))
 
-    def get_table_schema(self, full_path: str) -> Result[GetTableDetailData]:
+    def get_table_schema(self, full_path: str, datasource: Optional[str] = None) -> Result[GetTableDetailData]:
         """
         Get table schema details.
 
         Args:
             full_path: table name, [catalog.][database.][schema.]table
+            datasource: which configured datasource to resolve it against;
+                defaults to the current one
 
         Returns:
             GetTableSchemaResult with table schema
         """
         try:
-            if not self.current_db_connector:
+            try:
+                connector, default_database = self._connector_for(datasource)
+            except ValueError as e:
                 return Result(
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage="No database connection",
+                    errorMessage=str(e),
                 )
 
             try:
-                catalog_name, database_name, schema_name, table_name = self._resolve_table_identity(full_path)
-                cache_key = f"{catalog_name}.{database_name}.{schema_name}.{table_name}"
+                identity = self._resolve_table_identity(full_path, connector, default_database)
+                table_name = identity[3]
+                cache_key = self._cache_key(self.resolve_datasource(datasource), identity)
 
                 def _detail(cols: list[ColumnInfo]) -> Result[GetTableDetailData]:
                     return Result(
@@ -500,10 +584,10 @@ class DatasourceService:
                     if cached is not None:
                         return _detail(cached)
 
-                    schema_info = self.current_db_connector.get_schema(
-                        catalog_name=catalog_name,
-                        database_name=database_name,
-                        schema_name=schema_name,
+                    schema_info = connector.get_schema(
+                        catalog_name=identity[0],
+                        database_name=identity[1],
+                        schema_name=identity[2],
                         table_name=table_name,
                     )
                     if not schema_info:
@@ -558,7 +642,7 @@ class DatasourceService:
                 errorMessage=str(e),
             )
 
-    def get_tables_columns(self, tables: list[str]) -> Result[GetTablesColumnsData]:
+    def get_tables_columns(self, tables: list[str], datasource: Optional[str] = None) -> Result[GetTablesColumnsData]:
         """Batch-fetch columns for multiple tables (autocomplete prefetch).
 
         Reuses get_table_schema (and its column cache) per table. Tables that
@@ -592,7 +676,7 @@ class DatasourceService:
         results: list[TableColumns] = []
         pending: list[str] = []
         for full_path in tables:
-            cached = self._cached_columns(full_path)
+            cached = self._cached_columns(full_path, datasource)
             if cached is None:
                 pending.append(full_path)
             else:
@@ -627,7 +711,7 @@ class DatasourceService:
                     )
                     break
 
-                detail = self.get_table_schema(full_path)
+                detail = self.get_table_schema(full_path, datasource)
                 if detail.success and detail.data is not None:
                     results.append(TableColumns(table=full_path, columns=_brief_columns(detail.data.table.columns)))
         finally:

@@ -600,6 +600,69 @@ class TestListDatabases:
         result = svc.list_databases(request)
         assert result.data.current_database == "california_schools"
 
+    def test_list_databases_stamps_the_datasource(self, real_agent_config):
+        """Every row names the datasource it came from.
+
+        A client rendering several bound datasources in one tree cannot file the
+        rows without it — and cannot address a table afterwards.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.list_databases(ListDatabasesInput())
+        assert result.data.current_datasource == real_agent_config.current_datasource
+        assert {db.datasource for db in result.data.databases} == {real_agent_config.current_datasource}
+
+    def test_list_databases_rejects_an_unknown_datasource(self, real_agent_config):
+        """An undeclared name is an error, not a silent fall-back.
+
+        Falling back to the current datasource would file another warehouse's
+        databases under the requested one in the caller's tree.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.list_databases(ListDatabasesInput(datasource_id="not_bound"))
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+
+class TestPerDatasourceResolution:
+    """Table metadata addressed at a datasource other than the current one."""
+
+    def test_connector_for_defaults_to_current(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector, database = svc._connector_for()
+        assert connector is svc.current_db_connector
+        assert database == svc.current_db_name
+
+    def test_connector_for_rejects_unknown_datasource(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        with pytest.raises(ValueError, match="Unknown datasource"):
+            svc._connector_for("not_bound")
+
+    def test_table_detail_reports_an_unknown_datasource(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.get_table_schema("frpm", datasource="not_bound")
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+    def test_column_cache_is_keyed_by_datasource(self, real_agent_config):
+        """Two bound warehouses commonly hold a same-named table.
+
+        Without the datasource in the key, the second one would be served the
+        first one's columns from cache — wrong answers, no error anywhere.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        detail = svc.get_table_schema("frpm")
+        assert detail.success is True
+
+        current = real_agent_config.current_datasource
+        keys = list(svc._columns_cache)
+        assert keys and all(k.startswith(f"{current}\t") for k in keys)
+
+        # A second datasource asking for the same table name must miss.
+        svc._datasource_connectors["other"] = (svc.current_db_connector, "california_schools")
+        svc.agent_config.datasource_configs["other"] = svc.agent_config.datasource_configs[current]
+        assert svc._cached_columns("frpm", "other") is None
+        assert svc._cached_columns("frpm", current) is not None
+
 
 class _FakeServerConnector:
     """No-schema (server-style) connector that distinguishes its configured

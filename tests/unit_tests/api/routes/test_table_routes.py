@@ -24,10 +24,19 @@ class TestGetTableDetail:
         svc = MagicMock()
         svc.datasource.get_table_schema.return_value = Result(success=True)
 
-        result = await get_table_detail(svc, table="db.public.orders")
+        result = await get_table_detail(svc, table="db.public.orders", datasource="")
 
         assert result.success is True
-        svc.datasource.get_table_schema.assert_called_once_with("db.public.orders")
+        svc.datasource.get_table_schema.assert_called_once_with("db.public.orders", None)
+
+    @pytest.mark.asyncio
+    async def test_passes_the_requested_datasource_through(self):
+        svc = MagicMock()
+        svc.datasource.get_table_schema.return_value = Result(success=True)
+
+        await get_table_detail(svc, table="db.public.orders", datasource="lake")
+
+        svc.datasource.get_table_schema.assert_called_once_with("db.public.orders", "lake")
 
 
 class TestGetTablesColumns:
@@ -49,4 +58,16 @@ class TestGetTablesColumns:
 
         assert result.success is True
         assert [t.table for t in result.data.tables] == ["db.public.orders"]
-        svc.datasource.get_tables_columns.assert_called_once_with(["db.public.orders", "db.public.users"])
+        svc.datasource.get_tables_columns.assert_called_once_with(["db.public.orders", "db.public.users"], None)
+
+    @pytest.mark.asyncio
+    async def test_passes_the_batch_datasource_through(self):
+        svc = MagicMock()
+        svc.datasource.get_tables_columns.return_value = Result(
+            success=True, data=GetTablesColumnsData(tables=[])
+        )
+
+        request = GetTablesColumnsInput(tables=["db.public.orders"], datasource="lake")
+        await get_tables_columns(request, svc)
+
+        svc.datasource.get_tables_columns.assert_called_once_with(["db.public.orders"], "lake")

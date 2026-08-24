@@ -155,6 +155,33 @@ class TestCLIServiceExecuteSQL:
         assert result.success is True
         assert result.data.sql_query == "SELECT COUNT(*) FROM schools"
 
+    @pytest.mark.asyncio
+    async def test_execute_sql_with_the_current_datasource_named_explicitly(self, cli_svc, real_agent_config):
+        """Naming the current datasource is the same as omitting it."""
+        request = ExecuteSQLInput(
+            sql_query="SELECT COUNT(*) FROM schools",
+            datasource=real_agent_config.current_datasource,
+        )
+        result = await cli_svc.execute_sql(request)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_rejects_an_unknown_datasource(self, cli_svc):
+        """A datasource the project has not bound is refused.
+
+        Running it on the project's default instead would answer the editor tab
+        with plausible rows from the wrong warehouse.
+        """
+        request = ExecuteSQLInput(sql_query="SELECT 1", datasource="not_bound")
+        result = await cli_svc.execute_sql(request)
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+    def test_execution_target_defaults_to_current(self, cli_svc, real_agent_config):
+        datasource, connector = cli_svc._execution_target(None)
+        assert datasource == real_agent_config.current_datasource
+        assert connector is cli_svc.current_db_connector
+
 
 class TestCLIServiceStopExecuteSQL:
     """Tests for stop_execute_sql."""
