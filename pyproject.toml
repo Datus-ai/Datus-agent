@@ -206,8 +206,6 @@ dev = [
 ]
 ci = [
     "datus-storage-postgresql>=0.1.5",
-    "datus-metricflow>=0.2.7",
-    "datus-semantic-metricflow>=0.2.12",
     # The current PyPI release predates the authoring-spec API used here.
     # Use the merged adapter source until the next adapter package is released.
     "datus-semantic-dosi @ https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz#subdirectory=datus-semantic-dosi ; platform_machine == 'x86_64' and sys_platform == 'linux'",

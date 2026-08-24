@@ -557,14 +557,14 @@ class TestListAgents:
         agent_names = {a["name"] for a in result.data["agents"]}
         for builtin_name in _available_builtin_subagents(real_agent_config):
             assert builtin_name in agent_names
-        assert "semantic_modeling" not in agent_names
+        assert "semantic_modeling" in agent_names
         assert {"gen_semantic_model", "gen_metrics"}.isdisjoint(agent_names)
 
-    async def test_list_includes_semantic_modeling_for_dosi(self, real_agent_config):
-        real_agent_config.resolve_semantic_adapter = lambda requested=None: "dosi"
+    async def test_list_hides_semantic_modeling_for_metricflow(self, real_agent_config):
+        real_agent_config.resolve_semantic_adapter = lambda requested=None: "metricflow"
         result = await AgentService().list_agents(real_agent_config)
 
-        assert "semantic_modeling" in {agent["name"] for agent in result.data["agents"]}
+        assert "semantic_modeling" not in {agent["name"] for agent in result.data["agents"]}
 
     async def test_list_contains_builtin_type_entries(self, real_agent_config):
         """At least some agents in the list have type='builtin'."""
@@ -733,16 +733,16 @@ class TestGetAgent:
         for field in ("rules", "catalogs", "subjects"):
             assert isinstance(agent[field], list)
 
-    async def test_get_semantic_modeling_requires_dosi(self, real_agent_config):
+    async def test_get_semantic_modeling_follows_default_dosi(self, real_agent_config):
         svc = AgentService()
-        hidden = await svc.get_agent("semantic_modeling", real_agent_config)
-        assert hidden.success is False
-        assert hidden.errorCode == "AGENT_NOT_FOUND"
-
-        real_agent_config.resolve_semantic_adapter = lambda requested=None: "dosi"
         visible = await svc.get_agent("semantic_modeling", real_agent_config)
         assert visible.success is True
         assert visible.data["agent"]["type"] == "builtin"
+
+        real_agent_config.resolve_semantic_adapter = lambda requested=None: "metricflow"
+        hidden = await svc.get_agent("semantic_modeling", real_agent_config)
+        assert hidden.success is False
+        assert hidden.errorCode == "AGENT_NOT_FOUND"
 
     @pytest.mark.parametrize("retired_name", ["gen_semantic_model", "gen_metrics"])
     async def test_get_retired_semantic_agent_is_hidden_even_if_configured(self, real_agent_config, retired_name):

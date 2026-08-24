@@ -325,9 +325,9 @@ def test_osi_target_refuses_to_reuse_an_occupied_filename_with_a_different_model
     assert "already occupied" in target["reason"]
 
 
-def test_defaults_to_metricflow_when_unknown():
-    assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_METRICFLOW
-    assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_METRICFLOW
+def test_defaults_to_dosi_when_unknown():
+    assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_OSI
+    assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_OSI
 
 
 def test_resolution_propagates_agent_config_errors():

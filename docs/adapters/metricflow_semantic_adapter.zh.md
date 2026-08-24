@@ -6,6 +6,7 @@ MetricFlow 语义适配器把 Datus Agent 连接到已有的 MetricFlow 原生 s
 > 新的语义创作只允许在 Dosi 项目中通过 `semantic_modeling` 完成。
 
 当团队仍通过外部工具或流程维护 MetricFlow 源文件时，适合使用这个适配器。
+MetricFlow 不再默认安装或选择，需要显式配置。
 
 ## 安装
 
@@ -29,7 +30,7 @@ agent:
       metricflow:
         timeout: 300
         config_path: ./conf/agent.yml   # 可选高级覆盖项
-        default: true
+        default: true                   # 多个 adapter 并存时显式选择
 ```
 
 `config_path` 是可选项。正常情况下，Datus 会从以下信息构造 MetricFlow 运行时配置：

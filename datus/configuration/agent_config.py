@@ -48,7 +48,7 @@ _PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 # We leave room for prefixes/extensions by truncating to 200 chars + md5 suffix.
 _PROJECT_NAME_MAX_LEN = 200
 
-DEFAULT_SEMANTIC_ADAPTER = "metricflow"
+DEFAULT_SEMANTIC_ADAPTER = "dosi"
 
 
 def _normalize_project_name(cwd: str) -> str:
@@ -3030,7 +3030,7 @@ class AgentConfig:
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
                     "`agent.services.semantic_layer` must be a mapping such as "
-                    "`semantic_layer: {metricflow: {}}` or `semantic_layer: {osi: {}}`; "
+                    "`semantic_layer: {dosi: {}}` or `semantic_layer: {metricflow: {}}`; "
                     "scalar values like `semantic_layer: osi` are not supported."
                 ),
             )

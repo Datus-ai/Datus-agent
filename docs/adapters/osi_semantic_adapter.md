@@ -256,16 +256,17 @@ relationships:
     to_columns: [customer_id]
 ```
 
-## Validation and Publishing
+## Query Validation
 
-Datus enforces validation before publishing OSI assets:
+Datus exposes the following validation path for existing OSI assets:
 
-1. `validate_semantic(scope="semantic_model")` validates generated semantic models.
+1. `validate_semantic(scope="semantic_model")` validates a selected semantic model.
 2. `validate_semantic(scope="all")` validates the full semantic layer.
-3. `query_metrics(..., dry_run=True)` validates generated metrics by rendering SQL.
-4. `publish_semantic_model` / `publish_metrics` sync semantic objects and metrics to the Knowledge Base.
+3. `query_metrics(..., dry_run=True)` checks a metric query by rendering SQL.
 
-If validation or dry-run fails, Datus does not publish the metric to the Knowledge Base. This ensures `ask_metrics` only queries validated metrics.
+OSI mode does not publish or mutate semantic assets. Migrate to Dosi before
+using `semantic_modeling` to change a model and reconcile it to the Knowledge
+Base.
 
 ## ask_metrics Queries
 
