@@ -135,7 +135,7 @@ You need:
 
 - `datus` installed (see the [Quick Start Guide](Quickstart.md))
 - An LLM provider configured via `/model` inside `datus`. The picker writes provider credentials into `~/.datus/conf/agent.yml`.
-- The MetricFlow semantic-layer adapter configured via `/services semantic` — the CLI will auto-install the missing `datus-semantic-metricflow` package when the service configuration is saved in `/services`.
+- The default Dosi semantic-layer adapter. On interactive launch, Datus installs it automatically when no semantic adapter is configured; you can also select it explicitly with `/services semantic`.
 
 You do **not** need to download or `cp` anything. The first time `datus` runs without a config, it bootstraps `~/.datus/`:
 
@@ -415,7 +415,7 @@ You have just driven the full Datus loop end-to-end:
 | Component | Outcome |
 |----------|---------|
 | Metadata bootstrap | Schema, column descriptions, sampled rows indexed |
-| Semantic model bootstrap | MetricFlow YAMLs generated from success stories |
+| Semantic model bootstrap | Dosi semantic models generated from success stories |
 | Metrics bootstrap | Business metrics extracted and placed in the subject tree |
 | Reference SQL bootstrap | 19 SQL files summarized, joined, indexed |
 | Subagents | Two scoped agents with deliberately different toolsets |

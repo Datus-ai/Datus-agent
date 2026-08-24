@@ -48,6 +48,7 @@ PACKAGE_NAMES = (
     "datus-semantic-core",
     "datus-semantic-metricflow",
     "datus-semantic-dosi",
+    "datus-semantic-osi",
 )
 
 

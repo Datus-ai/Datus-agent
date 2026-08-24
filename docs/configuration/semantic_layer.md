@@ -2,8 +2,9 @@
 
 Semantic adapters are configured under `agent.services.semantic_layer`.
 If the section is omitted or empty, Datus uses its built-in semantic
-adapter default. That default is currently `metricflow`; a future release
-can switch it to `osi` without requiring per-node config changes.
+adapter default: `dosi`. Dosi supports both semantic authoring and queries.
+MetricFlow and OSI remain available when explicitly configured, but only for
+query compatibility with existing assets.
 
 Semantic layer selection is global for the project. Node-level semantic
 format fields from older configs are ignored; use this section to pin a
@@ -15,18 +16,18 @@ format explicitly.
 agent:
   services:
     semantic_layer:
-      metricflow:
-        timeout: 300
-        config_path: ./conf/agent.yml   # optional advanced override
-        default: true                   # global default — picked when no project pin set
-
-      osi:
-        # execution_backend defaults to metricflow and normally does not need
-        # to be configured.
-
       dosi:
+        default: true                   # optional; Dosi is also the built-in default
         # Native Dosi execution; semantic_model_path is only needed when the
         # datasource directory contains more than one OSI model file.
+
+      metricflow:                       # query-only compatibility
+        timeout: 300
+        config_path: ./conf/agent.yml   # optional advanced override
+
+      osi:                              # query-only compatibility
+        # execution_backend defaults to metricflow and normally does not need
+        # to be configured.
 ```
 
 ## Selection Rules
@@ -53,6 +54,9 @@ Comparison is case-insensitive and trims surrounding whitespace.
 
 ## MetricFlow Notes
 
+- MetricFlow is not selected or installed by default. Configure `metricflow`
+  explicitly to query an existing MetricFlow project.
+- MetricFlow is query-only in Datus; use Dosi for new semantic authoring.
 - `config_path` is optional.
 - Datus prefers the current `services.datasources` entry and the project semantic model directory to build runtime config automatically.
 - MetricFlow validation reads YAML files from the configured project semantic model directory directly, including generated files under gitignored project paths.
@@ -60,9 +64,9 @@ Comparison is case-insensitive and trims surrounding whitespace.
 
 ## OSI Notes
 
-- OSI is a peer semantic adapter to MetricFlow.
-- OSI mode authors strict OSI core YAML and stores Datus execution hints in `custom_extensions`.
+- OSI is an explicitly configured query-only compatibility adapter for existing strict OSI core YAML.
 - The current OSI execution backend is MetricFlow by default. You normally do not need to set `execution_backend`.
+- Install it with `pip install "datus-semantic-osi[metricflow]"`; the CLI uses the same extra so the query backend is present.
 - Configure `services.semantic_layer.osi` and mark it `default: true` to select this path globally when other adapters are also configured. An empty `osi: {}` entry is selected automatically only when it is the sole semantic adapter, or when the current project pins `semantic: osi`.
 
 ## Dosi Notes
@@ -71,6 +75,9 @@ Comparison is case-insensitive and trims surrounding whitespace.
 - `datus-semantic-dosi` executes directly through the native engine; it does not set `execution_backend: metricflow`.
 - The adapter loads one OSI document per instance. If the datasource model directory contains several files, configure `semantic_model_path` explicitly.
 - `pip install datus-semantic-dosi` installs the adapter and `dosi-engine` together.
+- On interactive launch with no semantic-layer configuration, Datus installs
+  and selects Dosi automatically. Non-interactive environments must install
+  their selected adapter explicitly.
 
 ## Configuring through the CLI (`/services`)
 
@@ -81,8 +88,8 @@ tab lets you:
 - Add a new semantic layer by pressing `Enter` on the trailing `+ Add
   new semantic` row. Choose the adapter type, such as `metricflow`, `osi`, or
   `dosi`. If the adapter package isn't installed, install the matching
-  package first, for example `datus-semantic-metricflow` or
-  `datus-semantic-dosi`.
+  package first, for example `datus-semantic-metricflow`,
+  `datus-semantic-osi[metricflow]`, or `datus-semantic-dosi`.
 - Delete an entry with `x` and run a registration probe with `t`.
 - Toggle the **global** `default: true` flag with `d`. Pressing `d`
   marks the current row as default and clears the flag from every other

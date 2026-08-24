@@ -65,7 +65,7 @@ def resolve_authoring_format(
     """Resolve the semantic authoring format from the global semantic adapter."""
     del node_config
 
-    adapter = _resolve_semantic_adapter(agent_config)
+    adapter = resolve_semantic_adapter_type(agent_config)
 
     if is_osi_semantic_adapter(adapter):
         return AUTHORING_FORMAT_OSI
@@ -73,12 +73,14 @@ def resolve_authoring_format(
 
 
 def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
-    """Resolve the active semantic adapter, defaulting to MetricFlow."""
+    """Resolve the active semantic adapter, using the configured built-in default."""
     adapter = _resolve_semantic_adapter(agent_config)
     normalized = str(adapter or "").strip().lower()
     if normalized:
         return normalized
-    return AUTHORING_FORMAT_METRICFLOW
+    from datus.configuration.agent_config import DEFAULT_SEMANTIC_ADAPTER
+
+    return DEFAULT_SEMANTIC_ADAPTER
 
 
 def is_semantic_modeling_available(agent_config: Any = None) -> bool:

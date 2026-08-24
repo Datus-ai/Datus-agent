@@ -850,6 +850,7 @@ export ADAPTERS_HIVE="${ADAPTERS_HIVE:-1}"
 export ADAPTERS_SPARK="${ADAPTERS_SPARK:-1}"
 export ADAPTERS_GAUSSDB="${ADAPTERS_GAUSSDB:-1}"
 export ADAPTERS_METRICFLOW_DUCKDB="${ADAPTERS_METRICFLOW_DUCKDB:-1}"
+export ADAPTERS_OSI_DUCKDB="${ADAPTERS_OSI_DUCKDB:-1}"
 export ADAPTERS_METRICFLOW_MYSQL="${ADAPTERS_METRICFLOW_MYSQL:-1}"
 export ADAPTERS_METRICFLOW_PG="${ADAPTERS_METRICFLOW_PG:-1}"
 export SUPERSET_PORT="${SUPERSET_PORT:-18088}"
@@ -1692,6 +1693,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/adapters/test_spark.py
   --deselect tests/integration/adapters/test_gaussdb.py
   --deselect tests/integration/adapters/test_semantic_metricflow_duckdb.py
+  --deselect tests/integration/adapters/test_semantic_osi_duckdb.py
   --deselect tests/integration/adapters/test_semantic_metricflow_mysql.py
   --deselect tests/integration/adapters/test_semantic_metricflow_postgresql.py
   --deselect tests/regression/test_regression_web_e2e.py
@@ -1718,7 +1720,7 @@ run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600"
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Spark Adapter Tests" "$SPARK_COMPOSE" "spark-thrift:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_spark.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "GaussDB Adapter Tests" "$GAUSSDB_COMPOSE" "gaussdb:600" -- run_gaussdb_adapter_tests
-run_logged "MetricFlow DuckDB Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_semantic_metricflow_duckdb.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_logged "Semantic Query Compatibility Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_semantic_metricflow_duckdb.py tests/integration/adapters/test_semantic_osi_duckdb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 
 run_logged_warn_only "Provider Health Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 

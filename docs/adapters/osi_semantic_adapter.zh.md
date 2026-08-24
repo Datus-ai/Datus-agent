@@ -255,16 +255,15 @@ relationships:
     to_columns: [customer_id]
 ```
 
-## 校验和发布流程
+## 查询校验
 
-OSI 模式下，Datus 在发布前会做硬性校验：
+Datus 为已有 OSI 资产保留以下校验链路：
 
-1. `validate_semantic(scope="semantic_model")` 校验语义模型。
+1. `validate_semantic(scope="semantic_model")` 校验指定语义模型。
 2. `validate_semantic(scope="all")` 校验完整语义层。
-3. `query_metrics(..., dry_run=True)` 对生成的指标做 SQL dry-run。
-4. `publish_semantic_model` / `publish_metrics` 把 OSI semantic objects 和 metrics 同步到 Knowledge Base。
+3. `query_metrics(..., dry_run=True)` 通过渲染 SQL 检查指标查询。
 
-如果 validation 或 dry-run 失败，Datus 不会发布该指标到 Knowledge Base。这样 `ask_metrics` 只会查询已经通过语义层验证的指标。
+OSI 模式不会发布或修改语义资产。需要修改模型并同步 Knowledge Base 时，请先迁移到 Dosi，再使用 `semantic_modeling`。
 
 ## ask_metrics 查询
 

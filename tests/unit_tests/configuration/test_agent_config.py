@@ -713,14 +713,14 @@ class TestAgentConfigServiceSelectors:
         )
         assert cfg.resolve_semantic_adapter() == "metricflow"
 
-    def test_resolve_semantic_adapter_defaults_to_metricflow_when_no_service_configured(self, tmp_path):
+    def test_resolve_semantic_adapter_defaults_to_dosi_when_no_service_configured(self, tmp_path):
         cfg = self._make(
             tmp_path,
             services={
                 "datasources": {},
             },
         )
-        assert cfg.resolve_semantic_adapter() == "metricflow"
+        assert cfg.resolve_semantic_adapter() == "dosi"
 
     def test_explicit_semantic_adapter_wins_when_no_service_configured(self, tmp_path):
         cfg = self._make(
@@ -741,7 +741,7 @@ class TestAgentConfigServiceSelectors:
         cfg.set_active_semantic("dbt", persist=False)
         assert cfg.resolve_semantic_adapter() == "dbt"
 
-    def test_build_semantic_adapter_config_defaults_to_metricflow_when_no_service_configured(self, tmp_path):
+    def test_build_semantic_adapter_config_defaults_to_dosi_when_no_service_configured(self, tmp_path):
         cfg = self._make(
             tmp_path,
             services={
@@ -755,7 +755,7 @@ class TestAgentConfigServiceSelectors:
             },
         )
         config = cfg.build_semantic_adapter_config()
-        assert config["type"] == "metricflow"
+        assert config["type"] == "dosi"
         assert config["datasource"] == "demo"
 
     def test_build_semantic_adapter_config_defaults_osi_execution_backend_to_metricflow(self, tmp_path):

@@ -76,10 +76,14 @@ def test_expected_sources_include_new_database_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-gaussdb"] == "datus-db-adapters/datus-gaussdb"
 
 
-def test_expected_sources_include_dosi_semantic_adapter():
+def test_expected_sources_include_query_compatible_semantic_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-semantic-dosi"] == (
         "datus-semantic-adapter/datus-semantic-dosi"
     )
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-semantic-metricflow"] == (
+        "datus-semantic-adapter/datus-semantic-metricflow"
+    )
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-semantic-osi"] == ("datus-semantic-adapter/datus-semantic-osi")
 
 
 def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
@@ -241,6 +245,7 @@ def test_verify_semantic_adapter_imports_requires_shared_contract(monkeypatch):
         "datus_semantic_core.models": SimpleNamespace(),
         "datus_semantic_metricflow": SimpleNamespace(),
         "datus_semantic_dosi": SimpleNamespace(),
+        "datus_semantic_osi": SimpleNamespace(),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 

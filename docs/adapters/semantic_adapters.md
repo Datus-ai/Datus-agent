@@ -1,6 +1,9 @@
 # Semantic Adapters
 
-Datus Agent uses semantic adapters to connect metric generation, validation, discovery, and querying to a concrete semantic layer implementation.
+Datus Agent uses semantic adapters to connect semantic authoring, validation,
+discovery, and querying to a concrete semantic layer implementation. Dosi is
+the default and the only authoring adapter; MetricFlow and OSI remain available
+as explicitly configured query-compatibility adapters.
 
 This page is the adapter overview. For adapter-specific behavior, use:
 
@@ -10,27 +13,31 @@ This page is the adapter overview. For adapter-specific behavior, use:
 
 ## Overview
 
-Semantic adapters provide a unified interface for:
+All three semantic adapters provide a unified query interface for:
 
 - listing executable metrics
 - discovering dimensions for a metric
 - querying metric values
-- validating semantic assets before publishing
+- validating existing semantic assets
+
+Dosi additionally provides the authoring lifecycle for:
+
+- validating authored semantic assets before publishing
 - syncing validated semantic assets into the Datus Knowledge Base
 
 Three adapters are currently supported:
 
-| Adapter | Package | Authoring format | Execution backend | Status |
-|---------|---------|------------------|-------------------|--------|
-| MetricFlow | `datus-semantic-metricflow` | MetricFlow YAML | MetricFlow | Ready |
-| OSI | `datus-semantic-osi` | strict OSI core YAML + DATUS custom extensions | MetricFlow by default | Ready |
-| Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | Native Dosi engine | Ready |
+| Adapter | Package | Source format | Execution backend | Datus mode |
+|---------|---------|---------------|-------------------|------------|
+| Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | Native Dosi engine | Default; authoring + query |
+| MetricFlow | `datus-semantic-metricflow` | MetricFlow YAML | MetricFlow | Explicit; query-only |
+| OSI | `datus-semantic-osi[metricflow]` | strict OSI core YAML + DATUS custom extensions | MetricFlow | Explicit; query-only |
 
-MetricFlow, OSI, and Dosi are peer semantic adapters. They differ in what users and generation agents author and how the authored model is executed:
+The adapters share a query interface, but no longer share the authoring surface:
 
-- MetricFlow mode authors MetricFlow YAML directly.
-- OSI mode authors OSI core YAML and lets `datus-semantic-osi` compile it to Datus Semantic IR before lowering to MetricFlow.
-- Dosi mode authors the same OSI format but compiles, plans, and executes it directly in the Rust engine.
+- Dosi authors strict OSI-compatible YAML and compiles, plans, and executes it directly in the Rust engine.
+- MetricFlow loads existing MetricFlow YAML for validation, discovery, and querying.
+- OSI loads existing OSI core YAML, compiles it to Datus Semantic IR, and lowers it to MetricFlow for querying.
 
 ## Architecture
 
@@ -63,13 +70,12 @@ Configure semantic adapters under `agent.services.semantic_layer` in `agent.yml`
 agent:
   services:
     semantic_layer:
-      metricflow:
+      dosi:
         default: true
 
-      osi:
-        execution_backend: metricflow
+      metricflow: {}  # optional query compatibility
 
-      dosi: {}
+      osi: {}         # optional query compatibility; install osi[metricflow]
 ```
 
 The key under `services.semantic_layer` must equal the adapter type, for example `metricflow`, `osi`, or `dosi`. If a `type:` field is present, it must match the key.
@@ -95,19 +101,19 @@ Optional semantic-model methods include `get_semantic_model()` and `list_semanti
 Use MetricFlow when:
 
 - you already have MetricFlow YAML
-- you want generated files to be MetricFlow-native
-- your team expects to inspect or maintain MetricFlow assets directly
+- your team maintains those assets outside Datus
+- you need Datus query surfaces to keep using them during migration
 
 Use OSI when:
 
 - you want the authored source to follow OSI core schema
 - you want Datus-specific execution hints isolated in `custom_extensions`
-- you want LLM generation to avoid backend YAML fields such as `measure_proxy`, `type_params`, and `data_source`
-- you still want to execute through MetricFlow today
+- you already have OSI assets that must remain queryable through MetricFlow
 
 Use Dosi when:
 
-- you want the same strict OSI authoring workflow
+- you are starting new semantic authoring or changing existing models
+- you want the strict OSI authoring workflow
 - aggregate, ratio, and expression metrics cover the model
 - you want native join planning, fan-out protection, and execution without MetricFlow
 

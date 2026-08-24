@@ -38,6 +38,11 @@ class TestPackageFor:
         assert pkg == "datus-semantic-dosi"
         assert mod == "datus_semantic_dosi"
 
+    def test_osi_semantic_layer_mapping_installs_query_backend(self):
+        pkg, mod = sai.package_for("semantic_layer", "OSI")
+        assert pkg == "datus-semantic-osi[metricflow]"
+        assert mod == "datus_semantic_osi"
+
     def test_unknown_section_raises(self):
         with pytest.raises(ValueError):
             sai.package_for("unknown_section", "x")
@@ -69,6 +74,19 @@ class TestIsAdapterInstalled:
 
     def test_unknown_section_returns_false(self):
         assert sai.is_adapter_installed("unknown_section", "x") is False
+
+    def test_osi_requires_adapter_and_metricflow_backend(self, monkeypatch):
+        installed = {"datus_semantic_osi"}
+        monkeypatch.setattr(
+            sai.importlib.util,
+            "find_spec",
+            lambda name: SimpleNamespace(name=name) if name in installed else None,
+        )
+
+        assert sai.is_adapter_installed("semantic_layer", "osi") is False
+
+        installed.add("datus_semantic_metricflow")
+        assert sai.is_adapter_installed("semantic_layer", "osi") is True
 
 
 class TestEnsureAdapter:
@@ -197,6 +215,24 @@ class TestEnsureAdapter:
         assert result.ok is True
         assert result.package == "datus-semantic-dosi"
         assert "datus-semantic-dosi" in captured["cmd"]
+
+    def test_semantic_layer_installs_osi_with_metricflow_backend(self, monkeypatch):
+        monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
+        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
+        captured = {}
+
+        def fake_run(cmd, capture_output, text, check):
+            captured["cmd"] = cmd
+            return SimpleNamespace(returncode=0, stdout="installed\n", stderr="")
+
+        monkeypatch.setattr(sai.subprocess, "run", fake_run)
+        monkeypatch.setattr(sai.importlib, "invalidate_caches", lambda: None)
+
+        result = sai.ensure_adapter("semantic_layer", "osi")
+
+        assert result.ok is True
+        assert result.package == "datus-semantic-osi[metricflow]"
+        assert "datus-semantic-osi[metricflow]" in captured["cmd"]
 
     def test_line_callback_receives_pip_output(self, monkeypatch):
         monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)

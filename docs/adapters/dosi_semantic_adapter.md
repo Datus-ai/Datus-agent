@@ -5,6 +5,10 @@ engine. Its authoring, validation, catalog loading, and execution paths are
 provided by `datus-semantic-dosi`; it does not load the Python OSI adapter or
 lower models to MetricFlow.
 
+Dosi is the built-in default semantic adapter and supports both
+`semantic_modeling` authoring and the complete query surface. When no semantic
+adapter is configured, interactive Datus startup installs and selects it.
+
 ## Install
 
 For local development, a published `dosi-engine` package is not required. From
@@ -31,8 +35,7 @@ agent:
         type: duckdb
         uri: /absolute/path/to/warehouse.db
     semantic_layer:
-      dosi:
-        default: true
+      dosi:  # optional: Dosi is selected when this section is empty
         # semantic_model_path: /absolute/path/to/model.yaml
 ```
 

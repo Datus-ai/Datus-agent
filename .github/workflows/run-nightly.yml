@@ -168,6 +168,7 @@ jobs:
             --reinstall-package datus-semantic-core \
             --reinstall-package datus-semantic-metricflow \
             --reinstall-package datus-semantic-dosi \
+            --reinstall-package datus-semantic-osi \
             --reinstall-package datus-snowflake \
             --reinstall-package datus-doris \
             --reinstall-package datus-hologres \
@@ -181,6 +182,7 @@ jobs:
             ./external/datus-semantic-adapter/datus-semantic-core \
             ./external/datus-semantic-adapter/datus-semantic-metricflow \
             ./external/datus-semantic-adapter/datus-semantic-dosi \
+            "./external/datus-semantic-adapter/datus-semantic-osi[metricflow]" \
             ./external/datus-db-adapters/datus-db-core \
             ./external/datus-db-adapters/datus-sqlalchemy \
             ./external/datus-db-adapters/datus-snowflake \

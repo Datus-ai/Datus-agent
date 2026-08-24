@@ -105,4 +105,4 @@ datus
 - **[上下文数据工程](./contextual_data_engineering.md)** —— `@` 引用、知识库与上下文管理
 - **[配置指南](../configuration/introduction.md)** —— 自有数据库与高级配置
 - **[CLI 参考](../cli/introduction.md)** —— 全部命令与选项
-- **[语义层适配器](../adapters/semantic_adapters.md)** —— datus-semantic-metricflow
+- **[语义层适配器](../adapters/semantic_adapters.zh.md)** —— 默认使用 Dosi，并兼容 MetricFlow 与 OSI 查询

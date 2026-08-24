@@ -465,10 +465,15 @@ class TestExplorerServiceMetricFlowAuthoring:
 
     METRIC = "metric:\n  name: revenue\n  type: aggregate\n"
 
+    @staticmethod
+    def _service(real_agent_config):
+        real_agent_config.resolve_semantic_adapter = MagicMock(return_value="metricflow")
+        return ExplorerService(agent_config=real_agent_config)
+
     async def test_create_is_query_only(self, real_agent_config):
         from datus.api.models.explorer_models import EditMetricInput
 
-        svc = ExplorerService(agent_config=real_agent_config)
+        svc = self._service(real_agent_config)
         result = await svc.create_metric(EditMetricInput(subject_path=["d"], yaml=self.METRIC))
         assert result.success is False
         assert "query-only" in result.errorMessage
@@ -477,13 +482,13 @@ class TestExplorerServiceMetricFlowAuthoring:
     async def test_edit_is_query_only(self, real_agent_config):
         from datus.api.models.explorer_models import EditMetricInput
 
-        svc = ExplorerService(agent_config=real_agent_config)
+        svc = self._service(real_agent_config)
         result = await svc.edit_metric(EditMetricInput(subject_path=["revenue"], yaml=self.METRIC))
         assert result.success is False
         assert "query-only" in result.errorMessage
 
     async def test_delete_is_query_only(self, real_agent_config):
-        svc = ExplorerService(agent_config=real_agent_config)
+        svc = self._service(real_agent_config)
         result = await svc.delete_subject(
             DeleteSubjectInput(type=SubjectNodeType.METRIC, subject_path=["sales", "revenue"])
         )

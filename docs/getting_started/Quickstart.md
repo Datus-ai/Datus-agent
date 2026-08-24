@@ -110,4 +110,4 @@ For natural-language turns, Datus streams thinking deltas, tool calls, SQL, and 
 - **[Contextual Data Engineering](./contextual_data_engineering.md)** — `@` references, knowledge base, context management
 - **[Configuration Guide](../configuration/introduction.md)** — connect your own databases and customize settings
 - **[CLI Reference](../cli/introduction.md)** — all commands and options
-- **[Semantic Adapters](../adapters/semantic_adapters.md)** — datus-semantic-metricflow
+- **[Semantic Adapters](../adapters/semantic_adapters.md)** — Dosi by default, with MetricFlow and OSI query compatibility
