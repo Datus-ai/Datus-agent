@@ -307,8 +307,9 @@ class TestSubAgentScopedServices:
 
     def test_two_sub_agents_get_their_own_scope(self, real_agent_config):
         """Equal names would mean the second service was handed the first
-        one's scope. The filter contents are asserted where a `tables` scope
-        has a store to bind to; the explorer only holds subject-scoped RAGs."""
+        one's scope. Filter contents are covered by test_rag_scope, which can
+        bind a `tables` scope to a store; the explorer's RAGs are subject-scoped
+        and build no filter at all."""
         svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
 
         analyst = svc.explorer_for("analyst")
@@ -318,9 +319,6 @@ class TestSubAgentScopedServices:
         assert auditor.sub_agent_name == "auditor"
         assert analyst.metric_rag.sub_agent_name == "analyst"
         assert auditor.metric_rag.sub_agent_name == "auditor"
-        assert str(analyst.reference_sql_rag._sub_agent_filter) != str(auditor.reference_sql_rag._sub_agent_filter) or (
-            analyst.reference_sql_rag._sub_agent_filter is None
-        )
 
     def test_an_unknown_name_is_refused(self, real_agent_config):
         """The failure mode this must never have: `sub_agent_config` is a plain

@@ -1126,9 +1126,11 @@ class _RejectingIndexTable(_RecordingIndexTable):
     """A backend that refuses index creation, e.g. against a read-only replica."""
 
     def create_scalar_index(self, column):
+        super().create_scalar_index(column)
         raise RuntimeError("permission denied")
 
     def create_vector_index(self, column, metric="cosine", **kwargs):
+        super().create_vector_index(column, metric, **kwargs)
         raise RuntimeError("permission denied")
 
 
@@ -1189,3 +1191,9 @@ class TestRuntimeIndexingAcrossBackends:
 
         store._create_scalar_index("name")
         store.create_vector_index()
+
+        # Refusing is the backend's call to make, so it still gets asked, and
+        # its error stays inside the store rather than failing the ingest that
+        # triggered the index build.
+        assert table.scalar_index_calls == ["name"]
+        assert [call[0] for call in table.vector_index_calls] == ["vector"]
