@@ -270,6 +270,29 @@ class TestCLIServiceConnectorSerialization:
         # And released once the statement is done, so the next request can run.
         assert cli_svc._connector_lock(ds).locked() is False
 
+    def test_execution_target_opens_and_remembers_another_datasource(self, cli_svc, real_agent_config):
+        current = real_agent_config.current_datasource
+        cli_svc.agent_config.services.datasources["second"] = cli_svc.agent_config.services.datasources[current]
+        connector = object()
+
+        with patch.object(cli_svc.db_manager, "first_conn_with_name", return_value=("db", connector)) as opened:
+            assert cli_svc._execution_target("second") == ("second", connector)
+            assert cli_svc._execution_target("second") == ("second", connector)
+
+        assert opened.call_count == 1
+
+    def test_execution_target_rejects_a_null_connector(self, cli_svc, real_agent_config):
+        """Caching a None turned the next request's `connector.dialect` into an
+        AttributeError instead of a reported connection failure."""
+        current = real_agent_config.current_datasource
+        cli_svc.agent_config.services.datasources["empty"] = cli_svc.agent_config.services.datasources[current]
+
+        with patch.object(cli_svc.db_manager, "first_conn_with_name", return_value=("db", None)):
+            with pytest.raises(ValueError, match="no usable connection"):
+                cli_svc._execution_target("empty")
+
+        assert "empty" not in cli_svc._datasource_connectors
+
     def test_lock_is_per_datasource(self, cli_svc, real_agent_config):
         """Different datasources must not block each other."""
         cli_svc.agent_config.services.datasources["other"] = cli_svc.agent_config.services.datasources[

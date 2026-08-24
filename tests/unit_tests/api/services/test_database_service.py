@@ -637,6 +637,83 @@ class TestPerDatasourceResolution:
         with pytest.raises(ValueError, match="Unknown datasource"):
             svc._connector_for("not_bound")
 
+    def test_connector_for_normalizes_an_unreachable_datasource(self, real_agent_config):
+        """Declared but unreachable raises DatusException from the db manager.
+
+        Every caller here turns ValueError into a clean error Result, so leaving
+        DatusException to escape loses that — and catching DatusException in the
+        callers would swallow unrelated ones from deeper in the stack.
+        """
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["broken"] = real_agent_config.services.datasources[current]
+
+        with patch.object(
+            svc.db_manager,
+            "first_conn_with_name",
+            side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
+        ):
+            with pytest.raises(ValueError, match="no usable connection"):
+                svc._connector_for("broken")
+
+        # Nothing unusable was remembered for the next request.
+        assert "broken" not in svc._datasource_connectors
+
+    def test_connector_for_rejects_a_null_connector(self, real_agent_config):
+        """Symmetric with the current-datasource branch, which already does."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["empty"] = real_agent_config.services.datasources[current]
+
+        with patch.object(svc.db_manager, "first_conn_with_name", return_value=("db", None)):
+            with pytest.raises(ValueError, match="no usable connection"):
+                svc._connector_for("empty")
+
+        assert "empty" not in svc._datasource_connectors
+
+    def test_connector_for_opens_and_remembers_another_datasource(self, real_agent_config):
+        """The happy path for a non-current datasource: opened on first use, then
+        reused — DBManager hands back a fresh wrapper per call, and the column
+        cache keys off the name rather than the object."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+        connector = MagicMock(database_name="")
+
+        with patch.object(svc.db_manager, "first_conn_with_name", return_value=("second_db", connector)) as opened:
+            first = svc._connector_for("second")
+            again = svc._connector_for("second")
+
+        assert first == (connector, "second_db")
+        assert again is first
+        assert opened.call_count == 1
+
+    def test_connector_for_rejects_a_current_datasource_with_no_connection(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_db_connector = None
+
+        with pytest.raises(ValueError, match="no usable connection"):
+            svc._connector_for(real_agent_config.current_datasource)
+
+    def test_connector_for_passes_a_valueerror_through_unwrapped(self, real_agent_config):
+        """Already the right type — re-wrapping would bury the original message."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        with patch.object(svc.db_manager, "first_conn_with_name", side_effect=ValueError("bad uri")):
+            with pytest.raises(ValueError, match="^bad uri$"):
+                svc._connector_for("second")
+
+    def test_connector_for_rejects_when_nothing_is_configured(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_datasource = ""
+
+        with pytest.raises(ValueError, match="No datasource configured"):
+            svc._connector_for(None)
+
     def test_table_detail_reports_an_unknown_datasource(self, real_agent_config):
         svc = DatasourceService(agent_config=real_agent_config)
         result = svc.get_table_schema("frpm", datasource="not_bound")

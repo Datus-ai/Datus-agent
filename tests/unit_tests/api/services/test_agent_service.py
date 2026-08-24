@@ -878,6 +878,52 @@ class TestCreateAgent:
         assert result.success is True
         assert result.data["name"] == "test_new_agent"
 
+    async def test_create_agent_binds_the_named_datasource(self, real_agent_config, agent_yml_with_singleton):
+        """`datasource_name` must reach `scoped_context.datasource`.
+
+        Ignoring it bound the agent to the active datasource instead of the one
+        the caller asked for — the same name the caller scoped its `catalogs`
+        against, so the scope would be matched on the wrong warehouse.
+        """
+        from datus.api.models.agent_models import CreateAgentInput
+
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="agent_on_second",
+                type="gen_sql",
+                tools=["db_tools"],
+                datasource_name="second",
+            ),
+            real_agent_config,
+        )
+
+        assert result.success is True
+        agent = real_agent_config.agentic_nodes["agent_on_second"]
+        assert agent["scoped_context"]["datasource"] == "second"
+
+    async def test_create_agent_rejects_an_unbound_datasource(self, real_agent_config, agent_yml_with_singleton):
+        """Better than silently binding to the current one."""
+        from datus.api.models.agent_models import CreateAgentInput
+
+        svc = AgentService()
+        result = await svc.create_agent(
+            CreateAgentInput(
+                name="agent_nowhere",
+                type="gen_sql",
+                tools=["db_tools"],
+                datasource_name="not_bound",
+            ),
+            real_agent_config,
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_DATASOURCE"
+        assert "not_bound" in result.errorMessage
+
     async def test_create_agent_duplicate_name_fails(self, real_agent_config, agent_yml_with_singleton):
         """create_agent rejects duplicate agent name."""
         from datus.api.models.agent_models import CreateAgentInput
