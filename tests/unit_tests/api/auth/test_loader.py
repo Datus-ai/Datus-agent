@@ -5,8 +5,8 @@ import types
 
 import pytest
 
+from datus.api.auth.header_context_provider import HeaderContextProvider
 from datus.api.auth.loader import load_auth_provider
-from datus.api.auth.no_auth_provider import NoAuthProvider
 from datus.utils.exceptions import DatusException
 
 
@@ -42,13 +42,13 @@ def fake_module():
 
 def test_default_when_empty():
     provider = load_auth_provider(None, datasource="default")
-    assert isinstance(provider, NoAuthProvider)
+    assert isinstance(provider, HeaderContextProvider)
 
     provider = load_auth_provider({}, datasource="default")
-    assert isinstance(provider, NoAuthProvider)
+    assert isinstance(provider, HeaderContextProvider)
 
     provider = load_auth_provider({"auth_provider": {}}, datasource="default")
-    assert isinstance(provider, NoAuthProvider)
+    assert isinstance(provider, HeaderContextProvider)
 
 
 def test_load_custom_with_kwargs(fake_module):

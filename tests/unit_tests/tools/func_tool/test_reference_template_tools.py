@@ -231,6 +231,64 @@ class TestRenderReferenceTemplate:
         assert result.success == 0
         assert "storage error" in result.error
 
+    def test_render_rejects_sandbox_escape(self, tools, mock_rag):
+        """Template bodies are user-authored and this tool is MCP-exposed, so a
+        template reaching for Python internals must be refused, not rendered.
+        """
+        mock_rag.get_reference_template_detail.return_value = [
+            {
+                "name": "evil",
+                "template": "SELECT {{ p.__class__.__mro__ }}",
+                "parameters": json.dumps([{"name": "p"}]),
+            }
+        ]
+        result = tools.render_reference_template(["Sales"], "evil", json.dumps({"p": "x"}))
+        assert result.success == 0
+        assert "sandbox" in result.error.lower()
+
+    def test_render_rejects_globals_walk(self, tools, mock_rag):
+        mock_rag.get_reference_template_detail.return_value = [
+            {
+                "name": "evil_globals",
+                "template": "SELECT {{ p.__init__.__globals__ }}",
+                "parameters": json.dumps([{"name": "p"}]),
+            }
+        ]
+        result = tools.render_reference_template(["Sales"], "evil_globals", json.dumps({"p": "x"}))
+        assert result.success == 0
+        assert "sandbox" in result.error.lower()
+
+    def test_sandbox_rejection_does_not_shadow_missing_params(self, tools, mock_rag):
+        """The new SecurityError branch sits next to the UndefinedError one;
+        make sure it did not swallow the retryable missing-param path.
+        """
+        mock_rag.get_reference_template_detail.return_value = [
+            {
+                "name": "tpl",
+                "template": "SELECT * FROM t WHERE region = '{{region}}'",
+                "parameters": json.dumps([{"name": "region"}]),
+            }
+        ]
+        result = tools.render_reference_template(["Sales"], "tpl", "{}")
+        assert result.success == 0
+        assert "sandbox" not in result.error.lower()
+        assert "Missing parameters: ['region']" in result.error
+
+    def test_normal_template_renders_unchanged_under_sandbox(self, tools, mock_rag):
+        """Loops, conditionals and built-in filters must behave exactly as before."""
+        mock_rag.get_reference_template_detail.return_value = [
+            {
+                "name": "loopy",
+                "template": (
+                    "SELECT {% for c in cols %}{{ c|upper }}{% if not loop.last %}, {% endif %}{% endfor %} FROM t"
+                ),
+                "parameters": json.dumps([{"name": "cols"}]),
+            }
+        ]
+        result = tools.render_reference_template(["Sales"], "loopy", json.dumps({"cols": ["a", "b"]}))
+        assert result.success == 1
+        assert result.result["rendered_sql"] == "SELECT A, B FROM t"
+
 
 class TestExecuteReferenceTemplate:
     def test_execute_success(self, tools, mock_rag):
@@ -252,6 +310,25 @@ class TestExecuteReferenceTemplate:
         assert result.result["query_result"] == [{"id": 1, "region": "US"}]
         assert result.result["template_name"] == "daily_sales"
         mock_db.read_query.assert_called_once()
+
+    def test_execute_rejects_sandbox_escape_without_touching_db(self, tools, mock_rag):
+        """A sandbox refusal must short-circuit before any SQL reaches the
+        datasource — execute_reference_template renders first, then queries.
+        """
+        mock_rag.get_reference_template_detail.return_value = [
+            {
+                "name": "evil",
+                "template": "SELECT {{ p.__class__.__mro__ }}",
+                "parameters": json.dumps([{"name": "p"}]),
+            }
+        ]
+        mock_db = MagicMock()
+        tools.db_func_tool = mock_db
+
+        result = tools.execute_reference_template(["Sales"], "evil", json.dumps({"p": "x"}))
+        assert result.success == 0
+        assert "sandbox" in result.error.lower()
+        mock_db.read_query.assert_not_called()
 
     def test_execute_render_fails(self, tools, mock_rag):
         """When render fails, execute returns the render error without calling DB."""

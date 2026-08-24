@@ -642,12 +642,31 @@ class ClaudeModel(OpenAICompatibleModel):
                 messages=filtered_messages,
                 system=self._build_system_param(system_message),
                 max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
-                temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
+                # ``temperature`` is never forwarded to Anthropic — the
+                # claude-*-5 family rejects it outright ("`temperature` is
+                # deprecated for this model."), so honouring a caller's value
+                # would fail the request rather than tune it. Matches the
+                # provider gate in ``OpenAICompatibleModel``; Anthropic applies
+                # its own default.
             )
 
-            if response.content:
-                return response.content[0].text
-            return ""
+            # A thinking-capable model answers with ``[ThinkingBlock,
+            # TextBlock, ...]`` — thinking first. On this path that is the
+            # normal shape, not an edge case: OAuth subscription tokens force
+            # ``use_native_api`` and the client carries
+            # ``interleaved-thinking-2025-05-14`` (see ``OAUTH_BETA_HEADERS``),
+            # so the server may emit thinking whether or not the caller asked
+            # for it — ``enable_thinking`` is not forwarded here at all.
+            # ``content[0].text`` therefore raised ``'BetaThinkingBlock' object
+            # has no attribute 'text'`` and threw away a complete answer, which
+            # is how a working AI permission review surfaced as "unavailable".
+            # Join the text blocks and skip the rest (thinking,
+            # redacted_thinking, tool_use), matching the streaming path.
+            return "\n".join(
+                block.text
+                for block in response.content or []
+                if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+            )
 
         except anthropic.AuthenticationError as e:
             self._diagnose_oauth_401(e)  # raises specific DatusException for OAuth tokens
@@ -838,7 +857,7 @@ class ClaudeModel(OpenAICompatibleModel):
                         messages=wrap_prompt_cache(messages),
                         tools=tools,
                         max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
-                        temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
+                        # No ``temperature`` — see ``generate`` above.
                     )
                     generation_input = capture_native_trace_content("prompts", _anthropic_trace_input(request_kwargs))
                     active_generation_span = start_native_generation_span(

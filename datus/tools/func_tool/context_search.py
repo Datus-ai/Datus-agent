@@ -12,7 +12,7 @@ from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.reference_template.store import ReferenceTemplateRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.semantic_dataset.store import MetricKindNotHere, SemanticDatasetRAG
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
@@ -78,7 +78,7 @@ class ContextSearchTools:
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
-        self.semantic_rag = SemanticModelRAG(agent_config, sub_agent_name)
+        self.semantic_rag = SemanticDatasetRAG(agent_config, sub_agent_name)
         self.reference_sql_store = ReferenceSqlRAG(agent_config, sub_agent_name)
         self.reference_template_store = ReferenceTemplateRAG(agent_config, sub_agent_name)
 
@@ -401,36 +401,38 @@ class ContextSearchTools:
         top_n: int = 5,
     ) -> FuncToolResult:
         """
-        Search for semantic objects (metrics, columns, tables) using unified storage.
+        Search modelled datasets, fields and relationships by description.
 
         Args:
             query_text: Natural language query describing what you're looking for
-            kinds: List of object kinds to filter by. Options: ["metric", "column", "table", "entity"]
-                   If None, searches all kinds
+            kinds: List of object kinds to filter by. Options: ["dataset", "field", "relationship"].
+                   If None, searches all kinds. The older `table` / `column` / `entity` names
+                   still work. Metrics are not in this store — use `search_metrics` for those.
             top_n: Maximum number of results to return (default 5)
 
         Returns:
-            FuncToolResult with list of matching objects containing:
-                - kind: Type of object ("metric", "column", "table", "entity")
+            FuncToolResult with list of matching objects, most relevant first, each containing:
+                - kind: Type of object ("dataset", "field" or "relationship")
                 - name: Object name
                 - description: Detailed description
-                - _distance: Similarity score (lower is better)
-                - Additional fields specific to object kind (e.g., available_dimensions for metrics)
+                - dataset_name: The dataset the object belongs to
         """
         # Normalize null values from LLM
         kinds = normalize_null(kinds)
         try:
-            results = self.semantic_rag.storage.search_objects(
+            results = self.semantic_rag.list_objects(
                 query_text=query_text,
                 kinds=kinds,
                 top_n=top_n,
             )
-
-            logger.debug(f"search_semantic_objects results: {results}")
-            return FuncToolResult(success=1, error=None, result=results)
+        except MetricKindNotHere as e:
+            return FuncToolResult(success=0, error=str(e), result=None)
         except Exception as e:
             logger.error(f"Failed to search semantic objects for '{query_text}': {str(e)}")
             return FuncToolResult(success=0, error=str(e))
+
+        logger.debug(f"search_semantic_objects returned {len(results)} object(s)")
+        return FuncToolResult(success=1, error=None, result=results)
 
 
 def _fill_subject_tree(

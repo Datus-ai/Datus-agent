@@ -16,6 +16,7 @@ from datus.schemas.base import BaseInput
 from datus.schemas.node_models import StrategyType
 from datus.storage.embedding_models import init_embedding_models
 from datus.storage.storage_cfg import check_storage_config, save_storage_config
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -106,25 +107,11 @@ def _validate_project_name(value: str) -> str:
     return value
 
 
-def _coerce_bool(value: Any, default: bool) -> bool:
-    """Coerce a config value to ``bool`` accepting YAML's string booleans.
-
-    ``bool("false")`` is ``True`` in Python, so a naive ``bool(...)`` cast on
-    a YAML value like ``enabled: "false"`` silently flips the toggle on. This
-    helper normalizes booleans and the common string spellings users actually
-    write in agent.yml.
-    """
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off", ""}:
-            return False
-    return bool(value)
+# Historical private alias. The implementation moved to ``datus.utils.config_utils``
+# so modules outside this package (DBFuncTool, skill_config) can share it without
+# importing a private symbol across package boundaries; the name is kept because
+# this module uses it in ~10 places.
+_coerce_bool = coerce_bool
 
 
 def _coerce_pattern_list(value: Any) -> List[str]:
@@ -801,6 +788,14 @@ class AgentConfig:
         """
         Initialize the global config from yaml file
         """
+        if "sql_policy" in kwargs:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "agent.sql_policy has been removed; configure policies under agent.plugins.sql-policy instead"
+                ),
+            )
+
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
         # project_name must be computed before _set_path_manager so shard-aware
@@ -941,6 +936,26 @@ class AgentConfig:
         # are hidden/refused and the plugin prompt preamble stops naming the
         # config file.
         self._config_mutable = _coerce_bool(kwargs.get("config_mutable"), True)
+        # ``sql_read_only`` is the deployment-wide SQL posture. When ``True`` no
+        # entry point served by this config may run a non-read statement. All of
+        # them consult it: ``DBFuncTool``'s write paths — ``execute_sql``,
+        # ``execute_write``, ``execute_ddl`` and the cross-datasource
+        # ``transfer_query_result`` — for agent nodes as well as the MCP server's
+        # ``create_dynamic``/``create_static`` instances, plus the raw
+        # ``POST /sql/execute`` REST route. Default ``False`` preserves the CLI's
+        # write-capable behaviour.
+        #
+        # This is a hard switch, not a policy. Unlike ``agent.sql_policy`` — a
+        # pluggable rewrite/deny framework that needs a provider class — it
+        # requires no extension and cannot be satisfied by rewriting the
+        # statement. Intended for hosts that run third-party-authored agent
+        # content against platform-owned datasources.
+        #
+        # One-way: exposed as a read-only property plus
+        # ``harden_sql_read_only()``. Nothing downstream — a plugin, a tool
+        # transformer, third-party code sharing the process — can undo a
+        # yaml-level ``true``.
+        self._sql_read_only = _coerce_bool(kwargs.get("sql_read_only"), False)
         # ``bash.enabled`` toggles whether agentic nodes instantiate the
         # general-purpose ``BashTool``. Default ``True`` preserves the
         # current behaviour where every node exposes ``bash``
@@ -1146,13 +1161,10 @@ class AgentConfig:
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
 
-        # SQL policies are enforced at the DB tool boundary. The config
-        # is static, while the request-scoped principal is attached later by
-        # API/gateway callers to the per-request AgentConfig copy.
-        from datus.tools.sql_policy import SqlPolicyConfig
-
-        self.sql_policy_config = SqlPolicyConfig.from_dict(kwargs.get("sql_policy", {}))
-        self.principal: Dict[str, Any] = {}
+        # Runtime policy data is attached by API/gateway callers to a
+        # per-request AgentConfig copy. Identity and authorization stay outside
+        # the agent; active policy plugins interpret this execution context.
+        self.policy_context: Dict[str, Any] = {}
 
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
@@ -1263,6 +1275,35 @@ class AgentConfig:
     @config_mutable.setter
     def config_mutable(self, value: bool) -> None:
         self._config_mutable = bool(value)
+
+    @property
+    def sql_read_only(self) -> bool:
+        """Whether every SQL entry point served by this config is read-only.
+
+        ``False`` (default): unchanged behaviour — writes and DDL are gated by
+        the permission profile and per-tool ``read_only`` flags only.
+
+        ``True``: :meth:`DBFuncTool.execute_sql`, the cross-datasource
+        :meth:`DBFuncTool.transfer_query_result`, and the raw
+        ``POST /sql/execute`` route all hard-reject every non-read statement,
+        regardless of profile or hooks.
+
+        Read-only by design — there is no setter. Use
+        :meth:`harden_sql_read_only` to turn it on; nothing can turn it off.
+        """
+        return self._sql_read_only
+
+    def harden_sql_read_only(self) -> None:
+        """Switch this config to the read-only SQL posture. One-way.
+
+        A method rather than a setter because the operation is not assignment:
+        it can only tighten, so ``cfg.sql_read_only = False`` would have to
+        silently do nothing. A per-request config clone may harden itself (as
+        the chat API does with ``config_mutable``), but nothing downstream — a
+        plugin, a tool transformer, third-party code sharing the process — may
+        undo a yaml-level ``true``.
+        """
+        self._sql_read_only = True
 
     @property
     def bash_tool_enabled(self) -> bool:

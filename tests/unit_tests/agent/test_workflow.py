@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -269,6 +270,24 @@ class TestWorkflow:
         loaded_node2 = loaded_workflow.nodes["node2"]
         assert loaded_node2.description == "Second node"
         assert loaded_node2.type == NodeType.TYPE_EXECUTE_SQL
+
+    def test_workflow_save_can_add_versioned_compatibility_envelope(self, tmp_path: Path, real_agent_config) -> None:
+        """Workflow.save wraps the payload in a versioned envelope for benchmark runs."""
+        import yaml
+
+        workflow = Workflow(
+            name="benchmark_workflow",
+            task=SqlTask(task="Test benchmark trajectory", artifact_profile="benchmark_v1"),
+            agent_config=real_agent_config,
+        )
+        save_path = tmp_path / "benchmark_workflow.yaml"
+
+        workflow.save(str(save_path), schema_version=1)
+
+        payload = yaml.safe_load(save_path.read_text(encoding="utf-8"))
+        assert payload["schema_version"] == 1
+        assert payload["workflow"]["name"] == "benchmark_workflow"
+        assert "artifact_type" not in payload
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,10 @@ You have access to:
 - The ability to generate, execute, and explain SQL queries
 - Date parsing tools: For temporal expression analysis
   - Use `parse_temporal_expressions` to convert relative dates to absolute date ranges in "YYYY-MM-DD" format
+- Installed plugin commands and bundled plugin skills are used directly in this main agent. For
+  scheduler and external BI operations (for example Airflow or Superset), follow the installed
+  plugin context and execute `datus <plugin> ...` here; do not delegate to `scheduler` or
+  `gen_dashboard` subagents.
 {% if has_ask_user_tool %}
 - Ask user tool (`ask_user`): Request clarification from the user. Accepts a list of questions, each with optional predefined choices (2-10 options per question). A built-in free-text input is always available to the user, so do NOT add an "Other" or "Custom" option yourself
   - **Independent questions only**: Every question in a single `ask_user` call must be answerable independently — do NOT include follow-up questions that depend on the answer to a previous question in the same batch. If you need to ask follow-ups based on the user's answer, use a separate `ask_user` call after receiving the first response.
@@ -27,11 +31,11 @@ You have access to:
 **Routing decision — do this first, before any tool call:**
 
 1. Classify the requested deliverable. Ask: what artifact or answer should exist after this request, and which system owns it?
-2. If the deliverable belongs to a specialized system or workflow handled by a subagent, delegate to that subagent via `task(type=..., ...)`. Task complexity is not the deciding factor; a simple scheduled job, dashboard, persisted table, semantic model, metric definition, or skill still belongs to its owning subagent.
+2. If the deliverable belongs to a specialized system or workflow handled by an available subagent, delegate via `task(type=..., ...)`. Task complexity is not the deciding factor. Scheduling and external BI platform operations are the exception: handle them directly through the installed plugin command and skill in this main agent.
 3. Use direct tools (`list_tables`, `describe_table`, `execute_sql`, file tools, etc.) when the deliverable is a read-only answer, explanation, or lightweight investigation that does not create or update an artifact owned by another platform/workflow. `execute_sql` runs any single SQL statement — prefer a read-only SELECT for inspection; INSERT / UPDATE / DELETE and DDL modify the database, require user confirmation, and should be run only when the request explicitly calls for it. Any schema change or write that produces an artifact owned by another platform/workflow MUST be delegated to its specialized subagent.
 4. If the deliverable ownership or required target is ambiguous (missing metric, table, time range, target system, etc.), {% if has_ask_user_tool %}call `ask_user` FIRST to clarify, then route{% else %}route only when the provided context is enough; otherwise stop with the missing information needed to proceed{% endif %}.
 
-Match by deliverable ownership and intent, not by keyword or perceived complexity. Consult the `task` tool description for the per-type rubric before delegating.
+Match by deliverable ownership and intent, not by keyword or perceived complexity. Consult the `task` tool description for the per-type rubric before delegating. Never call `task(type="scheduler")` or `task(type="gen_dashboard")`.
 {% endif -%}
 {% if has_platform_doc_tools -%}
 - When writing SQL for a specific platform (e.g., Snowflake, StarRocks, Polaris), you MUST consult platform documentation tools **before** generating SQL. Do NOT guess platform-specific syntax. Use them in this priority order:

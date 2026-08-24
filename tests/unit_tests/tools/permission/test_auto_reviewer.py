@@ -6,6 +6,7 @@ import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 from datus.tools.permission.auto_reviewer import (
@@ -13,6 +14,7 @@ from datus.tools.permission.auto_reviewer import (
     AutoReviewRequest,
     AutoReviewVerdict,
     LLMAutoReviewer,
+    ReviewDecision,
 )
 from datus.tools.permission.bash_rules import BashCommandRules
 from datus.tools.permission.permission_config import AutoReviewConfig, PermissionConfig
@@ -42,10 +44,12 @@ def verdict(risk="low", decision="allow", confidence=0.95):
     )
 
 
-def context(args, *, direct=False):
+def context(args, *, direct=False, call_id="call_1"):
     ctx = MagicMock()
     ctx.tool_arguments = json.dumps(args)
     ctx.direct_user_invocation = direct
+    # A real string, not a MagicMock: the gate keys review verdicts by this.
+    ctx.tool_call_id = call_id
     return ctx
 
 
@@ -124,6 +128,86 @@ class TestAutoReviewConfig:
         assert verdict("medium").can_auto_allow(config)
         assert not verdict("high").can_auto_allow(config)
         assert not verdict("medium", confidence=0.5).can_auto_allow(config)
+
+
+class TestVerdictToleratesUnconstrainedOutput:
+    """Validation must be no stricter than the transport can guarantee.
+
+    Only schema-capable adapters constrain decoding; every Claude model routes
+    through ``generate_with_json_output``, which drops the schema kwarg and
+    asks Anthropic for a JSON *object*. The schema is a suggestion there, so a
+    constraint the model can violate is one that fails a usable review closed
+    into a manual prompt.
+    """
+
+    _REQUIRED = {
+        "risk_level": "low",
+        "user_authorization": "high",
+        "decision": "allow",
+        "confidence": 0.97,
+        "rationale": "reads a remote page, no mutation",
+    }
+
+    @pytest.mark.parametrize(
+        "extra_key,extra_value",
+        [
+            # Each observed in ~/.datus/logs — the reviewer answered correctly
+            # and volunteered one more field explaining or qualifying itself.
+            ("requires_confirmation", False),
+            ("user_authorization_reason", "matches trusted user message"),
+            ("confidence_note", ""),
+        ],
+    )
+    def test_volunteered_field_does_not_void_the_verdict(self, extra_key, extra_value):
+        result = AutoReviewVerdict.model_validate({**self._REQUIRED, extra_key: extra_value})
+
+        assert result.decision == ReviewDecision.ALLOW
+        assert result.confidence == 0.97
+        assert result.rationale == "reads a remote page, no mutation"
+
+    def test_volunteered_field_is_dropped_not_retained(self):
+        """Ignored means gone: nothing downstream can read a hallucinated key."""
+        result = AutoReviewVerdict.model_validate({**self._REQUIRED, "requires_confirmation": True})
+
+        assert "requires_confirmation" not in result.model_dump()
+        assert not hasattr(result, "requires_confirmation")
+
+    def test_a_missing_required_field_still_fails(self):
+        """Leniency covers additions only — an incomplete verdict is unusable."""
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({k: v for k, v in self._REQUIRED.items() if k != "decision"})
+
+    def test_an_out_of_range_confidence_still_fails(self):
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({**self._REQUIRED, "confidence": 1.5})
+
+    def test_an_unknown_decision_still_fails(self):
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({**self._REQUIRED, "decision": "definitely"})
+
+    def test_a_long_rationale_survives_for_the_renderer_to_truncate(self):
+        """The display budget is ~70 chars; enforcing it here would fail closed."""
+        result = AutoReviewVerdict.model_validate({**self._REQUIRED, "rationale": "y" * 900})
+
+        assert len(result.rationale) == 900
+
+    def test_a_runaway_rationale_still_fails(self):
+        with pytest.raises(ValidationError):
+            AutoReviewVerdict.model_validate({**self._REQUIRED, "rationale": "y" * 1001})
+
+    def test_emitted_schema_still_forbids_extra_properties(self):
+        """The model must still be *told* not to add fields, and OpenAI's strict
+        json_schema mode rejects a schema without ``additionalProperties``."""
+        schema = AutoReviewVerdict.model_json_schema()
+
+        assert schema["additionalProperties"] is False
+
+    def test_emitted_schema_keeps_the_rationale_length_guidance(self):
+        """The schema is the only steer on the unconstrained path."""
+        rationale = AutoReviewVerdict.model_json_schema()["properties"]["rationale"]
+
+        assert "70 characters" in rationale["description"]
+        assert rationale["maxLength"] == 1000
 
 
 class TestReviewerRequest:
@@ -389,6 +473,25 @@ class TestBashAutoReview:
 
     @pytest.mark.asyncio
     async def test_safety_forced_command_is_reviewed(self):
+        """The reviewer sees the full text of a safety-ceiling command.
+
+        ``&&`` alone no longer forces the ceiling (each sub-command is judged
+        on its own), so this uses command substitution — a construct the argv
+        rules genuinely cannot decompose.
+        """
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        reviewer = StubReviewer(verdict("low"))
+        hooks, _ = hooks_for("auto", reviewer, broker)
+
+        await hooks.on_tool_start(context({"command": "git status && echo $(id)"}), MagicMock(), tool("bash"))
+
+        assert reviewer.requests[0][0].static_assessment["safety_forced"] is True
+        broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fully_allow_listed_chain_never_reaches_the_reviewer(self):
+        """Static per-sub-command ALLOW short-circuits before any model call."""
         broker = MagicMock()
         broker.request = AsyncMock()
         reviewer = StubReviewer(verdict("low"))
@@ -396,7 +499,7 @@ class TestBashAutoReview:
 
         await hooks.on_tool_start(context({"command": "git status && git diff"}), MagicMock(), tool("bash"))
 
-        assert reviewer.requests[0][0].static_assessment["safety_forced"] is True
+        assert reviewer.requests == []
         broker.request.assert_not_called()
 
     @pytest.mark.asyncio
@@ -518,3 +621,118 @@ class TestSqlAutoReview:
 
         event = broker.request.await_args.args[0][0]
         assert "`high` risk" in event.content
+
+
+class TestReviewHandoffToToolAction:
+    """The gate publishes its verdict so the tool action can display it."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self):
+        from datus.tools.permission import review_registry
+
+        review_registry.clear()
+        yield
+        review_registry.clear()
+
+    @staticmethod
+    def _take(call_id="call_1"):
+        from datus.tools.permission import review_registry
+
+        return review_registry.take(call_id)
+
+    @pytest.mark.asyncio
+    async def test_auto_allowed_bash_publishes_the_verdict(self):
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        published = self._take()
+        assert published["outcome"] == "auto_allowed"
+        assert published["decision"] == "allow"
+        assert published["risk_level"] == "low"
+        assert published["rationale"] == "low test action"
+        broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_user_override_is_published_as_such(self):
+        """A flagged action the user approved must not read as a clean pass."""
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["y"]])
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("high", decision="ask")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        published = self._take()
+        assert published["outcome"] == "user_approved"
+        assert published["decision"] == "ask"
+        assert published["risk_level"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_denied_action_publishes_nothing(self):
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["n"]])
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("high", decision="ask")), broker)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        assert self._take() is None
+
+    @pytest.mark.asyncio
+    async def test_inconclusive_review_is_published_as_unavailable(self):
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["y"]])
+        hooks, _ = hooks_for("auto", StubReviewer(None), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        published = self._take()
+        assert published == {"outcome": "user_approved", "decision": "unavailable"}
+
+    @pytest.mark.asyncio
+    async def test_review_disabled_publishes_nothing(self):
+        """The CLI must never claim a review happened when none did."""
+        broker = MagicMock()
+        broker.request = AsyncMock(return_value=[["y"]])
+        hooks, _ = hooks_for("normal", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}), MagicMock(), tool("bash"))
+
+        assert self._take() is None
+
+    @pytest.mark.asyncio
+    async def test_statically_allowed_command_publishes_nothing(self):
+        """No review ran, so there is nothing to show on the tool action."""
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "git status"}), MagicMock(), tool("bash"))
+
+        assert self._take() is None
+
+    @pytest.mark.asyncio
+    async def test_auto_allowed_sql_publishes_the_verdict(self):
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("medium")), broker)
+
+        await hooks.on_tool_start(context({"sql": "DELETE FROM t WHERE id = 1"}), MagicMock(), tool("execute_sql"))
+
+        published = self._take()
+        assert published["outcome"] == "auto_allowed"
+        assert published["risk_level"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_each_call_is_keyed_separately(self):
+        broker = MagicMock()
+        broker.request = AsyncMock()
+        hooks, _ = hooks_for("auto", StubReviewer(verdict("low")), broker)
+
+        await hooks.on_tool_start(context({"command": "cargo build"}, call_id="a"), MagicMock(), tool("bash"))
+        await hooks.on_tool_start(context({"command": "cargo test"}, call_id="b"), MagicMock(), tool("bash"))
+
+        assert self._take("a")["outcome"] == "auto_allowed"
+        assert self._take("b")["outcome"] == "auto_allowed"

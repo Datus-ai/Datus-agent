@@ -455,7 +455,7 @@ class TestResolvePermissionComponents:
 
 
 # ---------------------------------------------------------------------------
-# Tests: run_sql_gate (permission + transformers + sql_policy for manual SQL)
+# Tests: run_sql_gate (permission + transformers + policy runtime for manual SQL)
 # ---------------------------------------------------------------------------
 
 
@@ -514,36 +514,30 @@ class TestRunSqlGate:
         assert gate.approved is False
         assert gate.error
 
-    def test_sql_policy_applies_without_chat_node(self):
-        """Read governance is enforced even before the first chat node exists —
-        the policy is resolved off agent_config, not the (absent) node."""
+    def test_policy_runtime_applies_without_chat_node(self):
+        """Read governance is enforced before the first chat node exists."""
         from datus.cli import bash_mode
 
         cli = _sql_cli()  # current_node is None
-        enforced = SimpleNamespace(allowed=True, sql="SELECT masked FROM t", applied_policies=["p"])
-        enforcer = MagicMock()
-        enforcer.enforce_read.return_value = enforced
-        with (
-            patch.object(bash_mode, "_enabled_sql_policy", return_value=object()),
-            patch("datus.tools.sql_policy.load_sql_policy_enforcer", return_value=enforcer),
-        ):
+        runtime = MagicMock()
+        runtime.before_sql_read.return_value = SimpleNamespace(
+            allowed=True, sql="SELECT masked FROM t", applied_policies=["p"]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             gate = bash_mode.run_sql_gate(cli, "SELECT * FROM t")
         assert gate.approved is True
         assert gate.sql == "SELECT masked FROM t"
-        enforcer.enforce_read.assert_called_once()
+        runtime.before_sql_read.assert_called_once()
 
-    def test_sql_policy_denies_without_chat_node(self):
+    def test_policy_runtime_denies_without_chat_node(self):
         """A policy denial before any chat node fails the gate (fail closed)."""
         from datus.cli import bash_mode
 
         cli = _sql_cli()
         enforced = SimpleNamespace(allowed=False, reason="blocked by policy", sql=None, applied_policies=[])
-        enforcer = MagicMock()
-        enforcer.enforce_read.return_value = enforced
-        with (
-            patch.object(bash_mode, "_enabled_sql_policy", return_value=object()),
-            patch("datus.tools.sql_policy.load_sql_policy_enforcer", return_value=enforcer),
-        ):
+        runtime = MagicMock()
+        runtime.before_sql_read.return_value = enforced
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
             gate = bash_mode.run_sql_gate(cli, "SELECT * FROM t")
         assert gate.approved is False
         assert "blocked by policy" in (gate.error or "")
@@ -626,20 +620,39 @@ class TestRunSqlGate:
         assert gate.approved is False
         assert "instead of an arg dict" in (gate.error or "")
 
-    def test_sql_policy_rewrite_applied_for_read(self):
-        """``_enforce_sql_policy`` (via the node's db_func_tool) can rewrite a read."""
+    def test_policy_runtime_rewrite_applied_for_read(self):
         from datus.cli.bash_mode import run_sql_gate
 
-        node = MagicMock()
-        node.permission_manager = None  # force CLI-owned manager
-        node.db_func_tool._enforce_sql_policy.return_value = "SELECT 1 WHERE x=1"
-        cli = _sql_cli(node=node)
-        # node has no permission_manager → CLI-owned; keep node for db_func_tool.
-        node.permission_manager = None
-        gate = run_sql_gate(cli, "SELECT 1")
+        runtime = MagicMock()
+        runtime.before_sql_read.return_value = SimpleNamespace(
+            allowed=True, sql="SELECT 1 WHERE x=1", applied_policies=["scope"]
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            gate = run_sql_gate(_sql_cli(), "SELECT 1")
         assert gate.approved is True
         assert gate.sql == "SELECT 1 WHERE x=1"
-        node.db_func_tool._enforce_sql_policy.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("rewritten_sql", "error"),
+        [
+            ("DROP TABLE orders", "non-read SQL"),
+            ("SELECT 1; DELETE FROM orders", "multi-statement SQL"),
+            ("PRAGMA foreign_keys = OFF", "writable PRAGMA"),
+        ],
+    )
+    def test_policy_runtime_unsafe_rewrite_fails_closed(self, rewritten_sql, error):
+        from datus.cli.bash_mode import run_sql_gate
+
+        runtime = MagicMock()
+        runtime.before_sql_read.return_value = SimpleNamespace(
+            allowed=True,
+            sql=rewritten_sql,
+            applied_policies=["broken"],
+        )
+        with patch("datus.tools.policy_runtime.PolicyRuntime", return_value=runtime):
+            gate = run_sql_gate(_sql_cli(), "SELECT 1")
+        assert gate.approved is False
+        assert error in (gate.error or "")
 
 
 # ---------------------------------------------------------------------------

@@ -21,8 +21,17 @@ from datus.storage.artifact_replacement import (
     snapshot_artifact_replacements,
 )
 from datus.storage.metric.store import MetricRAG, build_metric_id, metric_definition_conflict, normalize_metric_name
-from datus.storage.semantic_model.store import SemanticModelRAG, _identifier_variants, _normalized_identifier
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+from datus.storage.semantic_dataset.store import (
+    KIND_DATASET,
+    KIND_FIELD,
+    KIND_RELATIONSHIP,
+    SemanticDatasetRAG,
+    _identifier_variants,
+    _normalized_identifier,
+    dataset_row_id,
+    field_row_id,
+    relationship_row_id,
+)
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -65,6 +74,9 @@ def _is_supported_row_container(rows: Any) -> bool:
     return isinstance(rows, Iterable) and not isinstance(rows, (str, bytes))
 
 
+_DB_PART_FIELDS = ("catalog_name", "database_name", "schema_name")
+
+
 def _rag_scope_conditions(rag: Any) -> List[Any]:
     method = getattr(rag, "_sub_agent_conditions", None)
     if not callable(method):
@@ -103,13 +115,12 @@ class GenerationTools:
 
             self.authoring_format = resolve_authoring_format(agent_config)
         self.metric_rag = MetricRAG(agent_config)
-        self.semantic_rag = SemanticModelRAG(agent_config)
-        self.table_semantic_profile_rag = None
+        self.semantic_dataset_rag = None
         if isinstance(getattr(agent_config, "project_name", ""), str):
             try:
-                self.table_semantic_profile_rag = TableSemanticProfileRAG(agent_config)
+                self.semantic_dataset_rag = SemanticDatasetRAG(agent_config)
             except Exception as exc:
-                logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
+                logger.debug(f"Failed to initialize semantic dataset storage: {exc}")
         self._semantic_object_exists_cache: Dict[tuple[str, str, str], FuncToolResult] = {}
         self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
         self.osi_target_state = osi_target_state
@@ -193,32 +204,29 @@ class GenerationTools:
                 if results:
                     found_object = results[0]
             else:
-                # For column, use vector search + post-filter
-                storage = self.semantic_rag.storage
-                results = storage.search_objects(
-                    query_text=object_name,
-                    kinds=[normalized_kind],
-                    table_name=table_context if table_context else None,
-                    top_n=5,
-                    extra_conditions=_rag_scope_conditions(self.semantic_rag),
+                # An existence check is an exact lookup, not a similarity
+                # question: scan the field rows in scope and compare names
+                # case-insensitively rather than ranking by embedding.
+                storage = self.semantic_dataset_rag.storage
+                results = storage._search_all(
+                    where=And([eq("kind", KIND_FIELD)] + _rag_scope_conditions(self.semantic_dataset_rag)),
+                    select_fields=["id", "name", "kind", "dataset_name"],
                 )
-                # Determine target table from explicit context or dotted name
-                target_table = None
+                # Determine the owning dataset from explicit context or dotted name
+                target_dataset = None
                 if table_context:
-                    target_table = table_context.lower()
+                    target_dataset = table_context.lower()
                 elif "." in object_name:
-                    target_table = object_name.rsplit(".", 1)[0].lower()
+                    target_dataset = object_name.rsplit(".", 1)[0].lower()
 
                 for obj in _rows_to_dicts(results):
-                    name_match = obj.get("name", "").lower() == target_name
-                    if target_table:
-                        table_match = obj.get("table_name", "").lower() == target_table
-                        if name_match and table_match:
-                            found_object = obj
-                            break
-                    elif name_match:
-                        found_object = obj
-                        break
+                    name_match = str(obj.get("name") or "").lower() == target_name
+                    if not name_match:
+                        continue
+                    if target_dataset and str(obj.get("dataset_name") or "").lower() != target_dataset:
+                        continue
+                    found_object = obj
+                    break
 
             if found_object:
                 result = FuncToolResult(
@@ -310,19 +318,27 @@ class GenerationTools:
         if self._semantic_table_object_index is not None:
             return self._semantic_table_object_index
 
-        storage = self.semantic_rag.storage
-        select_fields = ["id", "name", "kind", "table_name", "fq_name"]
-        rows = storage.search_all(
-            where=And([eq("kind", "table")] + _rag_scope_conditions(self.semantic_rag)),
+        storage = self.semantic_dataset_rag.storage
+        select_fields = ["id", "name", "kind", "dataset_name", "source_table", *_DB_PART_FIELDS]
+        rows = storage._search_all(
+            where=And([eq("kind", KIND_DATASET)] + _rag_scope_conditions(self.semantic_dataset_rag)),
             select_fields=select_fields,
         )
         index: Dict[str, Dict[str, object]] = {}
         for obj in _rows_to_dicts(rows):
-            for field in ("name", "table_name", "fq_name"):
-                value = str(obj.get(field) or "").strip()
-                if not value:
+            # A dataset answers to its own name, to the table it binds, and to
+            # that table's qualified name.
+            source_table = str(obj.get("source_table") or "").strip()
+            qualified = ".".join(
+                part
+                for part in (*(str(obj.get(field) or "").strip() for field in _DB_PART_FIELDS), source_table)
+                if part
+            )
+            for value in (obj.get("dataset_name"), source_table, qualified):
+                text = str(value or "").strip()
+                if not text:
                     continue
-                for variant in _identifier_variants(value):
+                for variant in _identifier_variants(text):
                     if variant:
                         index.setdefault(variant, obj)
                     normalized = _normalized_identifier(variant)
@@ -817,90 +833,142 @@ class GenerationTools:
             )
         return [{key: value for key, value in item.items() if value not in (None, "", [], {})} for item in columns]
 
-    @classmethod
-    def _osi_dataset_relationships(cls, doc: Any, dataset_name: str) -> List[dict]:
-        relationships: List[dict] = []
-        for relationship in getattr(doc, "relationships", []) or []:
-            from_dataset = cls._relationship_endpoint(relationship, "from", "from_dataset")
-            to_dataset = cls._relationship_endpoint(relationship, "to", "to_dataset")
-            if dataset_name not in (from_dataset, to_dataset):
-                continue
-            from_columns = cls._relationship_columns(relationship, "from_columns", "from_identifier")
-            to_columns = cls._relationship_columns(relationship, "to_columns", "to_identifier")
-            relationships.append(
-                {
-                    "name": str(getattr(relationship, "name", "") or ""),
-                    "type": str(getattr(relationship, "type", "") or ""),
-                    "from_dataset": from_dataset,
-                    "to_dataset": to_dataset,
-                    "from_columns": from_columns,
-                    "to_columns": to_columns,
-                    "role": "from" if from_dataset == dataset_name else "to",
-                    "ai_context": getattr(relationship, "ai_context", None),
-                    "join_type": getattr(relationship, "join_type", None),
-                }
-            )
-        return [
-            {key: value for key, value in item.items() if value not in (None, "", [], {})} for item in relationships
-        ]
+    @staticmethod
+    def _osi_dataset_binding(dataset: Any) -> tuple[str, str]:
+        """Split a dataset's source into (physical table leaf, reusable query).
+
+        Exactly one side is populated. A query-backed dataset gets no table, so
+        it can never be picked up by a lookup for a physical table that happens
+        to share its name.
+        """
+        source = getattr(dataset, "source", None)
+        table_ref = str(getattr(source, "table", "") or "")
+        query = str(getattr(source, "query", "") or "")
+        if query:
+            return "", query
+        return table_ref.split(".")[-1], ""
 
     @classmethod
-    def _osi_table_semantic_profile(
+    def _osi_dataset_rows(
         cls,
         *,
         doc: Any,
         dataset: Any,
-        table_name: str,
-        table_fq_name: str,
+        source_table: str,
+        source_query: str,
         db_parts: dict[str, str],
         yaml_path: str,
-    ) -> dict:
-        dataset_name = str(getattr(dataset, "name", "") or table_name)
-        columns = cls._osi_dataset_columns(dataset)
-        relationships = cls._osi_dataset_relationships(doc, dataset_name)
-        ai_context = getattr(dataset, "ai_context", None)
-        custom_extensions = getattr(dataset, "custom_extensions", None) or []
-        description = getattr(dataset, "description", "") or ""
+    ) -> List[dict]:
+        """Project one dataset into its own row plus one row per field."""
         semantic_model_name = str(getattr(doc, "name", "") or "")
-        physical_table = table_fq_name or table_name
-        return {
-            "id": f"osi:{semantic_model_name}:{physical_table}",
-            "format": "osi",
-            "physical_table_fq_name": physical_table,
-            "table_name": table_name,
-            "semantic_model_name": semantic_model_name,
-            "dataset_name": dataset_name,
-            "data_source_name": "",
-            "description": description,
-            "ai_context_json": cls._json_dumps(ai_context),
-            "columns_json": cls._json_dumps(columns),
-            "relationships_json": cls._json_dumps(relationships),
-            "custom_extensions_json": cls._json_dumps(custom_extensions),
-            "yaml_path": yaml_path,
-            "search_text": cls._profile_search_text(
-                semantic_model_name,
-                dataset_name,
-                physical_table,
-                description,
-                ai_context,
-                columns,
-                relationships,
-            ),
-            "updated_at": datetime.now().replace(microsecond=0),
-            **db_parts,
-        }
+        dataset_name = str(getattr(dataset, "name", "") or source_table)
+        description = getattr(dataset, "description", "") or ""
+        ai_context = getattr(dataset, "ai_context", None)
+        stamped_at = datetime.now().replace(microsecond=0)
 
-    def _upsert_table_semantic_profiles(self, profiles: List[dict]) -> int:
-        if not profiles or self.table_semantic_profile_rag is None:
-            return 0
-        yaml_path = str(profiles[0].get("yaml_path") or "")
-        self.table_semantic_profile_rag.upsert_batch(profiles)
-        self.table_semantic_profile_rag.create_indices()
-        if yaml_path:
-            self.table_semantic_profile_rag.delete_artifact_rows_except(
-                yaml_path, [profile.get("id", "") for profile in profiles]
+        rows: List[dict] = [
+            {
+                "id": dataset_row_id(semantic_model_name, dataset_name),
+                "kind": KIND_DATASET,
+                "semantic_model_name": semantic_model_name,
+                "dataset_name": dataset_name,
+                "name": dataset_name,
+                "source_table": source_table,
+                "source_query": source_query,
+                "description": description,
+                "ai_context_json": cls._json_dumps(ai_context),
+                "search_text": cls._profile_search_text(
+                    semantic_model_name, dataset_name, source_table, description, ai_context
+                ),
+                "yaml_path": yaml_path,
+                "updated_at": stamped_at,
+                **db_parts,
+            }
+        ]
+
+        for column in cls._osi_dataset_columns(dataset):
+            field_name = str(column.get("name") or "")
+            if not field_name:
+                continue
+            role = str(column.get("role") or "")
+            rows.append(
+                {
+                    "id": field_row_id(semantic_model_name, dataset_name, field_name),
+                    "kind": KIND_FIELD,
+                    "semantic_model_name": semantic_model_name,
+                    "dataset_name": dataset_name,
+                    "name": field_name,
+                    # Carried from the dataset so a lookup can narrow fields to
+                    # one physical table without resolving the dataset first.
+                    "source_table": source_table,
+                    "expr": str(column.get("expr") or field_name),
+                    "field_type": str(column.get("type") or ""),
+                    "is_primary_key": role == "primary_key",
+                    "is_time": role == "time_dimension",
+                    "is_dimension": role in ("dimension", "time_dimension"),
+                    "time_granularity": str(column.get("granularity") or ""),
+                    "description": str(column.get("description") or ""),
+                    "ai_context_json": cls._json_dumps(column.get("ai_context")),
+                    "search_text": cls._profile_search_text(
+                        dataset_name,
+                        field_name,
+                        column.get("expr"),
+                        column.get("description"),
+                        column.get("ai_context"),
+                    ),
+                    "yaml_path": yaml_path,
+                    "updated_at": stamped_at,
+                    **db_parts,
+                }
             )
-        return len(profiles)
+        return rows
+
+    @classmethod
+    def _osi_relationship_rows(cls, *, doc: Any, yaml_path: str) -> List[dict]:
+        """Project a model's relationships, which belong to the model itself.
+
+        Endpoints are dataset names, and those names only mean anything inside
+        their own semantic model — which is why these rows are never merged
+        across models when a table is read back.
+        """
+        semantic_model_name = str(getattr(doc, "name", "") or "")
+        stamped_at = datetime.now().replace(microsecond=0)
+        rows: List[dict] = []
+        for relationship in getattr(doc, "relationships", []) or []:
+            from_dataset = cls._relationship_endpoint(relationship, "from", "from_dataset")
+            to_dataset = cls._relationship_endpoint(relationship, "to", "to_dataset")
+            from_columns = cls._relationship_columns(relationship, "from_columns", "from_identifier")
+            to_columns = cls._relationship_columns(relationship, "to_columns", "to_identifier")
+            if not from_dataset and not to_dataset:
+                continue
+            name = str(getattr(relationship, "name", "") or "")
+            # An unnamed relationship still needs a stable identity, or two of
+            # them would collapse onto the same row. Its endpoints and joining
+            # columns are what make it unique in that case.
+            identity = name or f"{from_dataset}->{to_dataset}:{','.join(from_columns)}"
+            # The synthesized identity is also what the row is called, so an
+            # unnamed relationship still sorts and displays deterministically.
+            ai_context = getattr(relationship, "ai_context", None)
+            rows.append(
+                {
+                    "id": relationship_row_id(semantic_model_name, identity),
+                    "kind": KIND_RELATIONSHIP,
+                    "semantic_model_name": semantic_model_name,
+                    "dataset_name": "",
+                    "name": identity,
+                    "from_dataset": from_dataset,
+                    "to_dataset": to_dataset,
+                    "from_columns_json": cls._json_dumps(from_columns),
+                    "to_columns_json": cls._json_dumps(to_columns),
+                    "rel_type": str(getattr(relationship, "type", "") or ""),
+                    "join_type": str(getattr(relationship, "join_type", "") or ""),
+                    "ai_context_json": cls._json_dumps(ai_context),
+                    "search_text": cls._profile_search_text(name, from_dataset, to_dataset, ai_context),
+                    "yaml_path": yaml_path,
+                    "updated_at": stamped_at,
+                }
+            )
+        return rows
 
     @staticmethod
     def _current_db_parts(agent_config: AgentConfig) -> dict[str, str]:
@@ -926,12 +994,6 @@ class GenerationTools:
             or getattr(current_db_config, "schema", "")
             or "",
         }
-
-    @staticmethod
-    def _dataset_table_name(dataset: Any) -> str:
-        source = getattr(dataset, "source", None)
-        table = getattr(source, "table", None) or getattr(dataset, "name", "")
-        return str(table).split(".")[-1]
 
     def _dataset_db_parts(self, dataset: Any, default_db_parts: dict[str, str]) -> dict[str, str]:
         """Hierarchy for one dataset: a qualified source table overrides the
@@ -1157,6 +1219,11 @@ class GenerationTools:
     ) -> dict:
         """Sync OSI datasets into the semantic object store."""
         try:
+            # Checked before any work: a caller that prepares rows and then
+            # finds no store would otherwise report success having written
+            # nothing.
+            if self.semantic_dataset_rag is None:
+                return {"success": False, "error": "Semantic dataset storage is unavailable"}
             target_dataset_names = set(self.extract_osi_dataset_names(semantic_model_path))
             if not target_dataset_names:
                 return {
@@ -1165,122 +1232,36 @@ class GenerationTools:
                 }
 
             doc = doc or self._load_osi_document(semantic_model_file=semantic_model_path)
-            semantic_model_name = str(getattr(doc, "name", "") or "")
             default_db_parts = self._current_db_parts(self.agent_config)
-            semantic_objects: List[dict] = []
-            table_profiles: List[dict] = []
+            dataset_rows: List[dict] = []
             synced_items: List[str] = []
 
             for dataset in getattr(doc, "datasets", []):
                 dataset_name = getattr(dataset, "name", "")
                 if dataset_name not in target_dataset_names:
                     continue
-                table_name = self._dataset_table_name(dataset)
                 db_parts = self._dataset_db_parts(dataset, default_db_parts)
-                fq_parts = [db_parts["catalog_name"], db_parts["database_name"], db_parts["schema_name"], table_name]
-                table_fq_name = ".".join(part for part in fq_parts if part)
                 yaml_path = semantic_model_path
-                table_profiles.append(
-                    self._osi_table_semantic_profile(
+                source_table, source_query = self._osi_dataset_binding(dataset)
+                synced_items.append(source_table or dataset_name)
+                dataset_rows.extend(
+                    self._osi_dataset_rows(
                         doc=doc,
                         dataset=dataset,
-                        table_name=table_name,
-                        table_fq_name=table_fq_name,
-                        db_parts=db_parts,
+                        source_table=source_table,
+                        source_query=source_query,
+                        # A query-backed dataset has no place in the warehouse
+                        # namespace, so it carries no coordinates either.
+                        db_parts=db_parts if source_table else {key: "" for key in db_parts},
                         yaml_path=yaml_path,
                     )
                 )
 
-                semantic_objects.append(
-                    {
-                        "id": f"table:{semantic_model_name}:{table_fq_name}",
-                        "kind": "table",
-                        "name": table_name,
-                        "fq_name": table_fq_name,
-                        "table_name": table_name,
-                        "description": getattr(dataset, "description", "") or "",
-                        "yaml_path": yaml_path,
-                        "updated_at": datetime.now().replace(microsecond=0),
-                        **db_parts,
-                        "semantic_model_name": semantic_model_name,
-                        "is_dimension": False,
-                        "is_measure": False,
-                        "is_entity_key": False,
-                        "is_deprecated": False,
-                        "expr": "",
-                        "column_type": "",
-                        "agg": "",
-                        "create_metric": False,
-                        "agg_time_dimension": "",
-                        "is_partition": False,
-                        "time_granularity": "",
-                        "entity": "",
-                    }
-                )
-                synced_items.append(f"table:{table_fq_name}")
+            # Relationships hang off the model, not any single dataset, so they
+            # are projected once per document rather than per dataset.
+            dataset_rows.extend(self._osi_relationship_rows(doc=doc, yaml_path=semantic_model_path))
 
-                primary_keys = getattr(dataset, "primary_key", None) or []
-                if isinstance(primary_keys, str):
-                    primary_keys = [primary_keys]
-                for key in primary_keys:
-                    semantic_objects.append(
-                        self._osi_column_object(
-                            table_name=table_name,
-                            table_fq_name=table_fq_name,
-                            semantic_model_name=semantic_model_name,
-                            name=str(key),
-                            description="Primary key",
-                            expr=str(key),
-                            column_type="PRIMARY",
-                            yaml_path=yaml_path,
-                            db_parts=db_parts,
-                            is_entity_key=True,
-                        )
-                    )
-
-                time_dimension = getattr(dataset, "time_dimension", None)
-                if time_dimension and getattr(time_dimension, "name", None):
-                    semantic_objects.append(
-                        self._osi_column_object(
-                            table_name=table_name,
-                            table_fq_name=table_fq_name,
-                            semantic_model_name=semantic_model_name,
-                            name=str(time_dimension.name),
-                            description="Primary time dimension",
-                            expr=str(time_dimension.name),
-                            column_type="TIME",
-                            yaml_path=yaml_path,
-                            db_parts=db_parts,
-                            is_dimension=True,
-                            time_granularity=getattr(time_dimension, "granularity", "") or "",
-                        )
-                    )
-
-                fields = getattr(dataset, "fields", None)
-                dimension_names = {
-                    str(getattr(dimension, "name", "") or "") for dimension in getattr(dataset, "dimensions", []) or []
-                }
-                for field in fields if fields is not None else getattr(dataset, "dimensions", []):
-                    field_name = str(getattr(field, "name", "") or "")
-                    if not field_name or field_name in {*primary_keys, getattr(time_dimension, "name", None)}:
-                        continue
-                    semantic_objects.append(
-                        self._osi_column_object(
-                            table_name=table_name,
-                            table_fq_name=table_fq_name,
-                            semantic_model_name=semantic_model_name,
-                            name=field_name,
-                            description=getattr(field, "description", "") or "",
-                            expr=getattr(field, "expr", None) or field_name,
-                            column_type=str(getattr(field, "type", "") or ""),
-                            yaml_path=yaml_path,
-                            db_parts=db_parts,
-                            is_dimension=field_name in dimension_names,
-                            time_granularity=getattr(field, "granularity", "") or "",
-                        )
-                    )
-
-            if not semantic_objects:
+            if not dataset_rows:
                 return {
                     "success": False,
                     "error": (
@@ -1291,22 +1272,15 @@ class GenerationTools:
             if prepare_only:
                 return {
                     "success": True,
-                    "semantic_objects": semantic_objects,
-                    "table_semantic_profiles": table_profiles,
+                    "semantic_dataset_rows": dataset_rows,
                     "synced_items": synced_items,
                 }
-            replacement_plans = [(self.semantic_rag, semantic_model_path, semantic_objects)]
-            if self.table_semantic_profile_rag is not None:
-                replacement_plans.append((self.table_semantic_profile_rag, semantic_model_path, table_profiles))
+            replacement_plans = [(self.semantic_dataset_rag, semantic_model_path, dataset_rows)]
             snapshots = snapshot_artifact_replacements(replacement_plans)
             try:
-                self.semantic_rag.upsert_batch(semantic_objects)
-                self.semantic_rag.create_indices()
-                profile_count = 0
-                if table_profiles and self.table_semantic_profile_rag is not None:
-                    self.table_semantic_profile_rag.upsert_batch(table_profiles)
-                    self.table_semantic_profile_rag.create_indices()
-                    profile_count = len(table_profiles)
+                self.semantic_dataset_rag.upsert_batch(dataset_rows)
+                self.semantic_dataset_rag.create_indices()
+                profile_count = len(dataset_rows)
                 delete_stale_artifact_rows(replacement_plans)
             except Exception as sync_exc:
                 restore_failures = restore_artifact_replacements(snapshots)
@@ -1316,58 +1290,14 @@ class GenerationTools:
                         f"{', '.join(restore_failures)}"
                     ) from sync_exc
                 raise
-            # Post-commit, best-effort cleanup of shadowed stale rows; never raises.
-            self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
             return {
                 "success": True,
-                "message": f"Synced {len(semantic_objects)} OSI semantic object(s): {', '.join(synced_items[:5])}",
-                "semantic_objects": len(semantic_objects),
-                "table_semantic_profiles": profile_count,
+                "message": f"Synced {profile_count} OSI semantic row(s): {', '.join(synced_items[:5])}",
+                "semantic_dataset_rows": profile_count,
             }
         except Exception as e:
             logger.error(f"Error syncing OSI semantic objects to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
-
-    @staticmethod
-    def _osi_column_object(
-        *,
-        table_name: str,
-        table_fq_name: str,
-        semantic_model_name: str,
-        name: str,
-        description: str,
-        expr: str,
-        column_type: str,
-        yaml_path: str,
-        db_parts: dict[str, str],
-        is_dimension: bool = False,
-        is_entity_key: bool = False,
-        time_granularity: str = "",
-    ) -> dict:
-        return {
-            "id": f"column:{semantic_model_name}:{table_fq_name}.{name}",
-            "kind": "column",
-            "name": name,
-            "fq_name": f"{table_fq_name}.{name}",
-            "table_name": table_name,
-            "description": description,
-            "is_dimension": is_dimension,
-            "is_measure": False,
-            "is_entity_key": is_entity_key,
-            "is_deprecated": False,
-            "yaml_path": yaml_path,
-            "updated_at": datetime.now().replace(microsecond=0),
-            **db_parts,
-            "semantic_model_name": semantic_model_name,
-            "expr": expr,
-            "column_type": column_type,
-            "agg": "",
-            "create_metric": False,
-            "agg_time_dimension": "",
-            "is_partition": False,
-            "time_granularity": time_granularity,
-            "entity": name if is_entity_key else "",
-        }
 
     def _build_osi_metric_objects(
         self,
@@ -1596,7 +1526,7 @@ class GenerationTools:
                     ),
                 }
 
-            semantic_replacements: List[tuple[str, List[dict], List[dict]]] = []
+            semantic_replacements: List[tuple[str, List[dict]]] = []
             semantic_replacement_plans = []
             synced_semantic_files: List[str] = []
             for current_semantic_file in semantic_model_files:
@@ -1606,14 +1536,10 @@ class GenerationTools:
                 )
                 if not sem_result.get("success"):
                     return sem_result
-                semantic_objects = list(sem_result.get("semantic_objects") or [])
-                table_profiles = list(sem_result.get("table_semantic_profiles") or [])
-                semantic_replacements.append((current_semantic_file, semantic_objects, table_profiles))
-                semantic_replacement_plans.append((self.semantic_rag, current_semantic_file, semantic_objects))
-                if self.table_semantic_profile_rag is not None:
-                    semantic_replacement_plans.append(
-                        (self.table_semantic_profile_rag, current_semantic_file, table_profiles)
-                    )
+                dataset_rows = list(sem_result.get("semantic_dataset_rows") or [])
+                semantic_replacements.append((current_semantic_file, dataset_rows))
+                if self.semantic_dataset_rag is not None:
+                    semantic_replacement_plans.append((self.semantic_dataset_rag, current_semantic_file, dataset_rows))
                 synced_semantic_files.append(current_semantic_file)
 
             metric_plan = (self.metric_rag, metric_file, metric_objects)
@@ -1631,13 +1557,10 @@ class GenerationTools:
                         absent_metric_names.add(previous_name)
             keep_metric_ids = [build_metric_id([], name) for name in declared_metric_names]
             try:
-                for _semantic_file, semantic_objects, table_profiles in semantic_replacements:
-                    if semantic_objects:
-                        self.semantic_rag.upsert_batch(semantic_objects)
-                        self.semantic_rag.create_indices()
-                    if table_profiles and self.table_semantic_profile_rag is not None:
-                        self.table_semantic_profile_rag.upsert_batch(table_profiles)
-                        self.table_semantic_profile_rag.create_indices()
+                for _semantic_file, dataset_rows in semantic_replacements:
+                    if dataset_rows and self.semantic_dataset_rag is not None:
+                        self.semantic_dataset_rag.upsert_batch(dataset_rows)
+                        self.semantic_dataset_rag.create_indices()
                 if metric_objects:
                     self.metric_rag.upsert_batch(metric_objects)
                     self.metric_rag.create_indices()
@@ -1651,10 +1574,6 @@ class GenerationTools:
                         f"{', '.join(restore_failures)}"
                     ) from sync_exc
                 raise
-            for _semantic_file, semantic_objects, _table_profiles in semantic_replacements:
-                if semantic_objects:
-                    # Post-commit, best-effort cleanup; never raises.
-                    self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
             return {
                 "success": True,
                 "message": (
@@ -1697,8 +1616,7 @@ class GenerationTools:
             )
 
             replacement_plans = []
-            semantic_objects: List[dict] = []
-            table_profiles: List[dict] = []
+            dataset_rows: List[dict] = []
             synced_items: List[str] = []
             if include_semantic_objects:
                 prepared_semantic = self._sync_osi_semantic_objects_to_db(
@@ -1708,12 +1626,10 @@ class GenerationTools:
                 )
                 if not prepared_semantic.get("success"):
                     return {**prepared_semantic, "synced": 0}
-                semantic_objects = list(prepared_semantic.get("semantic_objects") or [])
-                table_profiles = list(prepared_semantic.get("table_semantic_profiles") or [])
+                dataset_rows = list(prepared_semantic.get("semantic_dataset_rows") or [])
                 synced_items = list(prepared_semantic.get("synced_items") or [])
-                replacement_plans.append((self.semantic_rag, osi_file_path, semantic_objects))
-                if self.table_semantic_profile_rag is not None:
-                    replacement_plans.append((self.table_semantic_profile_rag, osi_file_path, table_profiles))
+                if self.semantic_dataset_rag is not None:
+                    replacement_plans.append((self.semantic_dataset_rag, osi_file_path, dataset_rows))
 
             declared_metric_names = set(self.extract_osi_metric_names(osi_file_path))
             metric_objects: List[dict] = []
@@ -1751,12 +1667,9 @@ class GenerationTools:
                         deleted_metric_names.add(previous_name)
 
             try:
-                if semantic_objects:
-                    self.semantic_rag.upsert_batch(semantic_objects)
-                    self.semantic_rag.create_indices()
-                if table_profiles and self.table_semantic_profile_rag is not None:
-                    self.table_semantic_profile_rag.upsert_batch(table_profiles)
-                    self.table_semantic_profile_rag.create_indices()
+                if dataset_rows and self.semantic_dataset_rag is not None:
+                    self.semantic_dataset_rag.upsert_batch(dataset_rows)
+                    self.semantic_dataset_rag.create_indices()
                 if metric_objects:
                     self.metric_rag.upsert_batch(metric_objects)
                     self.metric_rag.create_indices()
@@ -1770,19 +1683,11 @@ class GenerationTools:
                     ) from sync_exc
                 raise
 
-            if semantic_objects:
-                # Best-effort cleanup outside the replacement transaction.
-                self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
-
-            synced = len(metric_objects) if include_metrics else len(semantic_objects)
+            synced = len(metric_objects) if include_metrics else len(dataset_rows)
             return {
                 "success": True,
-                "message": (
-                    f"Synced {len(semantic_objects)} OSI semantic object(s), "
-                    f"{len(table_profiles)} table profile(s), and {len(metric_objects)} metric(s)"
-                ),
-                "semantic_objects": len(semantic_objects),
-                "table_semantic_profiles": len(table_profiles) if self.table_semantic_profile_rag is not None else 0,
+                "message": (f"Synced {len(dataset_rows)} OSI semantic row(s) and {len(metric_objects)} metric(s)"),
+                "semantic_dataset_rows": len(dataset_rows) if self.semantic_dataset_rag is not None else 0,
                 "metric_artifact_ids": [obj["id"] for obj in metric_objects],
                 "metric_names": [obj["name"] for obj in metric_objects],
                 "deleted_metric_names": sorted(deleted_metric_names),

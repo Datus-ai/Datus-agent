@@ -185,9 +185,13 @@ _NORMAL_RULES = [
 #   * curl / wget / nc / ssh — network egress.
 #   * rm / mv / cp / mkdir / touch / chmod — filesystem writes (mkdir/touch
 #     move to ``auto`` below).
-# Wrappers (bash -c, sudo, xargs, env, ...) and any non-pipe metacharacter
-# command are force-ASKed by the safety ceiling in ``evaluate_bash_command``
-# regardless of this list. Tunable via ``permissions.bash_commands``.
+# Wrappers (bash -c, sudo, xargs, env, ...), compound constructs (loops,
+# subshells) and any residual metacharacter command ($(), redirection,
+# background &) are force-ASKed by the safety ceiling in
+# ``evaluate_bash_command`` regardless of this list. Note that a command
+# chained with ``|``/``&&``/``||``/``;`` is judged per sub-command, so a chain
+# built purely from this list auto-runs.
+# Tunable via ``permissions.bash_commands``.
 _NORMAL_BASH_ALLOW = [
     # environment / identity info
     "pwd",

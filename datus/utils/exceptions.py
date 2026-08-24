@@ -2,9 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import re
 import sys
 import traceback
 from enum import Enum
+from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_log_manager, get_logger
 
@@ -36,7 +38,10 @@ class ErrorCode(Enum):
 
     # Model errors
     MODEL_REQUEST_FAILED = ("300001", "LLM request failed")
-    MODEL_INVALID_RESPONSE = ("300002", "Invalid request format, content, or model response (HTTP 400)")
+    # Covers BOTH a rejected request (provider HTTP 400) and an unusable
+    # response (unparseable / empty model output), so the description must not
+    # name either one — the caller's ``error_detail`` says which it was.
+    MODEL_INVALID_RESPONSE = ("300002", "Invalid request or unusable model response")
     MODEL_TIMEOUT = ("300003", "Model request timeout")
 
     # API errors following Anthropic/OpenAI standards
@@ -206,14 +211,41 @@ class DatusException(Exception):
     def __str__(self):
         return self.message
 
-    def build_msg(self, message=None, message_args=None):
+    @staticmethod
+    def _desc_placeholders(template: str) -> set[str]:
+        """Root names of the ``{...}`` fields in ``template``.
+
+        ``{detail}`` -> ``detail``; ``{err.args[0]}`` -> ``err``, so a nested
+        accessor still counts its argument as consumed.
+        """
+        from string import Formatter
+
+        names: set[str] = set()
+        for _, field_name, _, _ in Formatter().parse(template):
+            if field_name:
+                names.add(re.split(r"[.\[]", field_name, maxsplit=1)[0])
+        return names
+
+    def build_msg(self, message: Optional[str] = None, message_args: Optional[Dict[str, Any]] = None) -> str:
         if message:
             final_message = message
         elif message_args:
             try:
-                final_message = self.code.desc.format(**message_args)
+                formatted = self.code.desc.format(**message_args)
             except (KeyError, IndexError):
                 final_message = f"{self.code.desc} (args={message_args})"
+            else:
+                # Args the description has no placeholder for used to be
+                # dropped without a trace: ``"...(HTTP 400)".format(
+                # error_detail=<real cause>)`` returns the template unchanged,
+                # so the only diagnostic the caller passed never reached the
+                # log. Append whatever the template did not consume.
+                unused = {k: v for k, v in message_args.items() if k not in self._desc_placeholders(self.code.desc)}
+                if unused:
+                    detail = ", ".join(f"{k}={v}" for k, v in unused.items())
+                    final_message = f"{formatted} ({detail})"
+                else:
+                    final_message = formatted
         else:
             final_message = self.code.desc
         return f"error_code={self.code.code}, error_message={final_message}"

@@ -403,10 +403,63 @@ def _metadata_pattern() -> re.Pattern:
 
 
 def strip_sql_comments(sql: str) -> str:
-    """Remove /* ... */ and -- ... comments (simple but effective)."""
-    sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
-    sql = re.sub(r"--.*?$", " ", sql, flags=re.MULTILINE)
-    return sql
+    """Remove ``/* ... */`` and ``-- ...`` comments.
+
+    Scanned rather than regexed, because a comment marker inside a string
+    literal is not a comment: ``re.sub`` on ``SELECT 'a--b' FROM t`` cuts the
+    statement down to ``SELECT 'a`` and hands that to whoever asked. Several
+    callers execute the stripped text, so the truncation reaches the database.
+    """
+    out: List[str] = []
+    i = 0
+    length = len(sql)
+    while i < length:
+        ch = sql[i]
+
+        # A quoted run is copied through whole; nothing inside it is a marker.
+        closer = {"'": "'", '"': '"', "`": "`", "[": "]"}.get(ch)
+        if closer:
+            out.append(ch)
+            i += 1
+            while i < length:
+                out.append(sql[i])
+                if sql[i] == closer:
+                    # A doubled quote is an escaped one, not the end.
+                    if i + 1 < length and sql[i + 1] == closer and closer != "]":
+                        out.append(sql[i + 1])
+                        i += 2
+                        continue
+                    if closer == "]" or not _is_escaped(sql, i):
+                        i += 1
+                        break
+                i += 1
+            continue
+
+        if ch == "$":
+            tag = _match_dollar_tag(sql, i)
+            if tag:
+                end = sql.find(tag, i + len(tag))
+                stop = length if end == -1 else end + len(tag)
+                out.append(sql[i:stop])
+                i = stop
+                continue
+
+        if sql.startswith("--", i):
+            end = sql.find("\n", i)
+            i = length if end == -1 else end
+            out.append(" ")
+            continue
+
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            i = length if end == -1 else end + 2
+            out.append(" ")
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
 
 
 def _is_escaped(text: str, index: int) -> bool:
@@ -747,6 +800,120 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
 
     inferred = _fallback_sql_type(first_statement)
     return inferred if inferred else SQLType.UNKNOWN
+
+
+READ_ONLY_MULTI_STATEMENT = "multi_statement"
+READ_ONLY_NON_READ = "non_read"
+READ_ONLY_WRITABLE_PRAGMA = "writable_pragma"
+
+
+def write_statement_reads_data(sql: str, dialect: str) -> bool:
+    """Whether a write statement reads rows a row policy would have filtered.
+
+    ``CREATE TABLE ... AS SELECT`` is the obvious shape, but it is not the only
+    one: ``UPDATE ... FROM``, ``DELETE ... USING`` and ``MERGE ... USING`` all
+    name a source table with no ``Select`` node anywhere in the tree, and
+    ``RETURNING`` hands the rows straight back to the caller. Each reads rows a
+    policy would have withheld and puts them somewhere it does not cover. The
+    read policy plugin cannot see any of it — it hooks reads, and these are
+    writes — so every surface that can run a write has to ask before running it.
+
+    Anything the parser did not actually understand counts as yes. On a project
+    with policies the cost of being wrong in that direction is a refused
+    statement; the other direction is a silent copy of the rows the policy
+    exists to withhold.
+    """
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        # RAISE, not IGNORE. IGNORE does not raise on syntax it cannot place —
+        # it returns an opaque `Command` whose body was never parsed, so
+        # "no Select inside" says nothing about the statement. Every unparsed
+        # shape has to reach the `except` and be refused.
+        #
+        # `parse_dialect`, not the connector's own name: a connector reports
+        # `postgresql` while sqlglot only knows `postgres`, and handing over the
+        # raw value raises for every statement — which this function reads as
+        # "contains a read" and refuses every write, plain `CREATE TABLE`
+        # included.
+        parsed = sqlglot.parse_one(sql, read=parse_dialect(dialect), error_level=sqlglot.ErrorLevel.RAISE)
+    except Exception:
+        return True
+    if parsed is None or isinstance(parsed, exp.Command):
+        return True
+
+    # `COPY` parses, but its source is a table reference rather than a Select,
+    # and `COPY ... TO '/path'` / `TO PROGRAM` on a self-hosted server is a real
+    # export.
+    if isinstance(parsed, exp.Copy):
+        return True
+
+    # Rows leaving through RETURNING are read by definition.
+    if parsed.args.get("returning") or list(parsed.find_all(exp.Returning)):
+        return True
+
+    if list(parsed.find_all(exp.Select)):
+        return True
+
+    # A source table named without a subquery: `UPDATE t SET .. FROM src`,
+    # `DELETE FROM t USING src`, `MERGE INTO t USING src`. Each reads `src`
+    # while the tree holds no Select at all.
+    #
+    # Counted rather than read off a named argument. The argument differs per
+    # node and *between sqlglot releases* — an earlier version of this keyed on
+    # `Update.args["from_"]`, which passed locally on 30.1 and missed the same
+    # statement on CI. `exp.Table` is the one part of the shape that does not
+    # move. One DML statement has exactly one target table; a second table in
+    # the tree is something being read.
+    #
+    # Scoped to the DML family on purpose: DDL routinely names two tables
+    # without reading a row (`ALTER TABLE a RENAME TO b`, `CREATE TABLE a
+    # (LIKE b)`), and the DDL that does read — CTAS — carries a Select and is
+    # caught above.
+    if isinstance(parsed, (exp.Update, exp.Delete, exp.Merge)):
+        if len({table.sql() for table in parsed.find_all(exp.Table)}) > 1:
+            return True
+
+    return False
+
+
+def is_single_statement(sql: str) -> bool:
+    """Whether the input is exactly one statement.
+
+    A trailing semicolon and surrounding comments do not make it two. Callers
+    that route on statement type need this separately from
+    :func:`validate_read_only_sql`, which folds it into one violation code.
+    """
+    normalized = strip_sql_comments(sql).strip().rstrip(";").strip()
+    if not normalized:
+        return False
+    return _first_statement(normalized) == normalized
+
+
+def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLType]:
+    """Classify one SQL statement and identify read-only safety violations.
+
+    Returns a violation code plus the detected SQL type. A ``None`` violation
+    means the statement is one read-only SELECT, metadata query, or EXPLAIN.
+    Callers own their user-facing error wording while sharing the security
+    checks themselves.
+    """
+    cleaned = strip_sql_comments(sql).strip()
+    normalized_sql = cleaned.rstrip(";").strip()
+    if normalized_sql and not is_single_statement(normalized_sql):
+        return READ_ONLY_MULTI_STATEMENT, SQLType.UNKNOWN
+
+    sql_type = parse_sql_type(sql, dialect)
+    if sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+        return READ_ONLY_NON_READ, sql_type
+
+    if sql_type == SQLType.METADATA_SHOW:
+        first_word = cleaned.split()[0].upper() if cleaned else ""
+        if first_word == "PRAGMA" and "=" in cleaned:
+            return READ_ONLY_WRITABLE_PRAGMA, sql_type
+
+    return None, sql_type
 
 
 # ``SQLType.DDL`` refinements for the permission layer: statements that

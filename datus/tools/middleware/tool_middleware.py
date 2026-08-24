@@ -15,7 +15,7 @@ Both execution paths (the SDK Runner and the native Claude loop) converge on
 call. Python callers that invoke tool methods directly (e.g. reference-template
 execution) bypass ``FunctionTool`` entirely — enforcement that must also cover
 those paths needs its own tool-layer check (see
-``DBFuncTool._enforce_sql_policy``).
+``DBFuncTool.execute_read_enforced``).
 
 Transformer contract (duck-typed so plugin packages never import ``datus.*``):
 
@@ -28,7 +28,7 @@ Transformer contract (duck-typed so plugin packages never import ``datus.*``):
   and the wrapped tool never runs (fail closed). Returning anything that is
   not a dict is treated the same way.
 * ``context`` carries request-scoped data injected at wrap time (see
-  :func:`apply_tool_transformers`): ``node_name``, ``principal``,
+  :func:`apply_tool_transformers`): ``node_name``, ``policy_context``,
   ``project_root``.
 * A rewrite changes what executes, not what the conversation records: the
   model's own arguments are restored onto the tool call afterwards.
@@ -125,7 +125,7 @@ def wrap_tool_with_transformers(
     and the tool's own malformed-arguments error path stays authoritative.
 
     ``context_provider`` is called once per invocation so request-scoped values
-    (e.g. a per-request principal set on the owning tool instance after wrap
+    (e.g. a per-request policy context set on the owning tool instance after wrap
     time) are read fresh, not frozen at wrap time.
     """
 
@@ -290,15 +290,15 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
 
     def context_provider() -> Dict[str, Any]:
         # Read request-scoped values fresh on every tool call: the API layer
-        # assigns ``principal`` onto a per-request clone of the config, which
+        # assigns ``policy_context`` onto a per-request clone of the config, which
         # is also where ``DBFuncTool`` reads its own copy from. Reading the
         # config directly covers nodes whose tool set excludes ``db_tools`` and
         # therefore never build a DBFuncTool at all (``ask_metrics`` is one).
         agent_config = getattr(node, "agent_config", None)
-        principal = getattr(agent_config, "principal", None)
+        policy_context = getattr(agent_config, "policy_context", None)
         return {
             "node_name": node_name,
-            "principal": dict(principal) if isinstance(principal, dict) else {},
+            "policy_context": dict(policy_context) if isinstance(policy_context, dict) else {},
             "project_root": getattr(agent_config, "project_root", None),
             # Live AgentConfig reference so transformers can read their own
             # plugin profile (``get_plugin_profile``) and datasource metadata.

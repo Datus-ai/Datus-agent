@@ -24,7 +24,7 @@ You **MUST** use the available context search tools below to gather domain knowl
 - `search_reference_sql(query_text="...")` — semantic search for existing SQL patterns and examples
 {% endif -%}
 {% if "search_semantic_objects" in context_tools -%}
-- `search_semantic_objects(query_text="...", kinds=["metric","column","table"])` — unified semantic search across all object types
+- `search_semantic_objects(query_text="...", kinds=["dataset","field","relationship"])` — find modelled datasets, their fields and their relationships by description (metrics are not here; use `search_metrics`)
 {% endif -%}
 {% endif -%}
 

@@ -56,7 +56,7 @@ async def test_batches_complete_semantic_modeling_calls_in_groups_of_five(build_
         ),
         patch("datus.storage.semantic_model.semantic_modeling_init._prepare_storage"),
         patch("datus.storage.semantic_model.semantic_modeling_init._run_semantic_modeling_batch", run_batch),
-        patch("datus.storage.semantic_model.semantic_modeling_init.SemanticModelRAG", return_value=semantic_rag),
+        patch("datus.storage.semantic_model.semantic_modeling_init.SemanticDatasetRAG", return_value=semantic_rag),
         patch("datus.storage.semantic_model.semantic_modeling_init.MetricRAG", return_value=metric_rag),
     ):
         success, error, result = await init_success_story_semantic_modeling_async(
@@ -92,7 +92,7 @@ async def test_datasets_only_scope_is_forwarded_to_every_batch():
         ),
         patch("datus.storage.semantic_model.semantic_modeling_init._prepare_storage"),
         patch("datus.storage.semantic_model.semantic_modeling_init._run_semantic_modeling_batch", run_batch),
-        patch("datus.storage.semantic_model.semantic_modeling_init.SemanticModelRAG", return_value=semantic_rag),
+        patch("datus.storage.semantic_model.semantic_modeling_init.SemanticDatasetRAG", return_value=semantic_rag),
         patch("datus.storage.semantic_model.semantic_modeling_init.MetricRAG", return_value=metric_rag),
     ):
         success, error, result = await init_success_story_semantic_modeling_async(

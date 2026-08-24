@@ -76,27 +76,32 @@ def test_catalog_screen_builds_generic_record_from_table_semantic_profile():
     screen = object.__new__(CatalogScreen)
     record = screen._semantic_record_from_table_profile(
         {
-            "format": "osi",
-            "table_name": "orders",
+            "source_table": "orders",
             "semantic_model_name": "shop",
             "dataset_name": "orders",
-            "data_source_name": "",
             "description": "Orders dataset",
             "ai_context_json": '{"instructions":"Use this dataset for order analytics."}',
-            "columns_json": (
-                "["
-                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
-                '{"name":"order_date","expr":"order_date","role":"time_dimension","description":"Order date"},'
-                '{"name":"segment","expr":"segment","role":"dimension","description":"Customer segment"},'
-                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
-                "]"
-            ),
-            "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
+            "fields": [
+                {"name": "order_id", "expr": "order_id", "is_primary_key": True, "description": "Order key"},
+                {
+                    "name": "order_date",
+                    "expr": "order_date",
+                    "is_dimension": True,
+                    "is_time": True,
+                    "description": "Order date",
+                },
+                {"name": "segment", "expr": "segment", "is_dimension": True, "description": "Customer segment"},
+                {"name": "amount", "expr": "amount", "description": "Order amount"},
+            ],
+            "relationships": [
+                {"name": "orders_to_customers", "from_dataset": "orders", "to_dataset": "customers"},
+            ],
+            "alternatives": [],
         }
     )
 
-    assert record["format"] == "osi"
     assert record["dataset_name"] == "orders"
+    assert record["table_name"] == "orders"
     assert record["ai_context"]["instructions"] == "Use this dataset for order analytics."
     assert [item["name"] for item in record["identifiers"]] == ["order_id"]
     assert [item["name"] for item in record["dimensions"]] == ["order_date", "segment"]
@@ -108,11 +113,10 @@ def test_catalog_screen_readonly_panel_shows_profile_fields_without_measures():
     screen = object.__new__(CatalogScreen)
     group = screen._render_readonly_panel(
         {
-            "format": "metricflow",
-            "semantic_model_name": "orders_source",
-            "data_source_name": "orders_source",
-            "description": "Orders data source",
-            "ai_context": {"instructions": "Use this data source for sales analytics."},
+            "semantic_model_name": "sales",
+            "dataset_name": "orders",
+            "description": "Orders dataset",
+            "ai_context": {"instructions": "Use this dataset for sales analytics."},
             "identifiers": [{"name": "order_id"}],
             "dimensions": [{"name": "order_date"}],
             "relationships": [{"name": "orders_to_customers"}],
@@ -124,7 +128,7 @@ def test_catalog_screen_readonly_panel_shows_profile_fields_without_measures():
     console.print(group)
     rendered = console.export_text()
 
-    assert "Data Source" in rendered
+    assert "Dataset" in rendered
     assert "AI Context" in rendered
     assert "Relationships" in rendered
     assert "Filters" not in rendered

@@ -239,34 +239,6 @@ class Node(ABC):
                 is_subagent=is_subagent,
                 session_id=session_id,
             )
-        elif node_type == NodeType.TYPE_GEN_DASHBOARD:
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            node = GenDashboardAgenticNode(
-                agent_config=agent_config,
-                execution_mode="workflow",
-                node_id=node_id,
-                node_name=node_name,
-                is_subagent=is_subagent,
-                session_id=session_id,
-            )
-            if input_data is not None:
-                node.input = input_data
-            return node
-        elif node_type == NodeType.TYPE_SCHEDULER:
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            node = SchedulerAgenticNode(
-                agent_config=agent_config,
-                execution_mode="workflow",
-                node_id=node_id,
-                node_name=node_name,
-                is_subagent=is_subagent,
-                session_id=session_id,
-            )
-            if input_data is not None:
-                node.input = input_data
-            return node
         elif node_type == NodeType.TYPE_FEEDBACK:
             from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
@@ -541,14 +513,6 @@ class Node(ABC):
                     input_data = GenReportNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     input_data = ExploreNodeInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_GEN_DASHBOARD:
-                    from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
-
-                    input_data = GenDashboardNodeInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_SCHEDULER:
-                    from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-                    input_data = SchedulerNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:
                     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
@@ -599,14 +563,6 @@ class Node(ABC):
                     result_data = GenReportNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_EXPLORE:
                     result_data = ExploreNodeResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_GEN_DASHBOARD:
-                    from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeResult
-
-                    result_data = GenDashboardNodeResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_SCHEDULER:
-                    from datus.schemas.scheduler_agentic_node_models import SchedulerNodeResult
-
-                    result_data = SchedulerNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_TABLE:
                     from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 

@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 2. `/datasource` 添加数据源
 3. `/init`(可选)扫描当前项目
 
-也可以用 `pip install datus-agent` 手动安装(Python 3.12+)，更多安装方式见[快速开始指南](https://docs.datus.ai/zh/latest/getting_started/Quickstart/)。[端到端教程](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/)用示例数据集演示了完整使用流程。配置分两级：全局 `agent.yml` 存放主配置，项目下的 `.datus/config.yml` 保存当前模型、默认数据源等项目级覆盖，详见[配置文档](https://docs.datus.ai/zh/latest/configuration/introduction/)。
+也可以用 `pip install datus-agent` 手动安装(Python 3.12+)，更多安装方式见[快速开始指南](https://docs.datus.ai/zh/latest/getting_started/Quickstart/)。如果 `pip` 因回溯 `litellm` 版本而耗时数分钟(0.3.9 及更早版本会遇到)，改用 uv 几秒即可完成解析：`pip install uv && uv pip install datus-agent --system`。[端到端教程](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/)用示例数据集演示了完整使用流程。配置分两级：全局 `agent.yml` 存放主配置，项目下的 `.datus/config.yml` 保存当前模型、默认数据源等项目级覆盖，详见[配置文档](https://docs.datus.ai/zh/latest/configuration/introduction/)。
 
 ## 接入方式
 

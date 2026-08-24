@@ -11,7 +11,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
 
 from agents import Tool
 from datus_db_core import BaseSqlConnector
@@ -22,8 +22,7 @@ from datus.schemas.node_models import ExecuteSQLResult
 from datus.storage.kb_retrieval import metadata_fts_enabled
 from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.tools.db_tools.capabilities import (
     get_dialect_operations,
     get_effective_capabilities,
@@ -32,6 +31,7 @@ from datus.tools.db_tools.capabilities import (
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -39,6 +39,25 @@ from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
+
+# One warning per project is enough: DBFuncTool is rebuilt per session and per
+# sub-agent, and repeating this on every construction would bury it.
+_STALE_PROJECTION_WARNED: Set[str] = set()
+
+
+def _warn_once_if_projection_is_stale(agent_config: Any) -> None:
+    """Tell the user their semantic YAML has not been projected yet."""
+    project = str(getattr(agent_config, "project_name", "") or "")
+    if project in _STALE_PROJECTION_WARNED:
+        return
+    try:
+        from datus.storage.semantic_dataset.store import SYNC_YAML_HINT, semantic_projection_is_stale
+
+        if semantic_projection_is_stale(agent_config):
+            _STALE_PROJECTION_WARNED.add(project)
+            logger.warning(SYNC_YAML_HINT)
+    except Exception as exc:  # noqa: BLE001 - a hint must never break tool setup
+        logger.debug(f"Unable to check the semantic dataset projection: {exc}")
 
 
 @dataclass
@@ -137,14 +156,19 @@ class DBFuncTool:
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
-            read_only: When True, ``execute_sql`` hard-rejects any non-read
-                       statement (INSERT/UPDATE/DELETE/DDL/MERGE/...) at the tool
-                       layer, independent of ``PermissionHooks``. Use for agents
-                       whose contract is read-only (Explore, ask_report/dashboard,
-                       LLM validators) so the unified write-capable entry point
-                       cannot mutate the datasource even when hooks are bypassed
-                       (e.g. validators run with ``hooks=None``) or under a
-                       permissive profile.
+            read_only: When True, the write paths (``execute_sql``,
+                       ``execute_write``, ``execute_ddl``,
+                       ``transfer_query_result``) hard-reject any non-read
+                       statement at the tool layer, independent of
+                       ``PermissionHooks``. Use for agents whose contract is
+                       read-only (Explore, ask_report/dashboard, LLM validators)
+                       so the unified write-capable entry point cannot mutate the
+                       datasource even when hooks are bypassed (e.g. validators
+                       run with ``hooks=None``) or under a permissive profile.
+                       This is the per-instance floor only; the ``read_only``
+                       property ORs it with ``AgentConfig.sql_read_only``, so
+                       passing False does not make the tool writable on a
+                       hardened deployment.
         """
         if connector_or_manager is None:
             if not agent_config:
@@ -171,7 +195,9 @@ class DBFuncTool:
         self.compressor = DataCompressor(model_name=model_name)
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
-        self.read_only = read_only
+        # Backing field for the ``read_only`` property: this instance's own
+        # posture, before the deployment-wide switch is ORed in.
+        self._read_only = read_only
         if agent_config and metadata_fts_enabled(agent_config):
             self.schema_rag = create_metadata_rag(agent_config, sub_agent_name)
         else:
@@ -179,35 +205,116 @@ class DBFuncTool:
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
 
-        self._semantic_storage = SemanticModelRAG(agent_config, sub_agent_name) if agent_config else None
-        self._table_semantic_profiles = None
+        self._semantic_datasets = None
         if agent_config and isinstance(getattr(agent_config, "project_name", ""), str):
             try:
-                self._table_semantic_profiles = TableSemanticProfileRAG(agent_config, sub_agent_name)
+                self._semantic_datasets = SemanticDatasetRAG(agent_config, sub_agent_name)
             except Exception as exc:
-                logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
+                logger.debug(f"Failed to initialize semantic dataset storage: {exc}")
         self.has_schema = self._has_schema_storage()
 
-        self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
         try:
-            self.has_table_semantic_profiles = (
-                self._table_semantic_profiles is not None and self._table_semantic_profiles.get_size() > 0
-            )
+            self.has_semantic_datasets = self._semantic_datasets is not None and self._semantic_datasets.get_size() > 0
         except Exception:
-            self._table_semantic_profiles = None
-            self.has_table_semantic_profiles = False
+            self._semantic_datasets = None
+            self.has_semantic_datasets = False
+        if not self.has_semantic_datasets and agent_config is not None:
+            _warn_once_if_projection_is_stale(agent_config)
 
     @property
-    def principal(self) -> Dict[str, Any]:
-        """Request-scoped SQL policy attributes, read from the config on access.
+    def policy_context(self) -> Dict[str, Any]:
+        """Request-scoped policy inputs, read fresh from the config."""
+        policy_context = getattr(self.agent_config, "policy_context", None)
+        return dict(policy_context) if isinstance(policy_context, dict) else {}
 
-        The API assigns this onto a per-request clone of the config. Resolving it
-        per access rather than caching it at construction keeps this tool and the
-        plugin tool-transformers on one value: they enforce the same policies and
-        must not disagree about who is asking.
+    @property
+    def read_only(self) -> bool:
+        """Whether this tool refuses non-read SQL. Resolved on every access.
+
+        ORs the per-instance flag — set by read-only agents (Explore,
+        ask_report/dashboard) and by the validator's shallow copy in
+        ``datus.validation.llm_runner`` — with the deployment-wide
+        ``AgentConfig.sql_read_only``. Tighten-only in both directions: neither
+        source can relax the other.
+
+        This is the effective posture, not the constructor argument, so that
+        anything asking "is this tool read-only?" gets the answer the write
+        paths will actually enforce. The MCP server's
+        ``create_dynamic``/``create_static`` factories pass a config but no
+        ``read_only`` flag, so on a hardened deployment their instances read
+        ``True`` here despite nothing having passed it.
+
+        Resolved per access rather than snapshotted in ``__init__`` for the same
+        reason as ``principal`` above: the API hands nodes a per-request config
+        clone, and a tool built before that clone was hardened must still honour
+        it.
+
+        ``coerce_bool`` rather than ``bool``: the ``getattr`` guard exists for
+        duck-typed / host-supplied config objects, which are exactly the ones
+        likely to carry a raw YAML value — and ``bool("false")`` is ``True``.
         """
-        principal = getattr(self.agent_config, "principal", None)
-        return dict(principal) if isinstance(principal, dict) else {}
+        if self._read_only:
+            return True
+        return coerce_bool(getattr(self.agent_config, "sql_read_only", False), False)
+
+    @read_only.setter
+    def read_only(self, value: bool) -> None:
+        # Tighten-only, matching ``AgentConfig.sql_read_only``: a caller may
+        # harden an instance (``llm_runner`` does this to a shallow copy before
+        # binding it to a hooks-free validator) but may not hand a write-capable
+        # view of a read-only deployment to anything downstream.
+        self._read_only = self._read_only or coerce_bool(value, False)
+
+    def _refuse_write_if_read_only(
+        self,
+        operation: str,
+        *,
+        datasource: Optional[str] = "",
+        sql_type: Optional[SQLType] = None,
+        statement_kind: str = "",
+        error: str = "",
+    ) -> Optional[FuncToolResult]:
+        """Gate every write entry point on the effective read-only posture.
+
+        Returns ``None`` when the caller may proceed, or the ``FuncToolResult``
+        to hand straight back when it may not. Defense-in-depth for read-only
+        agents and read-only deployments alike: it is independent of
+        ``PermissionHooks``, which several callers bypass entirely (validators
+        run with ``hooks=None``, and the MCP server's tool instances never see
+        hooks at all).
+
+        Shared by all four write paths so a new one cannot be added with a
+        subtly different rule, and so ``AgentConfig.sql_read_only`` means the
+        same thing at each of them.
+
+        Refusals are logged because a refusal is the event an operator actually
+        wants to see: on a deployment running third-party-authored content it
+        means that content just tried to write. Successful reads are already
+        logged in ``read_query``, so staying silent here would record the benign
+        path and drop the notable one. ``source`` separates a deployment-wide
+        refusal from a read-only agent doing its job — the difference between
+        "investigate this" and "working as intended".
+
+        ``statement_kind`` is the finer-grained classification from
+        ``parse_sql_statement_kind`` (``create`` / ``drop`` / ``alter`` /
+        ``truncate``) when the caller has the SQL to derive it. It is preferred
+        over ``sql_type`` in the log because ``ddl`` alone cannot tell an
+        operator whether third-party content tried to create a table or drop
+        one, and those warrant very different responses.
+        """
+        if not self.read_only:
+            return None
+        logger.warning(
+            f"{operation} rejected by read-only policy",
+            sql_type=statement_kind or (sql_type.value if sql_type else ""),
+            datasource=self._resolve_effective_datasource(datasource),
+            sub_agent=self.sub_agent_name or "",
+            source="agent" if self._read_only else "deployment",
+        )
+        return FuncToolResult(
+            success=0,
+            error=error or f"This agent is read-only: {operation} is not available.",
+        )
 
     def _has_schema_storage(self) -> bool:
         if not self.schema_rag:
@@ -498,50 +605,79 @@ class DBFuncTool:
         }
         return ScopedTablePattern(raw=token, **values)
 
-    def _get_semantic_model(
-        self, catalog: str = "", database: str = "", schema: str = "", table_name: str = ""
-    ) -> Dict[str, Any]:
-        if not self.has_semantic_models:
-            return {}
-        result = self._semantic_storage.get_semantic_model(
+    def _list_table_semantic_datasets(
+        self,
+        catalog: str = "",
+        database: str = "",
+        schema: str = "",
+        table_name: str = "",
+        semantic_model: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Every semantic dataset bound to one physical table, primary first."""
+        if self._semantic_datasets is None:
+            return []
+        rows = self._semantic_datasets.list_datasets(
             catalog_name=catalog,
             database_name=database,
             schema_name=schema,
             table_name=table_name,
+            semantic_model=semantic_model,
             select_fields=[
-                "semantic_model_name",
-                "dimensions",
-                "measures",
-                "description",
-                "identifiers",
-            ],
-        )
-        logger.info(f"get_semantic_model result: {result}")
-        return result if result is not None else {}
-
-    def _get_table_semantic_profile(
-        self, catalog: str = "", database: str = "", schema: str = "", table_name: str = ""
-    ) -> Dict[str, Any]:
-        if self._table_semantic_profiles is None:
-            return {}
-        result = self._table_semantic_profiles.get_profile(
-            catalog_name=catalog,
-            database_name=database,
-            schema_name=schema,
-            table_name=table_name,
-            select_fields=[
-                "table_name",
                 "semantic_model_name",
                 "dataset_name",
-                "data_source_name",
                 "description",
-                "ai_context_json",
-                "columns_json",
-                "relationships_json",
+                "yaml_path",
             ],
         )
-        logger.info(f"get_table_semantic_profile result: {result}")
-        return result if result is not None else {}
+        logger.info(f"list_table_semantic_datasets for {table_name!r}: {len(rows)} dataset(s)")
+        return rows
+
+    def _table_semantic_model_names(self, coordinate: "TableCoordinate") -> List[str]:
+        """Names of every semantic model describing one table, in lookup order."""
+        rows = self._list_table_semantic_datasets(
+            coordinate.catalog, coordinate.database, coordinate.schema, coordinate.table
+        )
+        return [str(row.get("semantic_model_name") or "") for row in rows if row.get("semantic_model_name")]
+
+    def _get_table_semantic_projection(
+        self,
+        catalog: str = "",
+        database: str = "",
+        schema: str = "",
+        table_name: str = "",
+        semantic_model: str = "",
+    ) -> Dict[str, Any]:
+        """The primary dataset for one table, with its fields and relationships."""
+        if self._semantic_datasets is None:
+            return {}
+        projection = self._semantic_datasets.get_table_projection(
+            catalog_name=catalog,
+            database_name=database,
+            schema_name=schema,
+            table_name=table_name,
+            semantic_model=semantic_model,
+        )
+        return projection or {}
+
+    def _semantic_description_for_row(self, metadata_row: Dict[str, Any]) -> str:
+        """Business description for one search hit, or "" when it has none.
+
+        Reads the primary semantic dataset, so search_table and describe_table
+        agree on which model speaks for a table. A table modelled by several
+        semantic models is legitimate, so this lookup must never fail the
+        search — it only ever contributes a description.
+        """
+        try:
+            datasets = self._list_table_semantic_datasets(
+                metadata_row.get("catalog_name", ""),
+                metadata_row.get("database_name", ""),
+                metadata_row.get("schema_name", ""),
+                metadata_row.get("table_name", ""),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to read semantic datasets for {metadata_row.get('table_name')!r}: {e}")
+            return ""
+        return str(datasets[0].get("description") or "") if datasets else ""
 
     @staticmethod
     def _decode_profile_json(value: Any, default: Any) -> Any:
@@ -556,53 +692,93 @@ class DBFuncTool:
         except (TypeError, ValueError):
             return default
 
-    def _apply_table_semantic_profile(self, result_data: Dict[str, Any], profile: Dict[str, Any]) -> None:
-        """Attach a table semantic profile to describe_table output."""
+    @staticmethod
+    def _semantic_field_role(field: Dict[str, Any]) -> str:
+        """Name the role a field plays, from the flags stored on its row."""
+        if field.get("is_primary_key"):
+            return "primary_key"
+        if field.get("is_time"):
+            return "time_dimension"
+        if field.get("is_dimension"):
+            return "dimension"
+        return "field"
+
+    def _apply_table_semantic_profile(self, result_data: Dict[str, Any], projection: Dict[str, Any]) -> None:
+        """Attach one semantic dataset to describe_table output.
+
+        Descriptions, column enrichment and relationships all come from the
+        primary dataset alone. OSI relationships reference dataset names, which
+        are local to their semantic model, so merging two models would assert a
+        join graph that exists in neither. Any further datasets are surfaced as
+        navigation under ``table.alternatives`` instead, and the caller can pull
+        one up in full by passing ``semantic_model``.
+        """
 
         columns = result_data.get("columns", [])
-        semantic_columns = self._decode_profile_json(profile.get("columns_json"), [])
-        relationships = self._decode_profile_json(profile.get("relationships_json"), [])
-        ai_context = self._decode_profile_json(profile.get("ai_context_json"), None)
+        semantic_fields = projection.get("fields") or []
+        alternatives = projection.get("alternatives") or []
+        ai_context = self._decode_profile_json(projection.get("ai_context_json"), None)
 
         table = {
             "name": (
-                profile.get("dataset_name")
-                or profile.get("data_source_name")
-                or profile.get("table_name")
-                or profile.get("semantic_model_name")
-                or ""
+                projection.get("dataset_name") or projection.get("semantic_model_name") or projection.get("name") or ""
             ),
-            "description": profile.get("description", ""),
+            "description": projection.get("description", ""),
         }
         if ai_context not in (None, "", [], {}):
             table["ai_context"] = ai_context
+        if alternatives:
+            table["semantic_model"] = projection.get("semantic_model_name", "")
+            table["alternatives"] = [
+                {
+                    "semantic_model": alternative.get("semantic_model_name", ""),
+                    "dataset": alternative.get("dataset_name", ""),
+                    "description": alternative.get("description", ""),
+                    "yaml_path": alternative.get("yaml_path", ""),
+                }
+                for alternative in alternatives
+            ]
         result_data["table"] = table
         result_data["semantic"] = {
-            "relationships": relationships,
+            "relationships": [
+                {
+                    key: value
+                    for key, value in {
+                        "name": relationship.get("name", ""),
+                        "type": relationship.get("rel_type", ""),
+                        "join_type": relationship.get("join_type", ""),
+                        "from_dataset": relationship.get("from_dataset", ""),
+                        "to_dataset": relationship.get("to_dataset", ""),
+                        "from_columns": self._decode_profile_json(relationship.get("from_columns_json"), []),
+                        "to_columns": self._decode_profile_json(relationship.get("to_columns_json"), []),
+                        "ai_context": self._decode_profile_json(relationship.get("ai_context_json"), None),
+                    }.items()
+                    if value not in (None, "", [], {})
+                }
+                for relationship in projection.get("relationships") or []
+            ],
         }
 
-        if not isinstance(semantic_columns, list):
-            return
-        semantic_lookup = {}
-        for semantic_col in semantic_columns:
-            if not isinstance(semantic_col, dict):
+        semantic_lookup: Dict[str, Dict[str, Any]] = {}
+        for field in semantic_fields:
+            if not isinstance(field, dict):
                 continue
             for key in ("expr", "name"):
-                value = semantic_col.get(key)
+                value = field.get(key)
                 if value:
-                    semantic_lookup.setdefault(str(value).strip("`").lower(), semantic_col)
+                    semantic_lookup.setdefault(str(value).strip("`").lower(), field)
 
         for col in columns:
             col_name = str(col.get("name", "")).lower()
-            semantic_col = semantic_lookup.get(col_name)
-            if not semantic_col:
+            field = semantic_lookup.get(col_name)
+            if not field:
                 continue
-            role = semantic_col.get("role") or ""
-            description = semantic_col.get("description") or ""
-            col["semantic_role"] = role
-            col["is_dimension"] = role in ("dimension", "time_dimension")
-            if semantic_col.get("ai_context") not in (None, "", [], {}):
-                col["ai_context"] = semantic_col.get("ai_context")
+            description = field.get("description") or ""
+            field_ai_context = self._decode_profile_json(field.get("ai_context_json"), None)
+            col["semantic_role"] = self._semantic_field_role(field)
+            col["is_dimension"] = bool(field.get("is_dimension"))
+            if field_ai_context not in (None, "", [], {}):
+                col["ai_context"] = field_ai_context
             if description:
                 col["semantic_description"] = description
                 col["comment"] = description
@@ -1081,16 +1257,10 @@ class DBFuncTool:
             if not metadata_rows:
                 return FuncToolResult(success=1, result=result_dict)
 
-            if self.has_semantic_models:
-                for metadata_row in metadata_rows:
-                    semantic_model = self._get_semantic_model(
-                        metadata_row["catalog_name"],
-                        metadata_row["database_name"],
-                        metadata_row["schema_name"],
-                        metadata_row["table_name"],
-                    )
-                    if semantic_model:
-                        metadata_row["description"] = semantic_model.get("description", "")
+            for metadata_row in metadata_rows:
+                description = self._semantic_description_for_row(metadata_row)
+                if description:
+                    metadata_row["description"] = description
 
             sample_rows_by_identifier = self._sample_rows_by_identifier(sample_values)
             result_dict["metadata"] = [
@@ -1246,6 +1416,7 @@ class DBFuncTool:
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
         datasource: Optional[str] = "",
+        semantic_model: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Fetch detailed column metadata, enriched with Semantic Model information.
@@ -1257,6 +1428,10 @@ class DBFuncTool:
             database: Optional database override.
             schema_name: Optional schema override.
             datasource: Optional datasource to route the query to. Defaults to the current datasource.
+            semantic_model: Optional semantic model to read the table's meaning from. Use it when
+                `table.alternatives` shows the table is modelled by more than one semantic model
+                and you want another one's view; defaults to the primary dataset. Naming a model
+                that does not describe this table fails with the list of models that do.
 
         Returns:
             FuncToolResult with a dictionary containing:
@@ -1272,11 +1447,19 @@ class DBFuncTool:
               - is_dimension (bool): Whether this column is a dimension in semantic model
                 (semantic fields only present if semantic model exists)
             - table (dict, optional): Table-level metadata from semantic model (only if model exists):
-              - name (str): Name of the table
+              - name (str): Name of the dataset modelling this table
               - description (str): Table description from semantic model
               - ai_context (dict/list/str, optional): Extra LLM-facing business guidance
+              - semantic_model (str, optional): Which semantic model the meaning above came from.
+                Only present when the table is modelled more than once.
+              - alternatives (list, optional): Other semantic models describing this same table, each
+                with semantic_model, dataset, description and yaml_path. Only present when the table
+                is modelled more than once. Re-call with `semantic_model` to read one of them; the
+                views are never merged, since each model's relationships are only valid within it.
             - semantic (dict, optional): LLM-facing semantic hints:
-              - relationships (list): Relevant dataset/data-source relationships
+              - relationships (list): Relationships of the dataset above, each with name, type,
+                join_type, from_dataset, to_dataset, from_columns and to_columns. Endpoints are
+                dataset names local to that one semantic model.
         """
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
@@ -1345,78 +1528,38 @@ class DBFuncTool:
 
             # 3. Enrich with Semantic Model Info if available
             result_data = {"columns": columns}
-            profile_applied = False
 
+            requested_model = str(semantic_model or "").strip()
             try:
-                profile = self._get_table_semantic_profile(
+                projection = self._get_table_semantic_projection(
                     coordinate.catalog,
                     coordinate.database,
                     coordinate.schema,
                     coordinate.table,
+                    semantic_model=requested_model,
                 )
-                if profile:
+                if projection:
                     logger.debug(
-                        "Found table semantic profile: %s",
-                        profile.get("dataset_name") or profile.get("data_source_name") or "unknown",
+                        "Found semantic dataset %s (%d alternative(s))",
+                        projection.get("dataset_name") or "unknown",
+                        len(projection.get("alternatives") or []),
                     )
-                    self._apply_table_semantic_profile(result_data, profile)
-                    profile_applied = True
+                    self._apply_table_semantic_profile(result_data, projection)
+                elif requested_model:
+                    # Silently dropping to physical columns would read as "this
+                    # table has no semantic model", sending the caller to guess
+                    # at raw columns when the name is merely misspelled.
+                    modelled_by = self._table_semantic_model_names(coordinate)
+                    if modelled_by:
+                        return FuncToolResult(
+                            success=0,
+                            error=(
+                                f"Semantic model '{requested_model}' does not describe table '{table_name}'. "
+                                f"It is modelled by: {', '.join(modelled_by)}."
+                            ),
+                        )
             except Exception as e:
                 logger.warning(f"Failed to get table semantic profile for {table_name}: {e}")
-
-            if self.has_semantic_models and not profile_applied:
-                try:
-                    logger.debug("Checking for semantic models")
-                    # Use coordinate values (resolved and stripped) for lookup
-                    model = self._get_semantic_model(
-                        coordinate.catalog,
-                        coordinate.database,
-                        coordinate.schema,
-                        coordinate.table,
-                    )
-
-                    if model:
-                        logger.debug(f"Found semantic model: {model.get('semantic_model_name', 'unknown')}")
-
-                        # Add table-level metadata unless the authoring-format
-                        # profile already provided a richer table projection.
-                        result_data.setdefault(
-                            "table",
-                            {
-                                "name": model.get("semantic_model_name", ""),
-                                "description": model.get("description", ""),
-                            },
-                        )
-
-                        # Create lookup map using expr (physical column) as key, fallback to name
-                        # expr is the actual column name/expression, name is the semantic name
-                        dimensions = model.get("dimensions", [])
-
-                        # Build map: physical_col_name -> dimension_data
-                        dim_map = {(d.get("expr") or d.get("name", "")).lower(): d for d in dimensions}
-
-                        logger.debug(f"Semantic map: {len(dim_map)} dimensions")
-
-                        # Enrich columns with dimension info
-                        if dim_map:
-                            for col in columns:
-                                col_name = col["name"].lower()
-
-                                if col_name in dim_map:
-                                    dim_data = dim_map[col_name]
-                                    col["is_dimension"] = True
-                                    if dim_data.get("description"):
-                                        col.setdefault("semantic_description", dim_data.get("description"))
-                                        col["comment"] = dim_data.get("description")
-                                else:
-                                    col.setdefault("is_dimension", False)
-                        else:
-                            logger.debug("No dimensions defined in model")
-                    else:
-                        logger.debug("No semantic model found for this table")
-                except Exception as e:
-                    # If semantic model lookup fails, just log and continue with physical schema only
-                    logger.warning(f"Failed to get semantic model for {table_name}: {e}")
 
             logger.info(f"describe_table succeeded for {table_name}, returning {len(columns)} columns")
             return FuncToolResult(result=result_data)
@@ -1470,7 +1613,12 @@ class DBFuncTool:
             FuncToolResult: compressed rows for read-only queries, or execution
             metadata for writes/DDL. On failure success=0 with an error message.
         """
-        from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_type
+        from datus.utils.sql_utils import (
+            looks_like_sql_file_ref,
+            parse_sql_statement_kind,
+            parse_sql_type,
+            write_statement_reads_data,
+        )
 
         try:
             # Resolve a ``.sql`` file path up front so type detection inspects the
@@ -1489,17 +1637,47 @@ class DBFuncTool:
 
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
                 return self.read_query(sql, datasource=datasource, database=database)
-            if self.read_only:
-                # Defense-in-depth for read-only agents: reject any non-read
-                # statement at the tool layer, independent of PermissionHooks
-                # (which may be bypassed, e.g. validators run with hooks=None).
+            refusal = self._refuse_write_if_read_only(
+                "execute_sql",
+                datasource=datasource,
+                sql_type=sql_type,
+                # The permission layer's finer classification, so the audit line
+                # says `drop` rather than a `ddl` that also covers CREATE.
+                statement_kind=parse_sql_statement_kind(sql, connector.dialect),
+                error=(
+                    "This agent is read-only: only SELECT/SHOW/DESCRIBE/EXPLAIN "
+                    "statements are allowed through execute_sql."
+                ),
+            )
+            if refusal:
+                return refusal
+
+            # A write can carry a read. `CREATE TABLE mine AS SELECT * FROM
+            # orders` is approved as a write, runs on the raw connector, and
+            # lands every row the policy just withheld in a table no policy
+            # covers — the person who may only SELECT two stores now owns all
+            # four. The plugin cannot see it: it hooks reads, and this is a
+            # write. So on a project that has a policy context at all, a write
+            # that embeds a query is refused before it is dispatched.
+            #
+            # The permission prompt is not this check. It asks whether the
+            # *user* consents to a write; consenting to a write they are
+            # allowed to make is not consent to read rows they are not.
+            #
+            # Ordered after the read-only gate above: a hardened deployment
+            # refuses every write outright, so it never needs to reason about
+            # what the write reads.
+            if self.policy_context and write_statement_reads_data(sql, connector.dialect):
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "This agent is read-only: only SELECT/SHOW/DESCRIBE/EXPLAIN "
-                        "statements are allowed through execute_sql."
+                        "This project has row-level policies, so a write statement that "
+                        "reads from a query is not allowed — it would copy filtered rows "
+                        "into a table no policy covers. Create views and derived tables "
+                        "on the database side instead."
                     ),
                 )
+
             if sql_type in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE):
                 return self.execute_write(
                     sql,
@@ -1551,7 +1729,15 @@ class DBFuncTool:
             if validation_error:
                 return validation_error
 
-            logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
+            # Resolved rather than the raw argument: the refusal logs resolve it
+            # too, and an operator correlating a session on ``datasource`` cannot
+            # do it if the same source appears as "default" on one line and by
+            # name on the next.
+            logger.info(
+                "read_query",
+                sql_type=sql_type.value,
+                datasource=self._resolve_effective_datasource(datasource),
+            )
             result_format = "arrow" if connector.dialect == "snowflake" else "list"
             result = self.execute_read_enforced(
                 sql,
@@ -1572,16 +1758,17 @@ class DBFuncTool:
         *,
         datasource: Optional[str] = "",
         result_format: str = "list",
+        policy_context: Optional[Dict[str, Any]] = None,
     ) -> ExecuteSQLResult:
         """Run a read-only query through the shared read guardrails.
 
         Single enforcement path for every read that hits the DB directly: the
         LLM ``read_query`` path plus the report/dashboard artifact save paths
         and dashboard view-time re-execution. Rejects multi-statement input and
-        applies the configured SQL policy (row caps / rewrites / denials) before
+        applies configured policy runtimes (rewrites / denials) before
         the statement reaches the engine, then returns the connector's raw
-        ``ExecuteSQLResult`` so callers keep control over row post-processing.
-        Without this, artifact query execution bypassed ``_enforce_sql_policy``
+        ``ExecuteSQLResult`` after result policies have run. Without this,
+        artifact query execution bypassed policy enforcement
         and could hand the engine an unbounded statement (e.g. a cross-join
         cartesian product that OOM-killed the DB backend).
         """
@@ -1589,8 +1776,29 @@ class DBFuncTool:
         if validation_error:
             return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=sql)
         effective_datasource = self._resolve_effective_datasource(datasource)
+        effective_policy_context = self.policy_context if policy_context is None else policy_context
         try:
-            enforced_sql = self._enforce_sql_policy(sql, datasource=effective_datasource, dialect=connector.dialect)
+            from datus.tools.policy_runtime import PolicyRuntime
+
+            runtime = PolicyRuntime(self.agent_config)
+            decision = runtime.before_sql_read(
+                sql,
+                datasource=effective_datasource,
+                dialect=connector.dialect,
+                policy_context=effective_policy_context,
+            )
+            if not decision.allowed:
+                raise DatusException(
+                    ErrorCode.TOOL_INVALID_INPUT,
+                    message=decision.reason or "Policy denied the query",
+                )
+            enforced_sql = decision.sql if decision.sql is not None else sql
+            if decision.applied_policies:
+                logger.info(
+                    "Applied pre-read policies",
+                    policies=decision.applied_policies,
+                    datasource=effective_datasource,
+                )
         except DatusException as exc:
             return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql)
         if enforced_sql != sql:
@@ -1599,7 +1807,32 @@ class DBFuncTool:
             validation_error, _ = self._validate_read_sql(enforced_sql, connector)
             if validation_error:
                 return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=enforced_sql)
-        return connector.execute_query(enforced_sql, result_format=result_format)
+        result = connector.execute_query(enforced_sql, result_format=result_format)
+        if not result.success:
+            return result
+        try:
+            result_decision = runtime.after_read_result(
+                result.sql_return,
+                sql=enforced_sql,
+                datasource=effective_datasource,
+                dialect=connector.dialect,
+                policy_context=effective_policy_context,
+            )
+            if not result_decision.allowed:
+                raise DatusException(
+                    ErrorCode.TOOL_INVALID_INPUT,
+                    message=result_decision.reason or "Policy denied the query result",
+                )
+            result.sql_return = result_decision.result
+            if result_decision.applied_policies:
+                logger.info(
+                    "Applied result policies",
+                    policies=result_decision.applied_policies,
+                    datasource=effective_datasource,
+                )
+            return result
+        except DatusException as exc:
+            return ExecuteSQLResult(success=False, error=str(exc), sql_query=enforced_sql)
 
     def guard_estimated_rows(
         self,
@@ -1655,41 +1888,43 @@ class DBFuncTool:
         return effective_datasource or "default"
 
     def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
-        from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+        from datus.utils.sql_utils import (
+            READ_ONLY_MULTI_STATEMENT,
+            READ_ONLY_NON_READ,
+            READ_ONLY_WRITABLE_PRAGMA,
+            validate_read_only_sql,
+        )
 
-        cleaned = strip_sql_comments(sql).strip()
-        normalized_sql = cleaned.rstrip(";").strip()
-        if normalized_sql and _first_statement(normalized_sql) != normalized_sql:
-            return (
-                FuncToolResult(
-                    success=0,
-                    error="Multi-statement SQL is not allowed. Please submit one query at a time.",
+        violation, sql_type = validate_read_only_sql(sql, connector.dialect)
+        if violation:
+            error = {
+                READ_ONLY_MULTI_STATEMENT: "Multi-statement SQL is not allowed. Please submit one query at a time.",
+                READ_ONLY_NON_READ: (
+                    f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
+                    f"Detected SQL type: {sql_type.value}"
                 ),
-                SQLType.UNKNOWN,
+                READ_ONLY_WRITABLE_PRAGMA: "Writable PRAGMA statements are not allowed in read-only mode.",
+            }[violation]
+            # Logged for the same reason as the write-path refusals, and this
+            # branch matters more than it looks: ``parse_sql_type`` classifies
+            # only the FIRST statement, so ``SELECT 1; DROP TABLE t`` reaches
+            # here as a SELECT and is refused by the multi-statement rule rather
+            # than by the read-only gate. Without this line the sneakiest input
+            # in the set would be the one that left no audit trail, while a
+            # plain DROP TABLE was recorded.
+            #
+            # ``rule`` rather than ``source``: these refusals hold regardless of
+            # ``sql_read_only``, so labelling them "deployment" would overstate
+            # what the switch is doing. The violation code is the value, so an
+            # operator can aggregate on it without parsing prose.
+            logger.warning(
+                "read_query rejected by statement-shape rules",
+                sql_type=sql_type.value,
+                datasource=self._resolve_effective_datasource(None),
+                sub_agent=self.sub_agent_name or "",
+                rule=violation,
             )
-
-        sql_type = parse_sql_type(sql, connector.dialect)
-        readonly_sql_types = {SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN}
-        if sql_type not in readonly_sql_types:
-            return (
-                FuncToolResult(
-                    success=0,
-                    error=f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
-                    f"Detected SQL type: {sql_type.value}",
-                ),
-                sql_type,
-            )
-
-        if sql_type == SQLType.METADATA_SHOW:
-            first_word = cleaned.split()[0].upper() if cleaned else ""
-            if first_word == "PRAGMA" and "=" in cleaned:
-                return (
-                    FuncToolResult(
-                        success=0,
-                        error="Writable PRAGMA statements are not allowed in read-only mode.",
-                    ),
-                    sql_type,
-                )
+            return FuncToolResult(success=0, error=error), sql_type
 
         out_of_scope = self._check_sql_table_scope(sql, connector)
         if out_of_scope:
@@ -1701,34 +1936,6 @@ class DBFuncTool:
                 sql_type,
             )
         return None, sql_type
-
-    def _enforce_sql_policy(self, sql: str, datasource: str, dialect: str) -> str:
-        if not self.agent_config:
-            return sql
-        sql_policy_config = getattr(self.agent_config, "sql_policy_config", None)
-        from datus.tools.sql_policy import SqlPolicyConfig, load_sql_policy_enforcer
-
-        if not isinstance(sql_policy_config, SqlPolicyConfig) or not sql_policy_config.enabled:
-            return sql
-
-        enforced = load_sql_policy_enforcer(sql_policy_config).enforce_read(
-            sql,
-            datasource=datasource,
-            dialect=dialect,
-            principal=self.principal,
-        )
-        if not enforced.allowed:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message=enforced.reason or "SQL policy denied the query",
-            )
-        if enforced.applied_policies:
-            logger.info(
-                "Applied SQL policies",
-                policies=enforced.applied_policies,
-                datasource=datasource,
-            )
-        return sql if enforced.sql is None else enforced.sql
 
     def get_table_ddl(
         self,
@@ -1815,6 +2022,14 @@ class DBFuncTool:
             Execution result with success status
         """
         from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+
+        # Reachable directly, not only via the ``execute_sql`` dispatch that
+        # already gated: gen_job-style callers and host code hold the tool
+        # itself. Gate before parsing so a hardened deployment refuses on
+        # posture, never on statement shape.
+        refusal = self._refuse_write_if_read_only("execute_ddl", datasource=datasource)
+        if refusal:
+            return refusal
 
         # Validate: strip comments, reject multi-statement SQL
         cleaned = strip_sql_comments(sql).strip().rstrip(";").strip()
@@ -1927,6 +2142,12 @@ class DBFuncTool:
                 success=0,
                 error="dry_run is not supported yet for execute_write. Use dry_run=False.",
             )
+
+        # Same reasoning as ``execute_ddl``: ``execute_sql`` has already gated by
+        # the time it dispatches here, but this method is also callable directly.
+        refusal = self._refuse_write_if_read_only("execute_write", datasource=datasource)
+        if refusal:
+            return refusal
 
         try:
             sql_stripped = sql.strip()
@@ -2195,6 +2416,15 @@ class DBFuncTool:
         Returns:
             FuncToolResult with transfer metadata on success.
         """
+        # ``source_sql`` is validated as read-only below, but the transfer WRITES
+        # to ``target_datasource`` — CREATE TABLE / TRUNCATE / INSERT — without
+        # ever going through ``execute_sql``. gen_job mounts this method as a
+        # tool directly, so without this gate a hardened deployment would still
+        # expose a cross-datasource write.
+        refusal = self._refuse_write_if_read_only("transfer_query_result", datasource=target_datasource)
+        if refusal:
+            return refusal
+
         # Validate batch_size
         if batch_size <= 0:
             return FuncToolResult(success=0, error="batch_size must be a positive integer.")

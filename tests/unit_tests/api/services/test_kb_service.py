@@ -62,6 +62,66 @@ class TestKbServiceSemanticComponentRouting:
         ]
 
 
+class TestKbServiceComponentSetRejection:
+    """Components run one after another, so a set the request had no right to
+    ask for must be refused before the first component writes anything."""
+
+    @pytest.mark.parametrize("strategy", ["sync-yaml", "refresh-profile"])
+    def test_a_semantic_model_only_strategy_refuses_extra_components(self, strategy):
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy=strategy,
+            success_story="stories.csv",
+        )
+
+        rejection = KbService._reject_unsupported_component_set(request)
+
+        assert rejection == f"strategy={strategy} is only supported with semantic_model, not metrics"
+
+    @pytest.mark.parametrize("strategy", ["sync-yaml", "refresh-profile"])
+    def test_semantic_model_alone_is_accepted(self, strategy):
+        request = BootstrapKbInput(
+            components=["semantic_model"],
+            strategy=strategy,
+            success_story="stories.csv",
+        )
+
+        assert KbService._reject_unsupported_component_set(request) is None
+
+    def test_other_strategies_are_not_restricted(self):
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy="incremental",
+            success_story="stories.csv",
+        )
+
+        assert KbService._reject_unsupported_component_set(request) is None
+
+    @pytest.mark.asyncio
+    async def test_a_refused_request_still_terminates_the_stream(self, real_agent_config):
+        """Consumers read the "all" component as the end of the stream, so a
+        refusal that returned early would leave them waiting forever."""
+        import asyncio
+
+        svc = KbService(agent_config=real_agent_config)
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy="sync-yaml",
+            success_story="stories.csv",
+        )
+
+        events = [
+            event
+            async for event in svc.bootstrap_stream(
+                request, "refused-stream", asyncio.Event(), str(real_agent_config.home)
+            )
+        ]
+
+        assert [event.component for event in events] == ["all"]
+        assert events[-1].stage == BatchStage.TASK_FAILED
+        assert "metrics" in events[-1].error
+
+
 class TestKbServiceBuildArgs:
     """Tests for _build_args — argument namespace creation."""
 
@@ -430,17 +490,14 @@ class TestKbServiceInitSemanticAndMetrics:
             str(real_agent_config.home),
         )
         with (
-            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_rag,
             patch("datus.api.services.kb_service.init_success_story_semantic_model") as mock_init,
         ):
             mock_rag.return_value.get_size.return_value = 4
-            mock_profile.return_value.get_size.return_value = 2
             result = svc._init_semantic_model(real_agent_config, "check", "", args, emit=None)
 
         assert result["status"] == "success"
-        assert "semantic_object_count=4" in result["message"]
-        assert "table_semantic_profile_count=2" in result["message"]
+        assert "semantic_dataset_count=4" in result["message"]
         mock_init.assert_not_called()
 
     def test_init_semantic_modeling_forwards_unified_options(self, real_agent_config):
@@ -488,8 +545,8 @@ class TestKbServiceInitSemanticAndMetrics:
         )
 
         with (
-            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG"),
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_rag_cls,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG"),
             patch(
                 "datus.api.services.kb_service.init_success_story_semantic_model",
                 return_value=(True, ""),
@@ -514,8 +571,7 @@ class TestKbServiceInitSemanticAndMetrics:
         )
 
         with (
-            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile_cls,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_rag_cls,
             patch(
                 "datus.api.services.kb_service.refresh_success_story_semantic_model_profile",
                 return_value=(True, "", 4),
@@ -523,7 +579,6 @@ class TestKbServiceInitSemanticAndMetrics:
             patch("datus.api.services.kb_service.init_success_story_semantic_model") as mock_generate,
         ):
             mock_rag_cls.return_value.get_size.return_value = 5
-            mock_profile_cls.return_value.get_size.return_value = 2
             result = svc._init_semantic_model(real_agent_config, "refresh-profile", "", args, emit=None)
 
         assert result["status"] == "success"

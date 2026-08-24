@@ -78,7 +78,10 @@ def test_nightly_runs_doris_agent_contract_from_checkout():
     assert 'echo "DORIS_QUERY_HOST_PORT=29031" >> $GITHUB_ENV' in workflow
     assert 'echo "DORIS_HTTP_HOST_PORT=28031" >> $GITHUB_ENV' in workflow
     assert 'DORIS_COMPOSE="${DORIS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-doris/docker-compose.yml}"' in script
-    assert 'run_compose_suite "Doris Adapter Tests"' in script
+    # The db-adapters compose file runs the all-in-one image as a single
+    # `doris` service; waiting on the retired `doris-fe`/`doris-be` names
+    # aborts the suite before pytest starts.
+    assert 'run_compose_suite "Doris Adapter Tests" "$DORIS_COMPOSE" "doris:600" --' in script
     assert 'uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-doris/scripts/wait_for_doris.py"' in script
     assert 'wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"' in script
     assert 'wait_for_tcp_readiness "Doris"' not in script

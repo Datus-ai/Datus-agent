@@ -555,6 +555,11 @@ class ActionRenderer:
             result: List[Text] = [
                 Text.from_markup(f"[dim]  \u23bf  \U0001f527 {label} - {tc.status_mark}{tc.duration_str}[/dim]")
             ]
+            # A reviewed sub-agent call carries the same verdict row as a
+            # main-agent one: without it a subagent could run a gated bash/SQL
+            # action and show only the result, hiding that a review happened.
+            if tc.review_line:
+                result.append(Text.from_markup(f"[dim]          {rich_escape(tc.review_line)}[/dim]"))
             if verbose:
                 for line in tc.args_lines:
                     result.append(Text.from_markup(f"[dim]          {line}[/dim]"))
@@ -794,10 +799,19 @@ class ActionRenderer:
         # Manual SQL/bash execution (input-bar sql>/bash> mode): render the
         # terminal frame as the styled execution block.
         if action.action_type == "manual_exec":
+            from datus.cli.action_display.tool_content import format_review_line
             from datus.cli.manual_exec import render_exec_block
+            from datus.tools.permission.review_registry import PERMISSION_REVIEW_OUTPUT_KEY
 
-            payload = action.output.get("payload") if isinstance(action.output, dict) else None
-            return [render_exec_block(payload)] if payload else []
+            output = action.output if isinstance(action.output, dict) else {}
+            payload = output.get("payload")
+            if not payload:
+                return []
+            # ``bash_mode`` stamps the verdict onto this action's output; render
+            # it inside the block so a manually run command shows what
+            # authorised it, exactly like an agent-run tool call does.
+            review_line = format_review_line(output.get(PERMISSION_REVIEW_OUTPUT_KEY), verbose=verbose)
+            return [render_exec_block(payload, review_line=review_line)]
 
         # Task tool -> render as subagent
         if action.role == ActionRole.TOOL:
@@ -855,6 +869,9 @@ class ActionRenderer:
             result: List[Union[Text, Markdown, Syntax]] = [
                 Text.from_markup(f"\u23fa \U0001f527 {rich_escape(tc.label)} - {tc.status_mark}{tc.duration_str}")
             ]
+            if tc.review_line:
+                # Verbose carries the untruncated rationale.
+                result.append(Text.from_markup(f"    [dim]{rich_escape(tc.review_line)}[/dim]"))
             for line in tc.args_lines:
                 result.append(Text.from_markup(f"    {line}"))
             if tc.args_lines and tc.output_lines:
@@ -877,12 +894,17 @@ class ActionRenderer:
             dur = tc.duration_str.strip()  # "(<0.1s)" or "(12.4s)"
             dur_suffix = f" \u00b7 [dim]{dur.strip('()')}[/dim]" if dur else ""
 
+            # The AI permission review (when the call was reviewed) gets its own
+            # row above the result, so the verdict that authorised the run reads
+            # in the same block as what the run produced.
+            review_rows = [f"  \u2514\u2500 [dim]{rich_escape(tc.review_line)}[/dim]"] if tc.review_line else []
+
             # Multi-line compact result (e.g. bash showing the first few output
             # lines). Continuation rows align under the first line's content; an
             # overflow row folds the remainder claude-style.
             if tc.compact_result_lines:
                 first, *rest = tc.compact_result_lines
-                body_lines = [f"  \u2514\u2500 {mark} {rich_escape(first)}{dur_suffix}"]
+                body_lines = review_rows + [f"  \u2514\u2500 {mark} {rich_escape(first)}{dur_suffix}"]
                 body_lines.extend(f"     {rich_escape(line)}" for line in rest)
                 if tc.compact_result_overflow > 0:
                     body_lines.append(f"     [dim]\u2026 +{tc.compact_result_overflow} lines (ctrl+o to expand)[/dim]")
@@ -894,6 +916,7 @@ class ActionRenderer:
                 body = f"  \u2514\u2500 {mark} {rich_escape(result_text)}{dur_suffix}"
             else:
                 body = f"  \u2514\u2500 {mark}{dur_suffix}"
+            body = "\n".join(review_rows + [body])
             return [Text.from_markup(f"{status_dot} {header}\n{body}")]
 
     @staticmethod

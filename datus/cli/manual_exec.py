@@ -362,7 +362,7 @@ def _sql_result_table(payload: Dict[str, Any]) -> Optional[Table]:
     return table
 
 
-def render_exec_block(payload: Dict[str, Any]) -> RenderableType:
+def render_exec_block(payload: Dict[str, Any], *, review_line: str = "") -> RenderableType:
     """Render a manual-execution payload as a bordered, mode-coloured block.
 
     Used identically by the live chat turn and the ``/resume`` transcript, so
@@ -374,10 +374,18 @@ def render_exec_block(payload: Dict[str, Any]) -> RenderableType:
     command line, the result (table / output), and a ✓/✗ status footer with
     timing. The content keeps its normal background so the SQL table and the
     syntax-highlighted command stay legible.
+
+    ``review_line`` is the pre-formatted AI permission-review summary for the
+    call (empty when it was never reviewed). It is passed in rather than read
+    off the payload because the formatter lives in ``action_display``, which
+    this module must not import — and because the payload doubles as the chat
+    message sent to the model, which has no business seeing the verdict.
     """
     kind = payload["kind"]
     _, _, border_style = _KIND_CHROME[kind]
     body: List[RenderableType] = [_command_renderable(payload)]
+    if review_line:
+        body.append(Text(review_line, style="dim"))
 
     if kind == "sql":
         table = _sql_result_table(payload)

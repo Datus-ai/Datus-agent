@@ -14,6 +14,7 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.output_checking import gen_prompt
 from datus.schemas.node_models import OutputInput, OutputResult
 from datus.tools.base import BaseTool
+from datus.utils.benchmark_artifacts import BENCHMARK_ARTIFACT_PROFILE
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -42,6 +43,20 @@ class OutputTool(BaseTool):
             if final_sql_query and final_sql_result is None:
                 final_sql_result = input_data.sql_result
                 final_sql_query = input_data.gen_sql
+
+            if input_data.artifact_profile == BENCHMARK_ARTIFACT_PROFILE:
+                canonical_sql = final_sql_query or input_data.gen_sql
+                canonical_result = final_sql_result if final_sql_result is not None else input_data.sql_result or ""
+                result_file = save_csv(target_dir, input_data.task_id, canonical_result)
+                save_sql(target_dir, input_data.task_id, canonical_sql)
+                return OutputResult(
+                    success=True,
+                    output=result_file,
+                    sql_query=input_data.gen_sql,
+                    sql_result=input_data.sql_result or "",
+                    sql_query_final=canonical_sql,
+                    sql_result_final=canonical_result,
+                )
 
             if input_data.file_type == "sql":
                 result_file = save_sql(
@@ -72,6 +87,14 @@ class OutputTool(BaseTool):
                 sql_result_final=final_sql_result,
             )
         else:
+            if input_data.artifact_profile == BENCHMARK_ARTIFACT_PROFILE:
+                return OutputResult(
+                    success=False,
+                    output=input_data.error or "Benchmark output failed",
+                    error=input_data.error,
+                    sql_query=input_data.gen_sql,
+                    sql_result=input_data.sql_result or "",
+                )
             file_name = f"{input_data.task_id}.json" if input_data.task_id else "result.json"
             with open(os.path.join(target_dir, file_name), "w") as f:
                 json.dump(

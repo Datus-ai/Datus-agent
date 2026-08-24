@@ -251,28 +251,16 @@ def _dataset_table_references(agent_config: Any, dataset: Dict[str, Any], datase
     return references if not parse_errors else []
 
 
-def validate_osi_core_document(document: Any) -> Optional[str]:
-    """Validate one parsed document with the OSI package's canonical schema."""
-    if not isinstance(document, dict):
-        return "YAML document must be an object"
-    try:
-        from datus_semantic_osi.errors import OSIValidationError
-        from datus_semantic_osi.profile import validate_osi_core_schema
-    except ImportError as exc:
-        return f"OSI schema validator is unavailable: {exc}"
-
-    try:
-        validate_osi_core_schema(document)
-    except OSIValidationError as exc:
-        return str(exc)
-    return None
-
-
 def validate_osi_authoring_document(document: Any, *, semantic_adapter: str) -> Optional[str]:
-    """Validate an OSI-shaped authoring document with its selected adapter."""
+    """Validate an OSI-shaped authoring document with its selected adapter.
+
+    Dosi is the only adapter that authors. Anything else is query-only, so
+    there is no validator to fall back to — saying so is more useful than
+    validating a document that will never be written.
+    """
 
     if str(semantic_adapter or "").strip().lower() != "dosi":
-        return validate_osi_core_document(document)
+        return QUERY_ONLY_MIGRATION_MESSAGE
     if not isinstance(document, dict):
         return "YAML document must be an object"
     try:

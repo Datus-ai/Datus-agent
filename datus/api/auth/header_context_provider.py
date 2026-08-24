@@ -1,4 +1,4 @@
-"""Open-source default auth provider — header-based identification, no secret."""
+"""Default provider for request context carried in trusted headers."""
 
 import json
 from typing import Any
@@ -7,19 +7,19 @@ from fastapi import Request
 
 from datus.api.auth.context import AppContext
 from datus.api.auth.provider import EvictCallback
-from datus.api.constants import HEADER_PRINCIPAL, HEADER_USER_ID, USER_ID_PATTERN
+from datus.api.constants import HEADER_POLICY_CONTEXT, HEADER_USER_ID, USER_ID_PATTERN
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 
-class NoAuthProvider:
-    """Open-source default provider — reads optional request context headers.
+class HeaderContextProvider:
+    """Read optional identity and execution-policy context headers.
 
     ``X-Datus-User-Id`` is optional caller identity for per-user session
-    isolation. ``X-Datus-Principal`` is an optional JSON object whose fields are
-    exposed to SQL policies as ``AppContext.principal``.
+    isolation. ``X-Datus-Policy-Context`` is an optional JSON object forwarded
+    to active execution policies without interpreting user identity.
 
     Auth provider only handles identification, not config loading.
     Config is loaded on-demand by ``get_datus_service``.
@@ -30,11 +30,11 @@ class NoAuthProvider:
 
     async def authenticate(self, request: Request) -> AppContext:
         user_id = self._read_user_id(request)
-        principal = self._read_principal(request)
-        return AppContext(user_id=user_id, project_id=None, config=None, principal=principal)
+        policy_context = self._read_policy_context(request)
+        return AppContext(user_id=user_id, project_id=None, config=None, policy_context=policy_context)
 
     def on_evict(self, callback: EvictCallback) -> None:
-        """Register eviction callback (no-op for no-auth provider)."""
+        """Register an eviction callback for the provider lifecycle."""
         self._evict_callbacks.append(callback)
 
     @staticmethod
@@ -56,35 +56,25 @@ class NoAuthProvider:
         return candidate
 
     @staticmethod
-    def _read_principal(request: Request) -> dict[str, Any]:
-        raw = request.headers.get(HEADER_PRINCIPAL)
+    def _read_policy_context(request: Request) -> dict[str, Any]:
+        raw = request.headers.get(HEADER_POLICY_CONTEXT)
         if raw is None or not raw.strip():
             return {}
 
         try:
-            principal = json.loads(raw)
+            policy_context = json.loads(raw)
         except json.JSONDecodeError as e:
             raise DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
                 message=(
-                    f"Invalid {HEADER_PRINCIPAL} header value: expected a JSON object with "
-                    f"SQL policy principal fields ({e.msg})."
+                    f"Invalid {HEADER_POLICY_CONTEXT} header value: expected a JSON object "
+                    f"with policy inputs ({e.msg})."
                 ),
             ) from e
 
-        if not isinstance(principal, dict):
+        if not isinstance(policy_context, dict):
             raise DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
-                message=(
-                    f"Invalid {HEADER_PRINCIPAL} header value: expected a JSON object with SQL policy principal fields."
-                ),
+                message=(f"Invalid {HEADER_POLICY_CONTEXT} header value: expected a JSON object with policy inputs."),
             )
-        if "user_id" in principal:
-            raise DatusException(
-                ErrorCode.COMMON_VALIDATION_FAILED,
-                message=(
-                    f"Invalid {HEADER_PRINCIPAL} header value: field 'user_id' is reserved for "
-                    f"{HEADER_USER_ID}; use a business principal field for SQL policy."
-                ),
-            )
-        return principal
+        return policy_context

@@ -13,16 +13,13 @@ import pytest
 from datus.agent.node import semantic_authoring
 from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+from tests.unit_tests.mock_llm_model import build_simple_response
 
 
 @pytest.fixture(autouse=True)
-def _stub_osi_schema_validation(monkeypatch):
-    monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
-    monkeypatch.setattr(
-        semantic_authoring,
-        "validate_osi_authoring_document",
-        lambda document, *, semantic_adapter: None,
-    )
+def _accept_any_authoring_document(monkeypatch):
+    """These drive the node, not the validator, which is covered on its own."""
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", lambda document, **kwargs: None)
     monkeypatch.setattr(
         semantic_authoring,
         "render_required_authoring_skill",
@@ -40,6 +37,10 @@ def _stub_osi_schema_validation(monkeypatch):
 
 def _set_adapter(agent_config, adapter: str) -> None:
     agent_config.resolve_semantic_adapter = MagicMock(return_value=adapter)
+
+
+def _stream_call_count(mock_llm_create) -> int:
+    return sum(1 for call in mock_llm_create.call_history if call.get("method") == "generate_with_tools_stream")
 
 
 def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_config, mock_llm_create):
@@ -425,6 +426,99 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     node._finalize_selected_osi_artifact.assert_called_once_with()
     assert result.status == "generated"
     assert result.semantic_models == ["subject/semantic_models/warehouse/orders.yml"]
+
+
+@pytest.mark.asyncio
+async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_config, mock_llm_create):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    mock_llm_create.reset(
+        responses=[
+            build_simple_response("The semantic model is complete and validated."),
+            build_simple_response(json.dumps({"status": "generated", "output": "Updated orders"})),
+        ]
+    )
+    _set_adapter(real_agent_config, "dosi")
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.input = SemanticNodeInput(user_message="Update the orders dataset")
+    node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
+
+    actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+    assert _stream_call_count(mock_llm_create) == 2
+    assert "You may use the available tools" in mock_llm_create.call_history[-1]["prompt"]
+    assert mock_llm_create.call_history[-1]["tools"]
+    assert actions[-1].output["success"] is True
+    assert actions[-1].output["status"] == "generated"
+    node._finalize_selected_osi_artifact.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_status", "expected_success"),
+    [
+        ({"status": "generated", "output": "Updated orders"}, "generated", True),
+        (
+            {"status": "skipped", "skip_reason": "no_semantic_change", "output": "No change required"},
+            "skipped",
+            True,
+        ),
+        (
+            {
+                "status": "blocked",
+                "blocker_code": "semantic_model_required",
+                "output": "A semantic model is required",
+            },
+            "blocked",
+            False,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_supported_outcome_does_not_retry(
+    real_agent_config,
+    mock_llm_create,
+    payload,
+    expected_status,
+    expected_success,
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    mock_llm_create.reset(responses=[build_simple_response(json.dumps(payload))])
+    _set_adapter(real_agent_config, "dosi")
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.input = SemanticNodeInput(user_message="Update the orders dataset")
+    node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
+
+    actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+    assert _stream_call_count(mock_llm_create) == 1
+    assert actions[-1].output["status"] == expected_status
+    assert actions[-1].output["success"] is expected_success
+    if expected_status == "generated":
+        node._finalize_selected_osi_artifact.assert_called_once_with()
+    else:
+        node._finalize_selected_osi_artifact.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_outcome_still_fails_after_one_retry(real_agent_config, mock_llm_create):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    mock_llm_create.reset(
+        responses=[
+            build_simple_response("The semantic model is complete."),
+            build_simple_response("The semantic model remains complete."),
+        ]
+    )
+    _set_adapter(real_agent_config, "dosi")
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.input = SemanticNodeInput(user_message="Update the orders dataset")
+
+    actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+    assert _stream_call_count(mock_llm_create) == 2
+    assert actions[-1].output["success"] is False
+    assert "must return a supported status" in actions[-1].output["error"]
 
 
 def test_unified_result_can_skip_when_no_semantic_change_is_needed(real_agent_config, mock_llm_create):

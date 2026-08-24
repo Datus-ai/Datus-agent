@@ -8,7 +8,7 @@
 
 An HTML dashboard is a **live data view** — every change to the date range, region, product line, or any other filter renders the saved SQL template with the new parameters and re-queries the database. That's the key difference from `gen_visual_report`, which bakes data into the page at build time: reports are for sharing in emails or briefings; dashboards are for the cases where you need to keep exploring or hand the page to someone who'll filter it themselves.
 
-For interactive BI dashboards on Superset / Grafana, use [`gen_dashboard`](gen_dashboard.md) instead.
+For interactive BI dashboards on Superset or another external platform, ask the main agent to use the installed BI plugin directly. The old BI dashboard node is documented only as a [legacy compatibility path](gen_dashboard.md).
 
 ## Quick Start
 

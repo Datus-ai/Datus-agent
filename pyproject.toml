@@ -46,7 +46,12 @@ dependencies = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
-    "litellm>=1.67.4.post1,<2",
+    # Upper bound tracks the ``httpx[socks]==0.27.2`` pin above: litellm 1.83.1+ requires
+    # ``httpx==0.28.1`` / ``httpx>=0.28``, so nothing above 1.83.0 can ever be selected.
+    # Without the bound, pip backtracks from the newest release through ~90 versions and
+    # source-builds the 1.92-1.95 sdists, which ship no macOS or Windows wheels — minutes
+    # stuck on "Preparing metadata". Lift this bound only together with the httpx pin.
+    "litellm>=1.67.4.post1,<1.83.1",
     "pydantic>=2.11.7,<3.0",
     "lancedb==0.34.0",
     # This library is required by lancedb
@@ -179,6 +184,7 @@ testpaths = ["tests"]
 dev = [
     "pytest==8.0.2",
     "pytest-asyncio>=0.23.8",
+    "jsonschema>=4.25.1,<5",
     # Keep consistent with the workflow version of github
     "ruff==0.15.6",
     "mypy==1.8.0",
@@ -202,8 +208,6 @@ ci = [
     "datus-storage-postgresql>=0.1.5",
     "datus-metricflow>=0.2.7",
     "datus-semantic-metricflow>=0.2.12",
-    # Required so the OSI authoring tests run in CI (rather than skipping).
-    "datus-semantic-osi>=0.1.4",
     # The current PyPI release predates the authoring-spec API used here.
     # Use the merged adapter source until the next adapter package is released.
     "datus-semantic-dosi @ https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz#subdirectory=datus-semantic-dosi ; platform_machine == 'x86_64' and sys_platform == 'linux'",

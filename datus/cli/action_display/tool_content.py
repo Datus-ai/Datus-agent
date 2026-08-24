@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional
 
 from datus.schemas.action_history import ActionHistory, ActionStatus
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, search_table_result_counts
+from datus.tools.permission.review_registry import PERMISSION_REVIEW_OUTPUT_KEY
 from datus.utils.loggings import get_logger
 from datus.utils.tool_archive import is_archived_output, parse_archived_marker
 
@@ -47,6 +48,10 @@ class ToolCallContent:
     # path (unchanged for every other tool).
     compact_result_lines: List[str] = field(default_factory=list)
     compact_result_overflow: int = 0  # extra lines beyond those shown
+    # One-line AI permission-review summary drawn above the result row(s), e.g.
+    # "AI review ✓ passed · low risk · conf 0.92 · <rationale>". Empty when the
+    # call was never reviewed (review disabled, or statically allowed/denied).
+    review_line: str = ""
 
 
 # Type alias for custom content builder functions
@@ -119,6 +124,51 @@ def _truncate_middle(text: str, max_len: int = 60) -> str:
         return flat
     keep = max(1, (max_len - 5) // 2)
     return flat[:keep] + " ... " + flat[-keep:]
+
+
+# Compact-mode budget for the rationale tail of the review line, matching the
+# budget the reviewer's system prompt asks for. The verdict prefix costs 46
+# columns ("  └─ AI review ✓ passed · low risk · conf 0.97"), so 70 keeps the
+# whole row inside a 120-column terminal instead of wrapping. A compliant
+# rationale therefore renders in full; only a model that ignored the budget gets
+# the middle-truncation marker, which doubles as the signal that it did. The
+# untruncated text stays available in verbose mode (ctrl+o).
+_REVIEW_RATIONALE_MAX = 70
+
+
+def format_review_line(review: Optional[dict], *, verbose: bool = False) -> str:
+    """One-line summary of an AI permission review, or "" when there is none.
+
+    Shape: ``AI review ✓ passed · low risk · conf 0.92 · <rationale>``.
+
+    ``outcome`` distinguishes a review the model resolved on its own from one a
+    person overrode, so an approved-despite-flagged run is not shown as if the
+    reviewer had waved it through.
+    """
+    if not isinstance(review, dict) or not review:
+        return ""
+    outcome = review.get("outcome", "")
+    decision = review.get("decision", "")
+    if decision == "unavailable":
+        head = "AI review ? unavailable"
+    elif decision == "allow":
+        head = "AI review ✓ passed"
+    else:
+        head = "AI review ✗ flagged"
+
+    parts = [head]
+    risk = review.get("risk_level")
+    if risk:
+        parts.append(f"{risk} risk")
+    confidence = review.get("confidence")
+    if isinstance(confidence, (int, float)):
+        parts.append(f"conf {confidence:.2f}")
+    if outcome == "user_approved":
+        parts.append("user approved")
+    rationale = _collapse_whitespace(str(review.get("rationale", "")))
+    if rationale:
+        parts.append(rationale if verbose else _truncate_middle(rationale, _REVIEW_RATIONALE_MAX))
+    return " · ".join(parts)
 
 
 def _format_positional(args: dict, *keys: str, max_len: int = 60) -> str:
@@ -2213,6 +2263,11 @@ class ToolCallContentBuilder:
             tc = self._registry[function_name](action, verbose)
         else:
             tc = self._build_default(action, verbose)
+
+        # Filled centrally rather than per-tool: any gated call (bash,
+        # execute_sql, and anything the gate reviews later) gets the same row.
+        if isinstance(action.output, dict):
+            tc.review_line = format_review_line(action.output.get(PERMISSION_REVIEW_OUTPUT_KEY), verbose=verbose)
 
         if not verbose:
             # Populate compact-layout fields if the per-tool builder skipped them.

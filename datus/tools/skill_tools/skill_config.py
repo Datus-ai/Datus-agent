@@ -99,7 +99,7 @@ def _plugins_system_enabled(agent_config: Optional[Any] = None) -> bool:
 
         # Same coercion as ``AgentConfig.plugins_enabled`` so the two readers
         # of this key can never disagree on a value like ``"off"``.
-        from datus.configuration.agent_config import _coerce_bool  # noqa: PLC2701
+        from datus.utils.config_utils import coerce_bool
 
         mgr = agent_config_loader.CONFIGURATION_MANAGER
         if mgr is None:
@@ -108,7 +108,7 @@ def _plugins_system_enabled(agent_config: Optional[Any] = None) -> bool:
     except Exception as exc:  # noqa: BLE001 - defensive: never break discovery
         logger.debug("plugins_enabled lookup failed: %s", exc)
         return True
-    return _coerce_bool(value, True)
+    return coerce_bool(value, True)
 
 
 def _plugin_skill_directories(agent_config: Optional[Any] = None) -> List[str]:

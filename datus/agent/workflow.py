@@ -423,7 +423,7 @@ class Workflow:
         """
         return self.task.task if self.task else None
 
-    def save(self, file_path: str):
+    def save(self, file_path: str, *, schema_version: Optional[int] = None) -> None:
         """
         Save the workflow to a YAML file.
 
@@ -454,8 +454,12 @@ class Workflow:
                     return {k: convert_pydantic(v) for k, v in obj.items()}
                 return obj
 
+            payload = {"workflow": convert_pydantic(workflow_dict)}
+            if schema_version is not None:
+                payload["schema_version"] = schema_version
+
             yaml.safe_dump(
-                {"workflow": convert_pydantic(workflow_dict)},
+                payload,
                 f,
                 default_flow_style=False,
                 indent=2,

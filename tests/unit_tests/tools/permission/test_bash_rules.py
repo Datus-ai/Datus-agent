@@ -18,8 +18,11 @@ from datus.tools.permission.bash_rules import (
     BashCommandRules,
     BashDecisionSource,
     command_matches_pattern,
+    contains_shell_metachars,
     evaluate_bash_command,
     session_bucket_for,
+    split_command_chain,
+    split_pipeline,
 )
 from datus.tools.permission.permission_config import PermissionLevel
 
@@ -187,19 +190,42 @@ class TestSafetyCeiling:
     @pytest.mark.parametrize(
         "command",
         [
-            "git status && rm -rf /",
-            "ls || rm x",  # logical OR is not a pipeline
-            "ls |& grep foo",  # stderr pipe is not a simple pipeline
-            "ls |",  # trailing empty pipeline segment
+            "ls |& grep foo",  # stderr pipe is not a simple pipe
+            "ls |",  # trailing empty segment
+            "ls & rm x",  # background `&` is not a sequencer
+            "ls &",
+            "ls;; rm x",  # empty segment between `;;`
             "echo hi > /etc/passwd",
             "echo `whoami`",
             "echo $(id)",
             "echo ${HOME}",
-            "ls; rm x",
+            "ls\nrm x",  # newline is not segmented
         ],
     )
     def test_metacharacters_force_ask(self, command):
         rules = BashCommandRules(allow=["git status", "ls:*", "echo:*", "grep:*", "rm:*"])
+        decision = evaluate_bash_command(command, rules)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "for f in *; do echo $f; done",
+            "if ls; then echo ok; fi",
+            "while ls; do echo x; done",
+            "(cd /tmp; ls)",
+            "{ ls; echo done; }",
+        ],
+    )
+    def test_compound_constructs_force_ask(self, command):
+        """Loops/conditionals/subshells are not decomposable into sub-commands.
+
+        Without this guard ``do rm $f`` would be judged — and persisted — as an
+        ordinary ``rm`` command.
+        """
+        rules = BashCommandRules(allow=["ls:*", "echo:*", "cd:*", "rm:*"])
         decision = evaluate_bash_command(command, rules)
         assert decision.level == PermissionLevel.ASK
         assert decision.source == BashDecisionSource.SAFETY
@@ -220,6 +246,160 @@ class TestSafetyCeiling:
     def test_plain_command_is_not_safety_forced(self):
         decision = evaluate_bash_command("cargo build", BashCommandRules())
         assert decision.safety_forced is False
+
+
+class TestBenignRedirectionExemption:
+    """``2>&1`` and a ``/dev/null`` target do not force a confirmation.
+
+    Neither form can express anything the argv already can't: fd duplication
+    rewires the command's own streams and names no path, and a ``/dev/null``
+    target discards by definition. They are also two of the most common shell
+    idioms there are, so prompting for them trains users to click through
+    prompts. Every other redirection still hits the ceiling because it names a
+    path an argv-matched allow rule cannot vouch for.
+    """
+
+    RULES = BashCommandRules(allow=["ls:*", "cat:*", "head:*", "grep:*", "echo:*"])
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls -la 2>&1",
+            "ls -la 1>&2",
+            "ls -la >&2",
+            "cat f <&0",
+            "ls -la 2>&-",
+            "ls -la 2>/dev/null",
+            "ls -la > /dev/null",
+            "ls -la >> /dev/null",
+            "ls -la 2>> /dev/null",
+            "ls -la &>/dev/null",
+            "ls -la &>> /dev/null",
+        ],
+    )
+    def test_benign_redirection_auto_allows(self, command):
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ALLOW
+        assert decision.safety_forced is False
+
+    def test_exempt_redirection_inside_a_chain_is_judged_per_sub_command(self):
+        """The motivating case. Bailing out of segmentation on the ``&`` of
+        ``2>&1`` sent the whole string to the ceiling and hid ``head`` from the
+        per-sub-command prompt."""
+        assert split_command_chain("ls -la /tmp 2>&1 | head -20") == ["ls -la /tmp 2>&1", "head -20"]
+
+        decision = evaluate_bash_command("ls -la /tmp 2>&1 | head -20", self.RULES)
+        assert decision.level == PermissionLevel.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls > out.txt",  # names an arbitrary path
+            "ls >> out.txt",
+            "ls 2> err.txt",
+            "ls &> out.txt",  # both streams, still an arbitrary path
+            "ls < in.txt",  # input redirection is not exempt
+            "ls > /dev/nullx",  # near-miss on the device name
+            "ls > /dev/stdout",  # only /dev/null is exempt
+        ],
+    )
+    def test_other_redirections_still_force_ask(self, command):
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    @pytest.mark.parametrize("command", ["& ls", "  & ls"])
+    def test_leading_ampersand_is_not_mistaken_for_a_redirection(self, command):
+        """There is no preceding operator, so segmentation must still bail.
+
+        Regression: the check was written ``_last_nonspace(buf) in "<>"``, and
+        ``"" in "<>"`` is True in Python — an empty string is a substring of
+        every string — so a leading ``&`` read as a redirection.
+        """
+        assert split_command_chain(command) is None
+
+    @pytest.mark.parametrize("command", ["ls &", "sleep 5 &", "ls 2>&1 &", "ls & rm x"])
+    def test_background_ampersand_is_not_mistaken_for_a_redirection(self, command):
+        """The exemption keys on the ``&`` sitting next to ``<``/``>``; a
+        trailing job-control ``&`` must still stop segmentation."""
+        assert split_command_chain(command) is None
+
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.safety_forced is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo $(id) 2>/dev/null",
+            "echo `whoami` 2>&1",
+            "ls\nrm x 2>&1",
+        ],
+    )
+    def test_exemption_does_not_rescue_other_metacharacters(self, command):
+        """Stripping the redirection must not strip anything else with it."""
+        decision = evaluate_bash_command(command, self.RULES)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    def test_exempt_redirection_does_not_change_a_chain_verdict(self):
+        """A non-allow-listed sub-command still blocks the chain, and the
+        redirection changes nothing about it: the redirected and bare forms of
+        the same chain must be judged identically."""
+        redirected = evaluate_bash_command("ls; rm x 2>/dev/null", self.RULES)
+        bare = evaluate_bash_command("ls; rm x", self.RULES)
+
+        assert redirected.level == PermissionLevel.ASK
+        assert redirected.level == bare.level
+        assert redirected.source == bare.source
+        assert redirected.safety_forced == bare.safety_forced
+
+    def test_wrapper_ceiling_still_beats_the_exemption(self):
+        """Ordering guard: the wrapper rule fires before the redirection check,
+        so a shell wrapper cannot smuggle a command past the exemption."""
+        rules = BashCommandRules(allow=["sh:*", "ls:*"])
+        decision = evaluate_bash_command('sh -c "rm -rf / 2>&1"', rules)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    def test_deny_rule_still_beats_the_exemption(self):
+        rules = BashCommandRules(allow=["ls:*"], deny=["ls:/secret*"])
+        decision = evaluate_bash_command("ls /secret 2>/dev/null", rules)
+        assert decision.level == PermissionLevel.DENY
+
+    def test_dangerous_command_is_unaffected_by_its_redirection(self):
+        """``rm -rf /`` was never safety-forced — no metacharacters. Adding
+        ``2>/dev/null`` used to force it, which made the redirection look like
+        the dangerous part. Both forms now agree; neither auto-allows."""
+        rules = BashCommandRules(allow=["ls:*"])
+        bare = evaluate_bash_command("rm -rf /", rules)
+        redirected = evaluate_bash_command("rm -rf / 2>/dev/null", rules)
+
+        assert bare.level == PermissionLevel.ASK
+        assert redirected.level == PermissionLevel.ASK
+        assert redirected.safety_forced == bare.safety_forced
+
+    def test_anchored_allow_rule_does_not_match_the_redirection_token(self):
+        """Known limitation, pinned deliberately: ``shlex`` keeps ``2>&1`` as an
+        argv token, so an exact (unglobbed) allow rule no longer matches. The
+        command is an ordinary ASK, not a safety-forced one."""
+        rules = BashCommandRules(allow=["git status"])
+        decision = evaluate_bash_command("git status 2>&1", rules)
+
+        assert decision.level == PermissionLevel.ASK
+        assert decision.safety_forced is False
+        assert evaluate_bash_command("git status", rules).level == PermissionLevel.ALLOW
+
+    def test_execution_layer_whitelist_still_rejects_every_redirection(self):
+        """The exemption is permission-layer only. ``BashTool`` shares
+        ``contains_shell_metachars`` as the skills whitelist — a separate trust
+        boundary that must keep rejecting redirection outright."""
+        assert contains_shell_metachars("ls -la 2>&1") is True
+        assert contains_shell_metachars("ls -la 2>/dev/null") is True
+        assert split_pipeline("ls 2>&1") == ["ls 2>&1"]
 
 
 class TestSessionBuckets:
@@ -429,19 +609,130 @@ class TestPipelineEvaluation:
         assert d.safety_forced is True
 
     def test_ask_pipeline_carries_all_non_allow_segments(self):
-        """The hook's project-grant bypass must see EVERY non-allow segment,
+        """The prompt and the grant writers must see EVERY non-allow segment,
         not just the representative one."""
         rules = BashCommandRules(allow=["cat:*"], ask=["docker:*"])
         d = evaluate_bash_command("frobnicate | docker ps | cat x", rules)
-        assert d.segment_ask_patterns == (
-            (BashDecisionSource.DEFAULT, None),
-            (BashDecisionSource.ASK_RULE, "docker:*"),
-        )
+        assert [(s.command, s.source, s.matched_pattern, s.bucket) for s in d.ask_segments] == [
+            ("frobnicate", BashDecisionSource.DEFAULT, None, "frobnicate"),
+            ("docker ps", BashDecisionSource.ASK_RULE, "docker:*", "docker:*"),
+        ]
 
-    def test_single_command_has_no_segment_patterns(self):
+    def test_single_command_carries_itself_as_one_ask_segment(self):
+        """Callers get one code path: a plain ASK still populates ask_segments."""
         rules = BashCommandRules(ask=["docker:*"])
         d = evaluate_bash_command("docker ps", rules)
-        assert d.segment_ask_patterns is None
+        assert len(d.ask_segments) == 1
+        seg = d.ask_segments[0]
+        assert seg.command == "docker ps"
+        assert seg.source == BashDecisionSource.ASK_RULE
+        assert seg.matched_pattern == "docker:*"
+        assert seg.bucket == "docker:*"
+        assert seg.safety_forced is False
+
+    def test_allow_and_deny_decisions_carry_no_ask_segments(self):
+        rules = BashCommandRules(allow=["ls:*"], deny=["rm:*"])
+        assert evaluate_bash_command("ls -la", rules).ask_segments == ()
+        assert evaluate_bash_command("rm -rf x", rules).ask_segments == ()
+
+
+class TestCommandChainSplitting:
+    """split_command_chain: top-level unquoted |, &&, ||, ; segmentation."""
+
+    @pytest.mark.parametrize(
+        "command,expected",
+        [
+            ("git status", ["git status"]),
+            ("a && b", ["a", "b"]),
+            ("a || b", ["a", "b"]),
+            ("a; b", ["a", "b"]),
+            ("a | b", ["a", "b"]),
+            ("a && b || c; d | e", ["a", "b", "c", "d", "e"]),
+            ('git commit -m "fix; bug"', ['git commit -m "fix; bug"']),
+            ("grep 'a && b' file", ["grep 'a && b' file"]),
+            ("echo a\\;b", ["echo a\\;b"]),
+            (r"find . -name '*.py' -exec ls {} \;", [r"find . -name '*.py' -exec ls {} \;"]),
+        ],
+    )
+    def test_segments(self, command, expected):
+        from datus.tools.permission.bash_rules import split_command_chain
+
+        assert split_command_chain(command) == expected
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "a |& b",  # stderr pipe
+            "ls &",  # background
+            "a & b",  # background
+            "ls &&",  # empty trailing segment
+            "; ls",  # empty leading segment
+            "a;; b",  # empty middle segment
+            'echo "unclosed && ls',  # unbalanced quotes
+        ],
+    )
+    def test_unsegmentable_returns_none(self, command):
+        from datus.tools.permission.bash_rules import split_command_chain
+
+        assert split_command_chain(command) is None
+
+    def test_split_pipeline_still_only_splits_pipes(self):
+        """The execution-layer whitelist (BashTool) must not be widened."""
+        from datus.tools.permission.bash_rules import split_pipeline
+
+        assert split_pipeline("a && b") == ["a && b"]
+        assert split_pipeline("a; b") == ["a; b"]
+        assert split_pipeline("a || b") is None
+        assert split_pipeline("a | b | c") == ["a", "b", "c"]
+
+
+class TestChainEvaluation:
+    """Per-sub-command judging for &&, ||, ; chains."""
+
+    @pytest.mark.parametrize("op", ["&&", "||", ";"])
+    def test_all_allow_sub_commands_auto_allow(self, op):
+        rules = BashCommandRules(allow=["git status", "ls:*"])
+        d = evaluate_bash_command(f"git status {op} ls -la", rules)
+        assert d.level == PermissionLevel.ALLOW
+        assert d.source == BashDecisionSource.ALLOW_RULE
+
+    @pytest.mark.parametrize("op", ["&&", "||", ";"])
+    def test_deny_sub_command_blocks_whole_chain(self, op):
+        rules = BashCommandRules(allow=["git status"], deny=["rm:*"])
+        d = evaluate_bash_command(f"git status {op} rm -rf /", rules)
+        assert d.level == PermissionLevel.DENY
+        assert d.matched_pattern == "rm:*"
+
+    def test_ask_chain_lists_every_non_allow_sub_command(self):
+        rules = BashCommandRules(allow=["git fetch"], ask=["npm:*"])
+        d = evaluate_bash_command("git fetch && rm -rf build && npm ci", rules)
+        assert d.level == PermissionLevel.ASK
+        assert [(s.command, s.source) for s in d.ask_segments] == [
+            ("rm -rf build", BashDecisionSource.DEFAULT),
+            ("npm ci", BashDecisionSource.ASK_RULE),
+        ]
+
+    def test_repeated_sub_commands_are_all_reported(self):
+        """Display fidelity: the user sees each occurrence, not a deduped one."""
+        rules = BashCommandRules()
+        d = evaluate_bash_command("rm a; rm b", rules)
+        assert [s.command for s in d.ask_segments] == ["rm a", "rm b"]
+
+    def test_safety_forced_sub_command_still_lists_the_others(self):
+        """The old short-circuit hid sibling sub-commands from the prompt."""
+        rules = BashCommandRules(allow=["git fetch"])
+        d = evaluate_bash_command("git fetch && sudo ls && npm ci", rules)
+        assert d.level == PermissionLevel.ASK
+        assert d.source == BashDecisionSource.SAFETY
+        assert d.safety_forced is True
+        assert [s.command for s in d.ask_segments] == ["sudo ls", "npm ci"]
+        assert [s.safety_forced for s in d.ask_segments] == [True, False]
+
+    def test_mixed_pipe_and_sequence_operators(self):
+        rules = BashCommandRules(allow=["cat:*", "grep:*"])
+        d = evaluate_bash_command("cat log | grep err && frobnicate", rules)
+        assert d.level == PermissionLevel.ASK
+        assert [s.command for s in d.ask_segments] == ["frobnicate"]
 
 
 class TestDatusProfileFlagNormalization:

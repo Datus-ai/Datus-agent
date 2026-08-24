@@ -22,13 +22,19 @@ express ``git status``):
   positional argument is matched to prevent smuggling a disallowed flag in
   front (mirrors the rationale in ``BashTool._matches_pattern``).
 
-Pipelines: a pure pipeline (``a | b | c`` — only top-level, unquoted ``|``)
-is split into segments and each segment is judged independently, then the
-results are aggregated (any DENY -> DENY; any safety-forced -> ASK; all ALLOW
--> ALLOW; otherwise ASK). This lets a pipeline of allow-listed read-only
-commands (``cat log | grep err | wc -l``) auto-run. Every OTHER shell
-construct (``&&``, ``;``, ``||``, ``$()``, redirection) hits the safety
-ceiling, so these static rules never allow it on their own.
+Sub-commands: a command chained with top-level, unquoted ``|``, ``&&``,
+``||`` or ``;`` is split into sub-commands and each is judged independently,
+then the results are aggregated (any DENY -> DENY; any safety-forced -> ASK;
+all ALLOW -> ALLOW; otherwise ASK). This lets a chain of allow-listed
+read-only commands (``cat log | grep err | wc -l``, ``git fetch && git
+status``) auto-run, and — just as importantly — lets the confirmation prompt
+name EVERY sub-command that needs approval instead of one representative.
+Shell constructs that segmentation cannot model still hit the safety ceiling
+as a whole: ``$()``, backticks, ``${}``, redirection, background ``&``,
+``|&``, newlines, subshells/braces and compound keywords (``for``/``if``/…).
+Two redirections are exempt because they name no path and so cannot do
+anything the argv could not: fd duplication (``2>&1``, ``>&2``, ``<&0``) and a
+``/dev/null`` target (see ``_BENIGN_REDIRECTION_RE``).
 
 The safety ceiling is a *static* verdict, not a final one: under a profile with
 ``permissions.auto_review`` enabled the shared reviewer in ``auto_reviewer.py``
@@ -46,9 +52,11 @@ asymmetry of aggressive deny / conservative allow):
                                  (``bash -c`` re-introduces a shell that the
                                  outer argv match is blind to), interpreter
                                  inline-code flags (``python -c`` / ``perl -e``
-                                 execute a string the rules cannot see), and
-                                 non-pipe shell metacharacters; allow rules
-                                 cannot override
+                                 execute a string the rules cannot see),
+                                 compound-construct fragments (``for``, ``do``,
+                                 ``(``, ``{`` — segmentation does not model
+                                 them), and residual shell metacharacters;
+                                 allow rules cannot override
 4. ask rules                  -> ASK (anchored)
 5. allow rules                -> ALLOW (anchored only, never unanchored)
 6. rules.default              -> usually ASK
@@ -60,7 +68,7 @@ override for the shared automatic reviewer settings.
 import fnmatch
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -77,12 +85,90 @@ logger = get_logger(__name__)
 # command substitution, chaining, or redirection, so commands containing them
 # never auto-allow (they hit the safety ceiling → confirmation).
 #
-# ``|`` is deliberately excluded here: a pure pipeline (``a | b | c``) is
-# split into segments by ``split_pipeline`` and each segment is judged on its
-# own, so pipelines of allow-listed read-only commands can auto-run. ``||``
-# (logical OR) is NOT a pipeline — ``split_pipeline`` returns None for it and
-# the caller falls back to this safety ceiling.
+# ``|`` is deliberately excluded here: chained commands are split into
+# sub-commands by ``split_command_chain`` before this check runs, so each
+# segment is judged on its own and chains of allow-listed read-only commands
+# can auto-run. The regex still lists ``;``/``&``/``&&``/``||`` because a
+# segment reaching this check kept them (an un-splittable form such as
+# background ``&``), and because ``BashTool._segment_allowed`` shares this
+# function with only ``split_pipeline`` in front of it.
 _SHELL_METACHARS_RE = re.compile(r"[;&<>`\n]|\$\(|\$\{|\|\||&&")
+
+# Redirections that cannot express anything the argv already can't, and so are
+# exempt from the redirection safety ceiling **in the permission layer only**:
+#
+#   * file-descriptor duplication / closing — ``2>&1``, ``>&2``, ``<&0``,
+#     ``2>&-``. These rewire the command's own streams. No path is named, so
+#     nothing can be written anywhere, and no new command can be introduced.
+#   * a ``/dev/null`` target — ``>/dev/null``, ``2>>/dev/null``,
+#     ``&>/dev/null``. The write goes to the null device by definition.
+#
+# ``2>&1`` and ``2>/dev/null`` are among the most common shell idioms there
+# are; forcing a confirmation prompt for them trains users to click through
+# prompts, which costs more safety than the ceiling buys. Every other
+# redirection stays on the ceiling: ``> file`` names an arbitrary path, so an
+# allow rule matched on argv (``ls:*`` says nothing about where output lands)
+# cannot vouch for it.
+#
+# Scope is deliberate. This is applied by ``_evaluate_single_command`` and
+# nowhere else: ``contains_shell_metachars`` itself is unchanged because
+# ``BashTool._segment_allowed`` shares it as the execution-layer whitelist for
+# skills — a separate trust boundary that must keep rejecting every
+# redirection outright.
+_BENIGN_REDIRECTION_RE = re.compile(
+    # 2>&1, >&2, <&0, 2>&-
+    r"\d*[<>]&(?:\d+|-)"
+    # >/dev/null, 2>/dev/null, >>/dev/null, &>/dev/null, &>>/dev/null.
+    # The target must end the token: without the lookahead, ``> /dev/nullx``
+    # would match its ``/dev/null`` prefix and leave a stray ``x`` behind,
+    # exempting a write to a real file.
+    r"|(?:\d*>{1,2}|&>{1,2})\s*/dev/null(?=\s|$)"
+)
+
+
+def _without_benign_redirections(text: str) -> str:
+    """Blank out the redirections listed in ``_BENIGN_REDIRECTION_RE``.
+
+    Substitutes a space rather than an empty string so stripping cannot fuse
+    two tokens into one (``a 2>&1b`` must not become ``a b``).
+    """
+    return _BENIGN_REDIRECTION_RE.sub(" ", text)
+
+
+def _last_nonspace(chars: List[str]) -> str:
+    """Last non-whitespace character accumulated so far, or ``""``."""
+    for ch in reversed(chars):
+        if not ch.isspace():
+            return ch
+    return ""
+
+
+# Shell keywords and grouping constructs. Segmentation splits on operators but
+# does not model compound commands, so ``for f in *; do rm $f; done`` arrives
+# here as three fragments (``for f in *``, ``do rm $f``, ``done``) that must
+# never be approved as three ordinary commands. Any fragment that opens or
+# belongs to such a construct hits the safety ceiling, which forces the WHOLE
+# chain to a confirmation prompt with no project-persistence option.
+_SHELL_KEYWORDS = frozenset(
+    {
+        "for",
+        "while",
+        "until",
+        "if",
+        "then",
+        "elif",
+        "else",
+        "fi",
+        "do",
+        "done",
+        "case",
+        "esac",
+        "in",
+        "select",
+        "function",
+        "coproc",
+    }
+)
 
 
 def contains_shell_metachars(text: str) -> bool:
@@ -94,6 +180,11 @@ def contains_shell_metachars(text: str) -> bool:
     metacharacter is treated just as conservatively as an unquoted one.
     Shared by ``evaluate_bash_command`` (→ forced ASK) and
     ``BashTool._segment_allowed`` (→ reject).
+
+    Deliberately knows nothing about ``_BENIGN_REDIRECTION_RE``: the
+    permission layer strips those forms from its own input before calling this,
+    while the execution-layer whitelist keeps rejecting every redirection. Add
+    the exemption at the call site, never here.
     """
     return bool(_SHELL_METACHARS_RE.search(text))
 
@@ -168,6 +259,22 @@ def _has_inline_code_flag(argv: List[str]) -> bool:
         if any(letter in token[1:] for letter in short_letters):
             return True
     return False
+
+
+def _is_compound_construct(command: str, argv: List[str]) -> bool:
+    """True when a segment belongs to a compound shell construct.
+
+    ``split_command_chain`` splits on control operators but does not model
+    loops, conditionals, subshells or brace groups, so ``for f in *; do rm $f;
+    done`` arrives as three fragments. Treating those as three ordinary
+    commands would let ``do rm $f`` be approved (and persisted) as ``rm:*``.
+    Detected by a leading shell keyword or an unbalanced grouping character,
+    both of which force the whole chain to the safety ceiling.
+    """
+    if argv and argv[0] in _SHELL_KEYWORDS:
+        return True
+    stripped = command.strip()
+    return bool(stripped) and (stripped[0] in "({" or stripped[-1] in ")}")
 
 
 # Multi-command CLIs whose first subcommand carries the semantics; session
@@ -345,6 +452,24 @@ class BashDecisionSource(str, Enum):
 
 
 @dataclass(frozen=True)
+class BashSegmentDecision:
+    """One sub-command's contribution to an ASK decision.
+
+    Carries everything the confirmation prompt and the grant writers need:
+    the segment text (so the prompt can name each sub-command), its own
+    session bucket, and its own rule provenance.
+    """
+
+    command: str
+    level: PermissionLevel
+    source: BashDecisionSource
+    matched_pattern: Optional[str]
+    reason: str
+    bucket: str
+    safety_forced: bool = False
+
+
+@dataclass(frozen=True)
 class BashRuleDecision:
     """Result of evaluating one bash command against a ruleset.
 
@@ -353,8 +478,10 @@ class BashRuleDecision:
         source: Which stage of the decision order produced it.
         matched_pattern: The rule pattern that fired, when source is a rule.
         reason: Human-readable explanation for prompts and logs.
-        bucket: Session-approval bucket key (e.g. ``git push`` or an ask-rule
-            pattern) — "always allow" grants are scoped to this bucket.
+        bucket: Session-approval bucket key of the REPRESENTATIVE sub-command
+            (e.g. ``git push`` or an ask-rule pattern). Kept for logging and
+            for the hook's profile-default fallback; grants are scoped per
+            ``ask_segments`` entry, not to this single bucket.
         safety_forced: True when the ASK came from the safety ceiling or an
             unparseable command. Such decisions are never auto-resolved by the
             deprecated bash-only classifier seam, and are never offered as
@@ -364,12 +491,11 @@ class BashRuleDecision:
             wrapper, metacharacter, or ``$()`` is judged on its actual effect).
             Genuinely unparseable commands stay behind direct user
             confirmation — the reviewer is never consulted for them.
-        segment_ask_patterns: For an ASK pipeline decision, the
-            ``(source, matched_pattern)`` of EVERY non-allow segment. The hook's
-            project-grant bypass must cover each segment, not just the
-            representative one — otherwise a grant for one plugin ask rule
-            would auto-run an entire pipeline including unreviewed segments.
-            ``None`` for single-command decisions.
+        ask_segments: For an ASK decision, EVERY non-allow sub-command in
+            source order (a one-element tuple for a plain single command).
+            The prompt lists them all and the session/project grants cover
+            them all — approving one representative must never green-light
+            unreviewed sub-commands. Empty for ALLOW/DENY decisions.
     """
 
     level: PermissionLevel
@@ -378,7 +504,7 @@ class BashRuleDecision:
     reason: str
     bucket: str
     safety_forced: bool = False
-    segment_ask_patterns: Optional[Tuple[Tuple[BashDecisionSource, Optional[str]], ...]] = None
+    ask_segments: Tuple[BashSegmentDecision, ...] = ()
 
 
 def _split_pattern(pattern: str) -> tuple[List[str], Optional[str]]:
@@ -451,23 +577,14 @@ def session_bucket_for(argv: List[str], matched_pattern: Optional[str]) -> str:
     return argv[0]
 
 
-def split_pipeline(command: str) -> Optional[List[str]]:
-    """Split a command on top-level, unquoted ``|`` into pipeline segments.
+def _split_top_level(command: str, *, chain: bool) -> Optional[List[str]]:
+    """Split on top-level, unquoted control operators.
 
-    Shared by the permission layer (per-segment judging) and the execution
-    layer (legacy ``allowed_patterns`` matching) so the *same* segmentation is
-    judged and run.
-
-    Returns:
-        * ``[command]`` — no top-level pipe (a plain single command).
-        * ``["seg1", "seg2", ...]`` — a clean pipeline, each part stripped.
-        * ``None`` — NOT a simple pipeline: ``||`` (logical OR), ``|&``
-          (stderr pipe), an empty segment (``ls |``, ``| ls``), or unbalanced
-          quotes. The caller routes these to the safety ceiling.
-
-    Only single/double quotes and backslash escaping are tracked — enough to
-    keep ``grep "a|b"`` and ``echo \\|`` from being treated as pipe splits.
-    Other shell metacharacters are handled separately by the caller.
+    ``chain=False`` splits on ``|`` only; ``chain=True`` also splits on
+    ``&&``, ``||`` and ``;``. Only single/double quotes and backslash escaping
+    are tracked — enough to keep ``grep "a|b"``, ``git commit -m "fix; bug"``
+    and ``find ... -exec ls {} \\;`` from being split. Returns ``None`` when
+    the string is not cleanly segmentable (see the public wrappers).
     """
     segments: List[str] = []
     buf: List[str] = []
@@ -489,14 +606,47 @@ def split_pipeline(command: str) -> Optional[List[str]]:
             in_single = not in_single
         elif c == '"' and not in_single:
             in_double = not in_double
-        elif c == "|" and not in_single and not in_double:
+        elif c in "|&;" and not in_single and not in_double:
             nxt = command[i + 1] if i + 1 < n else ""
-            if nxt in ("|", "&"):
-                # `||` (logical OR) / `|&` (stderr pipe) are not simple pipes.
-                return None
+            if c == "|":
+                if nxt == "&":
+                    # `|&` (stderr pipe) is not a plain pipe.
+                    return None
+                if nxt == "|" and not chain:
+                    # `||` (logical OR) is not a pipeline.
+                    return None
+                step = 2 if nxt == "|" else 1
+            elif not chain:
+                # `&` / `;` are ordinary characters for the pipeline-only
+                # splitter; the caller's metacharacter check rejects them.
+                buf.append(c)
+                i += 1
+                continue
+            elif c == "&":
+                if nxt != "&":
+                    # Tuple membership, not ``in "<>"``: ``_last_nonspace``
+                    # returns "" for a leading `&` and "" is a substring of
+                    # every string, which would read `& ls` as a redirection.
+                    if nxt == ">" or _last_nonspace(buf) in ("<", ">"):
+                        # The `&` belongs to a redirection, not to job control:
+                        # `2>&1`, `>&2`, `<&0` (preceded by the operator) or
+                        # `&>file` (followed by it). Keep it in the segment and
+                        # let the redirection ceiling judge the whole form —
+                        # bailing here would send `ls 2>&1 | head` to the
+                        # ceiling as one opaque string and hide `head` from the
+                        # per-sub-command prompt. A genuine trailing `&`
+                        # (`sleep 5 &`) still returns None below.
+                        buf.append(c)
+                        i += 1
+                        continue
+                    # A lone `&` backgrounds the command — not a sequencer.
+                    return None
+                step = 2
+            else:  # ";"
+                step = 1
             segments.append("".join(buf))
             buf = []
-            i += 1
+            i += step
             continue
         buf.append(c)
         i += 1
@@ -507,6 +657,45 @@ def split_pipeline(command: str) -> Optional[List[str]]:
     if any(s == "" for s in stripped):
         return None
     return stripped
+
+
+def split_pipeline(command: str) -> Optional[List[str]]:
+    """Split a command on top-level, unquoted ``|`` into pipeline segments.
+
+    Used by the execution layer (``BashTool._is_command_allowed``, the legacy
+    ``allowed_patterns`` whitelist for skills). Deliberately narrower than
+    :func:`split_command_chain`: that whitelist is a separate trust boundary
+    and must keep rejecting every non-pipe construct outright.
+
+    Returns:
+        * ``[command]`` — no top-level pipe (a plain single command).
+        * ``["seg1", "seg2", ...]`` — a clean pipeline, each part stripped.
+        * ``None`` — NOT a simple pipeline: ``||`` (logical OR), ``|&``
+          (stderr pipe), an empty segment (``ls |``, ``| ls``), or unbalanced
+          quotes. The caller routes these to the safety ceiling.
+    """
+    return _split_top_level(command, chain=False)
+
+
+def split_command_chain(command: str) -> Optional[List[str]]:
+    """Split a command into sub-commands on ``|``, ``&&``, ``||`` and ``;``.
+
+    Used by the permission layer so every sub-command is judged, displayed and
+    granted on its own. Returns ``None`` — routing the whole command to the
+    safety ceiling — for forms that cannot be segmented safely: ``|&``, a lone
+    background ``&``, an empty segment (``ls &&``, ``;;``, ``| ls``) or
+    unbalanced quotes.
+
+    An ``&`` that belongs to a redirection (``2>&1``, ``>&2``, ``<&0``,
+    ``&>file``) is not a background operator and does not stop segmentation;
+    ``sleep 5 &`` still does.
+
+    Note that ``None`` is not the only path to the safety ceiling: a segment
+    that still carries ``$()``, backticks, a newline or a redirection other
+    than the benign forms in ``_BENIGN_REDIRECTION_RE`` is caught per-segment
+    by :func:`contains_shell_metachars`.
+    """
+    return _split_top_level(command, chain=True)
 
 
 def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleDecision:
@@ -566,8 +755,17 @@ def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleD
                 safety_forced=False,
             )
 
-    # 2. Safety ceiling — wrappers and shell metacharacters can never
-    # auto-allow, regardless of allow rules.
+    # 2. Safety ceiling — wrappers, compound-construct fragments and shell
+    # metacharacters can never auto-allow, regardless of allow rules.
+    if _is_compound_construct(command, argv):
+        return BashRuleDecision(
+            level=PermissionLevel.ASK,
+            source=BashDecisionSource.SAFETY,
+            matched_pattern=None,
+            reason=f"'{command.strip()}' is part of a compound shell construct that the rules cannot decompose",
+            bucket=session_bucket_for(argv, None),
+            safety_forced=True,
+        )
     if argv[0] in _WRAPPER_COMMANDS:
         return BashRuleDecision(
             level=PermissionLevel.ASK,
@@ -586,7 +784,12 @@ def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleD
             bucket=session_bucket_for(argv, None),
             safety_forced=True,
         )
-    if contains_shell_metachars(command):
+    # ``2>&1`` / ``2>/dev/null`` and friends are dropped before the check —
+    # see ``_BENIGN_REDIRECTION_RE`` for which forms and why. Ordering matters:
+    # the wrapper and inline-code ceilings above already fired, so a command
+    # that reaches here cannot smuggle a second command past this exemption
+    # (``sh -c "... 2>&1"`` is stopped by the wrapper rule).
+    if contains_shell_metachars(_without_benign_redirections(command)):
         return BashRuleDecision(
             level=PermissionLevel.ASK,
             source=BashDecisionSource.SAFETY,
@@ -631,49 +834,59 @@ def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleD
     )
 
 
-# Severity for picking the representative segment of a pipeline that is neither
-# fully allowed nor denied/safety-forced. An ask-rule segment outranks a
-# default segment so the pipeline's overall source is ASK_RULE — this matters
+# Severity for picking the representative sub-command of a chain that is
+# neither fully allowed nor denied/safety-forced. An ask-rule segment outranks
+# a default segment so the chain's overall source is ASK_RULE — this matters
 # because the hook's dangerous-profile fallback only re-evaluates DEFAULT
 # decisions, so a DEFAULT representative could let a permissive profile swallow
 # an ask-rule segment.
-_PIPELINE_ASK_SEVERITY = {
+_ASK_SEVERITY = {
     BashDecisionSource.ASK_RULE: 2,
     BashDecisionSource.DEFAULT: 1,
 }
 
 
-def _evaluate_pipeline(command: str, segments: List[str], rules: BashCommandRules) -> BashRuleDecision:
-    """Aggregate per-segment decisions for a clean pipeline (``a | b | c``).
+def _as_segment(command: str, decision: BashRuleDecision) -> BashSegmentDecision:
+    """Project a per-segment ``BashRuleDecision`` onto a segment record."""
+    return BashSegmentDecision(
+        command=command.strip(),
+        level=decision.level,
+        source=decision.source,
+        matched_pattern=decision.matched_pattern,
+        reason=decision.reason,
+        bucket=decision.bucket,
+        safety_forced=decision.safety_forced,
+    )
 
-    * any segment DENY                 -> DENY
-    * any segment safety_forced        -> ASK (safety_forced)
-    * all segments ALLOW               -> ALLOW
-    * otherwise                        -> ASK, represented by the most severe
-      non-allow segment (ask-rule over default) for bucket/source/pattern.
+
+def _with_ask_segments(command: str, decision: BashRuleDecision) -> BashRuleDecision:
+    """Attach the single-command ask segment so callers have one code path."""
+    if decision.level != PermissionLevel.ASK:
+        return decision
+    return replace(decision, ask_segments=(_as_segment(command, decision),))
+
+
+def _evaluate_chain(segments: List[str], rules: BashCommandRules) -> BashRuleDecision:
+    """Aggregate per-sub-command decisions for a chain (``a | b && c; d``).
+
+    * any sub-command DENY             -> DENY
+    * all sub-commands ALLOW           -> ALLOW
+    * otherwise                        -> ASK carrying EVERY non-allow
+      sub-command in ``ask_segments``; ``safety_forced`` when any of them is,
+      and represented by the most severe one (ask-rule over default) for
+      bucket/source/pattern.
     """
     decisions = [_evaluate_single_command(seg, rules) for seg in segments]
 
-    for d in decisions:
+    for seg, d in zip(segments, decisions):
         if d.level == PermissionLevel.DENY:
             return BashRuleDecision(
                 level=PermissionLevel.DENY,
                 source=BashDecisionSource.DENY_RULE,
                 matched_pattern=d.matched_pattern,
-                reason=f"Pipeline blocked: segment matched deny rule '{d.matched_pattern}'",
+                reason=f"Sub-command '{seg}' matched deny rule '{d.matched_pattern}'",
                 bucket=d.bucket,
                 safety_forced=False,
-            )
-
-    for d in decisions:
-        if d.safety_forced:
-            return BashRuleDecision(
-                level=PermissionLevel.ASK,
-                source=BashDecisionSource.SAFETY,
-                matched_pattern=None,
-                reason=f"Pipeline requires confirmation: {d.reason}",
-                bucket=d.bucket,
-                safety_forced=True,
             )
 
     if all(d.level == PermissionLevel.ALLOW for d in decisions):
@@ -682,58 +895,71 @@ def _evaluate_pipeline(command: str, segments: List[str], rules: BashCommandRule
             level=PermissionLevel.ALLOW,
             source=BashDecisionSource.ALLOW_RULE,
             matched_pattern=None,
-            reason=f"Pipeline allowed: all segments matched allow rules ({patterns})",
+            reason=f"All sub-commands matched allow rules ({patterns})",
             bucket=session_bucket_for(shlex.split(segments[0]), None),
             safety_forced=False,
         )
 
-    non_allow = [d for d in decisions if d.level != PermissionLevel.ALLOW]
-    rep = max(non_allow, key=lambda d: _PIPELINE_ASK_SEVERITY.get(d.source, 0))
+    ask_segments = tuple(_as_segment(seg, d) for seg, d in zip(segments, decisions) if d.level != PermissionLevel.ALLOW)
+    # A safety-forced sub-command pins the whole chain to the safety ceiling —
+    # but unlike the old short-circuit, the other sub-commands stay visible so
+    # the prompt can still list everything that needs approval.
+    forced = [s for s in ask_segments if s.safety_forced]
+    rep = forced[0] if forced else max(ask_segments, key=lambda s: _ASK_SEVERITY.get(s.source, 0))
     return BashRuleDecision(
         level=PermissionLevel.ASK,
-        source=rep.source,
-        matched_pattern=rep.matched_pattern,
-        reason=f"Pipeline requires confirmation: {rep.reason}",
+        source=BashDecisionSource.SAFETY if forced else rep.source,
+        matched_pattern=None if forced else rep.matched_pattern,
+        reason=f"Requires confirmation: {rep.reason}",
         bucket=rep.bucket,
-        safety_forced=False,
-        segment_ask_patterns=tuple((d.source, d.matched_pattern) for d in non_allow),
+        safety_forced=bool(forced),
+        ask_segments=ask_segments,
     )
 
 
 def evaluate_bash_command(command: str, rules: BashCommandRules) -> BashRuleDecision:
     """Evaluate a bash command against a ruleset.
 
-    Routes pure pipelines (``a | b | c``) through per-segment judging so a
-    pipeline of allow-listed read-only commands can auto-run, while any other
-    shell construct (``&&``, ``;``, ``$()``, redirection, ``||``) falls to the
-    safety ceiling. See the module docstring for the full decision order.
+    Routes chained commands (``a | b``, ``a && b``, ``a; b``, ``a || b``)
+    through per-sub-command judging so a chain of allow-listed read-only
+    commands can auto-run and an ASK names every sub-command involved, while
+    un-segmentable shell constructs (``$()``, backticks, redirection,
+    background ``&``, newlines) fall to the safety ceiling. See the module
+    docstring for the full decision order.
     """
-    # Empty / whitespace-only input has no pipeline structure to speak of;
+    # Empty / whitespace-only input has no chain structure to speak of;
     # let the single-command path return the UNPARSEABLE decision.
     if not command.strip():
-        return _evaluate_single_command(command, rules)
+        return _with_ask_segments(command, _evaluate_single_command(command, rules))
 
-    segments = split_pipeline(command)
+    segments = split_command_chain(command)
     if segments is None:
-        # Malformed pipeline (``||``, ``|&``, empty segment, unbalanced quotes).
-        # Unbalanced quotes make shlex raise → route to the single-command path
-        # so the decision is UNPARSEABLE; everything else is an un-analyzable
-        # shell construct → safety ceiling.
+        # Not segmentable (``|&``, background ``&``, empty segment, unbalanced
+        # quotes). Unbalanced quotes make shlex raise → route to the
+        # single-command path so the decision is UNPARSEABLE; everything else
+        # is an un-analyzable shell construct → safety ceiling.
         try:
             shlex.split(command)
         except ValueError:
-            return _evaluate_single_command(command, rules)
-        return BashRuleDecision(
-            level=PermissionLevel.ASK,
-            source=BashDecisionSource.SAFETY,
-            matched_pattern=None,
-            reason="Command contains shell metacharacters",
-            bucket=command.strip().split()[0],
-            safety_forced=True,
+            return _with_ask_segments(command, _evaluate_single_command(command, rules))
+        return _with_ask_segments(
+            command,
+            BashRuleDecision(
+                level=PermissionLevel.ASK,
+                source=BashDecisionSource.SAFETY,
+                matched_pattern=None,
+                # Not every failure here is a metacharacter — an empty segment
+                # (``ls &&``, ``a;; b``) is a malformed chain. This text reaches
+                # the user through the prompt body and the AI reviewer through
+                # ``static_assessment.reason``, so it names the real cause.
+                reason="Command uses a shell construct that cannot be split into sub-commands",
+                bucket=command.strip().split()[0],
+                safety_forced=True,
+            ),
         )
     if len(segments) == 1:
-        return _evaluate_single_command(segments[0], rules)
-    return _evaluate_pipeline(command, segments, rules)
+        return _with_ask_segments(segments[0], _evaluate_single_command(segments[0], rules))
+    return _evaluate_chain(segments, rules)
 
 
 # Complete PermissionConfig's forward reference when this module loaded first

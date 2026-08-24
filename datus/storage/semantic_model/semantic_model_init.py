@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import pandas as pd
@@ -378,6 +379,71 @@ def init_semantic_yaml_semantic_model(
         logger.info(f"Successfully synced to vector store: {result.get('message')}")
         return True, ""
     return False, result.get("error", "Unknown error")
+
+
+def semantic_yaml_files(root: Path) -> list[Path]:
+    """Every authored semantic YAML under ``root``, in a stable order."""
+    if root.is_file():
+        return [root]
+    if not root.is_dir():
+        return []
+    found = {path for pattern in ("*.yml", "*.yaml") for path in root.rglob(pattern)}
+    # ``metrics`` holds per-metric fragments, not whole semantic models; the
+    # authoring inventory skips them for the same reason.
+    return sorted(path for path in found if "metrics" not in path.relative_to(root).parts)
+
+
+def sync_semantic_yaml_tree(
+    agent_config: AgentConfig,
+    root: str = "",
+) -> tuple[bool, str, int]:
+    """Re-project authored YAML into the Knowledge Base, file by file.
+
+    This is the plain YAML-to-KB refresh: no LLM, no network, no warehouse
+    access. ``sync_osi_to_db`` replaces one artifact at a time and is
+    idempotent, so running it again is always safe — which is what makes it
+    usable both as a storage-format migration and as a manual "I edited the
+    YAML, reload it" action.
+
+    ``root`` defaults to the active datasource's semantic-model directory; a
+    file path syncs exactly that file.
+    """
+    from datus.agent.node.semantic_authoring import _osi_semantic_model_dir
+
+    target = Path(root).expanduser() if root else _osi_semantic_model_dir(agent_config)
+    if target is None:
+        return False, "Unable to resolve the semantic model directory for the active datasource", 0
+    if not target.exists():
+        return False, f"Semantic model path not found: {target}", 0
+
+    files = semantic_yaml_files(target)
+    if not files:
+        return True, f"No semantic YAML found under {target}", 0
+
+    from datus.tools.func_tool.generation_tools import GenerationTools
+
+    tools = GenerationTools(agent_config=agent_config, authoring_format="osi")
+    synced = 0
+    failures: list[str] = []
+    for path in files:
+        rejection = reject_non_dosi_semantic_yaml(str(path), agent_config)
+        if rejection:
+            failures.append(f"{path.name}: {rejection}")
+            continue
+        try:
+            result = tools.sync_osi_to_db(str(path), include_semantic_objects=True, include_metrics=True)
+        except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
+            logger.exception(f"Failed to sync semantic YAML file '{path}'")
+            failures.append(f"{path.name}: {e}")
+            continue
+        if result.get("success"):
+            synced += 1
+        else:
+            failures.append(f"{path.name}: {result.get('error', 'Unknown error')}")
+
+    if failures:
+        return False, f"Synced {synced}/{len(files)} semantic YAML file(s); failed: " + "; ".join(failures), synced
+    return True, f"Synced {synced} semantic YAML file(s) from {target}", synced
 
 
 def refresh_semantic_yaml_profile_descriptions(

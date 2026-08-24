@@ -190,30 +190,6 @@ def create_interactive_node(
                 session_id=session_id,
             )
 
-        elif subagent_name == "gen_dashboard" or node_class_type == "gen_dashboard":
-            from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
-
-            return GenDashboardAgenticNode(
-                agent_config=agent_config,
-                execution_mode=execution_mode,
-                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
-                node_name=subagent_name if node_class_type == "gen_dashboard" else None,
-                scope=scope,
-                session_id=session_id,
-            )
-
-        elif subagent_name == "scheduler" or node_class_type == "scheduler":
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            return SchedulerAgenticNode(
-                agent_config=agent_config,
-                execution_mode=execution_mode,
-                node_id=node_id if node_id is not None else f"{subagent_name}{node_id_suffix}",
-                node_name=subagent_name if node_class_type == "scheduler" else None,
-                scope=scope,
-                session_id=session_id,
-            )
-
         elif subagent_name == "feedback":
             from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 

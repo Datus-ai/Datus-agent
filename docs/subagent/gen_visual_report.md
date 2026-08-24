@@ -6,7 +6,7 @@
 
 ![Sample HTML report — KPI strip, headline metrics, and a monthly growth trend chart](../assets/gen_visual_report_preview.png)
 
-An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset / Grafana, use `gen_dashboard` instead.
+An HTML report is a long-form, narrative answer with the data baked in at build time. There are no filters and no live re-querying once the report is built. For interactive BI dashboards on Superset or another external platform, ask the main agent to use the installed BI plugin directly.
 
 If you'd rather have a plain-text **Markdown report** (no HTML rendering, no charts), use the `gen_report` agent instead.
 

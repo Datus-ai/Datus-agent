@@ -15,7 +15,7 @@ semantic modeling, semantic compatibility aliases, metrics, and reference SQL.
 | Field                | Type     | Default        | Notes |
 |----------------------|----------|----------------|-------|
 | `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_modeling`, `semantic_model`, `metrics`, `reference_sql` |
-| `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), `incremental` (append/update), or `refresh-profile` (semantic model only) |
+| `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), `incremental` (append/update), `refresh-profile` (semantic model only), or `sync-yaml` (semantic model only; re-project authored YAML, no LLM call) |
 | `schema_linking_type`| string   | `full`         | Metadata only: `table`, `view`, `mv`, or `full` |
 | `catalog`            | string   | `""`           | Metadata catalog filter for catalog-aware engines such as StarRocks; leave empty for Snowflake |
 | `database_name`      | string   | `""`           | Metadata database filter |
@@ -25,6 +25,9 @@ semantic modeling, semantic compatibility aliases, metrics, and reference SQL.
 | `sql_dir`            | string?  | `null`         | Project-root-relative directory with `.sql` files |
 
 **Response**: `text/event-stream`. See [SSE event format](#sse-event-format) below.
+
+`strategy=sync-yaml` is only valid when `components` is exactly `["semantic_model"]`. It replays the authored
+YAML into storage without any LLM call; omit `semantic_yaml` to sync every file of the active datasource.
 
 `strategy=refresh-profile` is only valid when `components` is exactly `["semantic_model"]`. It requires both
 `semantic_yaml` and `success_story`, refreshes generated `Observed profile:` description suffixes in the existing

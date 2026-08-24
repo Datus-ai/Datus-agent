@@ -1510,7 +1510,7 @@ class DatusCLI:
         """Return system agents supported by the active adapter."""
         from datus.agent.node.semantic_authoring import is_semantic_modeling_available
 
-        available = set(SYS_SUB_AGENTS)
+        available = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
         if not is_semantic_modeling_available(self.agent_config):
             available.discard("semantic_modeling")
         return available
@@ -1838,7 +1838,7 @@ class DatusCLI:
         The statement first passes the same enforcement an LLM ``execute_sql``
         call gets — permission (``on_tool_start`` → ``_handle_sql_permission``:
         read auto-allow, write/DDL confirmation), plugin transformers, and
-        ``_enforce_sql_policy`` — via :func:`datus.cli.bash_mode.run_sql_gate`.
+        active policy runtimes — via :func:`datus.cli.bash_mode.run_sql_gate`.
         On approval the (possibly rewritten) statement executes and is packed
         into a marker-encoded chat message dispatched to the model
         (:meth:`_send_exec_turn`).
@@ -1903,6 +1903,28 @@ class DatusCLI:
                     messages=f"SQL execution failed: {error_msg}",
                 )
                 return None
+
+            if result.success:
+                sql_type = parse_sql_type(sql, getattr(self.db_connector, "dialect", ""))
+                if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+                    from datus.tools.policy_runtime import PolicyRuntime
+                    from datus.utils.exceptions import DatusException, ErrorCode
+
+                    context_source = getattr(self.agent_config, "policy_context", None)
+                    policy_context = dict(context_source) if isinstance(context_source, dict) else {}
+                    decision = PolicyRuntime(self.agent_config).after_read_result(
+                        result.sql_return,
+                        sql=sql,
+                        datasource=getattr(self.agent_config, "current_datasource", "") or "",
+                        dialect=getattr(self.db_connector, "dialect", "") or "",
+                        policy_context=policy_context,
+                    )
+                    if not decision.allowed:
+                        raise DatusException(
+                            ErrorCode.TOOL_INVALID_INPUT,
+                            message=decision.reason or "Policy denied the query result",
+                        )
+                    result.sql_return = decision.result
 
             self.last_sql = sql
             self.last_result = result

@@ -7,6 +7,9 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import (
     _WIDEST_FIELD_ORDER,
+    READ_ONLY_MULTI_STATEMENT,
+    READ_ONLY_NON_READ,
+    READ_ONLY_WRITABLE_PRAGMA,
     _fallback_sql_type,
     _first_statement,
     _is_escaped,
@@ -14,6 +17,7 @@ from datus.utils.sql_utils import (
     _metadata_pattern,
     extract_table_names,
     format_sql_to_pretty,
+    is_single_statement,
     looks_like_sql_file_ref,
     metadata_identifier,
     normalize_sql,
@@ -28,6 +32,7 @@ from datus.utils.sql_utils import (
     read_workspace_sql_file,
     strip_sql_comments,
     table_name_field_order,
+    validate_read_only_sql,
 )
 
 _CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = (
@@ -702,6 +707,19 @@ FROM gold_vs_bitcoin"""
     assert parse_sql_type("USE test", dialect="mysql") == SQLType.CONTENT_SET
     assert parse_sql_type("USE test", dialect="starrocks") == SQLType.CONTENT_SET
     assert parse_sql_type(" USE test ", dialect="snowflake") == SQLType.CONTENT_SET
+
+
+@pytest.mark.parametrize(
+    ("sql", "violation", "sql_type"),
+    [
+        ("SELECT 1", None, SQLType.SELECT),
+        ("SELECT 1; DROP TABLE orders", READ_ONLY_MULTI_STATEMENT, SQLType.UNKNOWN),
+        ("DROP TABLE orders", READ_ONLY_NON_READ, SQLType.DDL),
+        ("PRAGMA foreign_keys = OFF", READ_ONLY_WRITABLE_PRAGMA, SQLType.METADATA_SHOW),
+    ],
+)
+def test_validate_read_only_sql(sql, violation, sql_type):
+    assert validate_read_only_sql(sql, "sqlite") == (violation, sql_type)
 
 
 def test_parse_sql_type_with():
@@ -1851,3 +1869,178 @@ class TestTableNameFieldOrder:
         assert parsed["table_name"] == "*"
         for field in order[:-2]:
             assert parsed[field] == ""
+
+
+class TestStripSqlCommentsRespectsLiterals:
+    """A comment marker inside a string literal is not a comment.
+
+    The regex version cut `SELECT 'a--b' FROM t` down to `SELECT 'a` — and
+    `execute_ddl` / `execute_write` run the *stripped* text, so the truncation
+    reached the database rather than staying a parsing detail.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 'a--b' FROM t",
+            "SELECT 'a/*b*/c' FROM t",
+            'SELECT "col--x" FROM t',
+            "SELECT 'it''s--ok' FROM t",
+            "INSERT INTO t VALUES ('x;y')",
+            "SELECT $$a--b$$",
+            "COMMENT ON TABLE t IS 'a/*b*/c'",
+        ],
+    )
+    def test_markers_inside_literals_survive(self, sql):
+        assert strip_sql_comments(sql) == sql
+
+    @pytest.mark.parametrize(
+        "sql,expected",
+        [
+            ("SELECT 1 -- trailing\nFROM t", "SELECT 1  \nFROM t"),
+            ("SELECT /* mid */ 1", "SELECT   1"),
+            ("SELECT 1 -- unterminated", "SELECT 1  "),
+            ("SELECT /* unterminated 1", "SELECT  "),
+        ],
+    )
+    def test_real_comments_are_still_removed(self, sql, expected):
+        assert strip_sql_comments(sql) == expected
+
+    def test_a_semicolon_in_a_literal_is_not_a_second_statement(self):
+        assert is_single_statement("SELECT 'a;b' FROM t") is True
+        assert is_single_statement("SELECT 1; SELECT 2") is False
+
+
+class TestValidateReadOnlySql:
+    """The shared gate behind ``agent.sql_read_only``.
+
+    Both ``DBFuncTool._validate_read_sql`` and the ``POST /sql/execute`` route
+    call this, so a hole here is a hole in every SQL entry point at once. The
+    contract is fail-closed: it returns a reason unless the input is provably a
+    single read statement.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1",
+            "select id, name from users where status = 'active'",
+            "  SELECT 1  ",
+            "SELECT 1;",
+            "SELECT 1 ;  ",
+            "-- leading comment\nSELECT 1",
+            "/* block */ SELECT 1",
+            "WITH t AS (SELECT 1) SELECT * FROM t",
+            "SELECT 1 UNION SELECT 2",
+            "(SELECT 1)",
+            "EXPLAIN SELECT 1",
+            "SHOW TABLES",
+            "DESCRIBE users",
+            "PRAGMA table_info(users)",
+        ],
+    )
+    def test_single_read_statements_are_allowed(self, sql):
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation is None
+        assert sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO users VALUES (1)",
+            "UPDATE users SET name = 'x'",
+            "DELETE FROM users",
+            "DROP TABLE users",
+            "CREATE TABLE t (a int)",
+            "ALTER TABLE users ADD COLUMN a int",
+            "TRUNCATE TABLE users",
+            "CREATE TABLE t AS SELECT 1",
+            "GRANT SELECT ON users TO bob",
+            "USE other_db",
+            "SET search_path = evil",
+            "CALL some_proc()",
+        ],
+    )
+    def test_write_statements_are_refused(self, sql):
+        violation, _ = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1; DROP TABLE users",
+            "SELECT 1;DROP TABLE users",
+            "SELECT 1; DROP TABLE users;",
+            "  SELECT 1 ;  DELETE FROM users  ",
+            "-- c\nSELECT 1; DROP TABLE users",
+            "SELECT 1; SELECT 2",
+        ],
+    )
+    def test_multi_statement_input_is_refused(self, sql):
+        """The regression that motivates checking statement count HERE rather
+        than delegating to ``parse_sql_type``, which classifies only the first
+        statement and would read these as harmless SELECTs."""
+        violation, _ = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_MULTI_STATEMENT
+
+    def test_semicolon_inside_a_string_literal_is_not_a_second_statement(self):
+        """Quote-aware splitting: a naive ``";" in sql`` check would refuse this
+        valid single query."""
+        violation, sql_type = validate_read_only_sql("SELECT 'a;b' AS c", "sqlite")
+
+        assert violation is None
+        assert sql_type == SQLType.SELECT
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA journal_mode = WAL",
+            "pragma synchronous=OFF",
+        ],
+    )
+    def test_writable_pragma_is_refused_despite_classifying_as_metadata(self, sql):
+        """``PRAGMA x=y`` parses as METADATA_SHOW but mutates the database, so
+        the read-only type check alone would let it through."""
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_WRITABLE_PRAGMA
+        assert sql_type == SQLType.METADATA_SHOW
+
+    @pytest.mark.parametrize("sql", ["", "   ", "-- just a comment", "/* only a block comment */"])
+    def test_empty_and_comment_only_input_is_refused(self, sql):
+        """Nothing to prove read-only about, so fail closed rather than passing
+        an empty string down to the connector. Refused as an unclassifiable
+        statement type, not as a shape violation -- there is no statement.
+
+        ``None`` is deliberately not covered: the parameter is typed ``str`` and
+        the helper raises ``TypeError`` on it. That is out of contract and fails
+        loudly rather than open, which is the acceptable direction here."""
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_NON_READ
+        assert sql_type == SQLType.UNKNOWN
+
+    @pytest.mark.parametrize("sql", ["not sql at all", "SELCT 1", "}{"])
+    def test_unparseable_input_is_refused(self, sql):
+        """Fail-closed: text the parser cannot classify lands on UNKNOWN, which
+        is not a read-only type, so it is refused rather than forwarded."""
+        violation, sql_type = validate_read_only_sql(sql, "sqlite")
+
+        assert violation == READ_ONLY_NON_READ
+        assert sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+
+    @pytest.mark.parametrize("dialect", ["sqlite", "duckdb", "mysql", "postgresql", "starrocks", "snowflake", ""])
+    def test_the_verdict_does_not_depend_on_the_dialect(self, dialect):
+        """Every deployment dialect must agree on the two cases that matter, so
+        hardening cannot be dialect-specific in practice."""
+        assert validate_read_only_sql("SELECT 1", dialect)[0] is None
+        assert validate_read_only_sql("DROP TABLE users", dialect)[0] == READ_ONLY_NON_READ
+
+    def test_returns_the_parsed_type_alongside_the_verdict(self):
+        """Callers log the type; it must be the real one, not a placeholder."""
+        assert validate_read_only_sql("DROP TABLE users", "sqlite")[1] == SQLType.DDL
+        assert validate_read_only_sql("INSERT INTO t VALUES (1)", "sqlite")[1] == SQLType.INSERT

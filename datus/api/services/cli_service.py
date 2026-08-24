@@ -6,8 +6,9 @@ import asyncio
 import threading
 import time
 import uuid
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
+import datus.tools.func_tool as func_tool_mod
 from datus.api.models.base_models import Result
 from datus.api.models.cli_models import (
     ContextResultData,
@@ -32,9 +33,32 @@ from datus.schemas.action_history import (
 )
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import (
+    SQLType,
+    is_single_statement,
+    parse_sql_type,
+    write_statement_reads_data,
+)
 from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
+
+#: Statement types the console may send straight to the connector.
+#:
+#: Deliberately an allow-list of *identified* writes. ``UNKNOWN`` is absent:
+#: anything the parser could not place must fall to the enforced path, where it
+#: is refused — the alternative is that a syntax the dialect accepts but sqlglot
+#: does not becomes an unfiltered read.
+_WRITE_SQL_TYPES = frozenset(
+    {
+        SQLType.INSERT,
+        SQLType.UPDATE,
+        SQLType.DELETE,
+        SQLType.MERGE,
+        SQLType.DDL,
+        SQLType.CONTENT_SET,
+    }
+)
 
 
 class CLIService:
@@ -69,6 +93,11 @@ class CLIService:
 
         # Initialize database connection
         self.current_db_connector = None
+        self._db_tool_cache: Optional[func_tool_mod.DBFuncTool] = None
+        # `_execute_sql_sync` runs under `asyncio.to_thread`, so two clicks on
+        # Run can reach the lazy build below at the same time and each pay for
+        # a DBManager and three RAG indexes.
+        self._db_tool_lock = threading.Lock()
         if self.agent_config:
             self._initialize_connection()
 
@@ -99,7 +128,12 @@ class CLIService:
         with self._sql_tasks_lock:
             self._sql_tasks.pop(task_id, None)
 
-    def _execute_sql_sync(self, request: ExecuteSQLInput, task_id: str) -> Result[ExecuteSQLData]:
+    def _execute_sql_sync(
+        self,
+        request: ExecuteSQLInput,
+        task_id: str,
+        policy_context: Optional[Dict[str, Any]] = None,
+    ) -> Result[ExecuteSQLData]:
         """Synchronous SQL execution logic (runs in a thread)."""
         try:
             if not self.current_db_connector:
@@ -108,6 +142,72 @@ class CLIService:
                     errorCode=ErrorCode.DATABASE_CONNECTION_ERROR,
                     errorMessage="No database connection available",
                 )
+
+            # Deployment-wide read-only posture. This route reaches the connector
+            # directly (see ``.execute`` below) and never touches DBFuncTool, so
+            # the ``execute_sql`` tool gate does not cover it — without this check
+            # a hardened deployment would still expose arbitrary SQL here. The
+            # rules come from the same helper the tool path uses so the two
+            # entry points cannot disagree.
+            #
+            # Read per request rather than snapshotted: CLIService is built from
+            # the shared service-level config, so a host hardening it at runtime
+            # takes effect without rebuilding the service. Placed before
+            # ``switch_context`` so a request about to be refused does not mutate
+            # connector state.
+            #
+            # Still needed after the statement-type dispatch below, and this is
+            # the reason: that dispatch sends identified single writes straight
+            # to ``current_db_connector.execute`` and only reads through
+            # ``execute_read_enforced``. So a write never reaches DBFuncTool and
+            # never meets the tool-layer read-only gate — this check is the only
+            # thing standing in front of it. Refusing here also means the write
+            # branch is simply unreachable on a hardened deployment.
+            if getattr(self.agent_config, "sql_read_only", False):
+                from datus.utils.sql_utils import (
+                    READ_ONLY_MULTI_STATEMENT,
+                    READ_ONLY_NON_READ,
+                    READ_ONLY_WRITABLE_PRAGMA,
+                    parse_sql_statement_kind,
+                    validate_read_only_sql,
+                )
+
+                dialect = getattr(self.current_db_connector, "dialect", "") or ""
+                violation, sql_type = validate_read_only_sql(request.sql_query, dialect)
+                if violation:
+                    # The helper returns a code, not prose, so each entry point
+                    # words its own refusal. This route answers an HTTP client
+                    # rather than a model, so it names the setting that caused
+                    # the refusal.
+                    reason = {
+                        READ_ONLY_MULTI_STATEMENT: (
+                            "Multi-statement SQL is not allowed. Please submit one query at a time."
+                        ),
+                        READ_ONLY_NON_READ: (
+                            f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
+                            f"Detected SQL type: {sql_type.value}"
+                        ),
+                        READ_ONLY_WRITABLE_PRAGMA: "Writable PRAGMA statements are not allowed in read-only mode.",
+                    }[violation]
+                    # Same structured shape as the DBFuncTool refusal in
+                    # ``database._refuse_write_if_read_only`` so an operator can
+                    # filter both entry points on one field set — including the
+                    # finer statement kind, since ``ddl`` alone cannot tell them
+                    # whether a caller tried to CREATE or to DROP. ``source`` is
+                    # always "deployment" here: this route has no per-agent
+                    # read-only posture to distinguish it from.
+                    logger.warning(
+                        "POST /sql/execute rejected by read-only policy",
+                        sql_type=parse_sql_statement_kind(request.sql_query, dialect) or sql_type.value,
+                        database=request.database_name or "",
+                        source="deployment",
+                        rule=violation,
+                    )
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_READ_ONLY,
+                        errorMessage=(f"This deployment is read-only (agent.sql_read_only). {reason}"),
+                    )
 
             # Switch to the requested database/catalog context before executing.
             if request.database_name:
@@ -132,12 +232,69 @@ class CLIService:
             )
             actions.add_action(sql_action)
 
-            # Execute the query
+            # Reads — and anything we cannot positively identify as a single
+            # write — go through the enforced path.
+            #
+            # Hand-written SQL from the IDE is the widest read surface there is,
+            # so the console cannot be the one door a row policy does not cover.
+            # But the console is also where people write DDL and DML, and the
+            # enforced path admits only SELECT / SHOW / DESCRIBE / EXPLAIN, so
+            # sending everything through it would turn the console read-only.
+            #
+            # The split is on the *statement type*, never on "did the read-only
+            # validator object": that predicate is true for multi-statement
+            # input and for anything sqlglot cannot parse, so routing on it
+            # hands an attacker two one-token bypasses — `SELECT 1; SELECT *
+            # FROM orders` and a deliberate typo both stop being filtered.
+            # Multi-statement therefore reaches the enforced path and is
+            # rejected there, which is the same answer it gave before any of
+            # this existed.
             start_time = time.time()
-            result = self.current_db_connector.execute(
-                input_params={"sql_query": request.sql_query},
-                result_format=request.result_format,
-            )
+            sql_type = parse_sql_type(request.sql_query, self.current_db_connector.dialect)
+            is_write = sql_type in _WRITE_SQL_TYPES and is_single_statement(request.sql_query)
+
+            if is_write and policy_context:
+                # A write can carry a read: `CREATE TABLE mine AS SELECT * FROM
+                # orders` copies the rows a policy just filtered into a table no
+                # policy covers. The plugin cannot help — it hooks reads only —
+                # so on a project that has policies at all, a write that embeds
+                # a query is refused here.
+                reads = write_statement_reads_data(request.sql_query, self.current_db_connector.dialect)
+                if reads:
+                    message = (
+                        "This project has row-level policies, so a write statement that "
+                        "reads from a query is not allowed here — it would copy filtered "
+                        "rows into a table no policy covers. Create views and derived "
+                        "tables on the database side instead."
+                    )
+                    # Every other exit from here closes the action it opened;
+                    # returning without doing so leaves it PROCESSING forever
+                    # and the refusal never reaches the history.
+                    actions.update_action_by_id(
+                        sql_action.action_id,
+                        status=ActionStatus.FAILED,
+                        output={"error": message},
+                        messages=f"SQL execution refused: {message}",
+                    )
+                    return Result(
+                        success=False,
+                        errorCode=ErrorCode.SQL_EXECUTION_ERROR,
+                        errorMessage=message,
+                    )
+
+            if is_write:
+                result = self.current_db_connector.execute(
+                    input_params={"sql_query": request.sql_query},
+                    result_format=request.result_format,
+                )
+            else:
+                result = self._db_tool().execute_read_enforced(
+                    request.sql_query,
+                    self.current_db_connector,
+                    datasource=self.current_datasource or "",
+                    result_format=request.result_format,
+                    policy_context=policy_context,
+                )
             end_time = time.time()
             exec_time = end_time - start_time
 
@@ -233,7 +390,26 @@ class CLIService:
                 errorMessage=str(e),
             )
 
-    async def execute_sql(self, request: ExecuteSQLInput) -> Result[ExecuteSQLData]:
+    def _db_tool(self) -> "func_tool_mod.DBFuncTool":
+        """The tool that owns the enforced-read path, built once.
+
+        Its constructor stands up a DBManager and three RAG indexes and sizes
+        two of them — far too much to pay per click on Run. ``CLIService`` is
+        already cached per project, so this rides along with it; the caller's
+        policy context is the only per-request part and travels as an argument.
+        """
+        if self._db_tool_cache is None:
+            with self._db_tool_lock:
+                # Re-check: the other thread may have finished while we waited.
+                if self._db_tool_cache is None:
+                    self._db_tool_cache = func_tool_mod.DBFuncTool(agent_config=self.agent_config)
+        return self._db_tool_cache
+
+    async def execute_sql(
+        self,
+        request: ExecuteSQLInput,
+        policy_context: Optional[Dict[str, Any]] = None,
+    ) -> Result[ExecuteSQLData]:
         """Execute SQL query asynchronously with cancellation support.
 
         If ``request.execute_task_id`` is provided, it is used as-is and returned
@@ -244,7 +420,7 @@ class CLIService:
 
         async def _run() -> Result[ExecuteSQLData]:
             try:
-                return await asyncio.to_thread(self._execute_sql_sync, request, task_id)
+                return await asyncio.to_thread(self._execute_sql_sync, request, task_id, policy_context)
             except asyncio.CancelledError:
                 logger.info(f"SQL execution task cancelled: {task_id}")
                 return Result(

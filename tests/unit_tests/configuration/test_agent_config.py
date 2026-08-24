@@ -13,6 +13,7 @@ CI-level: zero external deps, zero network.
 """
 
 import argparse
+from unittest.mock import patch
 
 import pytest
 
@@ -2140,6 +2141,31 @@ class TestAgentConfigLanguage:
         assert cfg.language == "ja"
 
 
+class TestAgentConfigPolicyContext:
+    def test_legacy_sql_policy_config_is_rejected(self, tmp_path):
+        with (
+            patch("datus.plugins.store.activate") as activate,
+            pytest.raises(DatusException, match="agent.sql_policy has been removed") as exc_info,
+        ):
+            AgentConfig(
+                nodes={"test": NodeConfig(model="test-model", input=None)},
+                home=str(tmp_path / "h"),
+                target="mock",
+                models={
+                    "mock": {
+                        "type": "openai",
+                        "api_key": "k",
+                        "model": "m",
+                        "base_url": "http://localhost:0",
+                    }
+                },
+                sql_policy={"enabled": True},
+                skip_init_dirs=True,
+            )
+        assert exc_info.value.code == ErrorCode.COMMON_CONFIG_ERROR
+        activate.assert_not_called()
+
+
 class TestServicesConfigFromDict:
     def test_bi_platforms_key_is_parsed(self):
         cfg = ServicesConfig.from_dict({"bi_platforms": {"superset": {"type": "superset"}}})
@@ -3009,6 +3035,79 @@ class TestConfigMutable:
         clone.config_mutable = False
         assert clone.config_mutable is False
         assert cfg.config_mutable is True
+
+
+class TestSqlReadOnly:
+    """``sql_read_only`` — deployment-wide hard read-only posture."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_false(self, tmp_path):
+        assert self._make(tmp_path).sql_read_only is False
+
+    @pytest.mark.parametrize("value", [True, "true", "yes", "on", "1"])
+    def test_read_only_values(self, tmp_path, value):
+        assert self._make(tmp_path, sql_read_only=value).sql_read_only is True
+
+    @pytest.mark.parametrize("value", [False, "false", "no", "off", "0", ""])
+    def test_writable_values(self, tmp_path, value):
+        """``"false"`` is the one that matters: a naive ``bool()`` would read it
+        as True and silently invert a security switch.
+        """
+        assert self._make(tmp_path, sql_read_only=value).sql_read_only is False
+
+    def test_harden_turns_it_on(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.harden_sql_read_only()
+        assert cfg.sql_read_only is True
+
+    def test_hardening_twice_is_idempotent(self, tmp_path):
+        cfg = self._make(tmp_path, sql_read_only=True)
+        cfg.harden_sql_read_only()
+        assert cfg.sql_read_only is True
+
+    def test_there_is_no_way_to_relax_it(self, tmp_path):
+        """One-way by construction: the posture is exposed as a read-only
+        property, so nothing sharing the process — a plugin, a tool transformer,
+        third-party code — can undo a yaml-level ``true``. Assignment raises
+        rather than silently doing nothing, which is why this is a method and
+        not a tighten-only setter.
+        """
+        cfg = self._make(tmp_path, sql_read_only=True)
+
+        with pytest.raises(AttributeError):
+            cfg.sql_read_only = False
+
+        assert cfg.sql_read_only is True
+
+    def test_deepcopy_isolates_the_clone(self, tmp_path):
+        import copy
+
+        cfg = self._make(tmp_path)
+        clone = copy.deepcopy(cfg)
+        clone.harden_sql_read_only()
+        assert clone.sql_read_only is True
+        assert cfg.sql_read_only is False
+
+    def test_excluded_from_asdict_so_the_fingerprint_stays_stable(self, tmp_path):
+        """The flag is stored as a private attribute behind a property and is
+        deliberately NOT a dataclass field: ``compute_fingerprint`` runs
+        ``dataclasses.asdict``, which does ``getattr(obj, field.name)`` and would
+        raise on a declared-but-unstored ``sql_read_only``, silently collapsing
+        every config's fingerprint to the ``id:`` fallback.
+        """
+        from datus.api.services.datus_service import DatusService
+
+        fingerprint = DatusService.compute_fingerprint(self._make(tmp_path, sql_read_only=True))
+        assert not fingerprint.startswith("id:")
 
 
 class TestPluginPathsConfig:

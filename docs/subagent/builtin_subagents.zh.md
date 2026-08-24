@@ -15,9 +15,10 @@
 7. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
 8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
 9. **[gen_skill](#gen_skill)** — skill 创建与优化
-10. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-11. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
-12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+10. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+
+Airflow 调度和外部 BI authoring 由主 agent 直接使用已安装 plugin 完成，
+不再属于内置或自定义 subagent。
 
 ## 配置
 
@@ -60,19 +61,10 @@ agent:
     gen_skill:
       max_turns: 30     # 可选：默认为 30
 
-    gen_dashboard:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
-      bi_platform: superset  # 可选：显式指定平台（仅配置一个 BI 平台时可自动检测）
-
     gen_visual_report:
       model: claude            # 可选：默认使用已配置的模型
       max_turns: 30            # 可选：默认为 30
       report_dist: ~/report_dist  # 可选：HTML 离线编译时使用的本地 dist 目录
-
-    scheduler:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
 ```
 
 **可选配置参数**：
@@ -802,226 +794,15 @@ agent:
 
 ---
 
-## gen_dashboard
+## Plugin 平台操作
 
-### 概览
+Airflow 调度和 Superset 等外部 BI authoring 由主 agent 直接使用已安装 plugin
+及其内置 skill 完成，不能通过 `task()`、斜杠命令、agent API 或自定义 alias
+调用。
 
-gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI 仪表盘。它由聊天 agent 通过 `task(type="gen_dashboard")` 调用，使用 `BIFuncTool` 中的 BI 工具，基于已存在的 serving 表或 SQL dataset 创建 dashboard 资产。
-
-### 关键特性
-
-- **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_platforms` 自动检测
-- **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
-- **只处理已就位的 serving 数据**：数据准备由 `gen_job` / `scheduler` 单独完成；gen_dashboard 负责创建 BI dataset / chart / dashboard 资产
-- **Skill 引导**：平台 skill（`superset-dashboard`、`grafana-dashboard`）提供分步工作流；`bi-validation` 在创建结束后自动运行
-
-### 配置
-
-```yaml
-agent:
-  services:
-    datasources:
-      serving_pg:
-        type: postgresql
-        host: 127.0.0.1
-        port: 5433
-        database: superset_examples
-        schema: bi_public
-        username: "${SERVING_WRITE_USER}"
-        password: "${SERVING_WRITE_PASSWORD}"
-
-    bi_platforms:
-      superset:
-        type: superset
-        api_base_url: "http://localhost:8088"
-        username: "${SUPERSET_USER}"
-        password: "${SUPERSET_PASSWORD}"
-        dataset_db:
-          datasource_ref: serving_pg
-          bi_database_name: examples
-
-  agentic_nodes:
-    gen_dashboard:
-      model: claude           # 可选：默认使用已配置的模型
-      max_turns: 30           # 可选：默认为 30
-      bi_platform: superset   # 可选：只配置一个 BI 平台时可自动检测
-```
-
-**前置条件**：
-- `agent.yml` 中包含 `agent.services.bi_platforms` 配置段及平台凭据
-- 已安装 `datus-bi-superset` 或 `datus-bi-grafana` 包
-
-### 工作原理
-
-```mermaid
-graph LR
-    A[task gen_dashboard] --> C[GenDashboardAgenticNode]
-    C --> D[BIFuncTool.available_tools]
-    D --> E[LLM Function Calling]
-    E -->|Superset| F[list_bi_databases → create_dataset → create_chart → create_dashboard → add_chart_to_dashboard]
-    E -->|Grafana| G[create_dashboard → create_chart]
-    F --> H[ValidationHook.on_end]
-    G --> H
-```
-
-### 可用工具
-
-工具根据平台 adapter 实现的 Mixin 动态暴露：
-
-| 工具 | 所需能力 | 说明 |
-|------|---------|------|
-| `list_dashboards` | 所有 adapter | 列出/搜索仪表盘 |
-| `get_dashboard` | 所有 adapter | 获取仪表盘详情 |
-| `list_charts` | 所有 adapter | 列出仪表盘下的图表 |
-| `get_chart` | 所有 adapter | 获取单个图表或面板详情 |
-| `get_chart_data` | 支持的 adapter | 获取图表查询结果，用于数值校验 |
-| `list_datasets` | 所有 adapter | 列出数据集/数据源 |
-| `create_dashboard` | `DashboardWriteMixin` | 创建仪表盘 |
-| `update_dashboard` | `DashboardWriteMixin` | 更新仪表盘标题/描述 |
-| `delete_dashboard` | `DashboardWriteMixin` | 删除仪表盘 |
-| `create_chart` | `ChartWriteMixin` | 创建图表/面板 |
-| `update_chart` | `ChartWriteMixin` | 更新图表配置 |
-| `add_chart_to_dashboard` | `ChartWriteMixin` | 将图表添加到仪表盘 |
-| `delete_chart` | `ChartWriteMixin` | 删除图表 |
-| `create_dataset` | `DatasetWriteMixin` | 注册数据集 |
-| `list_bi_databases` | `DatasetWriteMixin` | 列出 BI 平台数据库连接 |
-| `delete_dataset` | `DatasetWriteMixin` | 删除数据集 |
-| `get_bi_serving_target` | 已配置 `dataset_db` | 给编排层返回 serving DB 契约 |
-
-### 输出格式
-
-```json
-{
-  "response": "已创建包含 3 个营收趋势图表的销售仪表盘。",
-  "dashboard_result": {
-    "dashboard_id": 42,
-    "url": "http://localhost:8088/superset/dashboard/42/"
-  },
-  "tokens_used": 3210
-}
-```
-
-### 使用方式
-
-gen_dashboard subagent 通常由聊天 agent 通过 `task(type="gen_dashboard")` 自动调用，也可手动启动：
-
-```bash
-/gen_dashboard 创建一个包含按地区划分的营收趋势的销售仪表盘
-```
-
-也可以使用 `gen_dashboard` 节点类创建自定义 subagent：
-
-```yaml
-agent:
-  agentic_nodes:
-    sales_dashboard:
-      node_class: gen_dashboard
-      bi_platform: superset
-      max_turns: 30
-```
-
----
-
-## scheduler
-
-### 概览
-
-scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时作业。它由聊天 agent 通过 `task(type="scheduler")` 调用，通过 LLM function calling 提供完整的 Airflow 作业生命周期管理。
-
-### 关键特性
-
-- **完整作业生命周期**：提交、触发、暂停、恢复、更新和删除 Airflow DAG 作业
-- **SQL 和 SparkSQL 支持**：支持提交 SQL 和 SparkSQL 两种作业类型
-- **SQL 文件管理**：提交前可用文件系统工具创建或更新作业 SQL 文件
-- **监控能力**：列出作业运行记录、获取运行日志、排查故障
-- **连接发现**：列出可用的 Airflow 连接，用于作业配置
-
-### 配置
-
-```yaml
-agent:
-  services:
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: "${AIRFLOW_URL}"
-        username: "${AIRFLOW_USER}"
-        password: "${AIRFLOW_PASSWORD}"
-        dags_folder: "${AIRFLOW_DAGS_DIR}"
-
-  agentic_nodes:
-    scheduler:
-      model: claude                  # 可选：默认使用已配置的模型
-      max_turns: 30                  # 可选：默认为 30
-      scheduler_service: airflow_prod
-```
-
-**前置条件**：
-- `agent.yml` 中包含 `agent.services.schedulers` 配置段及 Airflow 凭据
-- 已安装 `datus-scheduler-airflow` 包（会自动拉取 `datus-scheduler-core`）
-
-### 工作原理
-
-```mermaid
-graph LR
-    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
-    B --> C[LLM Function Calling]
-    C --> D[write_file / edit_file]
-    D --> E[submit_sql_job / submit_sparksql_job]
-    C --> F[trigger_scheduler_job]
-    C --> G[pause_job / resume_job]
-    C --> H[list_job_runs / get_run_log]
-```
-
-### 可用工具
-
-| 工具 | 说明 |
-|------|------|
-| `submit_sql_job` | 从 `.sql` 文件提交带 cron 表达式的定时 SQL 作业 |
-| `submit_sparksql_job` | 从 `.sql` 文件提交定时 SparkSQL 作业 |
-| `read_file` / `write_file` / `edit_file` | 读取、创建或更新定时作业使用的 SQL 文件 |
-| `trigger_scheduler_job` | 手动触发一次现有作业运行 |
-| `pause_job` | 暂停定时作业 |
-| `resume_job` | 恢复已暂停的作业 |
-| `delete_job` | 删除定时作业 |
-| `update_job` | 更新作业调度或配置 |
-| `get_scheduler_job` | 获取作业详情和当前状态 |
-| `list_scheduler_jobs` | 列出所有定时作业 |
-| `list_scheduler_connections` | 列出可用的 Airflow 连接 |
-| `list_job_runs` | 列出某作业的近期运行记录 |
-| `get_run_log` | 获取特定作业运行的日志 |
-
-### 输出格式
-
-```json
-{
-  "response": "已提交每日 SQL 作业 'daily_revenue'，每天早上 8:00 运行。",
-  "scheduler_result": {
-    "job_id": "daily_revenue_dag",
-    "status": "active",
-    "schedule": "0 8 * * *"
-  },
-  "tokens_used": 1580
-}
-```
-
-### 使用方式
-
-scheduler subagent 通常由聊天 agent 通过 `task(type="scheduler")` 自动调用，也可手动启动：
-
-```bash
-/scheduler 提交 /opt/sql/daily_revenue.sql 作为每天早上 8 点运行的定时作业，使用 postgres_prod 连接
-```
-
-也可以使用 `scheduler` 节点类创建自定义 subagent：
-
-```yaml
-agent:
-  agentic_nodes:
-    etl_scheduler:
-      node_class: scheduler
-      max_turns: 30
-```
+旧 Node 实现暂时保留在代码中，仅用于兼容。迁移说明见
+[BI Dashboard 节点（旧版兼容）](gen_dashboard.zh.md)和
+[Scheduler 节点（旧版兼容）](scheduler.zh.md)。
 
 ---
 
@@ -1038,9 +819,7 @@ agent:
 | `gen_table` | 交互式建表 | DDL + 执行结果 | 数据库 | DDL 确认、CTAS 或自然语言建表 |
 | `gen_job` | 数据管道作业（单库 ETL + 跨库传输） | 作业 / 传输结果 | 源库 + 目标库 | DDL/DML 执行、通过 MigrationTargetMixin 做跨方言类型映射、`transfer_query_result`、源目标不同库时做轻量对账校验 |
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
-| `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、基于已就位 serving 数据、多平台支持 |
 | `gen_visual_report` | 自包含的可视化报告（叙事文档，查询提前烘焙） | `reports/<slug>/`（可执行 SQL + 执行结果 + 报告组件） | 项目根目录 | 按模块独立修改、可基于 metric 或自定义 SQL 生成、CLI 模式直接在浏览器中打开 |
-| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）

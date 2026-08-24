@@ -26,10 +26,8 @@ nav:
       - Introduction: subagent/introduction.md
       - Built-in subagents: subagent/builtin_subagents.md
       - Customized subagents: subagent/customized_subagent.md
-      - Generate Dashboard: subagent/gen_dashboard.md
       - Semantic Modeling: subagent/semantic_modeling.md
       - Ask Metrics: subagent/ask_metrics.md
-      - Scheduler: subagent/scheduler.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
       - Data Pipeline (ETL + Migration): subagent/gen_job.md
@@ -40,6 +38,7 @@ nav:
       - Built-in Skills:
         - Init: skills/init.md
         - Build KB: skills/build_kb.md
+        - Dashboard Bootstrap: skills/dashboard_bootstrap.md
         - Storage Classify: skills/storage_classify.md
         - Extract Knowledge: skills/extract_knowledge.md
         - Memory Organization: skills/memory_organization.md
@@ -148,11 +147,9 @@ plugins:
             Subagent: Subagent
             Built-in subagents: 内置 subagent
             Customized subagents: 自定义 subagent
-            Generate Dashboard: 生成 Dashboard
             Generate Metrics: 生成指标
             Ask Metrics: 指标问答
             Generate Semantic Model: 生成语义模型
-            Scheduler: 调度器
             Chatbot: chatbot
             IM Gateway: IM 网关
             Slack: Slack
