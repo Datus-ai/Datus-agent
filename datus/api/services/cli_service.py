@@ -32,6 +32,7 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.tools.db_tools.db_manager import DBManager
+from datus.utils.config_utils import coerce_positive_seconds
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import (
     SQLType,
@@ -49,6 +50,12 @@ logger = get_logger(__name__)
 #: anything the parser could not place must fall to the enforced path, where it
 #: is refused — the alternative is that a syntax the dialect accepts but sqlglot
 #: does not becomes an unfiltered read.
+# How long a statement waits for its datasource's connector before being refused.
+# Long enough to ride out a normal interactive query, short enough that a queue
+# cannot pin to_thread workers indefinitely. Override via
+# ``api.sql_queue_budget_seconds``.
+_DEFAULT_SQL_QUEUE_BUDGET_SECONDS = 30.0
+
 _WRITE_SQL_TYPES = frozenset(
     {
         SQLType.INSERT,
@@ -283,8 +290,34 @@ class CLIService:
             # another request run under this one's database (or this one under
             # theirs). Acquired after the read-only refusal above so a rejected
             # request never queues behind a running query.
+            #
+            # Bounded, because waiting here is not free: this runs on an
+            # ``asyncio.to_thread`` worker, and the default executor has only
+            # ``min(32, cpu + 4)`` of them. A few slow queries queued on one
+            # datasource could otherwise starve every other to_thread caller in
+            # the process — table detail, catalog listing, the agent's own tool
+            # calls. Timing out also bounds how long a cancelled request keeps a
+            # worker: ``stop_execute_sql`` cancels the asyncio task, which cannot
+            # interrupt a thread parked in ``acquire()``.
+            api_config = getattr(self.agent_config, "api_config", {}) or {}
+            wait_budget = coerce_positive_seconds(
+                api_config.get("sql_queue_budget_seconds"), _DEFAULT_SQL_QUEUE_BUDGET_SECONDS
+            )
             execution_lock = self._connector_lock(datasource)
-            execution_lock.acquire()
+            if not execution_lock.acquire(timeout=wait_budget):
+                logger.warning(
+                    "POST /sql/execute gave up waiting for the datasource connector",
+                    datasource=datasource,
+                    waited_seconds=wait_budget,
+                )
+                return Result(
+                    success=False,
+                    errorCode=ErrorCode.DATASOURCE_BUSY,
+                    errorMessage=(
+                        f"Datasource '{datasource}' is busy with another statement "
+                        f"(waited {wait_budget:g}s). Nothing was executed — try again."
+                    ),
+                )
             try:
                 return self._execute_resolved_sql(request, task_id, policy_context, datasource, connector)
             finally:

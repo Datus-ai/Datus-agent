@@ -25,6 +25,10 @@ class ErrorCode(str, Enum):
     SQL_READ_ONLY = "SQL_READ_ONLY"
     TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"
     DATABASE_CONNECTION_ERROR = "DATABASE_CONNECTION_ERROR"
+    # A datasource's shared connector was busy for longer than the caller was
+    # allowed to wait. Distinct from SQL_EXECUTION_ERROR: the statement was
+    # never sent, so retrying is safe even for a write.
+    DATASOURCE_BUSY = "DATASOURCE_BUSY"
     CONTEXT_COMMAND_ERROR = "CONTEXT_COMMAND_ERROR"
     CHAT_COMMAND_ERROR = "CHAT_COMMAND_ERROR"
     INTERNAL_COMMAND_ERROR = "INTERNAL_COMMAND_ERROR"

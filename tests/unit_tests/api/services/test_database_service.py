@@ -1184,11 +1184,11 @@ class TestGetTablesColumnsBounds:
         spy = MagicMock(wraps=svc.current_db_connector.get_schema)
         svc.current_db_connector.get_schema = spy
 
-        svc._prefetch_gate.acquire()
+        svc._prefetch_gate_for(real_agent_config.current_datasource).acquire()
         try:
             result = svc.get_tables_columns(["schools"])
         finally:
-            svc._prefetch_gate.release()
+            svc._prefetch_gate_for(real_agent_config.current_datasource).release()
 
         assert result.success is True
         assert result.data.tables == []
@@ -1199,15 +1199,46 @@ class TestGetTablesColumnsBounds:
         svc = DatasourceService(agent_config=real_agent_config)
         svc.get_tables_columns(["schools"])
 
-        svc._prefetch_gate.acquire()
+        svc._prefetch_gate_for(real_agent_config.current_datasource).acquire()
         try:
             result = svc.get_tables_columns(["schools", "frpm"])
         finally:
-            svc._prefetch_gate.release()
+            svc._prefetch_gate_for(real_agent_config.current_datasource).release()
 
         # schools is cached; frpm would need the source, so it is omitted.
         assert [t.table for t in result.data.tables] == ["schools"]
         assert result.data.tables[0].columns
+
+    def test_a_busy_datasource_does_not_gate_another(self, real_agent_config):
+        """The gate is per datasource, not per service.
+
+        Each datasource has its own connector and its own cache entries, so a
+        prefetch running against one must not withhold another's — on this code
+        path a single `list_tables` runs for seconds, and one global gate made
+        expanding two datasources' trees queue for no reason.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        held = svc._prefetch_gate_for(current)
+        held.acquire()
+        try:
+            other = svc._prefetch_gate_for("second")
+            assert other is not held
+            assert other.acquire(blocking=False) is True
+            other.release()
+        finally:
+            held.release()
+
+    def test_schema_locks_are_per_datasource(self, real_agent_config):
+        """Same reasoning for the connector lock the batch serializes on."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+
+        first = svc._schema_lock_for(current)
+        assert first is svc._schema_lock_for(current)
+        assert first is not svc._schema_lock_for("second")
 
     def test_the_gate_is_released_for_the_next_batch(self, real_agent_config):
         svc = DatasourceService(agent_config=real_agent_config)

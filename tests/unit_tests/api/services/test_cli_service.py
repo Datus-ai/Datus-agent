@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from datus.api.models.cli_models import ExecuteContextInput, ExecuteSQLInput
+from datus.api.models.config_models import ErrorCode as ApiErrorCode
 from datus.api.services.chat_service import ChatService
 from datus.api.services.chat_task_manager import ChatTaskManager
 from datus.api.services.cli_service import CLIService
@@ -292,6 +293,38 @@ class TestCLIServiceConnectorSerialization:
                 cli_svc._execution_target("empty")
 
         assert "empty" not in cli_svc._datasource_connectors
+
+    @pytest.mark.asyncio
+    async def test_a_busy_datasource_is_refused_rather_than_queued_forever(self, cli_svc, real_agent_config):
+        """Waiting for the connector is bounded.
+
+        This runs on an asyncio.to_thread worker and the default executor has
+        only min(32, cpu + 4); an unbounded queue on one datasource could starve
+        every other to_thread caller in the process. It also bounds a cancelled
+        request, since cancelling the asyncio task cannot interrupt a thread
+        parked in acquire().
+        """
+        cli_svc.agent_config.api_config = {"sql_queue_budget_seconds": 0.05}
+        held = cli_svc._connector_lock(real_agent_config.current_datasource)
+        held.acquire()
+        try:
+            result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1"))
+        finally:
+            held.release()
+
+        assert result.success is False
+        assert result.errorCode == ApiErrorCode.DATASOURCE_BUSY
+        # The statement was never sent, so saying so matters: a refused write is
+        # safe to retry.
+        assert "Nothing was executed" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_a_free_datasource_is_not_delayed_by_the_budget(self, cli_svc):
+        cli_svc.agent_config.api_config = {"sql_queue_budget_seconds": 0.05}
+
+        result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
+
+        assert result.success is True
 
     def test_lock_is_per_datasource(self, cli_svc, real_agent_config):
         """Different datasources must not block each other."""

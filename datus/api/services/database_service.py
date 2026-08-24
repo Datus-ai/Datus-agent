@@ -94,12 +94,19 @@ class DatasourceService:
         # The lock serializes the not-thread-safe connector across concurrent
         # asyncio.to_thread detail/batch requests.
         self._columns_cache: dict[str, list[ColumnInfo]] = {}
-        self._schema_lock = threading.Lock()
-        # Only one prefetch batch resolves uncached tables at a time. Several in
-        # parallel cannot go any faster — they serialize on _schema_lock anyway —
-        # they just each pin a to_thread worker while queuing, which is what
-        # starves interactive metadata reads.
-        self._prefetch_gate = threading.BoundedSemaphore(1)
+        # One lock and one prefetch gate per datasource, not one of each overall.
+        # Each datasource has its own connector, and the column cache is keyed by
+        # datasource — so a global lock would serialize metadata reads between
+        # unrelated warehouses. That is expensive here in particular: a single
+        # `list_tables` runs for seconds, so expanding two datasources' trees at
+        # once would queue for no reason.
+        self._schema_locks: dict[str, threading.Lock] = {}
+        # Only one prefetch batch per datasource resolves uncached tables at a
+        # time. Several in parallel on the same datasource cannot go any faster —
+        # they serialize on that datasource's schema lock anyway — they just each
+        # pin a to_thread worker while queuing, which is what starves interactive
+        # metadata reads.
+        self._prefetch_gates: dict[str, threading.BoundedSemaphore] = {}
         self._initialize_connection()
 
     def _active_semantic_adapter(self) -> str:
@@ -171,6 +178,26 @@ class DatasourceService:
     def resolve_datasource(self, datasource: Optional[str] = None) -> str:
         """Normalize a requested datasource name, falling back to the current one."""
         return (datasource or "").strip() or (self.current_datasource or "")
+
+    def _schema_lock_for(self, datasource: str) -> threading.Lock:
+        """The lock guarding one datasource's connector and cache entries.
+
+        No lock of its own: ``dict.setdefault`` resolves the create-vs-reuse race
+        itself, so two threads asking at once still get the same lock.
+        """
+        locks = getattr(self, "_schema_locks", None)
+        if locks is None:
+            locks = {}
+            self._schema_locks = locks
+        return locks.setdefault(datasource, threading.Lock())
+
+    def _prefetch_gate_for(self, datasource: str) -> threading.BoundedSemaphore:
+        """The gate bounding concurrent prefetch batches on one datasource."""
+        gates = getattr(self, "_prefetch_gates", None)
+        if gates is None:
+            gates = {}
+            self._prefetch_gates = gates
+        return gates.setdefault(datasource, threading.BoundedSemaphore(1))
 
     def _connector_for(self, datasource: Optional[str] = None) -> tuple[BaseSqlConnector, str]:
         """``(connector, database_name)`` for one of the project's datasources.
@@ -578,7 +605,8 @@ class DatasourceService:
             try:
                 identity = self._resolve_table_identity(full_path, connector, default_database)
                 table_name = identity[3]
-                cache_key = self._cache_key(self.resolve_datasource(datasource), identity)
+                datasource_key = self.resolve_datasource(datasource)
+                cache_key = self._cache_key(datasource_key, identity)
 
                 def _detail(cols: list[ColumnInfo]) -> Result[GetTableDetailData]:
                     return Result(
@@ -590,10 +618,12 @@ class DatasourceService:
                 if cached is not None:
                     return _detail(cached)
 
-                # Serialize the not-thread-safe connector; re-check the cache
-                # inside the lock (double-checked) so each table is fetched once
-                # even under concurrent detail/batch requests.
-                with self._schema_lock:
+                # Serialize this datasource's not-thread-safe connector; re-check
+                # the cache inside the lock (double-checked) so each table is
+                # fetched once even under concurrent detail/batch requests.
+                # Per datasource, so a slow warehouse does not hold up metadata
+                # reads on an unrelated one.
+                with self._schema_lock_for(datasource_key):
                     cached = self._columns_cache.get(cache_key)
                     if cached is not None:
                         return _detail(cached)
@@ -701,7 +731,8 @@ class DatasourceService:
         if not pending:
             return Result(success=True, data=GetTablesColumnsData(tables=results))
 
-        if not self._prefetch_gate.acquire(blocking=False):
+        prefetch_gate = self._prefetch_gate_for(self.resolve_datasource(datasource))
+        if not prefetch_gate.acquire(blocking=False):
             logger.info(
                 "Prefetch already in flight; serving %d cached of %d tables and omitting %d",
                 len(results),
@@ -729,7 +760,7 @@ class DatasourceService:
                 if detail.success and detail.data is not None:
                     results.append(TableColumns(table=full_path, columns=_brief_columns(detail.data.table.columns)))
         finally:
-            self._prefetch_gate.release()
+            prefetch_gate.release()
 
         return Result(success=True, data=GetTablesColumnsData(tables=results))
 
