@@ -326,6 +326,46 @@ class ChatAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup skill tools: {e}")
 
+    # ── Lazy re-injection gates ────────────────────────────────────────
+    #
+    # `AgenticNode._ensure_lazy_tools_mounted` re-adds bash, skills, memory and
+    # web on every prompt build and on a snapshot-cache hit — AFTER setup_tools
+    # already decided what this node may have. Without these gates the exclusion
+    # holds only until the first prompt is built, and memory is the worst case:
+    # the base *re-creates* the instance when it finds None, so clearing it in
+    # setup_tools is not enough on its own. The ask_* subclass hit the same
+    # bypass and gates it the same way.
+
+    def _ensure_bash_tool_in_tools(self) -> None:
+        if not self._family_enabled(self._selected_tool_families(), "bash_tools"):
+            return
+        super()._ensure_bash_tool_in_tools()
+
+    def _ensure_skill_tools_in_tools(self) -> None:
+        if not self._family_enabled(self._selected_tool_families(), "skills"):
+            return
+        super()._ensure_skill_tools_in_tools()
+
+    def _ensure_memory_tool_in_tools(self) -> None:
+        if not self._family_enabled(self._selected_tool_families(), "memory_tools"):
+            return
+        super()._ensure_memory_tool_in_tools()
+
+    def _ensure_web_tools_in_tools(self) -> None:
+        selected = self._selected_tool_families()
+        if not self._family_enabled(selected, "web_tool"):
+            # Scrub rather than just skip: the base resolves provider-native
+            # builtins too, and a stale local web tool left in the list would
+            # still be offered to the model.
+            from datus.tools.func_tool.web_tool import WebTool
+
+            web_names = set(WebTool.all_tools_name())
+            self.tools = [t for t in (self.tools or []) if getattr(t, "name", None) not in web_names]
+            self._builtin_web_tools = {"web_search": False, "web_fetch": False}
+            self._web_tool = None
+            return
+        super()._ensure_web_tools_in_tools()
+
     def _rebuild_tools(self):
         """Rebuild the tools list with current tool instances including skills."""
         self.tools = []

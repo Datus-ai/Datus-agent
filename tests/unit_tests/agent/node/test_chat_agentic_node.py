@@ -2150,3 +2150,43 @@ class TestChatAgenticNodeHonoursConfiguredTools:
 
         # The list is ignored entirely, not partly: same surface as no key at all.
         assert self._families(unrestricted) == self._families(self._node(real_agent_config))
+
+    def test_exclusions_survive_the_lazy_prompt_build_mount(self, real_agent_config, mock_llm_create):
+        """`AgenticNode._ensure_lazy_tools_mounted` re-adds bash, skills, memory
+        and web on every prompt build and on a snapshot-cache hit — after
+        `setup_tools` already decided what this node may have.
+
+        Without gating those too, the exclusion holds only until the first
+        prompt is built. Memory is the worst case: the base *re-creates* the
+        instance when it finds None, so clearing it in `setup_tools` does not
+        survive on its own.
+        """
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        for resurrected in ("add_memory", "edit_memory", "web_fetch", "bash", "load_skill"):
+            assert resurrected not in names
+
+    def test_the_default_still_gets_the_lazy_tools(self, real_agent_config, mock_llm_create):
+        """The gates must not cost an ungated node its lazily mounted tools —
+        they are how a normal chat node gets bash, skills, memory and web at
+        all."""
+        node = self._node(real_agent_config)
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        for expected in ("add_memory", "bash", "load_skill"):
+            assert expected in names
+
+    def test_a_selected_family_survives_the_lazy_mount(self, real_agent_config, mock_llm_create):
+        """Gating is per family, not a blanket "narrowed nodes get nothing lazy"."""
+        node = self._node(real_agent_config, tools="db_tools.*, memory_tools.*")
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        assert "add_memory" in names
+        assert "bash" not in names
