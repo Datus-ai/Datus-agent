@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/dev/configuration/bi_platforms/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/dev/plugin/s3/">
       
       
-        <link rel="prev" href="../semantic_layer/">
+        <link rel="prev" href="../mwaa/">
       
       
-        <link rel="next" href="../schedulers/">
+        <link rel="next" href="../../web_chatbot/introduction/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>BI Platforms - Datus Docs</title>
+        <title>S3 - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#bi-platforms-configuration" class="md-skip">
+        <a href="#s3-plugin" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              BI Platforms
+              S3
             
           </span>
         </div>
@@ -1741,8 +1741,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1763,11 +1765,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6" id="__nav_1_6_label" tabindex="0">
@@ -1788,7 +1790,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1806,7 +1808,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -1834,7 +1836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/development/" class="md-nav__link">
+      <a href="../development/" class="md-nav__link">
         
   
   
@@ -1862,7 +1864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/airflow/" class="md-nav__link">
+      <a href="../airflow/" class="md-nav__link">
         
   
   
@@ -1890,7 +1892,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/mwaa/" class="md-nav__link">
+      <a href="../mwaa/" class="md-nav__link">
         
   
   
@@ -1915,10 +1917,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../plugin/s3/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    S3
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1934,6 +1963,137 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#s3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        s3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s3-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        s3-setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-with-the-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using with the Agent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orchestrating-workflows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orchestrating Workflows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Orchestrating Workflows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-transfer-layer-for-dag-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The transfer layer for DAG deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#publish-pipeline-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish pipeline artifacts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2819,10 +2979,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -2853,11 +3011,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12" >
         
           
           <label class="md-nav__link" for="__nav_1_12" id="__nav_1_12_label" tabindex="0">
@@ -2878,7 +3036,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_12_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_12_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_12">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2896,7 +3054,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../configuration/introduction/" class="md-nav__link">
         
   
   
@@ -2924,7 +3082,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../agent/" class="md-nav__link">
+      <a href="../../configuration/agent/" class="md-nav__link">
         
   
   
@@ -2952,7 +3110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../compact/" class="md-nav__link">
+      <a href="../../configuration/compact/" class="md-nav__link">
         
   
   
@@ -2980,7 +3138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../workflow/" class="md-nav__link">
+      <a href="../../configuration/workflow/" class="md-nav__link">
         
   
   
@@ -3008,7 +3166,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../benchmark/" class="md-nav__link">
+      <a href="../../configuration/benchmark/" class="md-nav__link">
         
   
   
@@ -3036,7 +3194,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_policy/" class="md-nav__link">
+      <a href="../../configuration/sql_policy/" class="md-nav__link">
         
   
   
@@ -3064,7 +3222,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web_tool/" class="md-nav__link">
+      <a href="../../configuration/web_tool/" class="md-nav__link">
         
   
   
@@ -3089,10 +3247,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -3111,11 +3267,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" >
         
           
           <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
@@ -3136,7 +3292,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_12_8">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3154,7 +3310,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../datasources/" class="md-nav__link">
+      <a href="../../configuration/datasources/" class="md-nav__link">
         
   
   
@@ -3182,7 +3338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../semantic_layer/" class="md-nav__link">
+      <a href="../../configuration/semantic_layer/" class="md-nav__link">
         
   
   
@@ -3207,37 +3363,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    BI Platforms
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../configuration/bi_platforms/" class="md-nav__link">
         
   
   
@@ -3253,92 +3382,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#structure" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Structure
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#dataset_db-fields" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        dataset_db fields
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#selection-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Selection rules
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuring-through-the-cli-services" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuring through the CLI (/services)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ownership" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ownership
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3351,7 +3394,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../schedulers/" class="md-nav__link">
+      <a href="../../configuration/schedulers/" class="md-nav__link">
         
   
   
@@ -3387,7 +3430,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../storage/" class="md-nav__link">
+      <a href="../../configuration/storage/" class="md-nav__link">
         
   
   
@@ -3415,7 +3458,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../nodes/" class="md-nav__link">
+      <a href="../../configuration/nodes/" class="md-nav__link">
         
   
   
@@ -4298,10 +4341,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#structure" class="md-nav__link">
+  <a href="#installation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Structure
+        Installation
       
     </span>
   </a>
@@ -4309,10 +4352,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#dataset_db-fields" class="md-nav__link">
+  <a href="#skills" class="md-nav__link">
     <span class="md-ellipsis">
       
-        dataset_db fields
+        Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#s3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        s3
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s3-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        s3-setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-with-the-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using with the Agent
       
     </span>
   </a>
@@ -4320,43 +4402,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#selection-rules" class="md-nav__link">
+  <a href="#orchestrating-workflows" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Selection rules
+        Orchestrating Workflows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Orchestrating Workflows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-transfer-layer-for-dag-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The transfer layer for DAG deployment
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#configuring-through-the-cli-services" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#publish-pipeline-artifacts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuring through the CLI (/services)
+        Publish pipeline artifacts
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#ownership" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Ownership
-      
-    </span>
-  </a>
+        
+      </ul>
+    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#notes" class="md-nav__link">
+  <a href="#related-docs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Notes
+        Related Docs
       
     </span>
   </a>
@@ -4380,7 +4468,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/bi_platforms.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/plugin/s3.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4388,155 +4476,123 @@
   
 
 
-<h1 id="bi-platforms-configuration">BI Platforms Configuration<a class="headerlink" href="#bi-platforms-configuration" title="Permanent link">&para;</a></h1>
-<p>BI platform connections are configured under <code>agent.services.bi_platforms</code>.</p>
-<h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
-<p>The serving DB (the database the BI platform reads from and Datus writes to)
-is registered as a <strong>regular Datus datasource</strong>. The BI platform entry then
-references it by name via <code>dataset_db.datasource_ref</code>. This keeps connector
-pooling, schema metadata, and credentials shared with the rest of Datus.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="c1"># Existing source warehouse (read-only from the BI side)</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">src_warehouse</span><span class="p">:</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">starrocks</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SRC_WAREHOUSE_HOST}</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9030</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SRC_WAREHOUSE_USER}</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SRC_WAREHOUSE_PASSWORD}</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">warehouse</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="c1"># Serving DB — Datus writes here, the BI platform reads from here</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">      </span><span class="nt">serving_pg</span><span class="p">:</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">127.0.0.1</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5433</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset_examples</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bi_public</span>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SERVING_WRITE_USER}</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SERVING_WRITE_PASSWORD}</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">    </span><span class="nt">bi_platforms</span><span class="p">:</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8088</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_USER}</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_PASSWORD}</span>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">        </span><span class="nt">dataset_db</span><span class="p">:</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">          </span><span class="nt">datasource_ref</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">serving_pg</span><span class="w">          </span><span class="c1"># ← references services.datasources.serving_pg</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="w">          </span><span class="nt">bi_database_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">examples</span><span class="w">          </span><span class="c1"># Superset Database connection name shown in Settings &gt; Database Connections</span>
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">      </span><span class="nt">grafana</span><span class="p">:</span>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">grafana</span>
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:3000</span>
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">        </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GRAFANA_API_KEY}</span>
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">        </span><span class="nt">dataset_db</span><span class="p">:</span>
-</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="w">          </span><span class="nt">datasource_ref</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">serving_pg</span><span class="w">          </span><span class="c1"># ← can share the same serving DB</span>
-</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a><span class="w">          </span><span class="nt">bi_database_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PostgreSQL</span><span class="w">        </span><span class="c1"># ← Grafana datasource name</span>
-</span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>
-</span><span id="__span-0-41"><a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-0-42"><a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a><span class="w">    </span><span class="nt">gen_dashboard</span><span class="p">:</span>
-</span><span id="__span-0-43"><a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a><span class="w">      </span><span class="nt">bi_platform</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
+<h1 id="s3-plugin">S3 Plugin<a class="headerlink" href="#s3-plugin" title="Permanent link">&para;</a></h1>
+<p>The S3 plugin (<code>datus-s3-plugin</code>) lets the Datus agent browse, query, and move
+object-storage data. It speaks to Amazon S3 and to S3-compatible stores such
+as MinIO and Alibaba Cloud OSS, and it is the transfer layer other plugins
+rely on when a workflow reads from or writes to an <code>s3://</code> URI — deploying
+Airflow DAGs, for example.</p>
+<h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-s3-plugin
 </span></code></pre></div>
-<h2 id="dataset_db-fields"><code>dataset_db</code> fields<a class="headerlink" href="#dataset_db-fields" title="Permanent link">&para;</a></h2>
-<p><code>dataset_db</code> is the BI-platform-specific layer on top of a Datus datasource.
-It carries only what's BI-specific:</p>
+<p>Requires datus-agent &gt;= 0.3.8. See <a href="../introduction/">Plugins</a> for other
+install sources and profile management.</p>
+<h2 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Field</th>
-<th>Required</th>
-<th>Description</th>
+<th>Skill</th>
+<th>Purpose</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>datasource_ref</code></td>
-<td>Yes</td>
-<td>Name of a <code>services.datasources</code> entry. Datus uses that datasource's connector for both schema introspection and writes.</td>
+<td><code>s3</code></td>
+<td>Browse, read, query, and move objects</td>
 </tr>
 <tr>
-<td><code>bi_database_name</code></td>
-<td>Recommended</td>
-<td>Alias under which the BI platform itself has registered the same DB. <code>gen_dashboard</code> matches it against <code>list_bi_databases()</code> to resolve <code>database_id</code> for <code>create_dataset</code>.</td>
+<td><code>s3-setup</code></td>
+<td>Create a profile (region, credentials, default bucket, compatibility mode)</td>
 </tr>
 </tbody>
 </table>
-<p>The legacy inline form (<code>dataset_db: {uri: "..."}</code> or
-<code>dataset_db: {type: ..., host: ..., ...}</code>) is no longer accepted —
-move the connection fields under <code>services.datasources</code> and reference them
-by name.</p>
-<h2 id="selection-rules">Selection rules<a class="headerlink" href="#selection-rules" title="Permanent link">&para;</a></h2>
-<p><code>BIFuncTool._resolved_platform</code> resolves the active BI service in this
-order — identical to Scheduler and Semantic resolution:</p>
-<ol>
-<li>Explicit <code>bi_service</code> argument at the call site (or <code>bi_platform</code> on
-   the agentic node).</li>
-<li>Project-level pin in <code>./.datus/config.yml</code>'s <code>dashboard:</code> field.</li>
-<li>Global <code>default: true</code> flag — at most one entry under
-   <code>services.bi_platforms</code> may carry it; multiple defaults are rejected
-   at config load time so the user fixes the YAML rather than us silently
-   picking one.</li>
-<li>Single-entry shortcut when only one BI service is configured.</li>
-<li>Otherwise raise <code>Multiple BI platforms configured</code> so the operator
-   sets a default explicitly.</li>
-</ol>
-<p>Set the global default in YAML:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">bi_platforms</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">     </span><span class="c1"># global default — picked when no project pin set</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="l l-Scalar l-Scalar-Plain">...</span>
-</span></code></pre></div>
-<h2 id="configuring-through-the-cli-services">Configuring through the CLI (<code>/services</code>)<a class="headerlink" href="#configuring-through-the-cli-services" title="Permanent link">&para;</a></h2>
-<p>Run <code>/services</code> inside the Datus REPL to enter the configuration TUI
-directly (Dashboard tab by default; pass <code>/services scheduler</code> to land on
-the Scheduler tab; <code>/services list</code> keeps the legacy read-only listing).
-The two-tab TUI lets you:</p>
+<h3 id="s3">s3<a class="headerlink" href="#s3" title="Permanent link">&para;</a></h3>
+<p>With this skill the agent can:</p>
 <ul>
-<li>Add a new dashboard with <code>Enter</code> on the trailing <code>+ Add new dashboard</code> row.
-  When you pick a <code>type</code> whose adapter package isn't installed yet
-  (<code>datus-bi-superset</code>, <code>datus-bi-grafana</code>, …), Datus runs
-  <code>pip install</code> for you and hot-reloads the registry — no restart needed.</li>
-<li>Edit credentials with <code>e</code>, delete an entry with <code>x</code>, run a connectivity
-  probe with <code>t</code>.</li>
-<li>Set the <strong>global</strong> <code>default: true</code> flag with <code>d</code>. Pressing <code>d</code> on a row
-  marks it as the workspace-wide default and clears the flag from every
-  other entry, so you cannot end up with two defaults.</li>
-<li>Pin a <strong>project-level</strong> default with <code>p</code>. The pin is written to
-  <code>./.datus/config.yml</code> as <code>dashboard: &lt;name&gt;</code> and outranks the global
-  flag for the current project only. Press <code>p</code> again on the pinned row to
-  clear it.</li>
+<li><strong>browse and read</strong> — list buckets and prefixes, show object metadata,
+  print an object's contents or first lines, and mint presigned URLs (a
+  presigned PUT URL grants write access and is treated like a credential);</li>
+<li><strong>query in place</strong> — run S3 Select SQL against a single CSV, JSON, or
+  Parquet object without downloading it, e.g. counting rows per group
+  straight off the bucket;</li>
+<li><strong>move data</strong> — upload and download files, sync a directory (only new and
+  changed files are transferred), move objects, and delete them;</li>
+<li><strong>publish artifacts safely</strong> — the skill encodes upload hygiene: verify an
+  upload by reading its metadata back, publish each build under a versioned
+  key instead of overwriting a mutable one, and never let credentials end up
+  inside uploaded files.</li>
 </ul>
-<p>On the first interactive launch, if a section is configured but has no
-project pin, Datus auto-pins the only entry (or the one flagged
-<code>default: true</code>) to <code>./.datus/config.yml</code> so subsequent runs are
-explicit. When multiple entries are configured without a default, the
-launch prompts for a quick choice.</p>
-<p>Service definitions are written to <code>~/.datus/conf/agent.yml</code>, so the same
-credentials are shared across every project. Only the active selection is
-project-local.</p>
-<h2 id="ownership">Ownership<a class="headerlink" href="#ownership" title="Permanent link">&para;</a></h2>
-<p>Dashboard creation is split into three explicit steps:</p>
-<ol>
-<li><code>gen_job</code> or <code>scheduler</code> prepares / refreshes data in the serving DB
-   referenced by <code>dataset_db.datasource_ref</code>.</li>
-<li><code>gen_dashboard</code> builds the dataset / chart / dashboard on the BI side
-   from tables or SQL datasets that already exist in that BI-registered DB.</li>
-<li><code>bi-validation</code> runs post-creation checks automatically through <code>ValidationHook.on_end</code>.</li>
-</ol>
-<p>Source DB credentials never leave Datus — Superset / Grafana see only the
-serving DB registered under <code>bi_database_name</code>.</p>
-<h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
+<p>Writes use SSE-KMS when the profile sets <code>kms_key_id</code>. In <code>aliyun-oss</code>
+compatibility mode, S3 Select and SSE-KMS are rejected explicitly.</p>
+<p>Note that AWS no longer offers S3 Select to new customers: only accounts that
+were using it before July 25, 2024 can still call it. Newer accounts should
+query through Amazon Athena or download the object and filter locally
+instead. MinIO continues to support the S3 Select API.</p>
+<h3 id="s3-setup">s3-setup<a class="headerlink" href="#s3-setup" title="Permanent link">&para;</a></h3>
+<p>Ask the agent to set up the plugin and the skill collects the region, the
+credential source (the default AWS chain, a named profile, keys as
+<code>${ENV_VAR}</code> references, or a role to assume), an optional default bucket for
+bare keys, and an optional SSE-KMS key, then verifies the profile with a
+read-only listing. MinIO needs only an <code>endpoint_url</code>; Alibaba OSS uses the
+dedicated compatibility fields. A resulting profile looks like this:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">s3</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">us-east-1</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">bucket</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-data-lake</span><span class="w">  </span><span class="c1"># optional default bucket</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="c1"># credentials: standard AWS chain, or profile / keys / role_arn</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">minio-local</span><span class="p">:</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">        </span><span class="nt">endpoint_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://minio:9000</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">        </span><span class="nt">access_key_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MINIO_ACCESS_KEY}</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">        </span><span class="nt">secret_access_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MINIO_SECRET_KEY}</span>
+</span></code></pre></div>
+<p>The IAM principal needs at least <code>s3:ListBucket</code> and <code>s3:GetObject</code>; listing
+the account's buckets additionally needs <code>s3:ListAllMyBuckets</code> (its
+<code>Resource</code> must be <code>"*"</code>). Add <code>s3:PutObject</code> for uploads and
+<code>s3:DeleteObject</code> for deletes.</p>
+<h2 id="using-with-the-agent">Using with the Agent<a class="headerlink" href="#using-with-the-agent" title="Permanent link">&para;</a></h2>
+<p>Some example requests, once a profile exists:</p>
 <ul>
-<li><code>services.bi_platforms</code> is the only runtime source for BI credentials.</li>
-<li>Top-level <code>dashboard:</code> is no longer read at runtime.</li>
-<li><code>services.datasources.&lt;datasource_ref&gt;</code> must exist before
-  <code>services.bi_platforms.&lt;x&gt;.dataset_db.datasource_ref</code> is resolved —
-  Datus validates this at startup and fails loudly if the ref is dangling.</li>
+<li><strong>"What's in s3://my-lake/events/?"</strong> — lists the prefix.</li>
+<li><strong>"Show me the first ten rows of s3://my-lake/events/day.csv."</strong></li>
+<li><strong>"How many events per region are in that file?"</strong> — an S3 Select query;
+  nothing is downloaded.</li>
+<li><strong>"Sync ./artifacts to s3://my-lake/artifacts/v1/ and verify the upload."</strong></li>
+<li><strong>"Set up the s3 plugin against our MinIO."</strong> — runs <code>s3-setup</code>.</li>
+</ul>
+<p>Under the <a href="../introduction/#permissions">permission system</a>, reads, queries,
+and presigning run without confirmation; uploads, syncs, and moves ask once
+under the <code>normal</code> mode; deletes always ask.</p>
+<h2 id="orchestrating-workflows">Orchestrating Workflows<a class="headerlink" href="#orchestrating-workflows" title="Permanent link">&para;</a></h2>
+<h3 id="the-transfer-layer-for-dag-deployment">The transfer layer for DAG deployment<a class="headerlink" href="#the-transfer-layer-for-dag-deployment" title="Permanent link">&para;</a></h3>
+<p>The <a href="../airflow/">Airflow</a> and <a href="../mwaa/">MWAA</a> plugins contain no
+object-storage client on purpose. Whenever a DAG deployment, export, backup,
+or migration targets an <code>s3://</code> URI, the agent routes the transfer through
+this plugin:</p>
+<ul>
+<li><strong>Deploy</strong> — "deploy dags/sales_daily.py to prod Airflow": the agent
+  uploads through this plugin into the scheduler's <code>dags_folder</code> (or an MWAA
+  environment's DAG prefix), then verifies through the scheduler-side plugin
+  that the DAG parses.</li>
+<li><strong>Back up</strong> — "export all active prod DAGs to s3://backup/airflow/": the
+  Airflow or MWAA export skill collects the sources through the scheduler's
+  API and hands this plugin the upload.</li>
+</ul>
+<p>Credentials stay separated: this plugin owns the storage credentials, the
+scheduler plugins own the Airflow credentials, and neither sees the other's.</p>
+<h3 id="publish-pipeline-artifacts">Publish pipeline artifacts<a class="headerlink" href="#publish-pipeline-artifacts" title="Permanent link">&para;</a></h3>
+<p>The same pattern serves anything a pipeline consumes from object storage —
+job JARs, rendered configs, exported query results. Ask the agent to publish
+a directory under a versioned prefix: it syncs only what changed, then reads
+the uploads back to verify them.</p>
+<h2 id="related-docs">Related Docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../introduction/">Plugins</a> — install sources, profiles, activation, and permissions</li>
+<li><a href="../airflow/">Airflow plugin</a> — DAG deployment on self-managed Airflow</li>
+<li><a href="../mwaa/">MWAA plugin</a> — DAG deployment on Amazon MWAA</li>
+<li><a href="../../skills/introduction/">Skills</a> — how skills are discovered and loaded</li>
 </ul>
 
 
@@ -4567,7 +4623,7 @@ serving DB registered under <code>bi_database_name</code>.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../semantic_layer/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Semantic Layer">
+          <a href="../mwaa/" class="md-footer__link md-footer__link--prev" aria-label="Previous: MWAA">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4577,20 +4633,20 @@ serving DB registered under <code>bi_database_name</code>.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Semantic Layer
+                MWAA
               </div>
             </div>
           </a>
         
         
           
-          <a href="../schedulers/" class="md-footer__link md-footer__link--next" aria-label="Next: Schedulers">
+          <a href="../../web_chatbot/introduction/" class="md-footer__link md-footer__link--next" aria-label="Next: Chatbot">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Schedulers
+                Chatbot
               </div>
             </div>
             <div class="md-footer__button md-icon">

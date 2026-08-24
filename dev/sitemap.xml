@@ -367,6 +367,12 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/dev/metricflow/introduction/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/dev/plugin/airflow/</loc>
+        <lastmod>2026-08-24</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/dev/plugin/airflow/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/dev/plugin/development/</loc>
         <lastmod>2026-08-24</lastmod>
         <changefreq>daily</changefreq>
@@ -377,6 +383,18 @@
         <lastmod>2026-08-24</lastmod>
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/dev/plugin/introduction/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/dev/plugin/mwaa/</loc>
+        <lastmod>2026-08-24</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/dev/plugin/mwaa/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/dev/plugin/s3/</loc>
+        <lastmod>2026-08-24</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/dev/plugin/s3/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/dev/skills/build_kb/</loc>
