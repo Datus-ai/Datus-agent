@@ -46,6 +46,9 @@ nav:
     - Plugin:
       - Introduction: plugin/introduction.md
       - Development: plugin/development.md
+      - Airflow: plugin/airflow.md
+      - MWAA: plugin/mwaa.md
+      - S3: plugin/s3.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md
@@ -201,6 +204,9 @@ plugins:
             Auto Memory: 自动记忆
             Plugin: 插件
             Development: 开发指南
+            Airflow: Airflow
+            MWAA: MWAA
+            S3: S3
             Develop: 开发
             Observability: 可观测性
             VSCode Extension: VSCode 插件
