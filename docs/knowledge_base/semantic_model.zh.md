@@ -1,209 +1,219 @@
 # 语义模型
 
-从 **0.2.4 版本**开始，语义模型作为**模式扩展（schema extensions）**，为数据库表提供语义信息的增强。它们定义表结构（列、维度、度量、实体）以帮助 agent 更好地理解数据，从而生成临时查询。
+语义模型把数据库的物理结构整理成可复用的业务概念。它告诉 Datus：哪些表或查询代表一个业务 dataset、字段的业务含义是什么、分析应该使用哪个时间字段，以及不同 dataset 可以如何关联。指标也定义在同一个模型中，详见[指标](metrics.md)。
 
-## 核心价值
+Datus 通过 Dosi 编写严格的 OSI YAML。YAML 文件是唯一事实来源；Knowledge Base 保存的是由 YAML 派生的可搜索投影，供 agent 和产品界面使用。
 
-增强数据库 schema 理解以改进 SQL 生成：
+## 语义模型包含什么
 
-- **丰富的列描述**：使用模式和过滤示例增强 DDL 注释
-- **维度和度量分类**：明确标记列为维度（用于分组）或度量（用于聚合）
-- **实体关系**：定义表之间的外键关系以准确生成 JOIN
-- **查询模式洞察**：从历史查询中捕获列的典型过滤方式（LIKE、IN、FIND_IN_SET 等）
+| 对象 | 作用 |
+| --- | --- |
+| **Semantic model** | 把相关的 dataset、relationship 和 metric 组织为一个业务域。 |
+| **Dataset** | 将业务实体或事件集合映射到物理表或可复用 SQL 查询。 |
+| **Field** | 为源列或表达式提供稳定名称和业务描述，也可以标记时间维度。 |
+| **Relationship** | 定义两个 dataset 之间允许使用的等值关联。 |
+| **Metric** | 定义可复用的业务计算。Metric 与 dataset 位于同一份 YAML，但使用独立的 Knowledge Base 投影和查询流程。 |
 
-## 工作原理
+例如，银行业务模型可以把 `main.bank_failures` 映射为 `bank_failures` dataset，描述银行、州、倒闭日期和资产字段，再定义倒闭银行数量与倒闭资产总额等指标。
 
-语义模型定义基础 schema 层。从 0.2.4 版本开始，它们独立运行：
+## 源文件与 Knowledge Base 投影
 
-- **语义模型**（本文档）：包含维度、度量和实体关系的 schema 扩展
-  - 存储：知识库中的 `semantic_dataset` 表
-  - 目的：帮助 agent 理解表结构以生成临时 SQL
-
-- **指标**（参见 [metrics.zh.md](metrics.zh.md)）：构建在语义模型之上的业务计算
-  - 存储：LanceDB 中的 `metrics` 表
-  - 目的：通过 MetricFlow 查询的标准化 KPI
-
-语义模型提供指标引用的构建块（维度、度量）。
-
-## 存储结构
-
-每个编写对象一行。dataset 行由 `(semantic_model, dataset)` 标识；
-field 行在此之上再加自身名称；relationship 行由
-`(semantic_model, relationship)` 标识：
-
-```python
-# 行的 kind:
-- "dataset": 一个授权的 dataset，绑定到物理表或可复用查询
-- "field": dataset 的一个字段
-- "relationship": semantic model 的一条关系
-
-# field 行上的标记:
-- is_dimension: 可用于分组/过滤
-- is_time: dataset 的时间维度
-- is_primary_key: 属于 dataset 的主键
-```
-
-一张物理表可以被多个 dataset 建模（分属不同的 semantic model）。query-backed 的 dataset
-不带 `source_table`，因此不会被误当成同名的真实表。
-
-## 使用方法
-
-使用 `--success_story` 时，该兼容组件会运行 Dosi-only 的 `semantic_modeling` 工作流（datasets-only 范围），不会创建、更新或删除指标。YAML 导入与 profile 刷新是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。
-
-### 基本命令
-
-```bash
-# 从 CSV（历史 SQLs）
-datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components semantic_model \
-    --success_story path/to/success_story.csv
-
-# 从 YAML（现有语义模型文件）
-datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components semantic_model \
-    --semantic_yaml path/to/semantic_model.yaml
-
-# 将已授权的 YAML 重新投影进知识库（不调用 LLM）
-datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components semantic_model \
-    --kb_update_strategy sync-yaml
-
-# 刷新已有 YAML 中的观测 profile 描述
-datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components semantic_model \
-    --kb_update_strategy refresh-profile \
-    --semantic_yaml path/to/semantic_model.yaml \
-    --success_story path/to/success_story.csv
-```
-
-### 关键参数
-
-| 参数 | 必需 | 描述 | 示例 |
-|-----------|----------|-------------|---------|
-| `--datasource` | ✅ | 数据库数据源 | `sales_db` |
-| `--components` | ✅ | 要初始化的组件 | `semantic_model` |
-| `--success_story` | ⚠️ | 包含历史 SQLs 的 CSV 文件。从 SQL 历史生成和 `refresh-profile` 都需要。 | `success_story.csv` |
-| `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件。从 YAML 导入和 `refresh-profile` 都需要。 | `semantic_model.yaml` |
-| `--kb_update_strategy` | ❌ | 更新策略。默认是 `check`；`refresh-profile` 与 `sync-yaml` 仅支持 `semantic_model` 组件。 | `check`/`overwrite`/`incremental`/`refresh-profile`/`sync-yaml` |
-
-`sync-yaml` 把已授权的语义 YAML 重新投影进知识库。`subject/semantic_models/<datasource>/` 下的 YAML 是唯一真相源，
-该策略逐个文件将其重放进存储——不调用 LLM、不访问数仓，可安全重复执行。传 `--semantic_yaml` 可只同步单个文件或
-子目录；不传则同步当前 datasource 的全部文件。手工改完 YAML 后，或升级导致存储结构变化需要重建投影时使用。
-
-`refresh-profile` 会原地更新已有 Dosi/OSI 语义模型 YAML（MetricFlow YAML 会被拒绝）。它会根据 `--success_story` 中的历史 SQL
-重新做有界、只读的数据 profile，替换表和字段 description 中生成的 `Observed profile:` 片段，并把更新后的 YAML
-同步回语义模型向量库。它不会重新运行完整 LLM 语义模型生成，也不会清空 semantic model store。
-
-## 数据源格式
-
-### CSV 格式
-
-```csv
-question,sql
-How many orders per customer?,SELECT customer_id, COUNT(*) as order_count FROM orders GROUP BY customer_id;
-What is the average order amount?,SELECT AVG(amount) FROM orders WHERE status = 'completed';
-```
-
-Agent 分析这些 SQL 以：
-
-- 提取表结构
-- 识别维度（GROUP BY 列）和度量（聚合列）
-- 发现列使用模式（WHERE 子句过滤器）
-- 推断实体关系（JOIN 模式）
-
-### YAML 格式
-
-YAML 导入仅接受 Dosi/OSI 文档。下面的旧版 MetricFlow 格式仅作参考，已不再支持导入：
-
-```yaml
-data_source:
-  name: orders
-  description: "订单交易表"
-
-  identifiers:
-    - name: order
-      type: PRIMARY
-      expr: id
-      description: "唯一订单标识符"
-
-    - name: customer
-      type: FOREIGN
-      expr: customer_id
-      description: "引用 customers 表"
-
-  dimensions:
-    - name: status
-      type: CATEGORICAL
-      expr: status
-      description: "订单状态。使用 IN 进行过滤。常见值：'pending', 'completed', 'cancelled'"
-
-    - name: created_at
-      type: TIME
-      expr: created_at
-      description: "订单创建时间戳"
-
-  measures:
-    - name: amount
-      agg: sum
-      expr: amount
-      description: "订单金额（美元）"
-
-    - name: order_count
-      agg: count
-      expr: id
-      description: "订单数量"
-```
-
-## 语义模型如何增强 SQL 生成
-
-生成 SQL 时，agent 使用语义模型来：
-
-1. **Schema Linking**：使用描述的向量搜索找到相关表和列
-2. **正确的 JOIN 构造**：使用实体关系生成正确的 JOIN 条件
-3. **智能过滤**：应用使用模式（例如，对逗号分隔的标签列使用 `FIND_IN_SET()`）
-4. **准确的聚合**：为聚合函数选择适当的度量
-
-查询流程示例：
+模型文件按 datasource 存放：
 
 ```text
-用户："按客户状态显示总收入"
-
-Agent 处理流程：
-1. 搜索语义对象："revenue", "customer", "status"
-2. 找到：orders.amount (measure, agg=sum), customers.status (dimension)
-3. 使用实体关系：orders.customer_id → customers.id
-4. 生成 SQL:
-   SELECT c.status, SUM(o.amount) as revenue
-   FROM orders o
-   JOIN customers c ON o.customer_id = c.id
-   GROUP BY c.status
+subject/semantic_models/<datasource>/<semantic_model>.yml
 ```
 
-## 与上下文搜索集成
+每个文件只包含一个 semantic model。`semantic_modeling` 成功完成后，会校验完整文件、写入磁盘，并把内容同步到 Knowledge Base。
 
-语义模型可通过 `/subject` 上下文命令搜索：
+`semantic_dataset` 投影为每个 dataset、field 和 relationship 各保存一行：
+
+- Dataset 由 `(semantic_model, dataset)` 标识，记录物理来源或可复用查询。
+- Field 在此基础上增加 dataset 和 field 名、表达式、时间/键标记及描述。
+- Relationship 由 `(semantic_model, relationship)` 标识，记录两端 dataset 与按位置配对的列。
+- Query-backed dataset 只有 `source_query`，没有 `source_table`，因此不会与同名物理表混淆。
+
+Metric 不保存在 `semantic_dataset` 中，而是投影到 `metrics` Knowledge Base store。两个投影都会保留源 YAML 路径，并按当前 datasource 隔离。
+
+## 快速上手
+
+用需要建模的 datasource 启动 Datus，然后直接用自然语言描述业务概念。主 agent 会自动把创作请求派发给 `semantic_modeling`：
 
 ```bash
-# 在 CLI 聊天模式中
-/subject <domain>/<layer1>/<layer2>
-
-# 搜索语义对象
-search_semantic_objects(query_text="customer revenue", kinds=["dataset", "field"])
+datus --datasource duckdb_demo
 ```
 
-## 总结
+```text
+为 bank_failures 建模。添加银行、州、倒闭日期和资产字段，将倒闭日期设为主要时间维度，并定义倒闭银行数量和倒闭资产总额两个指标。校验模型并实际查询代表性的指标。
+```
 
-语义模型通过丰富的语义信息扩展数据库 schema，实现更准确的临时 SQL 生成。从 0.2.4 版本开始，它们独立于指标运行：
+生成的文件位于：
 
-主要特点：
+```text
+subject/semantic_models/duckdb_demo/bank_failures.yml
+```
 
-- **Schema 扩展**：用业务语义增强物理 schema
-- **字段级存储**：单独存储表、列、实体以实现灵活搜索
-- **使用模式增强**：从历史 SQLs 捕获实际查询模式
-- **独立于指标**：专注于 schema 理解，而非指标计算
+这个示例所用的 DuckDB datasource 配置见[语义建模指南](../subagent/semantic_modeling.md)。该指南还介绍了支持的数据库、datasource 准备和交互式 agent 选择方式。
 
-这种分离确保语义模型专注于其核心目的：帮助 agent 理解数据结构，以生成正确、高效的 SQL 查询。
+## 当前 YAML 结构
+
+下面的 dataset 来自 Datus `duckdb-demo.duckdb` 示例数据库上的真实生成结果，展示了 Dosi 当前使用的 OSI 结构：
+
+```yaml
+version: 0.2.0.dev0
+semantic_model:
+  - name: bank_failures
+    datasets:
+      - name: bank_failures
+        source: main.bank_failures
+        description: 银行倒闭事件事实表，每一行记录一家倒闭银行。
+        ai_context: 用于按日期和州分析银行倒闭事件。
+        fields:
+          - name: bank
+            expression:
+              dialects:
+                - dialect: DUCKDB
+                  expression: Bank
+            description: 倒闭银行名称
+          - name: state
+            expression:
+              dialects:
+                - dialect: DUCKDB
+                  expression: State
+            description: 银行所在州（美国州代码）
+          - name: date
+            expression:
+              dialects:
+                - dialect: DUCKDB
+                  expression: Date
+            dimension:
+              is_time: true
+            description: 银行倒闭日期
+            custom_extensions:
+              - vendor_name: DATUS
+                data: '{"v":"1.4","time_granularity":"day"}'
+          - name: assets_million
+            expression:
+              dialects:
+                - dialect: DUCKDB
+                  expression: '"Assets ($mil.)"'
+            label: Assets ($mil.)
+            description: 倒闭时资产总额（百万美元）
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.4","time_dimension":"date"}'
+    relationships: []
+    metrics: []
+```
+
+需要遵守以下规则：
+
+- 根节点只有 `version` 和 `semantic_model`；`semantic_model` 是列表。
+- 物理 dataset 的 `source` 使用带限定的表名。只有查询结果本身是稳定业务 dataset 时，才使用可复用查询作为 source。
+- 表达式使用 `expression.dialects[]`，dialect 应与当前 datasource 匹配，例如 `DUCKDB`、`POSTGRESQL`、`SNOWFLAKE` 或 `STARROCKS`。
+- `primary_key` 和 `unique_keys` 只记录经过确认的键；Datus 不会根据列名或单条查询臆测主键。
+- 时间 field 使用 `dimension.is_time: true`，源数据粒度由 DATUS `time_granularity` extension 表达。
+- Relationship 属于 semantic model，而不是某个 dataset。`from_columns` 与 `to_columns` 按位置配对，目标列必须是完整且经过确认的键。
+- Metric 定义放在同一 semantic model 的 `metrics` 列表中，当前结构见[指标](metrics.md)。
+
+## Relationship
+
+Relationship 声明 Dosi 在跨 dataset 查询时可以使用的关联路径：
+
+```yaml
+relationships:
+  - name: order_customer
+    from: orders
+    to: customers
+    from_columns: [customer_id]
+    to_columns: [customer_id]
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","join_type":"left"}'
+```
+
+`from` 通常是多的一侧，`to` 是一的一侧。使用复合键时，两侧需要按相同顺序列出全部组成列。
+
+## DATUS extension
+
+`custom_extensions` 是 OSI 为厂商行为预留的扩展机制。DATUS entry 在保持文档符合 OSI 的同时，增加 Dosi 使用的执行或展示提示。
+
+```yaml
+custom_extensions:
+  - vendor_name: DATUS
+    data: '{"v":"1.4","time_dimension":"date"}'
+```
+
+`data` 是 JSON 字符串，不是嵌套 YAML 对象。`semantic_modeling` 会写入已安装 engine 所需的 extension 版本，因此应保留生成的版本值。
+
+常见的语义模型 extension 包括：
+
+| 对象 | Key | 作用 |
+| --- | --- | --- |
+| Dataset | `time_dimension`、`source_type` | 选择主要业务时间，或标记 query-backed source。 |
+| 时间 field | `time_granularity` | 记录源数据粒度：day、week、month、quarter 或 year。 |
+| Relationship | `join_type` | 选择 `left` 或 `inner` 关联。 |
+
+Metric 专用 extension 见[指标](metrics.md)。
+
+## 创建和更新模型
+
+日常交互中，直接用自然语言让 Datus 创建或更新模型即可。`semantic_modeling` 会检查真实 schema、编辑一个目标文件、完成校验，并在成功后同步 semantic object 和 metric。
+
+如果要从“问题 + SQL”历史批量创作，准备包含 `question` 和 `sql` 列的 CSV：
+
+```bash
+datus-agent bootstrap-kb \
+  --datasource <your_datasource> \
+  --components semantic_modeling \
+  --success_story path/to/success_story.csv \
+  --kb_update_strategy incremental \
+  --metrics-batch-size 5
+```
+
+如果批处理只需要 dataset 和 relationship，不生成 metric，可把 component 改为 `semantic_model`。`overwrite` 与 `incremental` 都会协调所选语义 YAML artifact；它们都不是只读检查。默认的 `check` 只报告当前投影数量。
+
+## 同步已有 YAML
+
+如果 YAML 不是通过 `semantic_modeling` 修改的，可用下面的命令重建 Knowledge Base 投影：
+
+```bash
+datus-agent bootstrap-kb \
+  --datasource <your_datasource> \
+  --components semantic_model \
+  --kb_update_strategy sync-yaml
+```
+
+该命令读取当前 datasource 下的全部语义 YAML，检查其结构，并协调 `semantic_dataset` 与 `metrics` 两个投影；不会调用 LLM，也不会查询数仓。只有明确想同步某个文件或目录时，才传 `--semantic_yaml path/to/model.yml`。
+
+如果要刷新某个已有模型中由 profile 生成的描述，可同时提供该 YAML 和历史 SQL CSV。`refresh-profile` 会执行有界的只读 profile、更新 YAML 描述并同步结果：
+
+```bash
+datus-agent bootstrap-kb \
+  --datasource <your_datasource> \
+  --components semantic_model \
+  --kb_update_strategy refresh-profile \
+  --semantic_yaml path/to/model.yml \
+  --success_story path/to/success_story.csv
+```
+
+## 检索和使用
+
+Agent 通过下面的工具搜索语义对象：
+
+```python
+search_semantic_objects(
+    query_text="银行倒闭日期和州",
+    kinds=["dataset", "field", "relationship"],
+    top_n=5,
+)
+```
+
+该搜索不返回 metric；指标应使用 `search_metrics`。查看物理表时，Datus 也可以把匹配的 dataset 投影合并到表元数据中；Catalog 中的语义模型视图是只读的。需要修改时应更新 YAML 或使用 `semantic_modeling`，再通过同步刷新所有使用方。
+
+## 相关文档
+
+- [语义建模](../subagent/semantic_modeling.md)：完整创作流程、配置、支持的数据库和真实生成 YAML
+- [指标](metrics.md)：指标定义、Knowledge Base 投影和查询参数
+- [AskMetrics](../subagent/ask_metrics.md)：自然语言指标问答
+- [语义层配置](../configuration/semantic_layer.md)：semantic adapter 配置
