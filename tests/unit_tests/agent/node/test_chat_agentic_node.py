@@ -1984,3 +1984,331 @@ class TestChatAgenticNodeNoSchedulerTools:
         assert tool_names.isdisjoint(scheduler_tool_names), (
             f"Chat node still has scheduler tools: {tool_names & scheduler_tool_names}"
         )
+
+
+# ===========================================================================
+# agentic_nodes[<name>].tools
+# ===========================================================================
+
+
+class TestChatAgenticNodeHonoursConfiguredTools:
+    """`ChatAgenticNode` was the one agentic node class that ignored `tools`.
+
+    The five others (gen_sql, gen_report, ask_metrics, and the two artifact
+    bases) read `node_config.get("tools")` and build only what it names. Chat
+    mounted every family unconditionally, so a host that publishes a chat
+    sub-agent and strips write-capable tools from that list got no effect from
+    the strip: the model was still shown tools the permission layer would then
+    deny.
+    """
+
+    @staticmethod
+    def _node(real_agent_config, tools=None):
+        """Build a chat node with `tools` set to *tools*, or removed entirely.
+
+        The shared fixture's `chat` entry declares a narrow `tools` list, so a
+        test for the no-key default has to delete the key rather than just leave
+        the argument out.
+        """
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        chat_entry = dict((real_agent_config.agentic_nodes or {}).get("chat") or {})
+        if tools is None:
+            chat_entry.pop("tools", None)
+        else:
+            chat_entry["tools"] = tools
+        real_agent_config.agentic_nodes = {
+            **(real_agent_config.agentic_nodes or {}),
+            "chat": chat_entry,
+        }
+        return ChatAgenticNode(
+            node_id="test_tools",
+            description="Test configured tools",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+    @staticmethod
+    def _families(node):
+        """The tool families actually mounted, by instance attribute."""
+        return {
+            "db_tools": node.db_func_tool is not None,
+            "context_search_tools": node.context_search_tools is not None,
+            "reference_template_tools": node.reference_template_tools is not None,
+            "date_parsing_tools": node.date_parsing_tools is not None,
+            "filesystem_tools": node.filesystem_func_tool is not None,
+            "memory_tools": node.memory_func_tool is not None,
+            "bash_tools": node.bash_tool is not None,
+        }
+
+    def test_no_tools_key_mounts_everything(self, real_agent_config, mock_llm_create):
+        """The default must not change. Chat nodes without a `tools` key are the
+        overwhelming majority, so narrowing this would be a silent capability
+        regression rather than a policy change anyone asked for."""
+        node = self._node(real_agent_config)
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is True
+        assert families["bash_tools"] is True
+
+    def test_an_empty_tools_value_is_treated_as_absent(self, real_agent_config, mock_llm_create):
+        """`tools: ""` is a missing value, not a request for no tools — reading
+        it as "none" would strip a node its operator never meant to strip."""
+        node = self._node(real_agent_config, tools="")
+
+        assert self._families(node) == self._families(self._node(real_agent_config))
+
+    def test_a_narrow_list_excludes_the_other_families(self, real_agent_config, mock_llm_create):
+        """The acceptance case: a db-only chat node must not carry filesystem or
+        bash tools."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is False
+        assert families["bash_tools"] is False
+        assert families["context_search_tools"] is False
+
+    def test_excluded_families_stay_out_of_available_tools(self, real_agent_config, mock_llm_create):
+        """Instance attributes are the mechanism; the tool list the LLM sees is
+        the thing that actually matters."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        names = {tool.name for tool in node.tools}
+        assert names, "a db-only node should still expose the db tools"
+        for excluded in ("read_file", "write_file", "glob", "bash"):
+            assert excluded not in names
+
+    def test_bash_is_dropped_even_though_init_built_it(self, real_agent_config, mock_llm_create):
+        """`bash_tool` is created in `AgenticNode.__init__`, not in
+        `setup_tools`, and `_rebuild_tools` re-adds it from the attribute on
+        every rebuild. Clearing the attribute is the only thing that keeps it
+        out — leaving it set would let a later rebuild resurrect it."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        assert node.bash_tool is None
+
+        node._rebuild_tools()
+
+        assert all(tool.name != "bash" for tool in node.tools)
+
+    def test_several_families_can_be_selected(self, real_agent_config, mock_llm_create):
+        node = self._node(real_agent_config, tools="db_tools.*, filesystem_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is True
+        assert families["bash_tools"] is False
+
+    def test_a_per_tool_pattern_still_enables_its_family(self, real_agent_config, mock_llm_create):
+        """Other node classes accept `context_search_tools.list_subject_tree`.
+        This node acts at family granularity, so the suffix selects the family
+        rather than being dropped — dropping it would silently remove a tool the
+        operator explicitly asked for."""
+        node = self._node(real_agent_config, tools="db_tools.execute_sql")
+
+        families = self._families(node)
+        assert families["db_tools"] is True
+        assert families["filesystem_tools"] is False
+
+    def test_an_unknown_family_selects_nothing_rather_than_everything(self, real_agent_config, mock_llm_create):
+        """Fail closed. A typo that fell back to "all tools" would hand a
+        published sub-agent the full surface its author meant to narrow."""
+        node = self._node(real_agent_config, tools="no_such_tools.*")
+
+        families = self._families(node)
+        assert families["db_tools"] is False
+        assert families["filesystem_tools"] is False
+        assert families["bash_tools"] is False
+
+    def test_the_ask_subclasses_opt_out(self):
+        """`BaseArtifactAskAgenticNode` inherits this setup but runs its own
+        whitelist over `self.tools` *after* it, and that design needs every tool
+        instance to exist — the artifact-anchored filesystem instance is
+        infrastructure it uses whether or not `filesystem_tools` is exposed.
+
+        Letting both mechanisms narrow on the same field left those attributes
+        None and broke the subclass, which is why the opt-out is explicit rather
+        than implied by overriding `setup_tools`.
+        """
+        from datus.agent.node.base_artifact_ask_agentic_node import BaseArtifactAskAgenticNode
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        assert ChatAgenticNode.HONOURS_CONFIGURED_TOOLS is True
+        assert BaseArtifactAskAgenticNode.HONOURS_CONFIGURED_TOOLS is False
+
+    def test_opting_out_ignores_a_configured_list(self, real_agent_config, mock_llm_create):
+        """The flag, not the class name, is what disables the narrowing."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = self._node(real_agent_config, tools="db_tools.*")
+        assert node.filesystem_func_tool is None
+
+        with patch.object(ChatAgenticNode, "HONOURS_CONFIGURED_TOOLS", False):
+            unrestricted = self._node(real_agent_config, tools="db_tools.*")
+
+        # The list is ignored entirely, not partly: same surface as no key at all.
+        assert self._families(unrestricted) == self._families(self._node(real_agent_config))
+
+    def test_exclusions_survive_the_lazy_prompt_build_mount(self, real_agent_config, mock_llm_create):
+        """`AgenticNode._ensure_lazy_tools_mounted` re-adds bash, skills, memory
+        and web on every prompt build and on a snapshot-cache hit — after
+        `setup_tools` already decided what this node may have.
+
+        Without gating those too, the exclusion holds only until the first
+        prompt is built. Memory is the worst case: the base *re-creates* the
+        instance when it finds None, so clearing it in `setup_tools` does not
+        survive on its own.
+        """
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        for resurrected in ("add_memory", "edit_memory", "web_fetch", "bash", "load_skill"):
+            assert resurrected not in names
+
+    def test_the_default_still_gets_the_lazy_tools(self, real_agent_config, mock_llm_create):
+        """The gates must not cost an ungated node its lazily mounted tools —
+        they are how a normal chat node gets bash, skills, memory and web at
+        all."""
+        node = self._node(real_agent_config)
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        # `web_fetch` included deliberately: web is gated here too, so a
+        # regression that stops mounting it for an unconfigured node would
+        # otherwise pass — the exclusion test only proves configured nodes do
+        # not receive it.
+        for expected in ("add_memory", "bash", "load_skill", "web_fetch"):
+            assert expected in names
+
+    def test_a_selected_family_survives_the_lazy_mount(self, real_agent_config, mock_llm_create):
+        """Gating is per family, not a blanket "narrowed nodes get nothing lazy"."""
+        node = self._node(real_agent_config, tools="db_tools.*, memory_tools.*")
+
+        node._ensure_lazy_tools_mounted()
+
+        names = {tool.name for tool in node.tools}
+        assert "add_memory" in names
+        assert "bash" not in names
+
+    #: The genuine `PlatformDocSearchTool` builds fine in tests but exposes
+    #: nothing — there is no indexed docstore for the fixture project — so
+    #: assertions about its tool names pass whether or not the code under test
+    #: mounts it. These tests patch the constructor so the group has a name to
+    #: be wrong about, which is also what a deployment with indexed docs looks
+    #: like.
+    _DOC_TOOL_NAME = "search_document"
+
+    @classmethod
+    def _doc_tool_stub(cls, *_args, **_kwargs):
+        stub = MagicMock()
+        tool = MagicMock()
+        tool.name = cls._DOC_TOOL_NAME
+        stub.available_tools.return_value = [tool]
+        return stub
+
+    @classmethod
+    def _patch_platform_doc(cls):
+        """Patch the constructor, so a node built inside this context has a
+        platform-doc group with a real name — what a deployment with indexed
+        docs looks like."""
+        return patch(
+            "datus.agent.node.chat_agentic_node.PlatformDocSearchTool",
+            side_effect=cls._doc_tool_stub,
+        )
+
+    @classmethod
+    def _stub_platform_doc(cls, node):
+        """Attach a non-empty platform-doc group to an already-built node."""
+        node._platform_doc_tool = cls._doc_tool_stub()
+        return cls._DOC_TOOL_NAME
+
+    def test_platform_doc_tools_survive_a_rebuild(self, real_agent_config, mock_llm_create):
+        """`_setup_platform_doc_tools` mounts *after* the initial
+        `_rebuild_tools`, and the rebuild never re-added it — so a task-database
+        switch, which rebuilds, silently dropped platform docs from the LLM's
+        surface mid-session.
+        """
+        node = self._node(real_agent_config)
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+
+        assert name in {tool.name for tool in node.tools}
+
+    def test_the_rebuild_does_not_duplicate_platform_doc_tools(self, real_agent_config, mock_llm_create):
+        """Setup mounts it once after the first rebuild; later rebuilds mount it
+        from the attribute. Neither path may double-count."""
+        node = self._node(real_agent_config)
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+        node._rebuild_tools()
+
+        assert [tool.name for tool in node.tools].count(name) == 1
+
+    def test_an_excluded_platform_doc_family_stays_out_across_a_rebuild(self, real_agent_config, mock_llm_create):
+        """The re-add is gated like everything else — otherwise the rebuild
+        would hand the family back to a node that excluded it."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+        assert node._platform_doc_tool is None
+        # Even if something later populated the attribute, the gate holds.
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+
+        assert name not in {tool.name for tool in node.tools}
+
+    @pytest.mark.parametrize(
+        ("attribute", "family", "tool_name"),
+        [
+            ("skill_func_tool", "skills", "load_skill"),
+            ("memory_func_tool", "memory_tools", "add_memory"),
+            ("filesystem_func_tool", "filesystem_tools", "read_file"),
+            ("bash_tool", "bash_tools", "bash"),
+        ],
+    )
+    def test_a_populated_instance_cannot_reinstate_an_excluded_family(
+        self, real_agent_config, mock_llm_create, attribute, family, tool_name
+    ):
+        """`_rebuild_tools` asks the config, not just whether the attribute is set.
+
+        Testing "did setup_tools leave it None" would make the exclusion depend
+        on nothing else ever populating the attribute — an assumption that has
+        already failed twice here: the base re-creates the memory tool when it
+        finds None, and platform docs were mounted after the rebuild meant to
+        own them. This pins the stronger property: whatever populates the
+        instance, an excluded family stays out.
+        """
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        stub = MagicMock()
+        tool = MagicMock()
+        tool.name = tool_name
+        stub.available_tools.return_value = [tool]
+        setattr(node, attribute, stub)
+
+        node._rebuild_tools()
+
+        assert tool_name not in {t.name for t in node.tools}
+
+    def test_a_second_setup_tools_does_not_duplicate_platform_doc_tools(self, real_agent_config, mock_llm_create):
+        """The CLI calls `setup_tools()` again after a datasource change.
+
+        Once the rebuild started mounting this group from the attribute,
+        building it *after* the rebuild appended a second copy of every name on
+        that second call. The fixture's real doc tool exposes nothing, so the
+        duplication is invisible without patching the constructor — the same
+        emptiness that made an earlier version of these tests vacuous.
+        """
+        with self._patch_platform_doc():
+            node = self._node(real_agent_config)
+            assert [t.name for t in node.tools].count(self._DOC_TOOL_NAME) == 1
+
+            node.setup_tools()
+
+            assert [t.name for t in node.tools].count(self._DOC_TOOL_NAME) == 1
