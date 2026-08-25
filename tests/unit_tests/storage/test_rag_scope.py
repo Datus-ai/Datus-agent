@@ -66,6 +66,16 @@ class TestBuildSubAgentFilter:
         clause = build_where(result)
         assert "users" in clause
 
+    def test_table_scope_honours_the_stores_table_column(self):
+        """Stores do not agree on the column holding the physical table name."""
+        config = _mock_agent_config(
+            sub_agent_configs={"team_a": {"scoped_context": {"tables": "public.users"}}},
+        )
+        result = _build_sub_agent_filter(config, "team_a", _mock_storage(), "tables", table_column="source_table")
+        clause = build_where(result)
+        assert "source_table = 'users'" in clause
+        assert "table_name" not in clause
+
     def test_subject_scope_without_tree_raises(self):
         """Subject-based scope without subject_tree on storage -> raises DatusException."""
         import pytest

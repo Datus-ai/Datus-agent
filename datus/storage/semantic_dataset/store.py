@@ -231,7 +231,12 @@ class SemanticDatasetRAG:
             project=agent_config.project_name,
             datasource_id=self.datasource_id,
         )
-        self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "tables")
+        # This projection binds its physical table through ``source_table``, so
+        # a tables scope has to be resolved against that column: an empty one
+        # means query-backed, which no table scope should ever match.
+        self._sub_agent_filter = _build_sub_agent_filter(
+            agent_config, sub_agent_name, self.storage, "tables", table_column="source_table"
+        )
 
     def _sub_agent_conditions(self) -> list:
         conditions = [datasource_condition(self.datasource_id)]
@@ -437,7 +442,13 @@ class SemanticDatasetRAG:
     def get_size(self) -> int:
         try:
             return self.storage._count_rows(where=And([eq("kind", KIND_DATASET), *self._sub_agent_conditions()]))
-        except Exception:
+        except Exception as exc:
+            # Callers read 0 as "nothing projected", so a failed count has to
+            # say so somewhere: a scope filter naming a column this table does
+            # not have is indistinguishable from an empty projection otherwise.
+            logger.warning(
+                "Failed to size the semantic dataset projection for datasource '%s': %s", self.datasource_id, exc
+            )
             return 0
 
     # ------------------------------------------------------------------
