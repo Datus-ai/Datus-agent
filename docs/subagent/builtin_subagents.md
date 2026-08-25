@@ -20,6 +20,11 @@ This document covers the core subagents:
 Airflow scheduling and external BI authoring are handled directly by the main
 agent through installed plugins. They are not built-in or custom subagents.
 
+In the REPL, describe the task directly and the main agent will route it to the
+appropriate subagent. To select one explicitly for a single message, append
+`@Agent <name>` to the request; `/agent <name>` switches the current agent for
+subsequent messages. The legacy `/<subagent> <message>` form is not supported.
+
 ## Configuration
 
 Builtin subagents work out of the box with minimal configuration. Most settings (tools, hooks, MCP servers, system prompts) are built-in. You can optionally customize them in your `agent.yml` file:
@@ -209,10 +214,10 @@ A semantic model is a YAML configuration that defines:
 
 ### Quick Start
 
-Start Datus CLI with `datus --datasource <datasource>`, and begin with a subagent command:
+Start Datus CLI with `datus --datasource <datasource>`, then describe the model you want. The main agent can route the request automatically, or you can select `semantic_modeling` explicitly:
 
-```bash
-/gen_semantic_model generate a semantic model for table <table_name>
+```text
+Generate a semantic model for table <table_name>. @Agent semantic_modeling
 ```
 
 ### How It Works
@@ -320,10 +325,10 @@ A **metric** is a reusable business calculation built on top of semantic models.
 
 ### Quick Start
 
-Start Datus CLI with `datus --datasource <datasource>`, and use the metrics generation subagent:
+Start Datus CLI with `datus --datasource <datasource>`, then describe the metric you want. The main agent can route the request automatically, or you can select `semantic_modeling` explicitly:
 
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions
+```text
+Generate a metric from this SQL: SELECT SUM(amount) FROM transactions. The corresponding question is the total amount of all transactions. @Agent semantic_modeling
 ```
 
 ### How It Works
@@ -371,13 +376,13 @@ Before publishing, the agent validates the YAML with `validate_semantic()` and c
 Subject tree allows organizing metrics by domain and layers. In CLI mode, include it in your question:
 
 **Example with subject_tree:**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, subject_tree: finance/revenue/transactions
+```text
+Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, subject_tree: finance/revenue/transactions. @Agent semantic_modeling
 ```
 
 **Example without subject_tree:**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions
+```text
+Generate a metric from this SQL: SELECT SUM(amount) FROM transactions. @Agent semantic_modeling
 ```
 
 When not provided, the agent operates in learning mode and suggests categories based on existing metrics in the Knowledge Base.
@@ -387,8 +392,8 @@ When not provided, the agent operates in learning mode and suggests categories b
 #### Example 1: Simple Aggregation
 
 **User Input:**
-```bash
-/gen_metrics Generate a metric for total order count
+```text
+Generate a metric for total order count. @Agent semantic_modeling
 ```
 
 **Agent Actions:**
@@ -412,12 +417,13 @@ metric:
 #### Example 2: Conversion Rate
 
 **User Input:**
-```bash
-/gen_metrics Create a metric from this SQL:
+```text
+Create a metric from this SQL:
 SELECT
   COUNT(DISTINCT CASE WHEN status = 'completed' THEN order_id END) /
   COUNT(DISTINCT order_id) AS completion_rate
 FROM orders
+@Agent semantic_modeling
 ```
 
 **Agent Actions:**
@@ -445,10 +451,11 @@ metric:
 #### Example 3: Complex Calculation
 
 **User Input:**
-```bash
-/gen_metrics Generate average basket size metric:
+```text
+Generate an average basket size metric:
 SELECT SUM(total_amount) / COUNT(DISTINCT order_id)
 FROM order_items
+@Agent semantic_modeling
 ```
 
 **Agent Actions:**
@@ -591,10 +598,10 @@ The explore subagent returns a concise, structured summary optimized for consump
 
 ### Usage
 
-The explore subagent is typically invoked automatically by the chat agent via `task(type="explore")`, but can also be launched manually:
+The explore subagent is typically invoked automatically by the chat agent via `task(type="explore")`. To select it explicitly for one message, append `@Agent explore`:
 
-```bash
-/explore Discover tables related to customer revenue and find relevant metrics
+```text
+Discover tables related to customer revenue and find relevant metrics. @Agent explore
 ```
 
 ---
@@ -659,10 +666,10 @@ The gen_sql subagent returns results in one of two formats:
 
 ### Usage
 
-The gen_sql subagent is typically invoked automatically by the chat agent via `task(type="gen_sql")` for complex queries, but can also be launched manually:
+The gen_sql subagent is typically invoked automatically by the chat agent via `task(type="gen_sql")` for complex queries. To select it explicitly for one message, append `@Agent gen_sql`:
 
-```bash
-/gen_sql Generate a query to calculate customer lifetime value with cohort analysis
+```text
+Generate a query to calculate customer lifetime value with cohort analysis. @Agent gen_sql
 ```
 
 ---
@@ -728,10 +735,10 @@ The gen_report subagent returns results as a structured report:
 
 ### Usage
 
-The gen_report subagent can be launched manually or invoked by the chat agent via `task(type="gen_report")`:
+The gen_report subagent can be selected explicitly for one message with `@Agent gen_report`, or invoked automatically by the chat agent via `task(type="gen_report")`:
 
-```bash
-/gen_report Analyze the revenue trend for the last quarter and provide insights
+```text
+Analyze the revenue trend for the last quarter and provide insights. @Agent gen_report
 ```
 
 ### Custom Report Subagents
@@ -747,7 +754,7 @@ agent:
       max_turns: 30
 ```
 
-Then use it via `/attribution_report Analyze the conversion attribution for campaign X`.
+Then ask `Analyze the conversion attribution for campaign X. @Agent attribution_report`.
 
 ---
 
@@ -787,10 +794,10 @@ agent:
 
 ### Usage
 
-Launch it directly:
+Select it explicitly for one message:
 
-```bash
-/gen_skill Create a skill that validates daily revenue dashboards before publishing
+```text
+Create a skill that validates daily revenue dashboards before publishing. @Agent gen_skill
 ```
 
 Or let the chat agent delegate via `task(type="gen_skill")`.

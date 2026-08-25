@@ -8,14 +8,14 @@ The agent auto-detects the path based on the user's prompt: if the source and ta
 
 ## Quick Start
 
-Start Datus CLI and use the gen_job subagent via natural language:
+Start Datus CLI and describe the pipeline you want in natural language. The chat agent can route the request automatically; append `@Agent gen_job` when you want to select it explicitly:
 
-```bash
+```text
 # Single-database ETL
-/gen_job Build a summary table from orders and customers tables
+Build a summary table from the orders and customers tables. @Agent gen_job
 
 # Cross-database transfer
-/gen_job Transfer the users table from local_duckdb to greenplum
+Transfer the users table from local_duckdb to greenplum. @Agent gen_job
 ```
 
 The chat agent can also automatically delegate to gen_job when it detects an ETL or migration task.

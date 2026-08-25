@@ -20,6 +20,10 @@
 Airflow 调度和外部 BI authoring 由主 agent 直接使用已安装 plugin 完成，
 不再属于内置或自定义 subagent。
 
+在 REPL 中可以直接描述任务，由主 agent 自动派发给合适的 subagent。如需为
+单条消息明确指定，可在请求末尾加 `@Agent <名称>`；`/agent <名称>` 用于切换
+后续消息使用的当前 agent。旧的 `/<subagent> <消息>` 形式不再支持。
+
 ## 配置
 
 内置subagent开箱即用，最小化配置。大部分设置（工具、hooks、MCP 服务器、系统提示）都是内置的。你可以在 `agent.yml` 文件中自定义：
@@ -208,10 +212,10 @@ tags: "revenue, region, aggregation"       # 逗号分隔的标签
 
 ### 快速开始
 
-使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用subagent命令：
+使用 `datus --datasource <datasource>` 启动 Datus CLI，然后直接描述要创建的模型。主 agent 可以自动派发，也可以明确选择 `semantic_modeling`：
 
-```bash
-/gen_semantic_model generate a semantic model for table <table_name>
+```text
+为表 <table_name> 生成语义模型。@Agent semantic_modeling
 ```
 
 ### 工作原理
@@ -317,10 +321,10 @@ data_source:
 
 ### 快速开始
 
-使用 `datus --datasource <datasource>` 启动 Datus CLI，然后使用指标生成subagent：
+使用 `datus --datasource <datasource>` 启动 Datus CLI，然后直接描述要创建的指标。主 agent 可以自动派发，也可以明确选择 `semantic_modeling`：
 
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, the corresponding question is total amount of all transactions
+```text
+根据 SQL SELECT SUM(amount) FROM transactions 生成“交易总金额”指标。@Agent semantic_modeling
 ```
 
 ### 工作原理
@@ -368,13 +372,13 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 在 CLI 模式下通过问题中包含主题树来组织指标：
 
 **带主题树示例：**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, subject_tree: finance/revenue/transactions
+```text
+根据 SQL SELECT SUM(amount) FROM transactions 生成指标，subject_tree: finance/revenue/transactions。@Agent semantic_modeling
 ```
 
 **不带主题树示例：**
-```bash
-/gen_metrics Generate a metric from this SQL: SELECT SUM(amount) FROM transactions
+```text
+根据 SQL SELECT SUM(amount) FROM transactions 生成指标。@Agent semantic_modeling
 ```
 
 未提供时，agent 会基于知识库中的现有指标自动建议分类。
@@ -384,8 +388,8 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 #### 示例 1：简单聚合
 
 **用户输入**：
-```bash
-/gen_metrics Generate a metric for total order count
+```text
+生成订单总数指标。@Agent semantic_modeling
 ```
 
 **智能体操作**：
@@ -409,12 +413,13 @@ metric:
 #### 示例 2：转化率
 
 **用户输入**：
-```bash
-/gen_metrics Create a metric from this SQL:
+```text
+根据以下 SQL 创建指标：
 SELECT
   COUNT(DISTINCT CASE WHEN status = 'completed' THEN order_id END) /
   COUNT(DISTINCT order_id) AS completion_rate
 FROM orders
+@Agent semantic_modeling
 ```
 
 **智能体操作**：
@@ -442,10 +447,11 @@ metric:
 #### 示例 3：复杂计算
 
 **用户输入**：
-```bash
-/gen_metrics Generate average basket size metric:
+```text
+根据以下 SQL 生成平均客单价指标：
 SELECT SUM(total_amount) / COUNT(DISTINCT order_id)
 FROM order_items
+@Agent semantic_modeling
 ```
 
 **智能体操作**：
@@ -588,10 +594,10 @@ explore subagent 返回简洁的结构化摘要，为其他 agent 消费而优�
 
 ### 使用方式
 
-explore subagent 通常由聊天助手通过 `task(type="explore")` 自动调用，也可手动启动：
+explore subagent 通常由聊天助手通过 `task(type="explore")` 自动调用。如需为单条消息明确指定，可在末尾加 `@Agent explore`：
 
-```bash
-/explore Discover tables related to customer revenue and find relevant metrics
+```text
+查找与客户收入相关的表和指标。@Agent explore
 ```
 
 ---
@@ -656,10 +662,10 @@ gen_sql subagent 以两种格式之一返回结果：
 
 ### 使用方式
 
-gen_sql subagent 通常由聊天助手通过 `task(type="gen_sql")` 自动调用来处理复杂查询，也可手动启动：
+gen_sql subagent 通常由聊天助手通过 `task(type="gen_sql")` 自动调用来处理复杂查询。如需为单条消息明确指定，可在末尾加 `@Agent gen_sql`：
 
-```bash
-/gen_sql Generate a query to calculate customer lifetime value with cohort analysis
+```text
+生成使用 cohort 分析计算客户生命周期价值的查询。@Agent gen_sql
 ```
 
 ---
@@ -725,10 +731,10 @@ gen_report subagent 以结构化报告返回结果：
 
 ### 使用方式
 
-gen_report subagent 可以手动启动，也可以由聊天助手通过 `task(type="gen_report")` 调用：
+gen_report subagent 可以通过 `@Agent gen_report` 为单条消息明确指定，也可以由聊天助手通过 `task(type="gen_report")` 自动调用：
 
-```bash
-/gen_report 分析上季度的收入趋势并提供洞察
+```text
+分析上季度的收入趋势并提供洞察。@Agent gen_report
 ```
 
 ### 自定义报告 Subagent
@@ -744,7 +750,7 @@ agent:
       max_turns: 30
 ```
 
-然后通过 `/attribution_report 分析活动 X 的转化归因` 使用。
+然后输入 `分析活动 X 的转化归因。@Agent attribution_report`。
 
 ---
 
@@ -784,10 +790,10 @@ agent:
 
 ### 使用方式
 
-直接启动：
+为单条消息明确指定：
 
-```bash
-/gen_skill 创建一个在发布前校验每日收入仪表盘的 skill
+```text
+创建一个在发布前校验每日收入仪表盘的 skill。@Agent gen_skill
 ```
 
 也可以由聊天 agent 通过 `task(type="gen_skill")` 自动委派。
