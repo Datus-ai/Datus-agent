@@ -6,7 +6,7 @@ import pytest
 
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.policy_runtime import PolicyRuntime
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class FakeRuntime:
@@ -181,6 +181,50 @@ def test_db_policy_denial_does_not_execute(monkeypatch):
     result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
     assert not result.success
     assert "access denied" in result.error
+    db.execute_query.assert_not_called()
+
+
+def test_db_policy_denial_is_coded_and_unprefixed(monkeypatch):
+    """A refusal has to be distinguishable from a broken query.
+
+    Both used to arrive as ``TOOL_INVALID_INPUT`` inside a string, so the only
+    way to tell "you may not see this" from "your SQL is wrong" was to match
+    the sentence — and an API surface has to tell them apart to know whether a
+    retry button means anything.
+    """
+    fake = FakeRuntime(allowed=False, reason="you have no value for store_id")
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    db = connector()
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
+
+    assert result.error_code == ErrorCode.POLICY_DENIED.code
+    # Reaches the reader as written, without the wire prefix in front of it.
+    assert result.error == "you have no value for store_id"
+
+
+def test_db_result_policy_denial_is_coded_too(monkeypatch):
+    fake = FakeRuntime(result_allowed=False, reason="you may not see these rows")
+    monkeypatch.setattr(
+        "datus.tools.policy_runtime.collect_plugin_policy_runtime_factories",
+        lambda active: {"sql-policy": lambda profile: fake},
+    )
+    db = connector()
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT * FROM orders", db)
+
+    assert result.error_code == ErrorCode.POLICY_DENIED.code
+    assert result.error == "you may not see these rows"
+
+
+def test_db_non_policy_failure_keeps_the_prefixed_form(monkeypatch):
+    """Only a refusal is unwrapped — everything else keeps what the logs expect."""
+    db = connector()
+    result = make_db_tool(db, config()).execute_read_enforced("SELECT 1; DROP TABLE t", db)
+
+    assert result.success is False
+    assert result.error_code is None
     db.execute_query.assert_not_called()
 
 
