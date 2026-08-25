@@ -13,6 +13,7 @@ node-level ``apply_tool_transformers`` matching/skipping behavior.
 import dataclasses
 import gc
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -845,6 +846,33 @@ class TestTransformToolArgsWithoutANode:
             transformers_by_pattern={"db_tools.*": [narrow]},
         )
         assert wrong_group["where"] is None
+
+    def test_skipping_a_category_pattern_is_logged(self, caplog):
+        """Not matching is the right call; doing it in silence is not.
+
+        An unenforced policy is the failure this entry point exists to fix, and
+        a caller that forgets its category would reproduce it exactly.
+        """
+        with caplog.at_level(logging.WARNING):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                transformers_by_pattern={"semantic_tools.query_metrics": [lambda n, a, c: a]},
+            )
+
+        assert "no category" in caplog.text
+
+    def test_a_bare_pattern_is_not_worth_a_warning(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                transformers_by_pattern={"query_*": [lambda n, a, c: a]},
+            )
+
+        assert "no category" not in caplog.text
 
     def test_a_bare_glob_matches_without_a_category(self):
         def narrow(name, args, ctx):

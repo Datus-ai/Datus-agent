@@ -239,8 +239,10 @@ def transform_tool_args(
     manifest. ``category`` stands in for the tool registry a direct caller does
     not have: it knows which group it is calling (``semantic_tools`` for
     ``query_metrics``), and without it a category-qualified pattern cannot
-    match — which is the safe direction, since the alternative is a
-    SQL-oriented transformer being handed metric arguments.
+    match — the safe direction, since the alternative is a SQL-oriented
+    transformer being handed metric arguments. Skipping one is logged: an
+    unenforced policy is what this exists to fix, and it should not be able to
+    happen quietly here either.
     """
     if transformers_by_pattern is None:
         transformers_by_pattern = collect_plugin_tool_transformers(active_plugin_names)
@@ -248,6 +250,15 @@ def transform_tool_args(
         return args
 
     registry = {tool_name: category} if category else {}
+    if not registry and any("." in pattern for pattern in transformers_by_pattern):
+        # Skipping is the safe half of the trade-off, but silence is not: a
+        # policy that quietly does not run is the exact failure this entry
+        # point exists to fix, and the next caller to forget a category would
+        # reproduce it with nobody looking.
+        logger.warning(
+            "Tool transformers: category-qualified patterns skipped for '%s' — the caller passed no category",
+            tool_name,
+        )
     matched: List[ToolTransformer] = []
     for pattern, transformers in transformers_by_pattern.items():
         if tool_name_matches(tool_name, registry, parse_tool_patterns([pattern])):
