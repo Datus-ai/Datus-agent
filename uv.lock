@@ -669,7 +669,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 ci = [
-    { name = "datus-semantic-dosi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz", subdirectory = "datus-semantic-dosi" },
+    { name = "datus-semantic-dosi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=0.1.6" },
     { name = "datus-storage-postgresql", specifier = ">=0.1.5" },
 ]
 dev = [
@@ -749,27 +749,19 @@ wheels = [
 
 [[package]]
 name = "datus-semantic-dosi"
-version = "0.1.1"
-source = { url = "https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz", subdirectory = "datus-semantic-dosi" }
+version = "0.1.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "datus-semantic-core", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
-    { name = "dosi-engine", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
-    { name = "pydantic", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
-    { name = "pyyaml", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "datus-semantic-core" },
+    { name = "dosi-engine" },
+    { name = "duckdb" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
 ]
-sdist = { hash = "sha256:15b44b45de856cdb0d35fb201308a55207bef37e298502b1a7515fcd37762f3d" }
-
-[package.metadata]
-requires-dist = [
-    { name = "datus-semantic-core", specifier = ">=0.2.3" },
-    { name = "dosi-engine", specifier = ">=0.1.3" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/b7/60/ae3f1fd838fd84170e3991e0843a18cab7a33752846881f82bec2798abed/datus_semantic_dosi-0.1.6.tar.gz", hash = "sha256:5d35b14232dc5f3b20d8c5695925a684ec534ccb9801cd14e3e6345dd78b9d27", size = 50259, upload-time = "2026-08-24T13:29:42.938Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/14/e473cf29f39449449fc4ee272acc8a0aa1ccaa8aa5f09c97dc60ab84abc6/datus_semantic_dosi-0.1.6-py3-none-any.whl", hash = "sha256:d58387316d03e5c580ddab5b05e606cf8605eed267ffbc69cbce1809e18efce2", size = 40846, upload-time = "2026-08-24T13:29:42.073Z" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "datus-storage-base"
@@ -3403,8 +3395,8 @@ name = "secretstorage"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
-    { name = "jeepney", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/31/9f/11ef35cf1027c1339552ea7bfe6aaa74a8516d8b5caf6e7d338daf54fd80/secretstorage-3.4.0.tar.gz", hash = "sha256:c46e216d6815aff8a8a18706a2fbfd8d53fcbb0dce99301881687a1b0289ef7c", size = 19748, upload-time = "2025-09-09T16:42:13.859Z" }
 wheels = [
