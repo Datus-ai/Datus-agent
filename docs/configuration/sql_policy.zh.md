@@ -92,7 +92,8 @@ agent:
 - `DBFuncTool.execute_sql`（暴露给 agentic node 与 MCP server 的工具）会硬拒绝 SELECT / SHOW / DESCRIBE / EXPLAIN 之外的任何语句。这与权限档位无关，在 `PermissionHooks` 被完全绕过的路径上同样生效（LLM validator 以 `hooks=None` 运行，MCP server 的工具实例根本不经过 hooks）。
 - 该工具的其它写入口同样拒绝，而不只是 `execute_sql` 这个分发入口：`execute_write`、`execute_ddl`、`transfer_query_result`。最后一个尤其关键——它从一个数据源读、向**另一个**数据源写（`CREATE TABLE` / `TRUNCATE` / `INSERT`），由 `gen_job` 单独挂载为工具，且完全不经过 `execute_sql`。
 - workflow 流水线同样拒绝。它的 `execute_sql` 节点和 output 工具的「改写后 SQL」检查都把 SQL 直接交给 connector，不经过 `DBFuncTool`，因此上面那些闸门都覆盖不到；而 `POST /workflows/run` 让这条流水线经 API 可达。两处都通过共用的 `deployment_read_only_refusal` 查询该开关。
-- `EXPLAIN` 只有在它所解释的语句本身是只读时才算只读。`EXPLAIN ANALYZE <写语句>` 在 postgres 和 mysql 上**会真正执行**该写操作，因此内层语句会被单独归类，不是只读就拒绝 —— 无论是否带 `ANALYZE`，因为按选项关键字判断意味着要一直追平各 dialect 的所有拼法，漏掉一种就 fail open。
+- `EXPLAIN` 只有在它所解释的语句本身是只读时才算只读。`EXPLAIN ANALYZE <写语句>` 在 PostgreSQL 和 MySQL 上**会真正执行**该写操作，因此内层语句会被单独归类，不是只读就拒绝 —— 无论是否带 `ANALYZE`，因为按选项关键字判断意味着要一直追平各 dialect 的所有拼法，漏掉一种就 fail open。
+- 顶层是读的语句，内部仍可能写：PostgreSQL 的数据修改型 CTE（`WITH d AS (DELETE ... RETURNING *) SELECT * FROM d`）从外面看就是一条 SELECT。因此会遍历整条语句查找写节点，而不只看根节点。
 - `POST /sql/execute` 拒绝任何不是**单条**只读语句的输入。多语句（`SELECT 1; DROP TABLE t`）、可写 `PRAGMA`、`USE` / `SET`，以及解析器无法归类的语句一律拒绝——判定是 fail-closed 的。需要切换数据库时请使用请求体的 `database_name` 字段，而不是 `USE`。
 
 `DBFuncTool.read_only` 返回的是**生效后**的姿态，因此构造时没有传 `read_only` 的实例——MCP server 的 `create_dynamic` / `create_static` 工厂正是这样构造的——在加固过的部署上读出来仍是 `True`。

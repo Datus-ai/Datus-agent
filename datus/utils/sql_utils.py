@@ -913,6 +913,33 @@ _EXPLAIN_PREFIX_RE = re.compile(
 )
 
 
+def _embeds_write_statement(sql: str, dialect: str) -> bool:
+    """Whether ``sql`` performs a write anywhere inside it, not just at the root.
+
+    Postgres data-modifying CTEs are a read on the outside and a write on the
+    inside::
+
+        WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted
+
+    That statement's top-level node is a SELECT, so classifying by root alone
+    called it a read and let it through every gate — while it deletes the rows.
+
+    Unparseable input returns False rather than True: the caller already refuses
+    anything it cannot classify, and answering True here would make the reason
+    reported for it wrong.
+    """
+    try:
+        parsed = sqlglot.parse_one(sql, read=dialect or None)
+    except Exception:
+        return False
+    if parsed is None:
+        return False
+    return any(
+        isinstance(node, (expressions.Insert, expressions.Update, expressions.Delete, expressions.Merge))
+        for node in parsed.walk()
+    )
+
+
 def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLType]:
     """Classify one SQL statement and identify read-only safety violations.
 
@@ -951,7 +978,9 @@ def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLTy
         if not inner:
             return READ_ONLY_NON_READ, sql_type
         inner_type = parse_sql_type(inner, dialect)
-        if inner_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+        if inner_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN) or _embeds_write_statement(
+            inner, dialect
+        ):
             # Reuses READ_ONLY_NON_READ rather than adding a code: callers map
             # codes to their own wording with a dict lookup, and an unmapped
             # code would raise KeyError inside a security gate. Returning the
@@ -962,6 +991,12 @@ def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLTy
         first_word = cleaned.split()[0].upper() if cleaned else ""
         if first_word == "PRAGMA" and "=" in cleaned:
             return READ_ONLY_WRITABLE_PRAGMA, sql_type
+
+    # Last, because it is the most expensive check and the cheap ones have
+    # already rejected the obvious cases: a statement that reads at the root can
+    # still write inside a CTE.
+    if _embeds_write_statement(normalized_sql, dialect):
+        return READ_ONLY_NON_READ, sql_type
 
     return None, sql_type
 

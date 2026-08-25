@@ -2217,3 +2217,62 @@ class TestValidateReadOnlySqlExplain:
         violation, _ = validate_read_only_sql("EXPLAIN SELECT 1; DROP TABLE t", "postgres")
 
         assert violation == READ_ONLY_MULTI_STATEMENT
+
+
+class TestValidateReadOnlySqlDataModifyingCte:
+    """A statement that reads at the root can still write inside it.
+
+    PostgreSQL data-modifying CTEs are a SELECT on the outside::
+
+        WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted
+
+    Classifying by root node alone called that a read and let it through every
+    gate built on this helper — while it deletes the rows.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted",
+            "WITH ins AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM ins",
+            "WITH upd AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM upd",
+        ],
+    )
+    def test_a_write_inside_a_cte_is_refused(self, sql):
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_it_is_refused_behind_an_explain_too(self):
+        """Both holes compose: EXPLAIN ANALYZE of a data-modifying CTE runs the
+        write and reads as a plain EXPLAIN of a SELECT."""
+        sql = "EXPLAIN ANALYZE WITH d AS (DELETE FROM orders RETURNING *) SELECT * FROM d"
+
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "WITH ok AS (SELECT 1) SELECT * FROM ok",
+            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON TRUE",
+            "SELECT * FROM t",
+            "EXPLAIN SELECT 1",
+        ],
+    )
+    def test_ordinary_reads_are_untouched(self, sql):
+        """The walk must not cost a read-only caller its ordinary CTEs — they
+        are how most non-trivial analytics queries are written."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation is None
+
+    def test_unparseable_input_is_still_refused_for_being_unclassifiable(self):
+        """The walk answers False on input it cannot parse, deliberately: the
+        type check already refuses it, and claiming "embeds a write" would make
+        the reported reason wrong."""
+        violation, sql_type = validate_read_only_sql("%%not sql%%", "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+        assert sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
