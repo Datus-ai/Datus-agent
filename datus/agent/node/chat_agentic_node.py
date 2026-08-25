@@ -367,25 +367,40 @@ class ChatAgenticNode(AgenticNode):
         super()._ensure_web_tools_in_tools()
 
     def _rebuild_tools(self):
-        """Rebuild the tools list with current tool instances including skills."""
+        """Rebuild the tools list with current tool instances including skills.
+
+        Every configurable family is re-checked against ``tools`` here, not just
+        tested for "did setup_tools leave an instance behind". Relying on the
+        attribute being None makes the exclusion depend on nothing else ever
+        populating it — an assumption that has already failed twice in this
+        class, once because the base re-creates the memory tool when it finds
+        None, and once because platform docs were mounted after the rebuild that
+        was supposed to own them. Asking the config makes the exclusion a
+        property of the node instead of an accident of ordering.
+        """
+        selected = self._selected_tool_families()
+
+        def enabled(family: str) -> bool:
+            return self._family_enabled(selected, family)
+
         self.tools = []
-        if self.db_func_tool:
+        if self.db_func_tool and enabled("db_tools"):
             self.tools.extend(self.db_func_tool.available_tools())
-        if self.context_search_tools:
+        if self.context_search_tools and enabled("context_search_tools"):
             self.tools.extend(self.context_search_tools.available_tools())
-        if self.reference_template_tools:
+        if self.reference_template_tools and enabled("reference_template_tools"):
             self.tools.extend(self.reference_template_tools.available_tools())
-        if self.date_parsing_tools:
+        if self.date_parsing_tools and enabled("date_parsing_tools"):
             self.tools.extend(self.date_parsing_tools.available_tools())
-        if self.filesystem_func_tool:
+        if self.filesystem_func_tool and enabled("filesystem_tools"):
             self.tools.extend(self.filesystem_func_tool.available_tools())
-        if self.memory_func_tool:
+        if self.memory_func_tool and enabled("memory_tools"):
             self.tools.extend(self.memory_func_tool.available_tools())
-        if self.bash_tool:
+        if self.bash_tool and enabled("bash_tools"):
             self.tools.extend(self.bash_tool.available_tools())
-        if self.skill_func_tool:
+        if self.skill_func_tool and enabled("skills"):
             self.tools.extend(self.skill_func_tool.available_tools())
-        if self.sub_agent_task_tool:
+        if self.sub_agent_task_tool and enabled("sub_agent_tools"):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
@@ -401,7 +416,7 @@ class ChatAgenticNode(AgenticNode):
         # silently dropped platform docs from the LLM's surface mid-session.
         # Gated like the rest: a node that excluded the family must not get it
         # back on the next rebuild.
-        if self._platform_doc_tool and self._family_enabled(self._selected_tool_families(), "platform_doc_tools"):
+        if self._platform_doc_tool and enabled("platform_doc_tools"):
             self.tools.extend(self._platform_doc_tool.available_tools())
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()

@@ -2243,3 +2243,36 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         node._rebuild_tools()
 
         assert name not in {tool.name for tool in node.tools}
+
+    @pytest.mark.parametrize(
+        ("attribute", "family", "tool_name"),
+        [
+            ("skill_func_tool", "skills", "load_skill"),
+            ("memory_func_tool", "memory_tools", "add_memory"),
+            ("filesystem_func_tool", "filesystem_tools", "read_file"),
+            ("bash_tool", "bash_tools", "bash"),
+        ],
+    )
+    def test_a_populated_instance_cannot_reinstate_an_excluded_family(
+        self, real_agent_config, mock_llm_create, attribute, family, tool_name
+    ):
+        """`_rebuild_tools` asks the config, not just whether the attribute is set.
+
+        Testing "did setup_tools leave it None" would make the exclusion depend
+        on nothing else ever populating the attribute — an assumption that has
+        already failed twice here: the base re-creates the memory tool when it
+        finds None, and platform docs were mounted after the rebuild meant to
+        own them. This pins the stronger property: whatever populates the
+        instance, an excluded family stays out.
+        """
+        node = self._node(real_agent_config, tools="db_tools.*")
+
+        stub = MagicMock()
+        tool = MagicMock()
+        tool.name = tool_name
+        stub.available_tools.return_value = [tool]
+        setattr(node, attribute, stub)
+
+        node._rebuild_tools()
+
+        assert tool_name not in {t.name for t in node.tools}
