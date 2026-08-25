@@ -80,7 +80,7 @@ Notes:
 
 ## How to Use Subagents
 
-### Method 1: CLI Slash Command
+### Method 1: CLI Automatic or Explicit Routing
 
 Start the CLI:
 
@@ -88,12 +88,14 @@ Start the CLI:
 datus --datasource production
 ```
 
-Then launch a subagent with `/[name]`:
+Normally, describe the request directly and let the main agent delegate it. To route one message explicitly, append `@Agent <name>`:
 
 ```text
-/semantic_modeling Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
-/finance_report Analyze quarter-over-quarter revenue changes
+Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders. @Agent semantic_modeling
+Analyze quarter-over-quarter revenue changes. @Agent finance_report
 ```
+
+For several consecutive turns with one subagent, run `/agent <name>` first and then enter normal messages. The legacy `/<name> <message>` form is no longer supported.
 
 ### Method 2: Web Interface
 

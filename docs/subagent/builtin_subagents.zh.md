@@ -98,10 +98,10 @@ SQL 摘要功能帮助你分析、分类和编目 SQL 查询，用于知识复�
 
 ### 快速开始
 
-启动 SQL 摘要生成 subagent：
+直接描述需求，或在消息末尾指定 SQL 摘要生成 subagent：
 
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. (You can also add some description on this SQL)
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 ```
 
 ### 生成工作流
@@ -138,13 +138,13 @@ graph LR
 在 CLI 模式下通过问题中包含主题树来组织 SQL 摘要：
 
 **带主题树示例：**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 ```
 
 **不带主题树示例：**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 ```
 
 未提供时，agent 会基于知识库中的现有主题树和相似查询自动建议分类。

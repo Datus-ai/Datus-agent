@@ -98,10 +98,10 @@ A **SQL summary** is a structured YAML document that captures:
 
 ### Quick Start
 
-Launch the SQL summary generation subagent:
+Describe the request directly, or identify the SQL summary generation subagent at the end of the message:
 
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. (You can also add some description on this SQL)
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 ```
 
 ### Generation Workflow
@@ -138,13 +138,13 @@ In interactive mode, after the YAML file is written successfully, the generation
 Subject tree allows organizing SQL summaries by domain and layers. In CLI mode, include it in your question:
 
 **Example with subject_tree:**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 ```
 
 **Example without subject_tree:**
-```bash
-/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales
+```text
+Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 ```
 
 When not provided, the agent suggests categories based on existing subject trees and similar queries in the Knowledge Base.

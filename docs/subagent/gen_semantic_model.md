@@ -7,7 +7,7 @@
 Use `semantic_modeling` in a Dosi project to create or update datasets, fields, relationships, model metadata, and metrics. The workflow edits Dosi YAML, validates the selected model, and reconciles the YAML source of truth with the Knowledge Base.
 
 ```text
-/semantic_modeling Model the orders and customers datasets and their relationship.
+Model the orders and customers datasets and their relationship. @Agent semantic_modeling
 ```
 
 MetricFlow and OSI projects remain queryable but are query-only for semantic changes. To modify an existing OSI project, first change its semantic type to Dosi, then use `semantic_modeling` to repair and validate the existing YAML. MetricFlow YAML migration is not supported.

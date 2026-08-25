@@ -7,7 +7,7 @@
 Use `semantic_modeling` in a Dosi project to author metrics together with their required datasets and relationships. The workflow validates the completed Dosi model, checks generated metrics, and reconciles the YAML source of truth with the Knowledge Base.
 
 ```text
-/semantic_modeling Define revenue and order-count metrics from this SQL evidence.
+Define revenue and order-count metrics from this SQL evidence. @Agent semantic_modeling
 ```
 
 MetricFlow and OSI projects retain execution and query support for existing metrics, but they cannot author new metrics. To modify existing OSI YAML, first change the project's semantic type to Dosi and then use `semantic_modeling`. MetricFlow YAML migration is not supported.

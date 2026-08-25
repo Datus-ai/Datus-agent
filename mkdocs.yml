@@ -150,6 +150,7 @@ plugins:
             Subagent: Subagent
             Built-in subagents: 内置 subagent
             Customized subagents: 自定义 subagent
+            Semantic Modeling: 语义建模
             Generate Metrics: 生成指标
             Ask Metrics: 指标问答
             Generate Semantic Model: 生成语义模型
