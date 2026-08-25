@@ -24,7 +24,9 @@ Author the active Dosi semantic model as strict OSI core YAML. Use this skill fo
 - Keep one `semantic_model` per file and stable `snake_case` names. Preserve unrelated content; an upsert replaces the complete same-named object.
 - Bind a dataset to a qualified physical table or a complete reusable SELECT. Declare every referenced physical column as a field with the active OSI dialect.
 - Mark time fields with `dimension: {is_time: true}`. Keep other fields available as dimensions.
-- Declare keys only from source metadata or verified data evidence.
+- For a dataset bound to a physical table, use `primary_key` to transcribe a source-declared physical primary key, and `unique_keys` to transcribe source-declared unique constraints and indexes. For a query-backed dataset, a source key holds only if the query preserves it: a one-to-many join repeats it, so validate against the result, not the base table. Declare a key the source does not declare only after full-table validation shows those columns are non-null and duplicate-free; a stated grain, a query pattern, or one partition is not evidence.
+- Give a field a `label` when its column name is not what a reader would call it.
+- Give a dataset `ai_context.instructions` when its grain or intended use does not follow from the description, and give a field `ai_context.synonyms` when users ask for it by a name the column does not carry. Leave both out otherwise: restating the description dilutes what a reader can act on.
 - Define model-level relationships with aligned `from_columns` and `to_columns`; bind the target columns to one complete verified key.
 
 ## Author DATUS extensions
