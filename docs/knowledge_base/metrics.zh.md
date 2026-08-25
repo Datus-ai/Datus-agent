@@ -1,157 +1,194 @@
-# 业务指标智能化
+# 指标
 
-从 **0.2.4 版本**开始，指标组件专注于创建标准化、可查询的业务指标，作为独立的语义查询层。指标可通过 MetricFlow 直接执行查询，而不仅仅作为 LLM 生成 SQL 的参考。
+指标是可复用、可执行的业务计算，例如收入、活跃客户数或倒闭银行资产。它为一套计算逻辑提供稳定的名称和定义，让用户无需反复编写聚合 SQL 就能提出业务问题。
 
-## 核心价值
+指标属于[语义模型](semantic_model.md)。定义保存在模型的 OSI YAML 中；Datus 将其投影到独立的 Knowledge Base store 供检索，再由当前 semantic adapter 编译并执行指标查询。Dosi 是内置的默认 adapter。
 
-解决常见的企业挑战：
+## 指标定义什么
 
-- **重复的 SQL 查询**：直接查询指标，而非重写相似的 SQL
-- **不一致的定义**：通过可执行的规范跨团队标准化指标定义
-- **手动分类**：使用层级主题树分类体系组织指标
-- **临时 SQL 复杂性**：对常见指标使用语义查询（`query_metrics`）而非生成 SQL
+一个指标通常包含：
 
-## 工作原理
+- datasource 内唯一的 `name`；
+- 业务 `description` 和 `ai_context.instructions`；
+- 聚合、比率或算术 `expression`；
+- 所属 dataset 与业务时间；
+- 用于检索的三级 `subject_path`；
+- `unit`、`format` 等可选展示信息；
+- 滚动、累计或同期比较等可选的可复用 window 行为。
 
-指标是构建在语义模型之上的业务级计算。从 0.2.4 版本开始，它们独立运行：
+指标所需的 dataset、field 和 relationship 都定义在同一份语义模型文件中。因此，计算逻辑和执行它所需的模型只有一个权威 artifact。
 
-- **指标**（本文档）：通过 MetricFlow 查询的标准化 KPI
-- **语义模型**（参见 [semantic_model.zh.md](semantic_model.zh.md)）：用于临时 SQL 生成的 schema 扩展
+## 定义、检索与执行
 
-两者都可以从历史 SQLs 生成，但指标专注于可复用的业务逻辑，而语义模型专注于 schema 理解。
+指标数据有三个不同角色：
+
+1. **OSI YAML 是定义。** 表达式、时间行为、描述和 extension 都以它为准。
+2. **`metrics` Knowledge Base store 是检索投影。** 它按当前 datasource 索引指标名、描述、subject path、所属模型、可用维度、源 YAML 等检索信息。
+3. **Semantic adapter 负责执行。** `query_metrics` 把指标名、维度、时间范围、过滤和排序交给当前 adapter，由 adapter 编译并运行查询。
+
+把指标移动到其他 `subject_path` 只会改变分类，不会改变指标身份。因此，同一个 datasource 中的指标名必须保持唯一。
+
+## 使用自然语言快速查询
+
+推荐的用户流程是直接提业务问题。主 agent 会识别指标问题，并自动派发给 `ask_metrics`：
+
+```bash
+datus --datasource duckdb_demo
+```
+
+```text
+看看倒闭银行数量和倒闭资产总额按年份的变化趋势。
+```
+
+用户不需要知道指标名。AskMetrics 会根据主题树和指标描述推断该问题需要 `bank_failure_count` 与 `failed_assets_million`，发现可用时间维度，再按年查询。
+
+该流程要求当前 datasource 已经存在可执行指标。如果没有现有指标能回答问题，AskMetrics 会直接说明限制，不会切换成无关的原始 SQL 回答。路由方式、配置和输出行为见 [AskMetrics](../subagent/ask_metrics.md)。
+
+## 当前指标 YAML
+
+下面的定义来自 Datus 示例 DuckDB 数据库上真实生成的 `bank_failures.yml`，使用了[语义模型](semantic_model.md)页面中的 dataset 和 field：
+
+```yaml
+metrics:
+  - name: bank_failure_count
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: COUNT(*)
+    description: 倒闭银行数量，即银行倒闭事件的记录数。
+    ai_context:
+      instructions: 按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+
+  - name: failed_assets_million
+    expression:
+      dialects:
+        - dialect: DUCKDB
+          expression: SUM(bank_failures.assets_million)
+    description: 倒闭银行资产总额（单位：百万美元）。
+    ai_context:
+      instructions: 按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。
+    custom_extensions:
+      - vendor_name: DATUS
+        data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+```
+
+Metric expression 与 field expression 一样使用 `expression.dialects[]`。字段应带 dataset 限定，例如 `SUM(bank_failures.assets_million)`。`COUNT(*)` 这类聚合无法根据限定字段判断所属 dataset，因此在 DATUS extension 中显式提供 `dataset`。
+
+不要把 `dataset`、`time_dimension`、`subject_path`、`unit` 或 window 设置写在 metric 顶层。这些属于 Datus 行为，应放入 metric 的 DATUS `custom_extensions` entry。
+
+## Metric extension
+
+DATUS extension 是一个 OSI `custom_extensions` entry，其中 `data` 的值是 JSON 字符串：
+
+```yaml
+custom_extensions:
+  - vendor_name: DATUS
+    data: '{"v":"1.4","time_dimension":"orders.order_date","subject_path":["sales","revenue","total"],"unit":"USD"}'
+```
+
+常用 key 包括：
+
+| Key | 作用 |
+| --- | --- |
+| `dataset` | 当表达式本身无法确定 dataset 时指定归属，例如 `COUNT(*)`。 |
+| `time_dimension` | 选择指标的业务时间字段；字段名可能冲突时应带 dataset 限定。 |
+| `subject_path` | 把指标放入三级检索分类。 |
+| `unit`、`format` | 描述结果的单位和展示格式。 |
+| `fill_nulls_with` | 定义明确的空值填充行为。 |
+| `window` | 定义可复用的滚动、累计、同期比较、排名或取值窗口。 |
+
+`semantic_modeling` 会写入已安装 engine 所需的 extension 版本。应保留生成的版本值，并保证每个对象最多只有一个 DATUS entry。
 
 ## 查询指标
 
-定义指标后，可使用 MetricFlow 工具直接查询：
+AskMetrics 是面向用户的常规查询入口。集成或高级 agent 工作流可以使用底层工具，将检索与执行分开：
 
 ```python
-# 在 agent 对话或工作流中
-# 搜索相关指标
-search_metrics(query_text="daily active users")
+# 从 Knowledge Base 中发现候选定义。
+search_metrics(
+    query_text="按年统计倒闭银行数量和资产",
+    top_n=5,
+)
 
-# 执行指标查询
+# 获取可查询维度和指标的主要时间轴。
+get_dimensions(metric_name="bank_failure_count")
+
+# 按年执行两个指标。
 query_metrics(
-    metrics=["daily_active_users"],
-    group_by=["platform", "country"],
-    start_time="2024-01-01",
-    end_time="2024-01-31"
+    metrics=["bank_failure_count", "failed_assets_million"],
+    dimensions=["metric_time"],
+    time_granularity="year",
+    order_by=["metric_time__year"],
 )
 ```
 
-**指标优先策略**：当用户查询涉及 KPI（例如 "按平台展示 DAU"）时，agent 将：
-1. 使用 `search_metrics` 搜索匹配的指标
-2. 如果找到，通过 `query_metrics` 执行（首选）
-3. 仅当不存在指标时才回退到临时 SQL 生成
+`query_metrics` 当前支持以下参数：
 
-这确保了组织内指标定义的一致性。
+| 参数 | 含义 |
+| --- | --- |
+| `metrics` | 一个或多个准确的指标名。 |
+| `dimensions` | `get_dimensions` 返回的维度；在 Dosi 中，`metric_time` 表示指标的主要时间轴。 |
+| `path` | 可选 subject-tree 路径，用于消除指标歧义。 |
+| `time_start`、`time_end` | 可选的左闭右开时间范围：start 包含，end 不包含。Adapter 支持 ISO 日期以及 `-7d`、`now` 等相对值。 |
+| `time_granularity` | `day`、`week`、`month`、`quarter` 或 `year`。 |
+| `where` | 可选过滤表达式，不包含 `WHERE` 关键字。 |
+| `order_by` | 排序所用的结果列；名称前加 `-` 表示降序。 |
+| `limit` | 最大行数；只在用户明确要求 Top N、预览或其他行数限制时使用。 |
+| `dry_run` | 编译并校验查询计划，不返回实时指标值。 |
 
-## 使用方法
+例如，要包含 2024 年 1 月的全部数据，应使用 `time_start="2024-01-01"` 和 `time_end="2024-02-01"`。
 
-使用 `--success_story` 时，该兼容组件会运行完整的 Dosi-only `semantic_modeling` 工作流，包括生成指标所需的 datasets 与 relationships。YAML 导入是非 LLM 的兼容操作，仅支持 Dosi 项目中的 Dosi/OSI YAML；MetricFlow YAML 会被拒绝。
+## 创建和更新指标
 
-### 基本命令
+日常创作使用 `semantic_modeling`。它可以在同一份 YAML 中补充所需 dataset 和 field、创建或更新 metric、校验完整模型、按需 dry-run 代表性查询，并同步两个 Knowledge Base 投影。
+
+```text
+在 sales 模型中增加月度收入增长指标，使用 order_date 作为业务时间，校验定义并 dry-run 一次按年查询。
+```
+
+如果要从包含 `question` 和 `sql` 的 CSV 批量创作，使用统一的 semantic-modeling component：
 
 ```bash
-# 从 CSV（历史 SQLs）
 datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components metrics \
-    --success_story path/to/success_story.csv
-
-# 从 YAML（语义模型）
-datus-agent bootstrap-kb \
-    --datasource <your_datasource> \
-    --components metrics \
-    --semantic_yaml path/to/semantic_model.yaml
+  --datasource <your_datasource> \
+  --components semantic_modeling \
+  --success_story path/to/success_story.csv \
+  --kb_update_strategy incremental \
+  --metrics-batch-size 5
 ```
 
-### 关键参数
+`--metrics-batch-size` 控制每个创作批次处理的历史记录数。`--subject_tree` 可以传入逗号分隔的允许分类；不传时，创作流程会复用已有分类或创建合适的分类。
 
-| 参数 | 必需 | 描述 | 示例 |
-|-----------|----------|-------------|------------|
-| `--datasource` | ✅ | 数据库数据源 | `sales_db` |
-| `--components` | ✅ | 要初始化的组件 | `metrics` |
-| `--success_story` | ⚠️ | 包含历史 SQLs 和问题的 CSV 文件（如果没有 `--semantic_yaml` 则必需） | `success_story.csv` |
-| `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件（如果没有 `--success_story` 则必需） | `semantic_model.yaml` |
-| `--kb_update_strategy` | ❌ | 更新策略 | `overwrite`/`incremental` |
-| `--subject_tree` | ❌ | 预定义分类（逗号分隔） | `Sales/Reporting/Daily,Finance/Revenue/Monthly` |
-| `--pool_size` | ❌ | 并发线程数 | `4` |
+默认的 `check` 策略不会创作指标，只报告当前 semantic-dataset 与 metric 投影数量。需要生成时应明确使用 `incremental` 或 `overwrite`。
 
-### 主题树分类
+## 同步 Knowledge Base
 
-使用层级分类法组织指标：`domain/layer1/layer2`（例如 `Sales/Reporting/Daily`）
-
-**两种模式：**
-
-- **预定义**：使用 `--subject_tree` 强制指定特定分类
-- **学习**：省略 `--subject_tree` 以复用现有分类或创建新分类
+`semantic_modeling` 成功完成后会自动同步目标文件。如果手工编辑了 YAML，可以用下面的命令协调全部 semantic-object 与 metric 投影：
 
 ```bash
-# 预定义模式示例
---subject_tree "Sales/Reporting/Daily,Finance/Revenue/Monthly"
-
-# 学习模式：省略 --subject_tree 参数
+datus-agent bootstrap-kb \
+  --datasource <your_datasource> \
+  --components semantic_model \
+  --kb_update_strategy sync-yaml
 ```
 
-**生成的标签格式（旧版 MetricFlow 文件）：**
+`sync-yaml` 默认读取当前 datasource 下的全部模型，替换各 artifact 的投影行，删除该 artifact 中已不再声明的指标，并在同步整个目录时清理已删除文件留下的行；不会调用 LLM，也不会查询数仓。
 
-存量 MetricFlow 指标文件的主题树分类存储在 `locked_metadata.tags` 中，格式为 `"subject_tree: {domain}/{layer1}/{layer2}"`。以下形态仅作参考——这类文件仍可查询，但不再支持生成或导入：
+如果只想查看已索引指标数量，不做任何修改：
 
-```yaml
-# 旧版 MetricFlow 形态——仅可查询，不可导入
-metric:
-  name: daily_revenue
-  type: simple
-  type_params:
-    measure: revenue
-  locked_metadata:
-    tags:
-      - "Finance"
-      - "subject_tree: Sales/Reporting/Daily"
+```bash
+datus-agent bootstrap-kb \
+  --datasource <your_datasource> \
+  --components metrics \
+  --kb_update_strategy check
 ```
 
-**YAML 导入注意事项：**
+## 相关文档
 
-`--semantic_yaml` 仅接受 Dosi/OSI 语义 YAML，且仅在 Dosi 项目中可用。MetricFlow YAML（`data_source:` / `metric:` 文档）会被明确拒绝；请先把项目迁移到 Dosi，再用 `semantic_modeling` 重新生成模型。
-
-## 数据源格式
-
-### CSV 格式
-
-```csv
-question,sql
-How many customers have been added per day?,"SELECT ds AS date, SUM(1) AS new_customers FROM customers GROUP BY ds ORDER BY ds;"
-What is the total transaction amount?,SELECT SUM(transaction_amount_usd) as total_amount FROM transactions;
-```
-
-### YAML 格式（指标导入）
-
-指标导入读取的是 Dosi/OSI 语义模型文档中的 `metrics` 集合——与 datasets 在同一个文件里：
-
-```yaml
-semantic_model:
-  - name: transactions
-    datasets:
-      - name: transactions
-        source: analytics.transactions
-    metrics:
-      - name: total_revenue
-        description: "Total revenue from all transactions"
-        expression: SUM(transactions.amount)
-        dataset: transactions
-```
-
-独立的 MetricFlow `metric:` 文档属于旧格式，已不支持导入。参见 [semantic_model.zh.md](semantic_model.zh.md) 了解如何定义语义模型。
-
-## 总结
-
-指标组件建立了一个**语义查询层**，将历史 SQLs 转换为标准化、可执行的指标定义。与传统的仅作为 LLM 参考的语义层不同，Datus 指标可通过 MetricFlow 直接查询，无需为常见 KPI 生成临时 SQL。
-
-主要特点：
-
-- **可执行指标**：通过 `query_metrics` 查询而非生成 SQL
-- **指标优先策略**：Agent 优先使用指标查询而非临时 SQL
-- **定义内嵌、执行独立**：指标定义存放在语义模型的 `metrics` 集合中；通过 `query_metrics` 查询是独立的执行路径，无需临时生成 SQL
-- **层级组织**：主题树分类法提高可发现性
-
-这种方法确保了团队之间指标定义的一致性，同时降低了查询复杂性并提高了性能。
+- [AskMetrics](../subagent/ask_metrics.md)：自然语言指标问答和能力边界
+- [语义建模](../subagent/semantic_modeling.md)：完整创作流程与真实生成 YAML
+- [语义模型](semantic_model.md)：dataset、field、relationship 与 Knowledge Base 投影
+- [语义层配置](../configuration/semantic_layer.md)：semantic adapter 配置
