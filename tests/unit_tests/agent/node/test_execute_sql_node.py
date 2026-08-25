@@ -13,16 +13,20 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult, SQLContext
 
 
-def make_agent_config():
+def make_agent_config(sql_read_only=False):
     cfg = MagicMock()
     cfg.datasource_configs = {}
     cfg.current_datasource = "test"
     cfg.nodes = {}
+    # Pinned: a bare MagicMock answers every attribute with a truthy Mock, so
+    # `sql_read_only` would read as on and refuse any write these tests execute
+    # — failing for a reason unrelated to what they assert.
+    cfg.sql_read_only = sql_read_only
     return cfg
 
 
-def make_node(input_data=None):
-    cfg = make_agent_config()
+def make_node(input_data=None, sql_read_only=False):
+    cfg = make_agent_config(sql_read_only=sql_read_only)
     return Node.new_instance(
         "exec_sql_1",
         "Execute SQL",
@@ -172,3 +176,46 @@ class TestExecuteSQLNodeStream:
             with pytest.raises(RuntimeError):
                 async for _ in node.execute_stream():
                     pass
+
+
+class TestExecuteSQLNodeReadOnlyDeployment:
+    """`agent.sql_read_only` on the workflow pipeline.
+
+    This node hands the generated SQL straight to the connector, so no
+    DBFuncTool gate applies to it. `POST /workflows/run` makes the pipeline
+    API-reachable, and the SQL is whatever gen_sql produced — it cannot be
+    assumed to be a read.
+    """
+
+    @staticmethod
+    def _run(sql, sql_read_only):
+        node = make_node(ExecuteSQLInput(sql_query=sql, database_name="testdb"), sql_read_only=sql_read_only)
+        connector = MagicMock()
+        connector.dialect = "sqlite"
+        connector.execute.return_value = ExecuteSQLResult(success=True, sql_query=sql, row_count=1, sql_return="1")
+        with patch.object(node, "_sql_connector", return_value=connector):
+            node.execute()
+        return node.result, connector
+
+    @pytest.mark.parametrize("sql", ["DROP TABLE t", "INSERT INTO t VALUES (1)", "UPDATE t SET a = 1"])
+    def test_a_write_never_reaches_the_connector(self, sql):
+        """The assertion that matters: refused *before* execution, not reported
+        after it."""
+        result, connector = self._run(sql, sql_read_only=True)
+
+        assert result.success is False
+        assert "agent.sql_read_only" in result.error
+        connector.execute.assert_not_called()
+
+    def test_reads_still_run(self):
+        result, connector = self._run("SELECT 1", sql_read_only=True)
+
+        assert result.success is True
+        connector.execute.assert_called_once()
+
+    def test_the_default_is_unchanged(self):
+        """The workflow pipeline is write-capable by design; the gate is opt-in."""
+        result, connector = self._run("DROP TABLE t", sql_read_only=False)
+
+        assert result.success is True
+        connector.execute.assert_called_once()

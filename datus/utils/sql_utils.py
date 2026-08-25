@@ -9,6 +9,7 @@ import sqlglot
 from sqlglot import expressions
 from sqlglot.expressions import CTE, Table
 
+from datus.utils.config_utils import coerce_bool
 from datus.utils.constants import DBType, SQLType
 from datus.utils.loggings import get_logger
 
@@ -891,6 +892,65 @@ def is_single_statement(sql: str) -> bool:
     return _first_statement(normalized) == normalized
 
 
+#: Leading ``EXPLAIN`` and the option forms the dialects spell it with, so the
+#: statement being explained can be classified on its own.
+#:
+#: Matched textually rather than off the parse tree because the tree is not
+#: dependable here: postgres parses ``EXPLAIN ...`` to a ``Command`` whose inner
+#: node is a bare string, mysql to a ``Describe`` with a real node, and
+#: ``EXPLAIN (ANALYZE, BUFFERS) DELETE ...`` fails to parse on mysql outright.
+_EXPLAIN_PREFIX_RE = re.compile(
+    r"""^EXPLAIN\b\s*
+        (?:
+            \([^)]*\)                 # postgres: EXPLAIN (ANALYZE, BUFFERS)
+          | ANALYZE\b | ANALYSE\b
+          | VERBOSE\b | EXTENDED\b | PARTITIONS\b
+          | FORMAT\s*=?\s*\w+
+          | QUERY\s+PLAN\b           # sqlite
+        )*
+        \s*""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _embeds_write_statement(sql: str, dialect: str) -> bool:
+    """Whether ``sql`` performs a write anywhere inside it, not just at the root.
+
+    Postgres data-modifying CTEs are a read on the outside and a write on the
+    inside::
+
+        WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted
+
+    That statement's top-level node is a SELECT, so classifying by root alone
+    called it a read and let it through every gate — while it deletes the rows.
+
+    Normalizes the dialect the same way ``parse_sql_type`` does and retries
+    without one. Passing the raw name meant a dialect sqlglot does not know
+    raised ``ValueError``, the walk was skipped, and the CTE above went through
+    — the check silently did not apply to exactly the deployments whose dialect
+    the classifier had to work around in the first place.
+
+    Returns False when nothing could be parsed at all. That is a known limit
+    rather than a guarantee: ``parse_sql_type`` has a fallback that rescues
+    vendor SELECTs sqlglot cannot parse, so a statement it rescues is treated as
+    a read while this function cannot see inside it. Detecting that would mean
+    refusing unparseable reads outright, which is the very thing the fallback
+    exists to avoid.
+    """
+    for read in (parse_dialect(dialect), None):
+        try:
+            parsed = sqlglot.parse_one(sql, read=read)
+        except Exception:
+            continue
+        if parsed is None:
+            continue
+        return any(
+            isinstance(node, (expressions.Insert, expressions.Update, expressions.Delete, expressions.Merge))
+            for node in parsed.walk()
+        )
+    return False
+
+
 def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLType]:
     """Classify one SQL statement and identify read-only safety violations.
 
@@ -908,10 +968,46 @@ def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLTy
     if sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
         return READ_ONLY_NON_READ, sql_type
 
+    if normalized_sql[:7].upper() == "EXPLAIN":
+        # `EXPLAIN ANALYZE <write>` RUNS the write — that is what ANALYZE means
+        # in postgres and mysql. Classifying the whole thing as EXPLAIN and
+        # stopping there let `EXPLAIN ANALYZE DELETE FROM orders` through every
+        # gate built on this helper, on a deployment whose entire promise is
+        # that no non-read statement may run.
+        #
+        # Refused whenever the explained statement is not itself a read, rather
+        # than only when ANALYZE is spelled out. Deciding on the option keyword
+        # would mean enumerating every dialect's spelling correctly forever, and
+        # getting that wrong fails open; a read-only caller has no need to
+        # explain a write either way.
+        #
+        # Keyed on the statement text, not on `sql_type`: sqlglot parses EXPLAIN
+        # to a `Describe` on mysql, which classifies as METADATA_SHOW rather
+        # than EXPLAIN, so branching on the type would have left mysql — one of
+        # the two dialects where ANALYZE actually executes — uncovered.
+        inner = _EXPLAIN_PREFIX_RE.sub("", normalized_sql, count=1).strip()
+        if not inner:
+            return READ_ONLY_NON_READ, sql_type
+        inner_type = parse_sql_type(inner, dialect)
+        if inner_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN) or _embeds_write_statement(
+            inner, dialect
+        ):
+            # Reuses READ_ONLY_NON_READ rather than adding a code: callers map
+            # codes to their own wording with a dict lookup, and an unmapped
+            # code would raise KeyError inside a security gate. Returning the
+            # inner type also makes the refusal say `delete`, not `explain`.
+            return READ_ONLY_NON_READ, inner_type
+
     if sql_type == SQLType.METADATA_SHOW:
         first_word = cleaned.split()[0].upper() if cleaned else ""
         if first_word == "PRAGMA" and "=" in cleaned:
             return READ_ONLY_WRITABLE_PRAGMA, sql_type
+
+    # Last, because it is the most expensive check and the cheap ones have
+    # already rejected the obvious cases: a statement that reads at the root can
+    # still write inside a CTE.
+    if _embeds_write_statement(normalized_sql, dialect):
+        return READ_ONLY_NON_READ, sql_type
 
     return None, sql_type
 
@@ -927,6 +1023,42 @@ _DDL_KIND_KEYWORDS: Dict[str, str] = {
     "TRUNCATE": "truncate",
     "RENAME": "alter",
 }
+
+
+def deployment_read_only_refusal(agent_config: Any, sql: str, dialect: str) -> Optional[str]:
+    """Refusal message when ``agent.sql_read_only`` forbids ``sql``, else ``None``.
+
+    For the paths that reach a connector directly instead of going through
+    ``DBFuncTool`` — the workflow ``execute_sql`` node and the output tool's
+    revised-SQL check. Those bypass every tool-layer gate, so without this the
+    deployment-wide switch simply does not apply to them, and the promise in
+    ``docs/configuration/sql_policy.md`` that no entry point may run a non-read
+    statement is false.
+
+    Lives here, next to the checks themselves, so the next direct-connector
+    caller has one obvious thing to call rather than a fourth hand-rolled copy
+    of the same rule. ``agent_config`` is read duck-typed: several of these
+    callers accept host-supplied or partially built configs.
+
+    A single message rather than one per violation code: these callers answer a
+    workflow, not a model that might retry differently, and the specific code is
+    logged for the operator instead.
+    """
+    if not coerce_bool(getattr(agent_config, "sql_read_only", False), False):
+        return None
+    violation, sql_type = validate_read_only_sql(sql, dialect)
+    if not violation:
+        return None
+    logger.warning(
+        "workflow SQL rejected by read-only policy",
+        sql_type=sql_type.value,
+        source="deployment",
+        rule=violation,
+    )
+    return (
+        "This deployment is read-only (agent.sql_read_only): only single "
+        f"SELECT/SHOW/DESCRIBE/EXPLAIN statements may run. Detected: {sql_type.value}."
+    )
 
 
 def parse_sql_statement_kind(sql: str, dialect: str = "") -> str:

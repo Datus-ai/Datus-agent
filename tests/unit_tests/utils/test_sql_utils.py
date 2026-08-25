@@ -15,6 +15,7 @@ from datus.utils.sql_utils import (
     _is_escaped,
     _match_dollar_tag,
     _metadata_pattern,
+    deployment_read_only_refusal,
     extract_table_names,
     format_sql_to_pretty,
     is_single_statement,
@@ -2044,3 +2045,253 @@ class TestValidateReadOnlySql:
         """Callers log the type; it must be the real one, not a placeholder."""
         assert validate_read_only_sql("DROP TABLE users", "sqlite")[1] == SQLType.DDL
         assert validate_read_only_sql("INSERT INTO t VALUES (1)", "sqlite")[1] == SQLType.INSERT
+
+
+class TestDeploymentReadOnlyRefusal:
+    """The guard for paths that reach a connector without going through
+    ``DBFuncTool`` — the workflow ``execute_sql`` node and the output tool's
+    revised-SQL check.
+
+    Those bypass every tool-layer gate, so before this the deployment-wide
+    switch did not apply to them at all, and `POST /workflows/run` makes that
+    pipeline API-reachable.
+    """
+
+    class _Config:
+        def __init__(self, sql_read_only):
+            self.sql_read_only = sql_read_only
+
+    def test_the_switch_off_is_a_no_op(self):
+        """The default posture must be untouched — this runs on the workflow
+        path, which is write-capable by design."""
+        assert deployment_read_only_refusal(self._Config(False), "DROP TABLE t", "sqlite") is None
+
+    def test_a_config_without_the_attribute_is_a_no_op(self):
+        """Duck-typed on purpose: several of these callers take host-supplied or
+        partially built configs."""
+        assert deployment_read_only_refusal(object(), "DROP TABLE t", "sqlite") is None
+
+    @pytest.mark.parametrize("value", ["false", "no", "off", "0", ""])
+    def test_a_yaml_string_false_stays_off(self, value):
+        """`bool("false")` is True, so a naive cast here would refuse every
+        write on a deployment that never asked to be read-only."""
+        assert deployment_read_only_refusal(self._Config(value), "DROP TABLE t", "sqlite") is None
+
+    @pytest.mark.parametrize("sql", ["SELECT 1", "SHOW TABLES", "EXPLAIN SELECT 1", "DESCRIBE users"])
+    def test_reads_still_run_when_hardened(self, sql):
+        assert deployment_read_only_refusal(self._Config(True), sql, "sqlite") is None
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "CREATE TABLE t2 (a int)",
+            "TRUNCATE TABLE t",
+        ],
+    )
+    def test_writes_are_refused_when_hardened(self, sql):
+        refusal = deployment_read_only_refusal(self._Config(True), sql, "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    @pytest.mark.parametrize("value", [True, "true", "yes", "on", "1"])
+    def test_a_yaml_string_true_turns_it_on(self, value):
+        refusal = deployment_read_only_refusal(self._Config(value), "DROP TABLE t", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_a_write_smuggled_behind_a_read_is_refused(self):
+        """`parse_sql_type` reads only the first statement, so this arrives as a
+        SELECT; the shared shape check is what catches it."""
+        refusal = deployment_read_only_refusal(self._Config(True), "SELECT 1; DROP TABLE t", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_unparseable_input_is_refused(self):
+        """Fail closed: a dialect syntax sqlglot cannot place must not become an
+        unchecked statement."""
+        refusal = deployment_read_only_refusal(self._Config(True), "%%not sql%%", "sqlite")
+
+        assert "agent.sql_read_only" in (refusal or "")
+
+    def test_the_message_names_the_detected_type(self):
+        """An operator reading the refusal should not have to re-parse the SQL
+        to learn what was rejected."""
+        refusal = deployment_read_only_refusal(self._Config(True), "DROP TABLE t", "sqlite")
+
+        assert "ddl" in refusal
+
+
+class TestValidateReadOnlySqlExplain:
+    """`EXPLAIN ANALYZE <write>` executes the write.
+
+    That is what ANALYZE means in postgres and mysql: the plan is measured by
+    running the statement. Classifying the whole thing as EXPLAIN and stopping
+    there let `EXPLAIN ANALYZE DELETE FROM orders` through every gate built on
+    this helper — the tool path, `POST /sql/execute`, the MCP surface and the
+    workflow guard — on a deployment whose entire promise is that no non-read
+    statement may run.
+    """
+
+    _DIALECTS = ("postgres", "mysql", "sqlite", "duckdb", "")
+
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN SELECT * FROM t",
+            "EXPLAIN ANALYZE SELECT * FROM t",
+            "EXPLAIN QUERY PLAN SELECT 1",
+            "EXPLAIN VERBOSE SELECT 1",
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT 1",
+        ],
+    )
+    def test_explaining_a_read_is_still_allowed(self, sql, dialect):
+        """The gate must not cost a read-only caller its query plans."""
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation is None
+
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN ANALYZE DELETE FROM orders",
+            "EXPLAIN ANALYZE INSERT INTO t VALUES (1)",
+            "EXPLAIN ANALYZE UPDATE t SET a = 1",
+            "EXPLAIN ANALYZE DROP TABLE t",
+            "EXPLAIN ANALYZE TRUNCATE TABLE t",
+        ],
+    )
+    def test_explain_analyze_of_a_write_is_refused(self, sql, dialect):
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN (ANALYZE, BUFFERS) DELETE FROM orders",
+            "EXPLAIN ANALYSE DELETE FROM orders",
+            "explain analyze delete from orders",
+            "EXPLAIN   ANALYZE   DELETE FROM orders",
+            "EXPLAIN VERBOSE INSERT INTO t VALUES (1)",
+            "EXPLAIN FORMAT=JSON DELETE FROM orders",
+        ],
+    )
+    def test_every_spelling_of_the_options_is_stripped(self, sql):
+        """The option list is matched textually across dialects. Deciding on the
+        ANALYZE keyword alone would mean enumerating every spelling correctly
+        forever, and getting that wrong fails open."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_explaining_a_write_is_refused_even_without_analyze(self):
+        """Conservative on purpose. Plain `EXPLAIN DELETE` only plans on
+        postgres, but a read-only caller has no need to explain a write, and
+        refusing on the inner statement rather than on an option keyword is the
+        rule that cannot fail open."""
+        violation, _ = validate_read_only_sql("EXPLAIN DELETE FROM orders", "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_the_refusal_names_the_inner_statement(self):
+        """`explain` would tell an operator nothing about what was attempted."""
+        _, sql_type = validate_read_only_sql("EXPLAIN ANALYZE DELETE FROM orders", "postgres")
+
+        assert sql_type == SQLType.DELETE
+
+    @pytest.mark.parametrize("sql", ["EXPLAIN", "EXPLAIN   ", "EXPLAIN ANALYZE"])
+    def test_an_explain_with_nothing_to_explain_is_refused(self, sql):
+        """Fail closed: nothing was classified, so nothing was cleared."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_a_write_smuggled_after_an_explain_is_still_multi_statement(self):
+        """The shape check runs first and stays the answer."""
+        violation, _ = validate_read_only_sql("EXPLAIN SELECT 1; DROP TABLE t", "postgres")
+
+        assert violation == READ_ONLY_MULTI_STATEMENT
+
+
+class TestValidateReadOnlySqlDataModifyingCte:
+    """A statement that reads at the root can still write inside it.
+
+    PostgreSQL data-modifying CTEs are a SELECT on the outside::
+
+        WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted
+
+    Classifying by root node alone called that a read and let it through every
+    gate built on this helper — while it deletes the rows.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted",
+            "WITH ins AS (INSERT INTO t VALUES (1) RETURNING *) SELECT * FROM ins",
+            "WITH upd AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM upd",
+        ],
+    )
+    def test_a_write_inside_a_cte_is_refused(self, sql):
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_it_is_refused_behind_an_explain_too(self):
+        """Both holes compose: EXPLAIN ANALYZE of a data-modifying CTE runs the
+        write and reads as a plain EXPLAIN of a SELECT."""
+        sql = "EXPLAIN ANALYZE WITH d AS (DELETE FROM orders RETURNING *) SELECT * FROM d"
+
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "WITH ok AS (SELECT 1) SELECT * FROM ok",
+            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a JOIN b ON TRUE",
+            "SELECT * FROM t",
+            "EXPLAIN SELECT 1",
+        ],
+    )
+    def test_ordinary_reads_are_untouched(self, sql):
+        """The walk must not cost a read-only caller its ordinary CTEs — they
+        are how most non-trivial analytics queries are written."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation is None
+
+    @pytest.mark.parametrize("dialect", ["postgres", "starrocks", "not_a_dialect", "totally-made-up", ""])
+    def test_the_walk_survives_a_dialect_sqlglot_does_not_know(self, dialect):
+        """The raw dialect name used to go straight to `parse_one`, so a name
+        sqlglot rejects raised, the walk was skipped, and the CTE went through —
+        the check silently did not apply to exactly the deployments whose
+        dialect the classifier already has to work around."""
+        sql = "WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted"
+
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize("dialect", ["postgres", "not_a_dialect"])
+    def test_an_unknown_dialect_does_not_refuse_ordinary_reads(self, dialect):
+        """The retry must widen coverage, not turn every read into a refusal."""
+        violation, _ = validate_read_only_sql("WITH ok AS (SELECT 1) SELECT * FROM ok", dialect)
+
+        assert violation is None
+
+    def test_unparseable_input_is_still_refused_for_being_unclassifiable(self):
+        """The walk answers False on input it cannot parse, deliberately: the
+        type check already refuses it, and claiming "embeds a write" would make
+        the reported reason wrong."""
+        violation, sql_type = validate_read_only_sql("%%not sql%%", "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+        assert sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)

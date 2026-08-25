@@ -16,6 +16,7 @@ from datus.schemas.node_models import OutputInput, OutputResult
 from datus.tools.base import BaseTool
 from datus.utils.benchmark_artifacts import BENCHMARK_ARTIFACT_PROFILE
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import deployment_read_only_refusal
 
 logger = get_logger(__name__)
 
@@ -147,6 +148,18 @@ class OutputTool(BaseTool):
             final_sql = input_data.gen_sql
         else:
             final_sql = llm_result.get("revised_sql")
+
+        # All three executions below run this same `final_sql` straight on the
+        # connector, so one check here covers them. The SQL is whatever the LLM
+        # revised it to, and nothing on this path goes through DBFuncTool, so a
+        # read-only deployment has no other gate in front of it. Falling back to
+        # the original SQL and result is what every other failure branch here
+        # does — the revision is an improvement, never a requirement.
+        refusal = deployment_read_only_refusal(self.agent_config, final_sql, sql_connector.dialect)
+        if refusal:
+            logger.warning(f"check_sql revision refused: {refusal} sql={final_sql}")
+            return input_data.gen_sql, input_data.sql_result
+
         if not input_data.sql_result:
             if final_sql == input_data.gen_sql:
                 return input_data.gen_sql, input_data.sql_result
