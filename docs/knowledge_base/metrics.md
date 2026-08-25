@@ -46,33 +46,33 @@ This flow assumes the metrics already exist on the active datasource. If no exis
 
 ## Current metric YAML
 
-The following definitions are from the `bank_failures.yml` file generated against Datus's sample DuckDB database. They use the dataset and fields shown in [Semantic Models](semantic_model.md):
+The following excerpt is the `semantic_model[0].metrics` section from the `bank_failures.yml` file generated against Datus's sample DuckDB database. It uses the dataset and fields shown in [Semantic Models](semantic_model.md). The leading indentation is intentional: this block belongs inside a semantic model and is not a standalone YAML document.
 
 ```yaml
-metrics:
-  - name: bank_failure_count
-    expression:
-      dialects:
-        - dialect: DUCKDB
-          expression: COUNT(*)
-    description: Number of failed banks, measured as bank failure event rows.
-    ai_context:
-      instructions: Use date as business time; group by state or a time grain when requested.
-    custom_extensions:
-      - vendor_name: DATUS
-        data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+    metrics:
+      - name: bank_failure_count
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: COUNT(*)
+        description: Number of failed banks, measured as bank failure event rows.
+        ai_context:
+          instructions: Use date as business time; group by state or a time grain when requested.
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
 
-  - name: failed_assets_million
-    expression:
-      dialects:
-        - dialect: DUCKDB
-          expression: SUM(bank_failures.assets_million)
-    description: Total assets of failed banks, in millions of US dollars.
-    ai_context:
-      instructions: Use date as business time and sum assets at failure.
-    custom_extensions:
-      - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+      - name: failed_assets_million
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: SUM(bank_failures.assets_million)
+        description: Total assets of failed banks, in millions of US dollars.
+        ai_context:
+          instructions: Use date as business time and sum assets at failure.
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
 ```
 
 Metric expressions use the same `expression.dialects[]` structure as field expressions. Qualify fields with their dataset name, as in `SUM(bank_failures.assets_million)`. An aggregate such as `COUNT(*)` cannot reveal its dataset from a qualified field, so its DATUS extension supplies `dataset` explicitly.

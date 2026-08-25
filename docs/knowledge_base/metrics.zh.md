@@ -46,33 +46,33 @@ datus --datasource duckdb_demo
 
 ## 当前指标 YAML
 
-下面的定义来自 Datus 示例 DuckDB 数据库上真实生成的 `bank_failures.yml`，使用了[语义模型](semantic_model.md)页面中的 dataset 和 field：
+下面是 Datus 示例 DuckDB 数据库上真实生成的 `bank_failures.yml` 中 `semantic_model[0].metrics` 的片段，使用了[语义模型](semantic_model.md)页面中的 dataset 和 field。代码块保留了它在完整文件中的缩进；它属于 semantic model 内部，不是一份独立的 YAML 文档。
 
 ```yaml
-metrics:
-  - name: bank_failure_count
-    expression:
-      dialects:
-        - dialect: DUCKDB
-          expression: COUNT(*)
-    description: 倒闭银行数量，即银行倒闭事件的记录数。
-    ai_context:
-      instructions: 按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。
-    custom_extensions:
-      - vendor_name: DATUS
-        data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
+    metrics:
+      - name: bank_failure_count
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: COUNT(*)
+        description: 倒闭银行数量，即银行倒闭事件的记录数。
+        ai_context:
+          instructions: 按 date 作为业务时间，统计倒闭事件条数；可按 state 或时间粒度分组。
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.4","dataset":"bank_failures","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","count"],"unit":"banks"}'
 
-  - name: failed_assets_million
-    expression:
-      dialects:
-        - dialect: DUCKDB
-          expression: SUM(bank_failures.assets_million)
-    description: 倒闭银行资产总额（单位：百万美元）。
-    ai_context:
-      instructions: 按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。
-    custom_extensions:
-      - vendor_name: DATUS
-        data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
+      - name: failed_assets_million
+        expression:
+          dialects:
+            - dialect: DUCKDB
+              expression: SUM(bank_failures.assets_million)
+        description: 倒闭银行资产总额（单位：百万美元）。
+        ai_context:
+          instructions: 按 date 作为业务时间，对倒闭时资产求和；单位是百万美元。
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.4","time_dimension":"bank_failures.date","subject_path":["banking","bank_failures","assets"],"unit":"USD million"}'
 ```
 
 Metric expression 与 field expression 一样使用 `expression.dialects[]`。字段应带 dataset 限定，例如 `SUM(bank_failures.assets_million)`。`COUNT(*)` 这类聚合无法根据限定字段判断所属 dataset，因此在 DATUS extension 中显式提供 `dataset`。
