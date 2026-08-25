@@ -15,7 +15,7 @@ agent 分析输入、生成 DDL、请求用户确认、执行 DDL 并验证结�
 
 ```text
 # SQL 模式：从 JOIN 查询创建宽表
-使用以下 SQL 创建 wide_orders 表：CREATE TABLE wide_orders AS SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
+根据以下查询创建 wide_orders 表：SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
 
 # 描述模式：用自然语言描述
 创建一个 user_profiles 表，包含 id (int)、name (varchar)、email (varchar) 和 created_at (timestamp)。@Agent gen_table

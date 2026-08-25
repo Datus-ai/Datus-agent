@@ -15,7 +15,7 @@ Start Datus CLI and describe the table you want. The chat agent can route the re
 
 ```text
 # SQL mode: create wide table from a JOIN query
-Use this SQL to create the wide_orders table: CREATE TABLE wide_orders AS SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
+Create the wide_orders table from this query: SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
 
 # Description mode: describe what you want
 Create a user_profiles table with id (int), name (varchar), email (varchar), and created_at (timestamp). @Agent gen_table
