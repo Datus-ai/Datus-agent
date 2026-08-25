@@ -397,12 +397,6 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/plugin/s3/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/zh/dev/dev/qa/metric-bootstrap-generation-qa/</loc>
-        <lastmod>2026-08-25</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/qa/metric-bootstrap-generation-qa/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/zh/dev/dev/skills/build_kb/</loc>
         <lastmod>2026-08-25</lastmod>
         <changefreq>daily</changefreq>
@@ -527,6 +521,12 @@
         <lastmod>2026-08-25</lastmod>
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/subagent/scheduler/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/zh/dev/dev/subagent/semantic_modeling/</loc>
+        <lastmod>2026-08-25</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/subagent/semantic_modeling/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/zh/dev/dev/training/llm_trace_usage/</loc>

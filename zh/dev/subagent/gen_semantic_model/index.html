@@ -1174,7 +1174,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -4220,7 +4220,7 @@
 <p><code>gen_semantic_model</code> 仅为兼容旧配置而保留。它不会出现在 subagent 列表中，直接调用会返回错误并推荐使用 <a href="../semantic_modeling/"><code>semantic_modeling</code></a>。</p>
 <h2 id="_1">替代方案<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <p>在 Dosi 项目中使用 <code>semantic_modeling</code> 创建或修改 dataset、field、relationship、模型元数据和 metric。该流程会修改 Dosi YAML、校验选中的模型，并将 YAML 源文件与 Knowledge Base 完整对账。</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/semantic_modeling 为 orders 和 customers 建模并定义二者的关系。
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>为 orders 和 customers 建模并定义二者的关系。@Agent semantic_modeling
 </span></code></pre></div>
 <p>MetricFlow 和 OSI 项目继续支持查询，但不支持语义写入。要修改已有 OSI 项目，请先把 semantic type 改为 Dosi，再使用 <code>semantic_modeling</code> 修复并校验已有 YAML。不支持迁移 MetricFlow YAML。</p>
 <h2 id="bootstrap">Bootstrap 兼容行为<a class="headerlink" href="#bootstrap" title="Permanent link">&para;</a></h2>

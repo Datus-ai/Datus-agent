@@ -1212,10 +1212,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1cli" class="md-nav__link">
+  <a href="#1cli-agent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        方法 1：CLI 斜杠命令
+        方法 1：CLI 自动派发或指定 Agent
       
     </span>
   </a>
@@ -1339,7 +1339,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -4391,10 +4391,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1cli" class="md-nav__link">
+  <a href="#1cli-agent" class="md-nav__link">
     <span class="md-ellipsis">
       
-        方法 1：CLI 斜杠命令
+        方法 1：CLI 自动派发或指定 Agent
       
     </span>
   </a>
@@ -4531,14 +4531,15 @@ agent 直接使用已安装 plugin 及其内置 skill 完成。代码中暂时�
 <li><code>subagents</code> 用于控制该节点可委派的 task 类型</li>
 </ul>
 <h2 id="subagent_4">如何使用 Subagent<a class="headerlink" href="#subagent_4" title="Permanent link">&para;</a></h2>
-<h3 id="1cli">方法 1：CLI 斜杠命令<a class="headerlink" href="#1cli" title="Permanent link">&para;</a></h3>
+<h3 id="1cli-agent">方法 1：CLI 自动派发或指定 Agent<a class="headerlink" href="#1cli-agent" title="Permanent link">&para;</a></h3>
 <p>先启动 CLI：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>production
 </span></code></pre></div>
-<p>然后使用 <code>/[name]</code> 启动 subagent：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/semantic_modeling 根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>/finance_report 分析本季度与上季度的收入变化
+<p>通常直接描述需求，主 agent 会自动派发。要为单次消息明确指定 subagent，在消息末尾添加 <code>@Agent &lt;name&gt;</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders。@Agent semantic_modeling
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>分析本季度与上季度的收入变化。@Agent finance_report
 </span></code></pre></div>
+<p>需要连续使用同一个 subagent 时，先运行 <code>/agent &lt;name&gt;</code>，再输入正常消息。旧的 <code>/&lt;name&gt; &lt;message&gt;</code> 形式不再支持。</p>
 <h3 id="2web">方法 2：Web 界面<a class="headerlink" href="#2web" title="Permanent link">&para;</a></h3>
 <p>启动 Web：</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--web<span class="w"> </span>--datasource<span class="w"> </span>production

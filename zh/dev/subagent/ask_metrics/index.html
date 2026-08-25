@@ -1187,7 +1187,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -1293,7 +1293,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        快速开始
+        快速开始：查询刚生成的指标
       
     </span>
   </a>
@@ -4360,7 +4360,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        快速开始
+        快速开始：查询刚生成的指标
       
     </span>
   </a>
@@ -4466,7 +4466,7 @@
 
 <h1 id="askmetrics">AskMetrics 指南<a class="headerlink" href="#askmetrics" title="Permanent link">&para;</a></h1>
 <h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p><code>ask_metrics</code> 是内置的指标问答 subagent。它基于已有语义指标回答问题，不探索原始表，也不生成 SQL。</p>
+<p><code>ask_metrics</code> 是内置的指标问答 subagent。它基于已有语义指标回答问题，不直接探索原始表，也不让模型临时编写 SQL；实际查询由当前 semantic adapter 编译并执行。</p>
 <p>适合使用 AskMetrics 的问题包括：</p>
 <ul>
 <li>KPI 数值，例如“上个月收入是多少？”</li>
@@ -4476,25 +4476,27 @@
 </ul>
 <p>AskMetrics 的能力边界刻意保持较窄。如果没有现有指标能够回答问题，它会直接说明原因，不会退回到原始 SQL 查询。</p>
 <h2 id="_2">前置条件<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>AskMetrics 需要已配置的语义层和已发布的指标。</p>
-<p>在 <code>agent.yml</code> 中配置语义层。以 MetricFlow 为例：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<p>AskMetrics 需要当前 datasource 上存在可执行的语义指标。Dosi 是内置的默认 semantic adapter；没有配置其他 adapter 时，无需额外添加 <code>semantic_layer</code> 配置。其他 adapter 的配置见<a href="../../configuration/semantic_layer/">语义层配置</a>。</p>
+<p>指标可以来自已有语义层资产，也可以由仅限 Dosi 的 <a href="../semantic_modeling/"><code>semantic_modeling</code></a> subagent 生成。<code>semantic_modeling</code> 成功返回 <code>generated</code> 后，会校验目标 YAML 并将指标同步到 Knowledge Base；保持在同一个 datasource 即可立即使用，无需手工发布、导入或重启 Datus。已有 MetricFlow 和 OSI 项目仍可查询，但在项目使用 Dosi 前不能进行语义创作。</p>
+<p>主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。</p>
+<h2 id="_3">快速开始：查询刚生成的指标<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>沿用<a href="../semantic_modeling/">语义建模</a>中的 DuckDB 示例，使用同一个 datasource 启动 Datus：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>duckdb_demo
 </span></code></pre></div>
-<p>完整配置见 <a href="../../configuration/semantic_layer/">语义层配置</a>。</p>
-<p>指标可以来自已有语义层资产，也可以由仅限 Dosi 的
-<a href="../semantic_modeling/"><code>semantic_modeling</code></a> subagent 生成。已有 MetricFlow 和 OSI 项目仍可查询，
-但在项目使用 Dosi 前不能进行语义创作。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。</p>
-<h2 id="_3">快速开始<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>使用包含指标的 datasource 启动 Datus：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>production
+<p>完成 <code>bank_failures</code> 建模后，在主 chat 中直接提问即可，主 agent 会自动派发给 AskMetrics：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>按年份查询倒闭银行数量和倒闭银行资产总额。
 </span></code></pre></div>
-<p>通过内置 subagent 提问：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/ask_metrics<span class="w"> </span>What<span class="w"> </span>was<span class="w"> </span>total<span class="w"> </span>revenue<span class="w"> </span>last<span class="w"> </span>month<span class="w"> </span>by<span class="w"> </span>customer<span class="w"> </span>segment?
+<p>AskMetrics 会根据业务描述从主题树和指标定义中匹配刚生成的 <code>bank_failure_count</code> 和 <code>failed_assets_million</code>，用户无需在问题中写出指标名。这次查询按 <code>date</code> 的年份粒度执行；真实测试返回了 14 个年份分组，例如 2008 年分别为 <code>26</code> 和 <code>768576.8</code>，2024 年分别为 <code>2</code> 和 <code>6107.8</code>。</p>
+<p>如果之前使用 <code>/agent semantic_modeling</code> 将语义建模设为当前 agent，先返回主 chat：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/agent chat
 </span></code></pre></div>
-<p>主 chat agent 也可以在识别到 metric-first 问题时，通过 <code>task(type="ask_metrics")</code> 自动委派给 AskMetrics。Web/API 调用方可以使用 <code>subagent_id: "ask_metrics"</code> 直接路由。</p>
+<p>要为单次问题明确指定 AskMetrics，可以使用 agent reference：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>按年份查询倒闭银行数量和倒闭银行资产总额。@Agent ask_metrics
+</span></code></pre></div>
+<p>需要连续询问多个指标问题时，可以先选择 AskMetrics，再正常提问：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/agent ask_metrics
+</span></code></pre></div>
+<p>旧的 <code>/ask_metrics &lt;问题&gt;</code> 形式不再支持。Web/API 调用方可以使用 <code>subagent_id: "ask_metrics"</code> 直接路由。</p>
 <p>AskMetrics 只作用于当前 datasource。如果用户询问其他 datasource，请先切换 datasource 再提问。</p>
 <h2 id="_4">工作方式<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>AskMetrics 遵循 metric-first 工作流：</p>
@@ -4570,27 +4572,26 @@
 </ul>
 <p>它不会返回原始 SQL，也不会编造指标值。</p>
 <h2 id="_7">配置<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
-<p>配置语义适配器后，内置 <code>ask_metrics</code> subagent 即可使用。你可以覆盖模型和轮数：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">ask_metrics</span><span class="p">:</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
+<p>当前 datasource 存在可执行指标后，内置 <code>ask_metrics</code> subagent 即可使用。你可以覆盖模型和轮数：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">ask_metrics</span><span class="p">:</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
 </span></code></pre></div>
 <h3 id="askmetrics-agent">自定义 AskMetrics Agent<a class="headerlink" href="#askmetrics-agent" title="Permanent link">&para;</a></h3>
 <p>使用 <code>type: ask_metrics</code> 可以创建具有独立名称、提示词模板或工具 allowlist 的自定义指标问答 agent：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">sales_metric_qa</span><span class="p">:</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ask_metrics</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_dimensions,semantic_tools.query_metrics"</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">"Answer</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">metric</span><span class="nv"> </span><span class="s">questions</span><span class="nv"> </span><span class="s">using</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">semantic</span><span class="nv"> </span><span class="s">layer."</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">sales_metric_qa</span><span class="p">:</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ask_metrics</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_dimensions,semantic_tools.query_metrics"</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">"Answer</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">metric</span><span class="nv"> </span><span class="s">questions</span><span class="nv"> </span><span class="s">using</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">semantic</span><span class="nv"> </span><span class="s">layer."</span>
 </span></code></pre></div>
 <p>如果省略 <code>system_prompt</code>，Datus 会先查找与自定义 agent 名称匹配的模板，例如 <code>sales_metric_qa_system_1.0.j2</code>，找不到时再回退到内置 <code>ask_metrics_system</code> 模板。</p>
 <p><code>tools</code> 可以是逗号分隔字符串，也可以是列表。默认工具面聚焦指标。自定义 agent 可以按需选择其他用户可见工具类别，但保持 AskMetrics 仅使用指标工具通常能得到更稳定的回答。</p>
@@ -4655,7 +4656,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../semantic_modeling/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Semantic Modeling">
+          <a href="../semantic_modeling/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 语义建模">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4665,7 +4666,7 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                Semantic Modeling
+                语义建模
               </div>
             </div>
           </a>

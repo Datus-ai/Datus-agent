@@ -1187,7 +1187,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -4769,12 +4769,12 @@
 <p><code>gen_job</code> 是一个内置 subagent，同时覆盖 <strong>单库 ETL</strong> 和 <strong>跨库传输</strong>。从一个或多个源表构建或更新目标表，在源库与目标库不同时执行数据传输，并校验结果。</p>
 <p>agent 会根据用户的 prompt 自动判断路径：源库和目标库相同则走单库 ETL（CREATE TABLE AS SELECT / INSERT FROM SELECT）；不同则走跨库传输（通过 <code>transfer_query_result</code>），并激活 <code>data-migration</code> skill 执行轻量对账校验。</p>
 <h2 id="_2">快速开始<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>启动 Datus CLI 后使用 gen_job subagent：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 单库 ETL</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>/gen_job<span class="w"> </span>从<span class="w"> </span>orders<span class="w"> </span>和<span class="w"> </span>customers<span class="w"> </span>表构建一个汇总表
+<p>启动 Datus CLI 后直接用自然语言描述数据管道，chat agent 可以自动派发；需要明确选择时，在请求末尾加 <code>@Agent gen_job</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># 单库 ETL
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>从 orders 和 customers 表构建一个汇总表。@Agent gen_job
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># 跨库传输</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>/gen_job<span class="w"> </span>把<span class="w"> </span>local_duckdb<span class="w"> </span>里的<span class="w"> </span>users<span class="w"> </span>表传输到<span class="w"> </span>greenplum
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a># 跨库传输
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>把 local_duckdb 里的 users 表传输到 greenplum。@Agent gen_job
 </span></code></pre></div>
 <p>chat agent 检测到 ETL 或迁移任务时也会自动委派给 gen_job。</p>
 <h2 id="_3">前置条件<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>

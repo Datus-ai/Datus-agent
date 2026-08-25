@@ -1187,7 +1187,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -4573,8 +4573,8 @@
 <li>启用语义搜索："查找与收入分析相关的查询"</li>
 </ul>
 <h2 id="_2">快速开始<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>启动 SQL 摘要生成子代理：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales<span class="w"> </span>GROUP<span class="w"> </span>BY<span class="w"> </span>region.<span class="o">(</span>You<span class="w"> </span>can<span class="w"> </span>also<span class="w"> </span>add<span class="w"> </span>some<span class="w"> </span>description<span class="w"> </span>on<span class="w"> </span>this<span class="w"> </span>SQL<span class="o">)</span>
+<p>直接描述需求，或在消息末尾指定 SQL 摘要生成 subagent：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 </span></code></pre></div>
 <h2 id="_3">工作原理<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <h3 id="_4">生成工作流<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
@@ -4612,10 +4612,10 @@
 <h3 id="_8">主题树分类<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
 <p>在 CLI 模式下通过问题中包含主题树来组织 SQL 摘要：</p>
 <p><strong>带主题树示例：</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales,<span class="w"> </span>subject_tree:<span class="w"> </span>sales/reporting/revenue_analysis
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p><strong>不带主题树示例：</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p>未提供时，agent 会基于知识库中的现有主题树和相似查询自动建议分类。</p>
 <h2 id="yaml">YAML 结构<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h2>

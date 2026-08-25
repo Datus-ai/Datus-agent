@@ -1522,7 +1522,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -4870,7 +4870,7 @@
 <p><strong>协同创作的上下文</strong></p>
 <p>大模型从数据表和 Reference SQL 起草语义模型与指标，工程师负责完善标签、元数据和主题树。</p>
 <p><strong>命令驱动的迭代</strong></p>
-<p>使用 <code>/semantic_modeling</code>、<code>/gen_sql_summary</code> 等命令创建或更新资产。已退役的 <code>/gen_semantic_model</code> 和 <code>/gen_metrics</code> 已隐藏，调用时会提示改用 <code>semantic_modeling</code>。</p>
+<p>直接描述要创建或更新的资产，主 agent 会自动委派给相应 subagent。单次明确指定可使用 <code>@Agent semantic_modeling</code>，连续操作可先使用 <code>/agent semantic_modeling</code> 选择当前 agent。</p>
 <p><strong>反馈驱动持续改进</strong></p>
 <p>通过 <code>/chat</code> 探索、成功案例回写、问题与基准循环，将使用过程转化为可复用的长期知识。</p>
 <h4 id="_8">子代理系统<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h4>

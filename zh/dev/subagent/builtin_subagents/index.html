@@ -2071,7 +2071,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -5946,6 +5946,9 @@
 </ol>
 <p>Airflow 调度和外部 BI authoring 由主 agent 直接使用已安装 plugin 完成，
 不再属于内置或自定义 subagent。</p>
+<p>在 REPL 中可以直接描述任务，由主 agent 自动派发给合适的 subagent。如需为
+单条消息明确指定，可在请求末尾加 <code>@Agent &lt;名称&gt;</code>；<code>/agent &lt;名称&gt;</code> 用于切换
+后续消息使用的当前 agent。旧的 <code>/&lt;subagent&gt; &lt;消息&gt;</code> 形式不再支持。</p>
 <h2 id="_2">配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p>内置subagent开箱即用，最小化配置。大部分设置（工具、hooks、MCP 服务器、系统提示）都是内置的。你可以在 <code>agent.yml</code> 文件中自定义：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
@@ -6013,8 +6016,8 @@
 <li><strong>元数据</strong>：名称、注释、文件路径</li>
 </ul>
 <h3 id="_4">快速开始<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
-<p>启动 SQL 摘要生成 subagent：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales<span class="w"> </span>GROUP<span class="w"> </span>BY<span class="w"> </span>region.<span class="w"> </span><span class="o">(</span>You<span class="w"> </span>can<span class="w"> </span>also<span class="w"> </span>add<span class="w"> </span>some<span class="w"> </span>description<span class="w"> </span>on<span class="w"> </span>this<span class="w"> </span>SQL<span class="o">)</span>
+<p>直接描述需求，或在消息末尾指定 SQL 摘要生成 subagent：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 </span></code></pre></div>
 <h3 id="_5">生成工作流<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
 <pre class="mermaid"><code>graph LR
@@ -6042,10 +6045,10 @@
 <h3 id="_7">主题树分类<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
 <p>在 CLI 模式下通过问题中包含主题树来组织 SQL 摘要：</p>
 <p><strong>带主题树示例：</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales,<span class="w"> </span>subject_tree:<span class="w"> </span>sales/reporting/revenue_analysis
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p><strong>不带主题树示例：</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p>未提供时，agent 会基于知识库中的现有主题树和相似查询自动建议分类。</p>
 <h3 id="yaml">YAML 结构<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h3>
@@ -6156,8 +6159,8 @@
 <li><strong>数据源（Data Source）</strong>：与数据库表的连接</li>
 </ul>
 <h3 id="_11">快速开始<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
-<p>使用 <code>datus --datasource &lt;datasource&gt;</code> 启动 Datus CLI，然后使用subagent命令：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>/gen_semantic_model<span class="w"> </span>generate<span class="w"> </span>a<span class="w"> </span>semantic<span class="w"> </span>model<span class="w"> </span><span class="k">for</span><span class="w"> </span>table<span class="w"> </span>&lt;table_name&gt;
+<p>使用 <code>datus --datasource &lt;datasource&gt;</code> 启动 Datus CLI，然后直接描述要创建的模型。主 agent 可以自动派发，也可以明确选择 <code>semantic_modeling</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>为表 &lt;table_name&gt; 生成语义模型。@Agent semantic_modeling
 </span></code></pre></div>
 <h3 id="_12">工作原理<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h3>
 <h4 id="_13">交互式生成<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h4>
@@ -6243,8 +6246,8 @@
 </ul>
 <p><strong>示例</strong>：与其重复编写 <code>SELECT SUM(revenue) / COUNT(DISTINCT customer_id)</code>，不如定义一次 <code>avg_customer_revenue</code> 指标。</p>
 <h3 id="_21">快速开始<a class="headerlink" href="#_21" title="Permanent link">&para;</a></h3>
-<p>使用 <code>datus --datasource &lt;datasource&gt;</code> 启动 Datus CLI，然后使用指标生成subagent：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>transactions,<span class="w"> </span>the<span class="w"> </span>corresponding<span class="w"> </span>question<span class="w"> </span>is<span class="w"> </span>total<span class="w"> </span>amount<span class="w"> </span>of<span class="w"> </span>all<span class="w"> </span>transactions
+<p>使用 <code>datus --datasource &lt;datasource&gt;</code> 启动 Datus CLI，然后直接描述要创建的指标。主 agent 可以自动派发，也可以明确选择 <code>semantic_modeling</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>根据 SQL SELECT SUM(amount) FROM transactions 生成“交易总金额”指标。@Agent semantic_modeling
 </span></code></pre></div>
 <h3 id="_22">工作原理<a class="headerlink" href="#_22" title="Permanent link">&para;</a></h3>
 <h4 id="_23">生成工作流<a class="headerlink" href="#_23" title="Permanent link">&para;</a></h4>
@@ -6277,16 +6280,16 @@
 <h3 id="_26">主题树分类<a class="headerlink" href="#_26" title="Permanent link">&para;</a></h3>
 <p>在 CLI 模式下通过问题中包含主题树来组织指标：</p>
 <p><strong>带主题树示例：</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>transactions,<span class="w"> </span>subject_tree:<span class="w"> </span>finance/revenue/transactions
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>根据 SQL SELECT SUM(amount) FROM transactions 生成指标，subject_tree: finance/revenue/transactions。@Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>不带主题树示例：</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>transactions
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>根据 SQL SELECT SUM(amount) FROM transactions 生成指标。@Agent semantic_modeling
 </span></code></pre></div></p>
 <p>未提供时，agent 会基于知识库中的现有指标自动建议分类。</p>
 <h3 id="_27">使用示例<a class="headerlink" href="#_27" title="Permanent link">&para;</a></h3>
 <h4 id="1">示例 1：简单聚合<a class="headerlink" href="#1" title="Permanent link">&para;</a></h4>
 <p><strong>用户输入</strong>：
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span><span class="k">for</span><span class="w"> </span>total<span class="w"> </span>order<span class="w"> </span>count
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>生成订单总数指标。@Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>智能体操作</strong>：
 1. 查找 <code>orders.yml</code> 语义模型
@@ -6305,11 +6308,12 @@
 </span></code></pre></div>
 <h4 id="2">示例 2：转化率<a class="headerlink" href="#2" title="Permanent link">&para;</a></h4>
 <p><strong>用户输入</strong>：
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/gen_metrics<span class="w"> </span>Create<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>根据以下 SQL 创建指标：
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>SELECT
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>COUNT<span class="o">(</span>DISTINCT<span class="w"> </span>CASE<span class="w"> </span>WHEN<span class="w"> </span><span class="nv">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'completed'</span><span class="w"> </span>THEN<span class="w"> </span>order_id<span class="w"> </span>END<span class="o">)</span><span class="w"> </span>/
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span>COUNT<span class="o">(</span>DISTINCT<span class="w"> </span>order_id<span class="o">)</span><span class="w"> </span>AS<span class="w"> </span>completion_rate
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>FROM<span class="w"> </span>orders
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>  COUNT(DISTINCT CASE WHEN status = 'completed' THEN order_id END) /
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>  COUNT(DISTINCT order_id) AS completion_rate
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>FROM orders
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>@Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>智能体操作</strong>：
 1. 分析 SQL 逻辑（带条件计数的比率）
@@ -6332,9 +6336,10 @@
 </span></code></pre></div>
 <h4 id="3">示例 3：复杂计算<a class="headerlink" href="#3" title="Permanent link">&para;</a></h4>
 <p><strong>用户输入</strong>：
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>average<span class="w"> </span>basket<span class="w"> </span>size<span class="w"> </span>metric:
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>SELECT<span class="w"> </span>SUM<span class="o">(</span>total_amount<span class="o">)</span><span class="w"> </span>/<span class="w"> </span>COUNT<span class="o">(</span>DISTINCT<span class="w"> </span>order_id<span class="o">)</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>FROM<span class="w"> </span>order_items
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>根据以下 SQL 生成平均客单价指标：
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>SELECT SUM(total_amount) / COUNT(DISTINCT order_id)
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>FROM order_items
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>@Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>智能体操作</strong>：
 1. 定位 <code>order_items.yml</code>
@@ -6478,8 +6483,8 @@
 <li><strong>Recommendation</strong>：使用哪些表、如何联接及关键注意事项</li>
 </ul>
 <h3 id="_37">使用方式<a class="headerlink" href="#_37" title="Permanent link">&para;</a></h3>
-<p>explore subagent 通常由聊天助手通过 <code>task(type="explore")</code> 自动调用，也可手动启动：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>/explore<span class="w"> </span>Discover<span class="w"> </span>tables<span class="w"> </span>related<span class="w"> </span>to<span class="w"> </span>customer<span class="w"> </span>revenue<span class="w"> </span>and<span class="w"> </span>find<span class="w"> </span>relevant<span class="w"> </span>metrics
+<p>explore subagent 通常由聊天助手通过 <code>task(type="explore")</code> 自动调用。如需为单条消息明确指定，可在末尾加 <code>@Agent explore</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>查找与客户收入相关的表和指标。@Agent explore
 </span></code></pre></div>
 <hr />
 <h2 id="gen_sql">gen_sql<a class="headerlink" href="#gen_sql" title="Permanent link">&para;</a></h2>
@@ -6525,8 +6530,8 @@
 </span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="p">}</span>
 </span></code></pre></div></p>
 <h3 id="_43">使用方式<a class="headerlink" href="#_43" title="Permanent link">&para;</a></h3>
-<p>gen_sql subagent 通常由聊天助手通过 <code>task(type="gen_sql")</code> 自动调用来处理复杂查询，也可手动启动：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>/gen_sql<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>query<span class="w"> </span>to<span class="w"> </span>calculate<span class="w"> </span>customer<span class="w"> </span>lifetime<span class="w"> </span>value<span class="w"> </span>with<span class="w"> </span>cohort<span class="w"> </span>analysis
+<p>gen_sql subagent 通常由聊天助手通过 <code>task(type="gen_sql")</code> 自动调用来处理复杂查询。如需为单条消息明确指定，可在末尾加 <code>@Agent gen_sql</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>生成使用 cohort 分析计算客户生命周期价值的查询。@Agent gen_sql
 </span></code></pre></div>
 <hr />
 <h2 id="gen_report">gen_report<a class="headerlink" href="#gen_report" title="Permanent link">&para;</a></h2>
@@ -6595,8 +6600,8 @@
 </span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="p">}</span>
 </span></code></pre></div>
 <h3 id="_49">使用方式<a class="headerlink" href="#_49" title="Permanent link">&para;</a></h3>
-<p>gen_report subagent 可以手动启动，也可以由聊天助手通过 <code>task(type="gen_report")</code> 调用：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>/gen_report<span class="w"> </span>分析上季度的收入趋势并提供洞察
+<p>gen_report subagent 可以通过 <code>@Agent gen_report</code> 为单条消息明确指定，也可以由聊天助手通过 <code>task(type="gen_report")</code> 自动调用：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>分析上季度的收入趋势并提供洞察。@Agent gen_report
 </span></code></pre></div>
 <h3 id="subagent_1">自定义报告 Subagent<a class="headerlink" href="#subagent_1" title="Permanent link">&para;</a></h3>
 <p>你可以在 <code>agent.yml</code> 中配置使用 gen_report 节点类的自定义 subagent：</p>
@@ -6607,7 +6612,7 @@
 </span><span id="__span-29-5"><a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"semantic_tools.*,</span><span class="nv"> </span><span class="s">db_tools.*,</span><span class="nv"> </span><span class="s">context_search_tools.*"</span>
 </span><span id="__span-29-6"><a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
-<p>然后通过 <code>/attribution_report 分析活动 X 的转化归因</code> 使用。</p>
+<p>然后输入 <code>分析活动 X 的转化归因。@Agent attribution_report</code>。</p>
 <hr />
 <h2 id="gen_skill">gen_skill<a class="headerlink" href="#gen_skill" title="Permanent link">&para;</a></h2>
 <h3 id="_50">概览<a class="headerlink" href="#_50" title="Permanent link">&para;</a></h3>
@@ -6635,8 +6640,8 @@
 </span><span id="__span-31-6"><a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="p">}</span>
 </span></code></pre></div>
 <h3 id="_54">使用方式<a class="headerlink" href="#_54" title="Permanent link">&para;</a></h3>
-<p>直接启动：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>/gen_skill<span class="w"> </span>创建一个在发布前校验每日收入仪表盘的<span class="w"> </span>skill
+<p>为单条消息明确指定：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>创建一个在发布前校验每日收入仪表盘的 skill。@Agent gen_skill
 </span></code></pre></div>
 <p>也可以由聊天 agent 通过 <code>task(type="gen_skill")</code> 自动委派。</p>
 <hr />

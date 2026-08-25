@@ -1187,7 +1187,7 @@
   <span class="md-ellipsis">
     
   
-    Semantic Modeling
+    语义建模
   
 
     
@@ -4517,12 +4517,12 @@
 </ol>
 <p>agent 分析输入、生成 DDL、请求用户确认、执行 DDL 并验证结果。</p>
 <h2 id="_2">快速开始<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>启动 Datus CLI 后使用 gen_table subagent：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># SQL 模式：从 JOIN 查询创建宽表</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>/gen_table<span class="w"> </span>CREATE<span class="w"> </span>TABLE<span class="w"> </span>wide_orders<span class="w"> </span>AS<span class="w"> </span>SELECT<span class="w"> </span>o.*,<span class="w"> </span>c.name<span class="w"> </span>FROM<span class="w"> </span>orders<span class="w"> </span>o<span class="w"> </span>JOIN<span class="w"> </span>customers<span class="w"> </span>c<span class="w"> </span>ON<span class="w"> </span>o.customer_id<span class="w"> </span><span class="o">=</span><span class="w"> </span>c.id
+<p>启动 Datus CLI 后直接描述要创建的表，chat agent 可以自动派发；需要明确选择时，在请求末尾加 <code>@Agent gen_table</code>：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># SQL 模式：从 JOIN 查询创建宽表
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>根据以下查询创建 wide_orders 表：SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># 描述模式：用自然语言描述</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>/gen_table<span class="w"> </span>创建一个<span class="w"> </span>user_profiles<span class="w"> </span>表，包含<span class="w"> </span>id<span class="w"> </span><span class="o">(</span>int<span class="o">)</span>,<span class="w"> </span>name<span class="w"> </span><span class="o">(</span>varchar<span class="o">)</span>,<span class="w"> </span>email<span class="w"> </span><span class="o">(</span>varchar<span class="o">)</span>,<span class="w"> </span>created_at<span class="w"> </span><span class="o">(</span>timestamp<span class="o">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a># 描述模式：用自然语言描述
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>创建一个 user_profiles 表，包含 id (int)、name (varchar)、email (varchar) 和 created_at (timestamp)。@Agent gen_table
 </span></code></pre></div>
 <p>chat agent 检测到建表任务时也会自动委派给 gen_table。</p>
 <h2 id="_3">内置工具<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
