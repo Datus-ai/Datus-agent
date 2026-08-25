@@ -2,7 +2,7 @@
 
 ## Overview
 
-`ask_metrics` is a built-in metric question-answering subagent. It answers questions from existing semantic metrics instead of exploring raw tables or generating SQL.
+`ask_metrics` is a built-in metric question-answering subagent. It answers questions from existing semantic metrics instead of exploring raw tables or asking the model to write ad hoc SQL; the active semantic adapter compiles and executes the query.
 
 Use AskMetrics when the user asks for:
 
@@ -15,40 +15,47 @@ AskMetrics is intentionally narrow. If no existing metric can answer the questio
 
 ## Prerequisites
 
-AskMetrics needs a configured semantic layer and published metrics.
+AskMetrics needs executable semantic metrics on the current datasource. Dosi is the built-in default semantic adapter, so no `semantic_layer` entry is needed when another adapter is not configured. See [Semantic Layer Configuration](../configuration/semantic_layer.md) for other adapter options.
 
-Configure a semantic adapter in `agent.yml`. For example, MetricFlow:
+Metrics can come from existing semantic-layer assets or from the Dosi-only [`semantic_modeling`](semantic_modeling.md) subagent. After `semantic_modeling` successfully returns `generated`, it validates the target YAML and syncs the metrics to the Knowledge Base. They are immediately available on the same datasource without a manual publish, import, or Datus restart. Existing MetricFlow and OSI projects remain queryable, but semantic authoring is unavailable until the project uses Dosi.
 
-```yaml
-agent:
-  services:
-    semantic_layer:
-      metricflow: {}
-```
+A metric subject tree is optional, but recommended because AskMetrics uses it as a routing catalog before searching.
 
-See [Semantic Layer Configuration](../configuration/semantic_layer.md) for full semantic adapter options.
+## Quick Start: Query Newly Generated Metrics
 
-Metrics can come from existing semantic-layer assets or from the Dosi-only
-[`semantic_modeling`](semantic_modeling.md) subagent. Existing MetricFlow and OSI
-projects remain queryable, but semantic authoring is unavailable until the project
-uses Dosi. A metric subject tree is optional, but recommended because AskMetrics
-uses it as a routing catalog before searching.
-
-## Quick Start
-
-Start Datus with the datasource that owns the metrics:
+Continue from the DuckDB example in [Semantic Modeling](semantic_modeling.md#quickstart-with-the-built-in-duckdb-sample) and start Datus with the same datasource:
 
 ```bash
-datus --datasource production
+datus --datasource duckdb_demo
 ```
 
-Ask a metric question through the built-in subagent:
+After creating the `bank_failures` model, ask the question directly in the main chat. The main agent delegates it to AskMetrics automatically:
 
-```bash
-/ask_metrics What was total revenue last month by customer segment?
+```text
+Show bank failure count and failed assets by year.
 ```
 
-The main chat agent can also delegate to AskMetrics automatically through `task(type="ask_metrics")` when the question is metric-first. Web/API callers can route directly by using `subagent_id: "ask_metrics"`.
+AskMetrics matches the business wording against the subject tree and metric definitions, selecting the generated `bank_failure_count` and `failed_assets_million` metrics without requiring the user to know their names. This query uses yearly `date` buckets. The real test returned 14 yearly groups; for example, 2008 returned `26` and `768576.8`, while 2024 returned `2` and `6107.8`.
+
+If `/agent semantic_modeling` was used to make the authoring agent current, return to the main chat first:
+
+```text
+/agent chat
+```
+
+To route one question explicitly, use an agent reference:
+
+```text
+Show the number of failed banks and their total assets by year. @Agent ask_metrics
+```
+
+For several consecutive metric questions, select AskMetrics first and then enter normal messages:
+
+```text
+/agent ask_metrics
+```
+
+The legacy `/ask_metrics <question>` form is no longer supported. Web/API callers can route directly by using `subagent_id: "ask_metrics"`.
 
 AskMetrics is scoped to the current datasource. If the user asks for another datasource, switch datasource first and ask again.
 
@@ -108,7 +115,7 @@ It does not return raw SQL and does not invent metric values.
 
 ## Configuration
 
-The built-in `ask_metrics` subagent works out of the box once the semantic adapter is configured. You can override model and turn budget:
+The built-in `ask_metrics` subagent works once the current datasource has executable metrics. You can override its model and turn budget:
 
 ```yaml
 agent:
@@ -116,7 +123,6 @@ agent:
     ask_metrics:
       model: claude
       max_turns: 12
-      semantic_adapter: metricflow
       subject_tree_prompt_limit: 100
 ```
 

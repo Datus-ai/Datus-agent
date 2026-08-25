@@ -11,14 +11,14 @@ agent 分析输入、生成 DDL、请求用户确认、执行 DDL 并验证结�
 
 ## 快速开始
 
-启动 Datus CLI 后使用 gen_table subagent：
+启动 Datus CLI 后直接描述要创建的表，chat agent 可以自动派发；需要明确选择时，在请求末尾加 `@Agent gen_table`：
 
-```bash
+```text
 # SQL 模式：从 JOIN 查询创建宽表
-/gen_table CREATE TABLE wide_orders AS SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id
+根据以下查询创建 wide_orders 表：SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
 
 # 描述模式：用自然语言描述
-/gen_table 创建一个 user_profiles 表，包含 id (int), name (varchar), email (varchar), created_at (timestamp)
+创建一个 user_profiles 表，包含 id (int)、name (varchar)、email (varchar) 和 created_at (timestamp)。@Agent gen_table
 ```
 
 chat agent 检测到建表任务时也会自动委派给 gen_table。

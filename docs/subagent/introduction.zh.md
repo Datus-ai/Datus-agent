@@ -79,7 +79,7 @@ agent:
 
 ## 如何使用 Subagent
 
-### 方法 1：CLI 斜杠命令
+### 方法 1：CLI 自动派发或指定 Agent
 
 先启动 CLI：
 
@@ -87,12 +87,14 @@ agent:
 datus --datasource production
 ```
 
-然后使用 `/[name]` 启动 subagent：
+通常直接描述需求，主 agent 会自动派发。要为单次消息明确指定 subagent，在消息末尾添加 `@Agent <name>`：
 
 ```text
-/semantic_modeling 根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders
-/finance_report 分析本季度与上季度的收入变化
+根据这段 SQL 生成收入指标：SELECT SUM(revenue) FROM orders。@Agent semantic_modeling
+分析本季度与上季度的收入变化。@Agent finance_report
 ```
+
+需要连续使用同一个 subagent 时，先运行 `/agent <name>`，再输入正常消息。旧的 `/<name> <message>` 形式不再支持。
 
 ### 方法 2：Web 界面
 

@@ -67,7 +67,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 **命令驱动的迭代**
 
-使用 `/semantic_modeling`、`/gen_sql_summary` 等命令创建或更新资产。已退役的 `/gen_semantic_model` 和 `/gen_metrics` 已隐藏，调用时会提示改用 `semantic_modeling`。
+直接描述要创建或更新的资产，主 agent 会自动委派给相应 subagent。单次明确指定可使用 `@Agent semantic_modeling`，连续操作可先使用 `/agent semantic_modeling` 选择当前 agent。
 
 **反馈驱动持续改进**
 

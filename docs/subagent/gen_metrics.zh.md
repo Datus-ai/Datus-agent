@@ -7,7 +7,7 @@
 在 Dosi 项目中使用 `semantic_modeling`，统一创作 metric 及其依赖的 dataset 和 relationship。该流程会校验完整的 Dosi 模型、检查生成的指标，并将 YAML 源文件与 Knowledge Base 完整对账。
 
 ```text
-/semantic_modeling 根据这些 SQL 证据定义收入和订单数指标。
+根据这些 SQL 证据定义收入和订单数指标。@Agent semantic_modeling
 ```
 
 MetricFlow 和 OSI 项目继续支持已有指标的执行和查询，但不能生成新指标。要修改已有 OSI YAML，请先把项目的 semantic type 改为 Dosi，再使用 `semantic_modeling`。不支持迁移 MetricFlow YAML。

@@ -68,7 +68,7 @@ LLMs draft semantic models and metrics from tables and reference SQL, while engi
 
 **Command-driven iteration**
 
-Commands like `/semantic_modeling` and `/gen_sql_summary` create and update assets. The retired `/gen_semantic_model` and `/gen_metrics` names are hidden and return guidance to use `semantic_modeling`.
+Describe the asset to create or update and the main agent delegates to the appropriate subagent automatically. Use `@Agent semantic_modeling` to route one request explicitly, or `/agent semantic_modeling` to select it for consecutive turns.
 
 **Feedback drives continuous improvement**
 
