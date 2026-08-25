@@ -4,7 +4,7 @@ API routes for Explorer endpoints.
 
 from fastapi import APIRouter
 
-from datus.api.deps import ServiceDep, SubAgentDep
+from datus.api.deps import AppContextDep, ServiceDep, SubAgentDep
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
     CreateDirectoryInput,
@@ -124,9 +124,13 @@ async def preview_metric(
     request: MetricPreviewInput,
     svc: ServiceDep,
     sub_agent: SubAgentDep,
+    ctx: AppContextDep,
 ) -> Result[MetricPreviewData]:
     """Compile a saved metric to SQL for preview."""
-    return await svc.explorer_for(sub_agent).preview_metric(request)
+    # The compiled SQL is handed straight to the result panel, which runs it —
+    # so a metric row policy has to narrow it here, while the datasets it
+    # matches on are still known. Nothing downstream can put it back.
+    return await svc.explorer_for(sub_agent).preview_metric(request, policy_context=ctx.policy_context)
 
 
 @router.post(

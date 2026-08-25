@@ -3,7 +3,7 @@ Explorer service for catalog and subject tree management.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
@@ -821,7 +821,44 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    async def preview_metric(self, request: MetricPreviewInput) -> Result[MetricPreviewData]:
+    def _narrow_by_metric_policy(
+        self, tools, metric_name: str, where: Optional[str], policy_context: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Add any metric row policy's condition to ``where``.
+
+        Runs the same transformer chain the agent's ``query_metrics`` goes
+        through, via the node-free entry point — there is no node here.
+        Returns ``where`` unchanged when no policy matches or none is
+        configured; raises ``ToolTransformDenied`` when a transformer refuses.
+        """
+        from datus.tools.middleware import transform_tool_args
+
+        effective = policy_context
+        if effective is None:
+            effective = getattr(self.agent_config, "policy_context", None)
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"metrics": [metric_name], "where": where},
+            # Lazy: reading the metric catalogue costs an adapter round trip,
+            # and a project with no policy plugin has nothing to spend it on.
+            context=lambda: {
+                "agent_config": self.agent_config,
+                "policy_context": dict(effective) if isinstance(effective, dict) else {},
+                "metric_datasets": tools.metric_datasets(),
+            },
+            active_plugin_names=(
+                self.agent_config.active_plugin_names() if hasattr(self.agent_config, "active_plugin_names") else None
+            ),
+        )
+        narrowed = args.get("where")
+        if narrowed != where:
+            logger.info(f"Metric policy narrowed the preview of '{metric_name}'")
+        return narrowed
+
+    async def preview_metric(
+        self, request: MetricPreviewInput, policy_context: Optional[Dict[str, Any]] = None
+    ) -> Result[MetricPreviewData]:
         """Compile a saved metric into runnable SQL via the semantic adapter.
 
         Uses dry-run so nothing executes here: the frontend hands the returned
@@ -830,8 +867,21 @@ class ExplorerService:
         When the adapter rejects the query — unsupported dimensions, or a
         validation failure such as a grain with no time dimension to hang it on
         — returns a structured ``preflight_error`` instead of SQL.
+
+        A metric row policy narrows the query here, before the compile. It has
+        to be here and not at execution time: the policy matches on the
+        datasets a metric reads, and once the adapter has compiled there is
+        only SQL left, where that dataset is no longer visible. The SQL this
+        returns is therefore the query the caller would actually run — which
+        matters because it is also the SQL shown in the preview panel.
+
+        Every caller of this method reaches the adapter by a direct Python call
+        rather than the agent's tool loop, so the transformer that enforces
+        those policies for ``query_metrics`` never wrapped them. ``policy_context``
+        falls back to the one on the config for callers that pin it there.
         """
         from datus.api.models.config_models import ErrorCode
+        from datus.tools.middleware import ToolTransformDenied
 
         try:
             self._require_datasource()
@@ -869,6 +919,18 @@ class ExplorerService:
                     errorMessage="Semantic adapter is not available; cannot preview this metric.",
                 )
 
+            try:
+                where = self._narrow_by_metric_policy(tools, metric_name, request.where, policy_context)
+            except ToolTransformDenied as exc:
+                # The transformer declines rather than guesses when it cannot
+                # resolve which datasets a metric reads. Its own words name what
+                # is unresolvable, so they go out as-is.
+                return Result[MetricPreviewData](
+                    success=False,
+                    errorCode=ErrorCode.POLICY_DENIED,
+                    errorMessage=str(exc),
+                )
+
             # query_metrics is sync (it wraps an async adapter call); run it off
             # the event loop. dry_run renders SQL and runs the dimension preflight
             # without executing anything.
@@ -879,7 +941,7 @@ class ExplorerService:
                 time_start=request.time_start,
                 time_end=request.time_end,
                 time_granularity=request.time_granularity,
-                where=request.where,
+                where=where,
                 limit=request.limit,
                 order_by=request.order_by or None,
                 dry_run=True,

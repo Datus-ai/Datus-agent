@@ -757,6 +757,80 @@ class TestExplorerServicePreviewMetric:
 
         return FuncToolResult(success=success, error=error, result=result)
 
+    async def test_metric_policy_narrows_the_compiled_query(self, monkeypatch, real_agent_config):
+        """A metric row policy has to be applied before the compile.
+
+        It matches on the datasets a metric reads; after compilation there is
+        only SQL, where that dataset is no longer visible. Every caller of this
+        method reaches the adapter by a direct Python call, so the transformer
+        that enforces these for the agent's ``query_metrics`` never wrapped it.
+        """
+        from datus.api.models.explorer_models import MetricPreviewInput
+        from datus.api.services.explorer_service import ExplorerService
+
+        seen = {}
+
+        def fake_query_metrics(**kwargs):
+            seen["where"] = kwargs.get("where")
+            return self._func_result(result={"metadata": {"sql": "SELECT 1"}})
+
+        tools = self._patch_tools(monkeypatch, adapter=object(), query_metrics=fake_query_metrics)
+        tools.metric_datasets = lambda: {"revenue": ["orders"]}
+
+        def fake_transform(tool_name, args, *, context, **kwargs):
+            seen["context"] = context() if callable(context) else context
+            return {**args, "where": "(a = 1) AND orders.store_id IN ('S1')"}
+
+        import datus.tools.middleware as middleware_mod
+
+        monkeypatch.setattr(middleware_mod, "transform_tool_args", fake_transform)
+
+        service = ExplorerService(agent_config=real_agent_config)
+        monkeypatch.setattr(service, "_metric_is_in_scope", lambda path: True)
+        monkeypatch.setattr(service, "_require_datasource", lambda: None)
+
+        ctx = {"row_filter": {"access_mode": "scoped", "store_ids": ["S1"]}}
+        await service.preview_metric(
+            MetricPreviewInput(subject_path=["a", "revenue"], where="a = 1"),
+            policy_context=ctx,
+        )
+
+        # The adapter compiles the narrowed query, not the caller's.
+        assert seen["where"] == "(a = 1) AND orders.store_id IN ('S1')"
+        assert seen["context"]["policy_context"] == ctx
+        assert seen["context"]["metric_datasets"] == {"revenue": ["orders"]}
+
+    async def test_metric_policy_refusal_becomes_policy_denied(self, monkeypatch, real_agent_config):
+        """A transformer that cannot resolve datasets refuses; the caller has
+        to hear that rather than receive an unfiltered query."""
+        from datus.api.models.config_models import ErrorCode
+        from datus.api.models.explorer_models import MetricPreviewInput
+        from datus.api.services.explorer_service import ExplorerService
+        from datus.tools.middleware import ToolTransformDenied
+
+        tools = self._patch_tools(monkeypatch, adapter=object(), query_metrics=lambda **k: None)
+        tools.metric_datasets = lambda: {}
+
+        def refuse(tool_name, args, *, context, **kwargs):
+            raise ToolTransformDenied("the semantic adapter reports no dataset for them")
+
+        import datus.tools.middleware as middleware_mod
+
+        monkeypatch.setattr(middleware_mod, "transform_tool_args", refuse)
+
+        service = ExplorerService(agent_config=real_agent_config)
+        monkeypatch.setattr(service, "_metric_is_in_scope", lambda path: True)
+        monkeypatch.setattr(service, "_require_datasource", lambda: None)
+
+        result = await service.preview_metric(
+            MetricPreviewInput(subject_path=["a", "revenue"]),
+            policy_context={},
+        )
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.POLICY_DENIED
+        assert "no dataset" in result.errorMessage
+
     async def test_empty_subject_path_fails(self, real_agent_config):
         """Empty subject path is rejected before touching the adapter."""
         from datus.api.models.explorer_models import MetricPreviewInput

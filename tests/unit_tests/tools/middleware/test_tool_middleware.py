@@ -836,3 +836,31 @@ class TestTransformToolArgsWithoutANode:
                 context={},
                 transformers_by_pattern={"semantic_tools.query_metrics": [later]},
             )
+
+    def test_a_callable_context_is_resolved_only_when_something_matches(self):
+        """Assembling the context can cost an adapter round trip.
+
+        A deployment with no policy plugin should not pay to read a metric
+        catalogue that no transformer will look at.
+        """
+        calls = []
+
+        def build_context():
+            calls.append(1)
+            return {"policy_context": {}}
+
+        transform_tool_args(
+            "query_metrics",
+            {},
+            context=build_context,
+            transformers_by_pattern={"db_tools.execute_sql": [lambda n, a, c: a]},
+        )
+        assert calls == []
+
+        transform_tool_args(
+            "query_metrics",
+            {},
+            context=build_context,
+            transformers_by_pattern={"semantic_tools.query_metrics": [lambda n, a, c: a]},
+        )
+        assert calls == [1]

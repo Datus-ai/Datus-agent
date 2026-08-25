@@ -39,7 +39,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from agents import FunctionTool
 
@@ -208,7 +208,7 @@ def transform_tool_args(
     tool_name: str,
     args: Dict[str, Any],
     *,
-    context: Dict[str, Any],
+    context: Union[Dict[str, Any], ContextProvider],
     transformers_by_pattern: Optional[Dict[str, List[ToolTransformer]]] = None,
     active_plugin_names: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
@@ -223,7 +223,10 @@ def transform_tool_args(
     ``context`` is the caller's to build — the node version reads
     ``policy_context`` and the metric catalogue off the node, and there is no
     node here. A transformer needs at least ``agent_config``,
-    ``policy_context`` and, for metric policies, ``metric_datasets``.
+    ``policy_context`` and, for metric policies, ``metric_datasets``. Pass a
+    callable when assembling it costs something: it is called only once a
+    transformer actually matches, so a deployment with no policy plugin never
+    pays to read a metric catalogue nobody will look at.
 
     Fail-closed like the wrapper: a transformer that raises, or returns
     anything but a dict, denies the call. The wrapper turns that into a payload
@@ -246,11 +249,12 @@ def transform_tool_args(
     if not matched:
         return args
 
+    resolved_context = context() if callable(context) else context
     current = args
     for transformer in matched:
         transformer_name = getattr(transformer, "__name__", repr(transformer))
         try:
-            result = transformer(tool_name, current, context)
+            result = transformer(tool_name, current, resolved_context)
         except Exception as exc:
             logger.warning("Tool transformer %s denied '%s': %s", transformer_name, tool_name, exc)
             raise ToolTransformDenied(str(exc) or type(exc).__name__) from exc

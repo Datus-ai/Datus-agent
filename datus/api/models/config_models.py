@@ -23,6 +23,11 @@ class ErrorCode(str, Enum):
     # never attempted against the database. Distinct from SQL_EXECUTION_ERROR so
     # callers can tell "policy says no, do not retry" from "the engine errored".
     SQL_READ_ONLY = "SQL_READ_ONLY"
+    # Refused by a row policy — the caller may not read these rows, as opposed
+    # to the request being malformed. Same distinction ErrorCode.POLICY_DENIED
+    # draws on the tool side, and the reason a viewer renders it differently:
+    # a refusal is not worth a retry button.
+    POLICY_DENIED = "POLICY_DENIED"
     TOOL_EXECUTION_ERROR = "TOOL_EXECUTION_ERROR"
     DATABASE_CONNECTION_ERROR = "DATABASE_CONNECTION_ERROR"
     # A datasource's shared connector was busy for longer than the caller was
