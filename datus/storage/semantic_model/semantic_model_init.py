@@ -418,7 +418,11 @@ def sync_semantic_yaml_tree(
 
     files = semantic_yaml_files(target)
     if not files:
-        return True, f"No semantic YAML found under {target}", 0
+        # Deleting the last model is the strongest form of the case this
+        # prunes for, so it cannot return before reconciling.
+        pruned = _prune_rows_for_missing_artifacts(agent_config, []) if target.is_dir() else 0
+        suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
+        return True, f"No semantic YAML found under {target}{suffix}", 0
 
     from datus.tools.func_tool.generation_tools import GenerationTools
 

@@ -44,14 +44,16 @@ class OsiDataset:
     name: str
     source: OsiSource
     primary_key: list[str] = field(default_factory=list)
-    # Each entry is one key, which may span several columns.
-    unique_keys: list[list[str]] = field(default_factory=list)
     time_dimension: OsiDimension | None = None
     dimensions: list[OsiDimension] = field(default_factory=list)
     fields: list[OsiDimension] = field(default_factory=list)
     description: str = ""
     ai_context: Any = None
     custom_extensions: list[dict[str, Any]] = field(default_factory=list)
+    # Appended rather than grouped with primary_key: inserting a field would
+    # shift every positional argument after it. Each entry is one key, which
+    # may span several columns.
+    unique_keys: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -193,7 +195,10 @@ def _unique_keys(value: Any) -> list[list[str]]:
         return []
     keys: list[list[str]] = []
     for entry in value:
-        columns = _names(entry) if isinstance(entry, list) else _names([entry])
+        raw = entry if isinstance(entry, list) else [entry]
+        # Only strings name a column. Coercing anything else would persist a
+        # key like ["None"] that resolves to no column at all.
+        columns = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
         if columns:
             keys.append(columns)
     return keys

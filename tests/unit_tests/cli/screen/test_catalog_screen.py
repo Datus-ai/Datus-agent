@@ -283,3 +283,61 @@ def test_panel_omits_the_unique_keys_line_when_there_are_none():
     console.print(group)
 
     assert "Unique keys" not in console.export_text()
+
+
+def test_columns_table_lists_a_renamed_field_once():
+    """A field whose expression names a different column is reachable under
+    both names, but those are lookup keys -- emitting a row per alias would
+    count the field twice."""
+    screen = _screen_with_columns([{"name": "created_at", "type": "timestamp", "comment": ""}])
+    record = {
+        "table_name": "orders",
+        "modelled_fields": [
+            {"name": "order_date", "expr": "orders.created_at", "description": "Business date"},
+        ],
+    }
+
+    text = _render_columns_text(screen, record)
+
+    assert "1 modelled / 1 total" in text
+    assert text.count("Business date") == 1
+
+
+def test_rendering_after_table_details_makes_no_second_datasource_request():
+    """The invariant is the request count, not which helper runs: the
+    table-details pane has already fetched this schema, and a slow datasource
+    must not be hit again from the Textual event thread."""
+    from datus.cli.screen.catalog_screen import _fetch_schema_with_cache
+
+    _fetch_schema_with_cache.cache_clear()
+    try:
+        screen = _screen_with_columns([{"name": "id", "type": "bigint", "comment": ""}])
+        record = {"table_name": "orders", "database_name": "shop", "modelled_fields": []}
+
+        screen._get_cached_schema("", "shop", "", "orders")  # what the details pane does first
+        assert screen.db_connector.get_schema.call_count == 1
+
+        screen._create_columns_table(record)
+
+        assert screen.db_connector.get_schema.call_count == 1
+    finally:
+        _fetch_schema_with_cache.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "expr",
+    ["orders.`created_at`", '"orders"."created_at"', "orders.created_at", "created_at"],
+)
+def test_columns_table_matches_a_quoted_qualified_expression(expr):
+    """A qualifier carries its own quotes, so the basename has to be unquoted
+    after the split, not before it."""
+    screen = _screen_with_columns([{"name": "created_at", "type": "timestamp", "comment": ""}])
+    record = {
+        "table_name": "orders",
+        "modelled_fields": [{"name": "order_date", "expr": expr, "description": "Business date"}],
+    }
+
+    text = _render_columns_text(screen, record)
+
+    assert "1 modelled / 1 total" in text
+    assert "Business date" in text

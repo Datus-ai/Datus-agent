@@ -602,32 +602,38 @@ class CatalogScreen(ContextScreen):
         """
         from rich import box
 
-        modelled = {
-            str(field.get("name", "")).strip("`").lower(): field
-            for field in semantic_record.get("modelled_fields") or []
-            if field.get("name")
-        }
-        # An expression may name the column rather than the field.
-        for field in semantic_record.get("modelled_fields") or []:
-            expr = str(field.get("expr", "") or "").strip("`").lower()
-            if expr:
-                modelled.setdefault(expr.rsplit(".", 1)[-1], field)
+        fields = [f for f in semantic_record.get("modelled_fields") or [] if f.get("name")]
+        # Aliases resolve a physical column to its field; they are lookup keys
+        # only. Emitting a row per alias would list a field whose expression
+        # names a different column twice.
+        by_alias: Dict[str, Dict[str, Any]] = {}
+        for field in fields:
+            by_alias.setdefault(str(field.get("name", "")).strip("`").lower(), field)
+        for field in fields:
+            # Strip after taking the basename: a qualifier carries its own
+            # quotes, so `orders.\`created_at\`` would otherwise keep the
+            # leading backtick and match no column.
+            expr = str(field.get("expr", "") or "").lower()
+            basename = expr.rsplit(".", 1)[-1].strip("`").strip('"').strip()
+            if basename:
+                by_alias.setdefault(basename, field)
 
         physical = self._physical_columns(semantic_record)
-        if not physical and not modelled:
+        if not physical and not fields:
             return None
 
         rows: List[tuple] = []
-        seen: set = set()
+        matched: set = set()
         for column in physical:
             name = str(column.get("name", ""))
-            field = modelled.get(name.strip("`").lower())
-            seen.add(name.strip("`").lower())
+            field = by_alias.get(name.strip("`").lower())
+            if field is not None:
+                matched.add(id(field))
             rows.append((name, str(column.get("type", "")), field, str(column.get("comment", "") or "")))
-        # A field whose column the connector did not report still belongs here;
-        # a computed expression has no physical column of its own.
-        for key, field in modelled.items():
-            if key not in seen:
+        # A field the connector reported no column for still belongs here: a
+        # computed expression has no physical column of its own.
+        for field in fields:
+            if id(field) not in matched:
                 rows.append((str(field.get("name", "")), "", field, ""))
 
         modelled_count = sum(1 for _, _, field, _ in rows if field)
@@ -670,12 +676,15 @@ class CatalogScreen(ContextScreen):
         if not table_name or self.db_connector is None:
             return []
         try:
+            # Through the screen's LRU cache: the table details pane has
+            # usually fetched this already, and a slow datasource must not be
+            # hit twice from the Textual event thread.
             return list(
-                self.db_connector.get_schema(
-                    catalog_name=semantic_record.get("catalog_name", "") or self.catalog_name,
-                    database_name=semantic_record.get("database_name", "") or self.database_name,
-                    schema_name=semantic_record.get("schema_name", "") or "",
-                    table_name=table_name,
+                self._get_cached_schema(
+                    semantic_record.get("catalog_name", "") or self.catalog_name,
+                    semantic_record.get("database_name", "") or self.database_name,
+                    semantic_record.get("schema_name", "") or "",
+                    table_name,
                 )
                 or []
             )

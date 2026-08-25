@@ -337,3 +337,31 @@ def test_sync_semantic_yaml_tree_drops_rows_whose_file_is_gone(tmp_path, real_ag
     assert successful is True
     surviving = {row["semantic_model_name"] for row in rag.storage.table.search_all(limit=100).to_pylist()}
     assert surviving == {"ops"}
+
+
+def test_sync_semantic_yaml_tree_prunes_when_the_last_file_is_deleted(tmp_path, real_agent_config):
+    """Deleting every model is the strongest form of the case pruning exists
+    for, and the empty-directory branch used to return before reconciling."""
+    from datus.storage.semantic_dataset.store import KIND_DATASET, SemanticDatasetRAG, dataset_row_id
+
+    rag = SemanticDatasetRAG(real_agent_config)
+    rag.upsert_batch(
+        [
+            {
+                "id": dataset_row_id("finance", "orders"),
+                "kind": KIND_DATASET,
+                "semantic_model_name": "finance",
+                "dataset_name": "orders",
+                "name": "orders",
+                "source_table": "orders",
+                "search_text": "finance",
+                "yaml_path": str(tmp_path / "finance.yml"),
+            }
+        ]
+    )
+
+    successful, message, synced = sync_semantic_yaml_tree(real_agent_config, str(tmp_path))
+
+    assert successful is True and synced == 0
+    assert "pruned 1 deleted artifact(s)" in message
+    assert rag.storage.table.search_all(limit=100).to_pylist() == []
