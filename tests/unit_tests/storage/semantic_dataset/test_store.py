@@ -1,6 +1,8 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pyarrow as pa
 import pytest
 
 from datus.storage.semantic_dataset.store import (
@@ -367,3 +369,102 @@ def test_resolve_object_kinds_rejects_metrics():
     """An empty result would read as "no such metric" instead of "wrong tool"."""
     with pytest.raises(MetricKindNotHere, match="search_metrics"):
         resolve_object_kinds(["metric"])
+
+
+# ---------------------------------------------------------------------------
+# Sub-agent table scope, against real storage
+# ---------------------------------------------------------------------------
+
+
+def _dataset_row(source_table: str, *, database_name: str = "") -> dict:
+    """A minimal ``kind=dataset`` row bound to one physical table."""
+    return {
+        "id": f"dataset:sales:{source_table}",
+        "kind": "dataset",
+        "semantic_model_name": "sales",
+        "dataset_name": source_table,
+        "name": source_table,
+        "source_table": source_table,
+        "source_query": "",
+        "catalog_name": "",
+        "database_name": database_name,
+        "schema_name": "",
+        "description": f"{source_table} dataset",
+        "ai_context_json": "",
+        "search_text": f"{source_table} dataset",
+        "expr": "",
+        "field_type": "",
+        "is_dimension": False,
+        "is_time": False,
+        "is_primary_key": False,
+        "time_granularity": "",
+        "from_dataset": "",
+        "to_dataset": "",
+        "from_columns_json": "",
+        "to_columns_json": "",
+        "rel_type": "",
+        "join_type": "",
+        "yaml_path": "",
+        "updated_at": pa.scalar(0, type=pa.timestamp("ms")),
+    }
+
+
+class TestSubAgentTableScope:
+    """A sub-agent scoped to tables must still see the datasets bound to them.
+
+    These run against real storage on purpose: the scope filter names a column,
+    and a filter naming a column the table does not have is exactly the failure
+    a mocked ``_sub_agent_conditions`` cannot reproduce.
+    """
+
+    @staticmethod
+    def _scoped_rag(real_agent_config, tables: str):
+        real_agent_config.agentic_nodes["scoped_reader"] = {"scoped_context": {"tables": tables}}
+        return SemanticDatasetRAG(real_agent_config, sub_agent_name="scoped_reader")
+
+    def test_scoped_sub_agent_counts_datasets_of_its_tables(self, real_agent_config):
+        SemanticDatasetRAG(real_agent_config).upsert_batch([_dataset_row("orders")])
+
+        assert self._scoped_rag(real_agent_config, "orders").get_size() == 1
+
+    def test_scoped_sub_agent_reads_datasets_of_its_tables(self, real_agent_config):
+        SemanticDatasetRAG(real_agent_config).upsert_batch([_dataset_row("orders")])
+
+        rows = self._scoped_rag(real_agent_config, "orders").list_datasets(table_name="orders")
+
+        assert [row["source_table"] for row in rows] == ["orders"]
+
+    def test_scoped_sub_agent_resolves_a_qualified_token(self, real_agent_config):
+        """The namespace parts of a scope token keep their own column names --
+        only the table leaf lives under a different one here.
+
+        The qualifier is a database because the fixture's datasource is SQLite,
+        whose identifier parser fills ``database_name`` for a two-part name.
+        """
+        SemanticDatasetRAG(real_agent_config).upsert_batch([_dataset_row("orders", database_name="shop")])
+
+        assert self._scoped_rag(real_agent_config, "shop.orders").get_size() == 1
+
+    def test_scoped_sub_agent_excludes_datasets_outside_its_tables(self, real_agent_config):
+        rag = SemanticDatasetRAG(real_agent_config)
+        rag.upsert_batch([_dataset_row("orders"), _dataset_row("customers")])
+
+        assert self._scoped_rag(real_agent_config, "orders").get_size() == 1
+
+
+def test_get_size_reports_a_failed_count_instead_of_swallowing_it(caplog):
+    """0 means "nothing projected" to every caller, so a failed count that
+    returns 0 silently is indistinguishable from an empty projection -- which
+    is how a filter naming a missing column stayed invisible."""
+    rag = SemanticDatasetRAG.__new__(SemanticDatasetRAG)
+    rag.storage = Mock()
+    rag.datasource_id = "ds_main"
+    rag._sub_agent_conditions = lambda: []
+    rag.storage._count_rows.side_effect = RuntimeError("Schema error: No field named table_name")
+
+    with caplog.at_level(logging.WARNING):
+        size = rag.get_size()
+
+    assert size == 0
+    assert "ds_main" in caplog.text
+    assert "No field named table_name" in caplog.text

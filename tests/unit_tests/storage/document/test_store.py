@@ -438,15 +438,19 @@ class TestDocumentStoreCreateIndices:
         assert len(results) == 2
 
     def test_create_indices_calls_vector_index(self, doc_store):
-        """create_indices must delegate to the backend's create_vector_index."""
+        """create_indices must delegate to the backend's create_vector_index.
+
+        Every backend builds its vector index at runtime, so the delegation is
+        unconditional -- gating it on the table's class name is what left
+        pgvector deployments running without an index at all.
+        """
         doc_store.store_chunks(_make_chunks(3))
         with patch.object(doc_store.table, "create_vector_index", wraps=doc_store.table.create_vector_index) as mock_vi:
             doc_store.create_indices()
-            expected_call_count = int(type(doc_store.table).__name__.startswith("Lance"))
-            assert mock_vi.call_count == expected_call_count
-            assert [args[0] for args, _ in mock_vi.call_args_list] == ["vector"] * expected_call_count
-            assert [kwargs["metric"] for _, kwargs in mock_vi.call_args_list] == ["cosine"] * expected_call_count
-            assert [kwargs["replace"] for _, kwargs in mock_vi.call_args_list] == [True] * expected_call_count
+            assert mock_vi.call_count == 1
+            assert [args[0] for args, _ in mock_vi.call_args_list] == ["vector"]
+            assert [kwargs["metric"] for _, kwargs in mock_vi.call_args_list] == ["cosine"]
+            assert [kwargs["replace"] for _, kwargs in mock_vi.call_args_list] == [True]
 
     def test_create_indices_calls_fts_index(self, doc_store):
         """create_indices must delegate to the backend's create_fts_index."""

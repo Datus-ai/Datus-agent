@@ -31,8 +31,13 @@ def _build_sub_agent_filter(
     sub_agent_name: Optional[str],
     storage: "BaseEmbeddingStore",
     check_scope_attr: str,
+    table_column: str = "table_name",
 ) -> Optional[Node]:
-    """Build scope filter from sub-agent's scoped context."""
+    """Build scope filter from sub-agent's scoped context.
+
+    ``table_column`` names the column holding the physical table name in the
+    target store, and only applies to the ``tables`` scope.
+    """
     if not sub_agent_name:
         return None
 
@@ -50,7 +55,7 @@ def _build_sub_agent_filter(
 
     if check_scope_attr == "tables":
         dialect = getattr(agent_config, "db_type", "")
-        return ScopedFilterBuilder.build_table_filter(scope_value, dialect)
+        return ScopedFilterBuilder.build_table_filter(scope_value, dialect, table_column)
     elif check_scope_attr in ("metrics", "sqls"):
         subject_tree = getattr(storage, "subject_tree", None)
         if subject_tree is None:
