@@ -2178,7 +2178,11 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         node._ensure_lazy_tools_mounted()
 
         names = {tool.name for tool in node.tools}
-        for expected in ("add_memory", "bash", "load_skill"):
+        # `web_fetch` included deliberately: web is gated here too, so a
+        # regression that stops mounting it for an unconfigured node would
+        # otherwise pass — the exclusion test only proves configured nodes do
+        # not receive it.
+        for expected in ("add_memory", "bash", "load_skill", "web_fetch"):
             assert expected in names
 
     def test_a_selected_family_survives_the_lazy_mount(self, real_agent_config, mock_llm_create):
@@ -2191,22 +2195,37 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         assert "add_memory" in names
         assert "bash" not in names
 
-    @staticmethod
-    def _stub_platform_doc(node, name="search_document"):
-        """Give the node a platform-doc tool with a real, named tool in it.
+    #: The genuine `PlatformDocSearchTool` builds fine in tests but exposes
+    #: nothing — there is no indexed docstore for the fixture project — so
+    #: assertions about its tool names pass whether or not the code under test
+    #: mounts it. These tests patch the constructor so the group has a name to
+    #: be wrong about, which is also what a deployment with indexed docs looks
+    #: like.
+    _DOC_TOOL_NAME = "search_document"
 
-        The genuine `PlatformDocSearchTool` builds fine in tests but exposes
-        nothing — there is no indexed docstore for the fixture project — so
-        asserting against its (empty) tool names passes whether or not the
-        rebuild re-adds it. Stub it so the assertion has something to be wrong
-        about.
-        """
+    @classmethod
+    def _doc_tool_stub(cls, *_args, **_kwargs):
         stub = MagicMock()
         tool = MagicMock()
-        tool.name = name
+        tool.name = cls._DOC_TOOL_NAME
         stub.available_tools.return_value = [tool]
-        node._platform_doc_tool = stub
-        return name
+        return stub
+
+    @classmethod
+    def _patch_platform_doc(cls):
+        """Patch the constructor, so a node built inside this context has a
+        platform-doc group with a real name — what a deployment with indexed
+        docs looks like."""
+        return patch(
+            "datus.agent.node.chat_agentic_node.PlatformDocSearchTool",
+            side_effect=cls._doc_tool_stub,
+        )
+
+    @classmethod
+    def _stub_platform_doc(cls, node):
+        """Attach a non-empty platform-doc group to an already-built node."""
+        node._platform_doc_tool = cls._doc_tool_stub()
+        return cls._DOC_TOOL_NAME
 
     def test_platform_doc_tools_survive_a_rebuild(self, real_agent_config, mock_llm_create):
         """`_setup_platform_doc_tools` mounts *after* the initial
@@ -2276,3 +2295,20 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         node._rebuild_tools()
 
         assert tool_name not in {t.name for t in node.tools}
+
+    def test_a_second_setup_tools_does_not_duplicate_platform_doc_tools(self, real_agent_config, mock_llm_create):
+        """The CLI calls `setup_tools()` again after a datasource change.
+
+        Once the rebuild started mounting this group from the attribute,
+        building it *after* the rebuild appended a second copy of every name on
+        that second call. The fixture's real doc tool exposes nothing, so the
+        duplication is invisible without patching the constructor — the same
+        emptiness that made an earlier version of these tests vacuous.
+        """
+        with self._patch_platform_doc():
+            node = self._node(real_agent_config)
+            assert [t.name for t in node.tools].count(self._DOC_TOOL_NAME) == 1
+
+            node.setup_tools()
+
+            assert [t.name for t in node.tools].count(self._DOC_TOOL_NAME) == 1

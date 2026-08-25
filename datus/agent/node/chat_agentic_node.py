@@ -226,9 +226,13 @@ class ChatAgenticNode(AgenticNode):
             self._setup_ask_user_tool()
         # No-op unless the request declared an orchestrator origin.
         self._setup_task_result_tool()
-        self._rebuild_tools()
+        # Before the rebuild, not after: the rebuild now mounts this group from
+        # the attribute, so building it afterwards appended a second copy of
+        # every name on the second `setup_tools()` — which the CLI does after a
+        # datasource change. Building first lets the rebuild own the mounting.
         if self._family_enabled(selected, "platform_doc_tools"):
             self._setup_platform_doc_tools()
+        self._rebuild_tools()
 
         # Populate the shared tool_registry eagerly so consumers that inspect
         # categories before the first LLM turn (tests, ``apply_proxy_tools``'
