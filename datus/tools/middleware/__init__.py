@@ -3,11 +3,15 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from datus.tools.middleware.tool_middleware import (
+    ToolTransformDenied,
     apply_tool_transformers,
+    transform_tool_args,
     wrap_tool_with_transformers,
 )
 
 __all__ = [
+    "ToolTransformDenied",
     "apply_tool_transformers",
+    "transform_tool_args",
     "wrap_tool_with_transformers",
 ]
