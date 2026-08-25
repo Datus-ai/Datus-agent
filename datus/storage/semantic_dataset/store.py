@@ -446,6 +446,18 @@ class SemanticDatasetRAG:
         self.storage.delete_datasource_rows(self.datasource_id)
         self._refresh_metadata_documents_for_tables(rows)
 
+    def list_artifact_paths(self) -> List[str]:
+        """Every distinct ``yaml_path`` this store currently holds rows for.
+
+        A tree-wide sync needs this to notice files that disappeared: the
+        per-artifact deletes are scoped to a path, so a model whose file was
+        removed is never visited and its rows would outlive it.
+        """
+        rows = self.storage._search_all(
+            where=And(self._sub_agent_conditions()), select_fields=["yaml_path"]
+        ).to_pylist()
+        return sorted({str(row.get("yaml_path") or "") for row in rows} - {""})
+
     def delete_artifact_rows(self, yaml_path: str) -> None:
         """Delete rows projected from a single YAML artifact."""
         if not yaml_path:

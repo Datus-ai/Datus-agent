@@ -443,7 +443,46 @@ def sync_semantic_yaml_tree(
 
     if failures:
         return False, f"Synced {synced}/{len(files)} semantic YAML file(s); failed: " + "; ".join(failures), synced
-    return True, f"Synced {synced} semantic YAML file(s) from {target}", synced
+
+    # A directory sync reconciles the tree, so a model whose file was deleted or
+    # renamed has to lose its rows. Per-artifact replacement cannot do this: it
+    # is scoped to a yaml_path, and a file that no longer exists is never
+    # visited. Left behind, its rows keep describe_table offering a model whose
+    # yaml_path does not open.
+    pruned = _prune_rows_for_missing_artifacts(agent_config, files) if target.is_dir() else 0
+    suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
+    return True, f"Synced {synced} semantic YAML file(s) from {target}{suffix}", synced
+
+
+def _prune_rows_for_missing_artifacts(agent_config: AgentConfig, present: list[Path]) -> int:
+    """Drop rows whose source YAML is no longer on disk. Returns artifacts pruned."""
+    from datus.storage.metric.store import MetricRAG
+    from datus.storage.semantic_dataset.store import SemanticDatasetRAG
+
+    keep = {str(path.resolve(strict=False)) for path in present}
+    pruned: set[str] = set()
+    try:
+        rags = [SemanticDatasetRAG(agent_config), MetricRAG(agent_config)]
+    except Exception:  # noqa: BLE001 - pruning must never fail an otherwise good sync
+        logger.exception("Failed to open semantic stores while pruning deleted semantic models")
+        return 0
+    for rag in rags:
+        try:
+            stored = rag.list_artifact_paths()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to list artifact paths while pruning deleted semantic models")
+            continue
+        for yaml_path in stored:
+            if str(Path(yaml_path).resolve(strict=False)) in keep or Path(yaml_path).exists():
+                continue
+            try:
+                rag.delete_artifact_rows(yaml_path)
+                pruned.add(yaml_path)
+            except Exception:  # noqa: BLE001
+                logger.exception(f"Failed to prune rows for deleted semantic model '{yaml_path}'")
+    if pruned:
+        logger.info(f"Pruned knowledge-base rows for {len(pruned)} deleted semantic YAML file(s)")
+    return len(pruned)
 
 
 def refresh_semantic_yaml_profile_descriptions(
