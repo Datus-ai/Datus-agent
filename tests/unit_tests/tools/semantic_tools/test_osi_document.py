@@ -162,3 +162,77 @@ semantic_model:
 
     with pytest.raises(DatusException, match="declared 2 times"):
         load_osi_document(str(model), "finance")
+
+
+def test_load_osi_document_reads_composite_unique_keys(tmp_path):
+    """A dataset can declare uniqueness without a DDL primary key to
+    transcribe, and such a key routinely spans several columns."""
+    model = tmp_path / "activity.yml"
+    model.write_text(
+        """
+version: 0.2.0.dev0
+semantic_model:
+  - name: ops
+    datasets:
+      - name: activity
+        source: mart.activity
+        unique_keys:
+          - [ac_code, subject_seq, product_code]
+          - [surrogate_id]
+        fields:
+          - name: ac_code
+            expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
+"""
+    )
+
+    dataset = load_osi_document(str(model), semantic_model_name="ops").datasets[0]
+
+    assert dataset.unique_keys == [["ac_code", "subject_seq", "product_code"], ["surrogate_id"]]
+    assert dataset.primary_key == []
+
+
+def test_load_osi_document_defaults_unique_keys_to_empty(tmp_path):
+    model = tmp_path / "plain.yml"
+    model.write_text(
+        """
+version: 0.2.0.dev0
+semantic_model:
+  - name: ops
+    datasets:
+      - name: activity
+        source: mart.activity
+        fields:
+          - name: ac_code
+            expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
+"""
+    )
+
+    assert load_osi_document(str(model), semantic_model_name="ops").datasets[0].unique_keys == []
+
+
+def test_load_osi_document_ignores_non_string_unique_key_entries(tmp_path):
+    """Coercing a non-string would persist a key like ["None"] that resolves
+    to no column at all."""
+    model = tmp_path / "loose.yml"
+    model.write_text(
+        """
+version: 0.2.0.dev0
+semantic_model:
+  - name: ops
+    datasets:
+      - name: activity
+        source: mart.activity
+        unique_keys:
+          - [ac_code, null, subject_seq]
+          - [123]
+          - []
+          - [surrogate_id]
+        fields:
+          - name: ac_code
+            expression: {dialects: [{dialect: ANSI_SQL, expression: ac_code}]}
+"""
+    )
+
+    dataset = load_osi_document(str(model), semantic_model_name="ops").datasets[0]
+
+    assert dataset.unique_keys == [["ac_code", "subject_seq"], ["surrogate_id"]]

@@ -297,3 +297,71 @@ def test_semantic_yaml_files_skips_the_metrics_fragment_directory(tmp_path):
     found = semantic_yaml_files(tmp_path)
 
     assert [path.name for path in found] == ["sales.yml"]
+
+
+def test_sync_semantic_yaml_tree_drops_rows_whose_file_is_gone(tmp_path, real_agent_config):
+    """A sync is a reconcile, not an append. Deleting or renaming a model file
+    has to remove what it projected: the rows outlive the file otherwise, and
+    describe_table keeps offering a model whose yaml_path no longer opens."""
+    from datus.storage.semantic_dataset.store import (
+        KIND_DATASET,
+        SemanticDatasetRAG,
+        dataset_row_id,
+    )
+
+    rag = SemanticDatasetRAG(real_agent_config)
+    removed = tmp_path / "finance.yml"
+    kept = tmp_path / "ops.yml"
+    for path, model in ((removed, "finance"), (kept, "ops")):
+        rag.upsert_batch(
+            [
+                {
+                    "id": dataset_row_id(model, "orders"),
+                    "kind": KIND_DATASET,
+                    "semantic_model_name": model,
+                    "dataset_name": "orders",
+                    "name": "orders",
+                    "source_table": "orders",
+                    "search_text": model,
+                    "yaml_path": str(path),
+                }
+            ]
+        )
+    kept.write_text("version: 0.2.0.dev0\nsemantic_model: []\n")  # removed.yml intentionally absent
+
+    tools = MagicMock()
+    tools.sync_osi_to_db.return_value = {"success": True}
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools", return_value=tools):
+        successful, _, _ = sync_semantic_yaml_tree(real_agent_config, str(tmp_path))
+
+    assert successful is True
+    surviving = {row["semantic_model_name"] for row in rag.storage.table.search_all(limit=100).to_pylist()}
+    assert surviving == {"ops"}
+
+
+def test_sync_semantic_yaml_tree_prunes_when_the_last_file_is_deleted(tmp_path, real_agent_config):
+    """Deleting every model is the strongest form of the case pruning exists
+    for, and the empty-directory branch used to return before reconciling."""
+    from datus.storage.semantic_dataset.store import KIND_DATASET, SemanticDatasetRAG, dataset_row_id
+
+    rag = SemanticDatasetRAG(real_agent_config)
+    rag.upsert_batch(
+        [
+            {
+                "id": dataset_row_id("finance", "orders"),
+                "kind": KIND_DATASET,
+                "semantic_model_name": "finance",
+                "dataset_name": "orders",
+                "name": "orders",
+                "source_table": "orders",
+                "search_text": "finance",
+                "yaml_path": str(tmp_path / "finance.yml"),
+            }
+        ]
+    )
+
+    successful, message, synced = sync_semantic_yaml_tree(real_agent_config, str(tmp_path))
+
+    assert successful is True and synced == 0
+    assert "pruned 1 deleted artifact(s)" in message
+    assert rag.storage.table.search_all(limit=100).to_pylist() == []

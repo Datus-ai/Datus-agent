@@ -162,6 +162,9 @@ class SemanticDatasetStorage(BaseEmbeddingStore):
                     pa.field("catalog_name", pa.string()),
                     pa.field("database_name", pa.string()),
                     pa.field("schema_name", pa.string()),
+                    # A key may span several columns, so this is a list of
+                    # groups rather than a flag on each field row.
+                    pa.field("unique_keys_json", pa.string()),
                     # -- Content --
                     pa.field("description", pa.string()),
                     pa.field("ai_context_json", pa.string()),
@@ -445,6 +448,18 @@ class SemanticDatasetRAG:
         rows = self._table_refs(where=And(self._sub_agent_conditions()))
         self.storage.delete_datasource_rows(self.datasource_id)
         self._refresh_metadata_documents_for_tables(rows)
+
+    def list_artifact_paths(self) -> List[str]:
+        """Every distinct ``yaml_path`` this store currently holds rows for.
+
+        A tree-wide sync needs this to notice files that disappeared: the
+        per-artifact deletes are scoped to a path, so a model whose file was
+        removed is never visited and its rows would outlive it.
+        """
+        rows = self.storage._search_all(
+            where=And(self._sub_agent_conditions()), select_fields=["yaml_path"]
+        ).to_pylist()
+        return sorted({str(row.get("yaml_path") or "") for row in rows} - {""})
 
     def delete_artifact_rows(self, yaml_path: str) -> None:
         """Delete rows projected from a single YAML artifact."""

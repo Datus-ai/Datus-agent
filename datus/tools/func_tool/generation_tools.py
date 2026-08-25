@@ -824,7 +824,15 @@ class GenerationTools:
                 {
                     "name": field_name,
                     "expr": getattr(field, "expr", None) or field_name,
-                    "role": "dimension" if field_name in dimension_names else "field",
+                    # A dataset carries one primary time axis, but any number of
+                    # time dimensions. The loader keeps the temporal type on
+                    # every one of them; reading only `time_dimension` would
+                    # drop the rest back to plain fields.
+                    "role": (
+                        "time_dimension"
+                        if str(getattr(field, "type", "") or "") == "time"
+                        else ("dimension" if field_name in dimension_names else "field")
+                    ),
                     "type": str(getattr(field, "type", "") or ""),
                     "granularity": getattr(field, "granularity", "") or "",
                     "description": getattr(field, "description", "") or "",
@@ -877,6 +885,9 @@ class GenerationTools:
                 "source_query": source_query,
                 "description": description,
                 "ai_context_json": cls._json_dumps(ai_context),
+                # Uniqueness a dataset declares without a DDL primary key to
+                # transcribe. Kept whole because a key may span columns.
+                "unique_keys_json": cls._json_dumps(getattr(dataset, "unique_keys", []) or []),
                 "search_text": cls._profile_search_text(
                     semantic_model_name, dataset_name, source_table, description, ai_context
                 ),

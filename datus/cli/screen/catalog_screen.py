@@ -22,7 +22,7 @@ from textual.widgets import Tree as TextualTree
 from textual.widgets._tree import TreeNode
 from textual.worker import get_current_worker
 
-from datus.cli.cli_styles import HEADER_BOLD_CYAN, TABLE_BORDER_STYLE
+from datus.cli.cli_styles import HEADER_BOLD_CYAN, TABLE_BORDER_STYLE, TABLE_HEADER_STYLE
 from datus.cli.screen.base_widgets import FocusableStatic
 from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.semantic_dataset.store import SemanticDatasetRAG
@@ -578,13 +578,119 @@ class CatalogScreen(ContextScreen):
             table.add_row("Dataset", semantic_record.get("dataset_name", "") or "[dim]N/A[/dim]")
         table.add_row("Description", semantic_record.get("description", "") or "[dim]N/A[/dim]")
         table.add_row("AI Context", self._create_nested_table_for_json(semantic_record.get("ai_context")))
-        table.add_row("Identifiers", self._create_nested_table_for_json(semantic_record.get("identifiers")))
-        table.add_row("Dimensions", self._create_nested_table_for_json(semantic_record.get("dimensions")))
         table.add_row("Relationships", self._create_nested_table_for_json(semantic_record.get("relationships")))
 
         sections.append(table)
 
+        columns_table = self._create_columns_table(semantic_record)
+        if columns_table is not None:
+            sections.append(columns_table)
+            # Below the table, not as a per-column mark: a key may span several
+            # columns, and ticking each one loses which columns form it.
+            unique_keys = semantic_record.get("unique_keys") or []
+            if unique_keys:
+                rendered = "  ".join(f"({', '.join(str(c) for c in key)})" for key in unique_keys if key)
+                sections.append(Text.from_markup(f"[bright_cyan]Unique keys[/]  [yellow]{rendered}[/]"))
+
         return Group(*sections)
+
+    def _create_columns_table(self, semantic_record: Dict[str, Any]) -> Optional[Table]:
+        """One row per physical column, annotated with what the model says.
+
+        Physical columns that no field models are shown dimmed rather than
+        hidden: the gap between the two is the point of the view.
+        """
+        from rich import box
+
+        fields = [f for f in semantic_record.get("modelled_fields") or [] if f.get("name")]
+        # Aliases resolve a physical column to its field; they are lookup keys
+        # only. Emitting a row per alias would list a field whose expression
+        # names a different column twice.
+        by_alias: Dict[str, Dict[str, Any]] = {}
+        for field in fields:
+            by_alias.setdefault(str(field.get("name", "")).strip("`").lower(), field)
+        for field in fields:
+            # Strip after taking the basename: a qualifier carries its own
+            # quotes, so `orders.\`created_at\`` would otherwise keep the
+            # leading backtick and match no column.
+            expr = str(field.get("expr", "") or "").lower()
+            basename = expr.rsplit(".", 1)[-1].strip("`").strip('"').strip()
+            if basename:
+                by_alias.setdefault(basename, field)
+
+        physical = self._physical_columns(semantic_record)
+        if not physical and not fields:
+            return None
+
+        rows: List[tuple] = []
+        matched: set = set()
+        for column in physical:
+            name = str(column.get("name", ""))
+            field = by_alias.get(name.strip("`").lower())
+            if field is not None:
+                matched.add(id(field))
+            rows.append((name, str(column.get("type", "")), field, str(column.get("comment", "") or "")))
+        # A field the connector reported no column for still belongs here: a
+        # computed expression has no physical column of its own.
+        for field in fields:
+            if id(field) not in matched:
+                rows.append((str(field.get("name", "")), "", field, ""))
+
+        modelled_count = sum(1 for _, _, field, _ in rows if field)
+        columns_table = Table(
+            title=f"[bold cyan]Columns[/] [dim]({modelled_count} modelled / {len(rows)} total)[/dim]",
+            box=box.SIMPLE,
+            border_style=TABLE_BORDER_STYLE,
+            header_style=TABLE_HEADER_STYLE,
+            expand=True,
+            padding=(0, 1),
+        )
+        columns_table.add_column("column", ratio=2, no_wrap=True)
+        columns_table.add_column("type", ratio=2, no_wrap=True)
+        columns_table.add_column("key", ratio=1, justify="center", no_wrap=True)
+        columns_table.add_column("time", ratio=1, justify="center", no_wrap=True)
+        columns_table.add_column("description", ratio=5, no_wrap=False)
+
+        for name, physical_type, field, ddl_comment in rows:
+            if field:
+                description = field.get("description") or ddl_comment
+                columns_table.add_row(
+                    name,
+                    physical_type,
+                    "✓" if field.get("is_primary_key") else "",
+                    str(field.get("time_granularity") or "") if field.get("is_time") else "",
+                    description,
+                )
+            else:
+                dim = "[dim]{}[/dim]".format
+                columns_table.add_row(dim(name), dim(physical_type), "", "", dim(ddl_comment) if ddl_comment else "")
+        return columns_table
+
+    def _physical_columns(self, semantic_record: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Live columns for the selected table, or [] when unavailable.
+
+        The catalog is a browser: a datasource that is slow or down must dim
+        the physical half of this view, never fail the panel.
+        """
+        table_name = str(semantic_record.get("table_name", "") or "")
+        if not table_name or self.db_connector is None:
+            return []
+        try:
+            # Through the screen's LRU cache: the table details pane has
+            # usually fetched this already, and a slow datasource must not be
+            # hit twice from the Textual event thread.
+            return list(
+                self._get_cached_schema(
+                    semantic_record.get("catalog_name", "") or self.catalog_name,
+                    semantic_record.get("database_name", "") or self.database_name,
+                    semantic_record.get("schema_name", "") or "",
+                    table_name,
+                )
+                or []
+            )
+        except Exception as exc:  # pragma: no cover - defensive, datasource may be down
+            logger.debug(f"Could not read physical columns for {table_name!r}: {exc}")
+            return []
 
     def _show_semantic_panel(
         self, record: Optional[Dict[str, Any]], message: Optional[str] = None, message_style: Optional[str] = None
@@ -759,27 +865,25 @@ class CatalogScreen(ContextScreen):
     def _semantic_record_from_table_profile(self, projection: Dict[str, Any]) -> Dict[str, Any]:
         ai_context = self._decode_profile_json(projection.get("ai_context_json"), None)
 
-        identifiers = []
-        dimensions = []
+        # Every authored field, in order. Splitting them into identifiers and
+        # dimensions dropped the rest: OSI has no measure concept, so a field
+        # that is neither a key nor a time dimension is still a perfectly
+        # ordinary column, and most of them are.
+        modelled_fields = []
         for field in projection.get("fields") or []:
             if not isinstance(field, dict):
                 continue
-            entry = {
-                key: value
-                for key, value in {
-                    "name": field.get("name", ""),
-                    "expr": field.get("expr", ""),
-                    "type": field.get("field_type", ""),
-                    "time_granularity": field.get("time_granularity", ""),
-                    "description": field.get("description", ""),
+            modelled_fields.append(
+                {
+                    "name": str(field.get("name", "") or ""),
+                    "expr": str(field.get("expr", "") or ""),
+                    "time_granularity": str(field.get("time_granularity", "") or ""),
+                    "is_time": bool(field.get("is_time")),
+                    "is_primary_key": bool(field.get("is_primary_key")),
+                    "description": str(field.get("description", "") or ""),
                     "ai_context": self._decode_profile_json(field.get("ai_context_json"), None),
-                }.items()
-                if value not in (None, "", [], {})
-            }
-            if field.get("is_primary_key"):
-                identifiers.append(entry)
-            elif field.get("is_dimension"):
-                dimensions.append(entry)
+                }
+            )
 
         relationships = [
             {
@@ -800,12 +904,15 @@ class CatalogScreen(ContextScreen):
         return {
             "_source": "table_semantic_profile",
             "table_name": projection.get("source_table", ""),
+            "catalog_name": projection.get("catalog_name", ""),
+            "database_name": projection.get("database_name", ""),
+            "schema_name": projection.get("schema_name", ""),
             "semantic_model_name": projection.get("semantic_model_name", ""),
             "dataset_name": projection.get("dataset_name", ""),
             "description": projection.get("description", ""),
             "ai_context": ai_context,
-            "identifiers": identifiers,
-            "dimensions": dimensions,
+            "unique_keys": self._decode_profile_json(projection.get("unique_keys_json"), []) or [],
+            "modelled_fields": modelled_fields,
             "relationships": relationships,
         }
 

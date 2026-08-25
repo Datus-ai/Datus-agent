@@ -50,6 +50,10 @@ class OsiDataset:
     description: str = ""
     ai_context: Any = None
     custom_extensions: list[dict[str, Any]] = field(default_factory=list)
+    # Appended rather than grouped with primary_key: inserting a field would
+    # shift every positional argument after it. Each entry is one key, which
+    # may span several columns.
+    unique_keys: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -181,6 +185,25 @@ def _dimension(field_node: dict[str, Any]) -> OsiDimension:
     )
 
 
+def _unique_keys(value: Any) -> list[list[str]]:
+    """Normalize `unique_keys` to a list of column groups.
+
+    A key may span several columns, and a single-column key is often written
+    unwrapped, so both `[["a", "b"], ["c"]]` and `["c"]` have to round-trip.
+    """
+    if not isinstance(value, list):
+        return []
+    keys: list[list[str]] = []
+    for entry in value:
+        raw = entry if isinstance(entry, list) else [entry]
+        # Only strings name a column. Coercing anything else would persist a
+        # key like ["None"] that resolves to no column at all.
+        columns = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+        if columns:
+            keys.append(columns)
+    return keys
+
+
 def _dataset(node: dict[str, Any]) -> OsiDataset:
     payload = _extension_payload(node)
     fields = [item for item in node.get("fields") or [] if isinstance(item, dict) and item.get("name")]
@@ -198,6 +221,7 @@ def _dataset(node: dict[str, Any]) -> OsiDataset:
     dimensions: list[OsiDimension] = []
     field_views: list[OsiDimension] = []
     primary_keys = _names(node.get("primary_key"))
+    unique_keys = _unique_keys(node.get("unique_keys"))
     for field_node in fields:
         name = str(field_node.get("name") or "")
         dimension = _dimension(field_node)
@@ -212,6 +236,7 @@ def _dataset(node: dict[str, Any]) -> OsiDataset:
         name=str(node.get("name") or ""),
         source=_source(node.get("source"), payload.get("source_type")),
         primary_key=primary_keys,
+        unique_keys=unique_keys,
         time_dimension=primary_time,
         dimensions=dimensions,
         fields=field_views,
