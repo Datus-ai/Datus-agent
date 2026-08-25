@@ -4220,7 +4220,7 @@
 <p><code>gen_semantic_model</code> is retained only for configuration compatibility. It is hidden from subagent discovery, and direct invocation returns an error recommending <a href="../semantic_modeling/"><code>semantic_modeling</code></a>.</p>
 <h2 id="replacement">Replacement<a class="headerlink" href="#replacement" title="Permanent link">&para;</a></h2>
 <p>Use <code>semantic_modeling</code> in a Dosi project to create or update datasets, fields, relationships, model metadata, and metrics. The workflow edits Dosi YAML, validates the selected model, and reconciles the YAML source of truth with the Knowledge Base.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/semantic_modeling Model the orders and customers datasets and their relationship.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Model the orders and customers datasets and their relationship. @Agent semantic_modeling
 </span></code></pre></div>
 <p>MetricFlow and OSI projects remain queryable but are query-only for semantic changes. To modify an existing OSI project, first change its semantic type to Dosi, then use <code>semantic_modeling</code> to repair and validate the existing YAML. MetricFlow YAML migration is not supported.</p>
 <h2 id="bootstrap-compatibility">Bootstrap compatibility<a class="headerlink" href="#bootstrap-compatibility" title="Permanent link">&para;</a></h2>

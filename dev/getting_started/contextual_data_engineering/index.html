@@ -4870,7 +4870,7 @@
 <p><strong>Co-authored context</strong></p>
 <p>LLMs draft semantic models and metrics from tables and reference SQL, while engineers refine labels, metadata, and the subject tree.</p>
 <p><strong>Command-driven iteration</strong></p>
-<p>Commands like <code>/semantic_modeling</code> and <code>/gen_sql_summary</code> create and update assets. The retired <code>/gen_semantic_model</code> and <code>/gen_metrics</code> names are hidden and return guidance to use <code>semantic_modeling</code>.</p>
+<p>Describe the asset to create or update and the main agent delegates to the appropriate subagent automatically. Use <code>@Agent semantic_modeling</code> to route one request explicitly, or <code>/agent semantic_modeling</code> to select it for consecutive turns.</p>
 <p><strong>Feedback drives continuous improvement</strong></p>
 <p>Exploration with <code>/chat</code>, success-story writebacks, and issue/benchmark loops convert usage into durable, reusable knowledge.</p>
 <h4 id="subagent-system">Subagent System<a class="headerlink" href="#subagent-system" title="Permanent link">&para;</a></h4>

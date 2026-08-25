@@ -5946,6 +5946,10 @@
 </ol>
 <p>Airflow scheduling and external BI authoring are handled directly by the main
 agent through installed plugins. They are not built-in or custom subagents.</p>
+<p>In the REPL, describe the task directly and the main agent will route it to the
+appropriate subagent. To select one explicitly for a single message, append
+<code>@Agent &lt;name&gt;</code> to the request; <code>/agent &lt;name&gt;</code> switches the current agent for
+subsequent messages. The legacy <code>/&lt;subagent&gt; &lt;message&gt;</code> form is not supported.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>Builtin subagents work out of the box with minimal configuration. Most settings (tools, hooks, MCP servers, system prompts) are built-in. You can optionally customize them in your <code>agent.yml</code> file:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
@@ -6013,8 +6017,8 @@ agent through installed plugins. They are not built-in or custom subagents.</p>
 <li><strong>Metadata</strong>: Name, comment, file path</li>
 </ul>
 <h3 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h3>
-<p>Launch the SQL summary generation subagent:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales<span class="w"> </span>GROUP<span class="w"> </span>BY<span class="w"> </span>region.<span class="w"> </span><span class="o">(</span>You<span class="w"> </span>can<span class="w"> </span>also<span class="w"> </span>add<span class="w"> </span>some<span class="w"> </span>description<span class="w"> </span>on<span class="w"> </span>this<span class="w"> </span>SQL<span class="o">)</span>
+<p>Describe the request directly, or identify the SQL summary generation subagent at the end of the message:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 </span></code></pre></div>
 <h3 id="generation-workflow">Generation Workflow<a class="headerlink" href="#generation-workflow" title="Permanent link">&para;</a></h3>
 <pre class="mermaid"><code>graph LR
@@ -6042,10 +6046,10 @@ agent through installed plugins. They are not built-in or custom subagents.</p>
 <h3 id="subject-tree-categorization">Subject Tree Categorization<a class="headerlink" href="#subject-tree-categorization" title="Permanent link">&para;</a></h3>
 <p>Subject tree allows organizing SQL summaries by domain and layers. In CLI mode, include it in your question:</p>
 <p><strong>Example with subject_tree:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales,<span class="w"> </span>subject_tree:<span class="w"> </span>sales/reporting/revenue_analysis
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p><strong>Example without subject_tree:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p>When not provided, the agent suggests categories based on existing subject trees and similar queries in the Knowledge Base.</p>
 <h3 id="yaml-structure">YAML Structure<a class="headerlink" href="#yaml-structure" title="Permanent link">&para;</a></h3>
@@ -6157,8 +6161,8 @@ for compatibility with existing installations.</p>
 <li><strong>Data Source</strong>: Connection to your database table</li>
 </ul>
 <h3 id="quick-start_1">Quick Start<a class="headerlink" href="#quick-start_1" title="Permanent link">&para;</a></h3>
-<p>Start Datus CLI with <code>datus --datasource &lt;datasource&gt;</code>, and begin with a subagent command:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>/gen_semantic_model<span class="w"> </span>generate<span class="w"> </span>a<span class="w"> </span>semantic<span class="w"> </span>model<span class="w"> </span><span class="k">for</span><span class="w"> </span>table<span class="w"> </span>&lt;table_name&gt;
+<p>Start Datus CLI with <code>datus --datasource &lt;datasource&gt;</code>, then describe the model you want. The main agent can route the request automatically, or you can select <code>semantic_modeling</code> explicitly:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Generate a semantic model for table &lt;table_name&gt;. @Agent semantic_modeling
 </span></code></pre></div>
 <h3 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h3>
 <h4 id="interactive-generation">Interactive Generation<a class="headerlink" href="#interactive-generation" title="Permanent link">&para;</a></h4>
@@ -6246,8 +6250,8 @@ for compatibility with existing installations.</p>
 </ul>
 <p><strong>Example</strong>: Instead of writing <code>SELECT SUM(revenue) / COUNT(DISTINCT customer_id)</code> repeatedly, define an <code>avg_customer_revenue</code> metric once.</p>
 <h3 id="quick-start_2">Quick Start<a class="headerlink" href="#quick-start_2" title="Permanent link">&para;</a></h3>
-<p>Start Datus CLI with <code>datus --datasource &lt;datasource&gt;</code>, and use the metrics generation subagent:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>transactions,<span class="w"> </span>the<span class="w"> </span>corresponding<span class="w"> </span>question<span class="w"> </span>is<span class="w"> </span>total<span class="w"> </span>amount<span class="w"> </span>of<span class="w"> </span>all<span class="w"> </span>transactions
+<p>Start Datus CLI with <code>datus --datasource &lt;datasource&gt;</code>, then describe the metric you want. The main agent can route the request automatically, or you can select <code>semantic_modeling</code> explicitly:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Generate a metric from this SQL: SELECT SUM(amount) FROM transactions. The corresponding question is the total amount of all transactions. @Agent semantic_modeling
 </span></code></pre></div>
 <h3 id="how-it-works_1">How It Works<a class="headerlink" href="#how-it-works_1" title="Permanent link">&para;</a></h3>
 <h4 id="generation-workflow_2">Generation Workflow<a class="headerlink" href="#generation-workflow_2" title="Permanent link">&para;</a></h4>
@@ -6280,16 +6284,16 @@ for compatibility with existing installations.</p>
 <h3 id="subject-tree-categorization_1">Subject Tree Categorization<a class="headerlink" href="#subject-tree-categorization_1" title="Permanent link">&para;</a></h3>
 <p>Subject tree allows organizing metrics by domain and layers. In CLI mode, include it in your question:</p>
 <p><strong>Example with subject_tree:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>transactions,<span class="w"> </span>subject_tree:<span class="w"> </span>finance/revenue/transactions
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>Generate a metric from this SQL: SELECT SUM(amount) FROM transactions, subject_tree: finance/revenue/transactions. @Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>Example without subject_tree:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>amount<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>transactions
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Generate a metric from this SQL: SELECT SUM(amount) FROM transactions. @Agent semantic_modeling
 </span></code></pre></div></p>
 <p>When not provided, the agent operates in learning mode and suggests categories based on existing metrics in the Knowledge Base.</p>
 <h3 id="usage-examples">Usage Examples<a class="headerlink" href="#usage-examples" title="Permanent link">&para;</a></h3>
 <h4 id="example-1-simple-aggregation">Example 1: Simple Aggregation<a class="headerlink" href="#example-1-simple-aggregation" title="Permanent link">&para;</a></h4>
 <p><strong>User Input:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span><span class="k">for</span><span class="w"> </span>total<span class="w"> </span>order<span class="w"> </span>count
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Generate a metric for total order count. @Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>Agent Actions:</strong>
 1. Finds <code>orders.yml</code> semantic model
@@ -6308,11 +6312,12 @@ for compatibility with existing installations.</p>
 </span></code></pre></div>
 <h4 id="example-2-conversion-rate">Example 2: Conversion Rate<a class="headerlink" href="#example-2-conversion-rate" title="Permanent link">&para;</a></h4>
 <p><strong>User Input:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>/gen_metrics<span class="w"> </span>Create<span class="w"> </span>a<span class="w"> </span>metric<span class="w"> </span>from<span class="w"> </span>this<span class="w"> </span>SQL:
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Create a metric from this SQL:
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>SELECT
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>COUNT<span class="o">(</span>DISTINCT<span class="w"> </span>CASE<span class="w"> </span>WHEN<span class="w"> </span><span class="nv">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'completed'</span><span class="w"> </span>THEN<span class="w"> </span>order_id<span class="w"> </span>END<span class="o">)</span><span class="w"> </span>/
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span>COUNT<span class="o">(</span>DISTINCT<span class="w"> </span>order_id<span class="o">)</span><span class="w"> </span>AS<span class="w"> </span>completion_rate
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>FROM<span class="w"> </span>orders
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>  COUNT(DISTINCT CASE WHEN status = 'completed' THEN order_id END) /
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>  COUNT(DISTINCT order_id) AS completion_rate
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>FROM orders
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>@Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>Agent Actions:</strong>
 1. Analyzes SQL logic (ratio with conditional counting)
@@ -6335,9 +6340,10 @@ for compatibility with existing installations.</p>
 </span></code></pre></div>
 <h4 id="example-3-complex-calculation">Example 3: Complex Calculation<a class="headerlink" href="#example-3-complex-calculation" title="Permanent link">&para;</a></h4>
 <p><strong>User Input:</strong>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>/gen_metrics<span class="w"> </span>Generate<span class="w"> </span>average<span class="w"> </span>basket<span class="w"> </span>size<span class="w"> </span>metric:
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>SELECT<span class="w"> </span>SUM<span class="o">(</span>total_amount<span class="o">)</span><span class="w"> </span>/<span class="w"> </span>COUNT<span class="o">(</span>DISTINCT<span class="w"> </span>order_id<span class="o">)</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>FROM<span class="w"> </span>order_items
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>Generate an average basket size metric:
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>SELECT SUM(total_amount) / COUNT(DISTINCT order_id)
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>FROM order_items
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>@Agent semantic_modeling
 </span></code></pre></div></p>
 <p><strong>Agent Actions:</strong>
 1. Locates <code>order_items.yml</code>
@@ -6481,8 +6487,8 @@ for compatibility with existing installations.</p>
 <li><strong>Recommendation</strong>: Which tables to use, how to join, and key caveats</li>
 </ul>
 <h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h3>
-<p>The explore subagent is typically invoked automatically by the chat agent via <code>task(type="explore")</code>, but can also be launched manually:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>/explore<span class="w"> </span>Discover<span class="w"> </span>tables<span class="w"> </span>related<span class="w"> </span>to<span class="w"> </span>customer<span class="w"> </span>revenue<span class="w"> </span>and<span class="w"> </span>find<span class="w"> </span>relevant<span class="w"> </span>metrics
+<p>The explore subagent is typically invoked automatically by the chat agent via <code>task(type="explore")</code>. To select it explicitly for one message, append <code>@Agent explore</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>Discover tables related to customer revenue and find relevant metrics. @Agent explore
 </span></code></pre></div>
 <hr />
 <h2 id="gen_sql">gen_sql<a class="headerlink" href="#gen_sql" title="Permanent link">&para;</a></h2>
@@ -6528,8 +6534,8 @@ for compatibility with existing installations.</p>
 </span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="p">}</span>
 </span></code></pre></div></p>
 <h3 id="usage_1">Usage<a class="headerlink" href="#usage_1" title="Permanent link">&para;</a></h3>
-<p>The gen_sql subagent is typically invoked automatically by the chat agent via <code>task(type="gen_sql")</code> for complex queries, but can also be launched manually:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>/gen_sql<span class="w"> </span>Generate<span class="w"> </span>a<span class="w"> </span>query<span class="w"> </span>to<span class="w"> </span>calculate<span class="w"> </span>customer<span class="w"> </span>lifetime<span class="w"> </span>value<span class="w"> </span>with<span class="w"> </span>cohort<span class="w"> </span>analysis
+<p>The gen_sql subagent is typically invoked automatically by the chat agent via <code>task(type="gen_sql")</code> for complex queries. To select it explicitly for one message, append <code>@Agent gen_sql</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>Generate a query to calculate customer lifetime value with cohort analysis. @Agent gen_sql
 </span></code></pre></div>
 <hr />
 <h2 id="gen_report">gen_report<a class="headerlink" href="#gen_report" title="Permanent link">&para;</a></h2>
@@ -6598,8 +6604,8 @@ for compatibility with existing installations.</p>
 </span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="p">}</span>
 </span></code></pre></div>
 <h3 id="usage_2">Usage<a class="headerlink" href="#usage_2" title="Permanent link">&para;</a></h3>
-<p>The gen_report subagent can be launched manually or invoked by the chat agent via <code>task(type="gen_report")</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>/gen_report<span class="w"> </span>Analyze<span class="w"> </span>the<span class="w"> </span>revenue<span class="w"> </span>trend<span class="w"> </span><span class="k">for</span><span class="w"> </span>the<span class="w"> </span>last<span class="w"> </span>quarter<span class="w"> </span>and<span class="w"> </span>provide<span class="w"> </span>insights
+<p>The gen_report subagent can be selected explicitly for one message with <code>@Agent gen_report</code>, or invoked automatically by the chat agent via <code>task(type="gen_report")</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>Analyze the revenue trend for the last quarter and provide insights. @Agent gen_report
 </span></code></pre></div>
 <h3 id="custom-report-subagents">Custom Report Subagents<a class="headerlink" href="#custom-report-subagents" title="Permanent link">&para;</a></h3>
 <p>You can create custom subagents that use the gen_report node class by configuring them in <code>agent.yml</code>:</p>
@@ -6610,7 +6616,7 @@ for compatibility with existing installations.</p>
 </span><span id="__span-29-5"><a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"semantic_tools.*,</span><span class="nv"> </span><span class="s">db_tools.*,</span><span class="nv"> </span><span class="s">context_search_tools.*"</span>
 </span><span id="__span-29-6"><a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
 </span></code></pre></div>
-<p>Then use it via <code>/attribution_report Analyze the conversion attribution for campaign X</code>.</p>
+<p>Then ask <code>Analyze the conversion attribution for campaign X. @Agent attribution_report</code>.</p>
 <hr />
 <h2 id="gen_skill">gen_skill<a class="headerlink" href="#gen_skill" title="Permanent link">&para;</a></h2>
 <h3 id="overview_7">Overview<a class="headerlink" href="#overview_7" title="Permanent link">&para;</a></h3>
@@ -6638,8 +6644,8 @@ for compatibility with existing installations.</p>
 </span><span id="__span-31-6"><a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="p">}</span>
 </span></code></pre></div>
 <h3 id="usage_3">Usage<a class="headerlink" href="#usage_3" title="Permanent link">&para;</a></h3>
-<p>Launch it directly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>/gen_skill<span class="w"> </span>Create<span class="w"> </span>a<span class="w"> </span>skill<span class="w"> </span>that<span class="w"> </span>validates<span class="w"> </span>daily<span class="w"> </span>revenue<span class="w"> </span>dashboards<span class="w"> </span>before<span class="w"> </span>publishing
+<p>Select it explicitly for one message:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>Create a skill that validates daily revenue dashboards before publishing. @Agent gen_skill
 </span></code></pre></div>
 <p>Or let the chat agent delegate via <code>task(type="gen_skill")</code>.</p>
 <hr />

@@ -4617,12 +4617,12 @@
 </ol>
 <p>The agent analyzes the input, generates DDL, asks for user confirmation, executes the DDL, and verifies the result.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<p>Start Datus CLI and use the gen_table subagent:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># SQL mode: create wide table from a JOIN query</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>/gen_table<span class="w"> </span>CREATE<span class="w"> </span>TABLE<span class="w"> </span>wide_orders<span class="w"> </span>AS<span class="w"> </span>SELECT<span class="w"> </span>o.*,<span class="w"> </span>c.name<span class="w"> </span>FROM<span class="w"> </span>orders<span class="w"> </span>o<span class="w"> </span>JOIN<span class="w"> </span>customers<span class="w"> </span>c<span class="w"> </span>ON<span class="w"> </span>o.customer_id<span class="w"> </span><span class="o">=</span><span class="w"> </span>c.id
+<p>Start Datus CLI and describe the table you want. The chat agent can route the request automatically; append <code>@Agent gen_table</code> when you want to select it explicitly:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># SQL mode: create wide table from a JOIN query
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Create the wide_orders table from this query: SELECT o.*, c.name FROM orders o JOIN customers c ON o.customer_id = c.id @Agent gen_table
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Description mode: describe what you want</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>/gen_table<span class="w"> </span>Create<span class="w"> </span>a<span class="w"> </span>user_profiles<span class="w"> </span>table<span class="w"> </span>with<span class="w"> </span>id<span class="w"> </span><span class="o">(</span>int<span class="o">)</span>,<span class="w"> </span>name<span class="w"> </span><span class="o">(</span>varchar<span class="o">)</span>,<span class="w"> </span>email<span class="w"> </span><span class="o">(</span>varchar<span class="o">)</span>,<span class="w"> </span>created_at<span class="w"> </span><span class="o">(</span>timestamp<span class="o">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a># Description mode: describe what you want
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Create a user_profiles table with id (int), name (varchar), email (varchar), and created_at (timestamp). @Agent gen_table
 </span></code></pre></div>
 <p>The chat agent can also automatically delegate to gen_table when it detects a table creation task.</p>
 <h2 id="built-in-tools">Built-in Tools<a class="headerlink" href="#built-in-tools" title="Permanent link">&para;</a></h2>

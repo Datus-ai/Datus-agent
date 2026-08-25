@@ -1212,10 +1212,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#method-1-cli-slash-command" class="md-nav__link">
+  <a href="#method-1-cli-automatic-or-explicit-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Method 1: CLI Slash Command
+        Method 1: CLI Automatic or Explicit Routing
       
     </span>
   </a>
@@ -4391,10 +4391,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#method-1-cli-slash-command" class="md-nav__link">
+  <a href="#method-1-cli-automatic-or-explicit-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Method 1: CLI Slash Command
+        Method 1: CLI Automatic or Explicit Routing
       
     </span>
   </a>
@@ -4532,14 +4532,15 @@ but they are not discoverable or executable as built-in or custom subagents.</p>
 <li><code>subagents</code> controls which task types this node may delegate to</li>
 </ul>
 <h2 id="how-to-use-subagents">How to Use Subagents<a class="headerlink" href="#how-to-use-subagents" title="Permanent link">&para;</a></h2>
-<h3 id="method-1-cli-slash-command">Method 1: CLI Slash Command<a class="headerlink" href="#method-1-cli-slash-command" title="Permanent link">&para;</a></h3>
+<h3 id="method-1-cli-automatic-or-explicit-routing">Method 1: CLI Automatic or Explicit Routing<a class="headerlink" href="#method-1-cli-automatic-or-explicit-routing" title="Permanent link">&para;</a></h3>
 <p>Start the CLI:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>production
 </span></code></pre></div>
-<p>Then launch a subagent with <code>/[name]</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/semantic_modeling Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>/finance_report Analyze quarter-over-quarter revenue changes
+<p>Normally, describe the request directly and let the main agent delegate it. To route one message explicitly, append <code>@Agent &lt;name&gt;</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders. @Agent semantic_modeling
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>Analyze quarter-over-quarter revenue changes. @Agent finance_report
 </span></code></pre></div>
+<p>For several consecutive turns with one subagent, run <code>/agent &lt;name&gt;</code> first and then enter normal messages. The legacy <code>/&lt;name&gt; &lt;message&gt;</code> form is no longer supported.</p>
 <h3 id="method-2-web-interface">Method 2: Web Interface<a class="headerlink" href="#method-2-web-interface" title="Permanent link">&para;</a></h3>
 <p>Start the web interface:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>--web<span class="w"> </span>--datasource<span class="w"> </span>production

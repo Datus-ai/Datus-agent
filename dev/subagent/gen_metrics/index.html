@@ -4220,7 +4220,7 @@
 <p><code>gen_metrics</code> is retained only for configuration compatibility. It is hidden from subagent discovery, and direct invocation returns an error recommending <a href="../semantic_modeling/"><code>semantic_modeling</code></a>.</p>
 <h2 id="replacement">Replacement<a class="headerlink" href="#replacement" title="Permanent link">&para;</a></h2>
 <p>Use <code>semantic_modeling</code> in a Dosi project to author metrics together with their required datasets and relationships. The workflow validates the completed Dosi model, checks generated metrics, and reconciles the YAML source of truth with the Knowledge Base.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/semantic_modeling Define revenue and order-count metrics from this SQL evidence.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Define revenue and order-count metrics from this SQL evidence. @Agent semantic_modeling
 </span></code></pre></div>
 <p>MetricFlow and OSI projects retain execution and query support for existing metrics, but they cannot author new metrics. To modify existing OSI YAML, first change the project's semantic type to Dosi and then use <code>semantic_modeling</code>. MetricFlow YAML migration is not supported.</p>
 <h2 id="bootstrap-compatibility">Bootstrap compatibility<a class="headerlink" href="#bootstrap-compatibility" title="Permanent link">&para;</a></h2>

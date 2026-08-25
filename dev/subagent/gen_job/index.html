@@ -4747,12 +4747,12 @@
 <p>The <code>gen_job</code> subagent is a built-in data engineering agent that covers BOTH single-database ETL and cross-database transfer. It builds or updates target tables from one or more source tables, transferring data across database engines when the source and target differ, and validates the result.</p>
 <p>The agent auto-detects the path based on the user's prompt: if the source and target are the same database, it runs intra-DB ETL (CREATE TABLE AS SELECT / INSERT from SELECT). If they differ, it runs a cross-DB transfer (via <code>transfer_query_result</code>) and activates the <code>data-migration</code> skill for lightweight reconciliation.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<p>Start Datus CLI and use the gen_job subagent via natural language:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Single-database ETL</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>/gen_job<span class="w"> </span>Build<span class="w"> </span>a<span class="w"> </span>summary<span class="w"> </span>table<span class="w"> </span>from<span class="w"> </span>orders<span class="w"> </span>and<span class="w"> </span>customers<span class="w"> </span>tables
+<p>Start Datus CLI and describe the pipeline you want in natural language. The chat agent can route the request automatically; append <code>@Agent gen_job</code> when you want to select it explicitly:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a># Single-database ETL
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Build a summary table from the orders and customers tables. @Agent gen_job
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Cross-database transfer</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>/gen_job<span class="w"> </span>Transfer<span class="w"> </span>the<span class="w"> </span>users<span class="w"> </span>table<span class="w"> </span>from<span class="w"> </span>local_duckdb<span class="w"> </span>to<span class="w"> </span>greenplum
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a># Cross-database transfer
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Transfer the users table from local_duckdb to greenplum. @Agent gen_job
 </span></code></pre></div>
 <p>The chat agent can also automatically delegate to gen_job when it detects an ETL or migration task.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>

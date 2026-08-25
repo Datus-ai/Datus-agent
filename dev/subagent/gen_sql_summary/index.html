@@ -4617,8 +4617,8 @@
 <li>Enable semantic search: "Find queries related to revenue analysis"</li>
 </ul>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
-<p>Launch the SQL summary generation subagent:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/gen_sql_summary<span class="w"> </span>Analyze<span class="w"> </span>this<span class="w"> </span>SQL:<span class="w"> </span>SELECT<span class="w"> </span>SUM<span class="o">(</span>revenue<span class="o">)</span><span class="w"> </span>FROM<span class="w"> </span>sales<span class="w"> </span>GROUP<span class="w"> </span>BY<span class="w"> </span>region.<span class="o">(</span>You<span class="w"> </span>can<span class="w"> </span>also<span class="w"> </span>add<span class="w"> </span>some<span class="w"> </span>description<span class="w"> </span>on<span class="w"> </span>this<span class="w"> </span>SQL<span class="o">)</span>
+<p>Describe the request directly, or identify the SQL summary generation subagent at the end of the message:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales GROUP BY region. You can also add a description. @Agent gen_sql_summary
 </span></code></pre></div>
 <h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <h3 id="generation-workflow">Generation Workflow<a class="headerlink" href="#generation-workflow" title="Permanent link">&para;</a></h3>
@@ -4682,10 +4682,10 @@
 <h3 id="subject-tree-categorization">Subject Tree Categorization<a class="headerlink" href="#subject-tree-categorization" title="Permanent link">&para;</a></h3>
 <p>Subject tree allows organizing SQL summaries by domain and layers. In CLI mode, include it in your question:</p>
 <p><strong>Example with subject_tree:</strong>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales, subject_tree: sales/reporting/revenue_analysis. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p><strong>Example without subject_tree:</strong>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/gen_sql_summary Analyze this SQL: SELECT SUM(revenue) FROM sales
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Analyze this SQL: SELECT SUM(revenue) FROM sales. @Agent gen_sql_summary
 </span></code></pre></div></p>
 <p>When subject_tree is provided, the SQL summary will be categorized accordingly (e.g., domain: sales, layer1: reporting, layer2: revenue_analysis). If not provided, the agent operates in learning mode and automatically suggests categories based on:
 - Existing subject trees in the Knowledge Base
