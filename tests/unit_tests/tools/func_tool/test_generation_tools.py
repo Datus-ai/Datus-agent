@@ -1874,3 +1874,53 @@ class TestCheckSemanticObjectExistsCacheHit:
         assert result1.result == result2.result
         # Cache should have been populated
         assert len(generation_tools._semantic_object_exists_cache) >= 1
+
+
+class TestOsiDatasetColumnRoles:
+    """Projection has to keep what the loader resolved, not re-derive it."""
+
+    @staticmethod
+    def _dataset(fields, time_dimension=None, dimensions=(), unique_keys=()):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            name="orders",
+            primary_key=[],
+            unique_keys=list(unique_keys),
+            time_dimension=time_dimension,
+            dimensions=list(dimensions),
+            fields=fields,
+        )
+
+    @staticmethod
+    def _field(name, type_="categorical", granularity=""):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            name=name, expr=name, type=type_, granularity=granularity, description="", ai_context=None
+        )
+
+    def test_every_time_field_keeps_its_temporal_role(self):
+        """A dataset has one primary time axis but any number of time
+        dimensions. Reading only `time_dimension` demoted the others to plain
+        fields and lost their granularity."""
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        start = self._field("start_date", "time", "day")
+        end = self._field("end_date", "time", "day")
+        dataset = self._dataset([start, end], time_dimension=start, dimensions=[end])
+
+        columns = {c["name"]: c for c in GenerationTools._osi_dataset_columns(dataset)}
+
+        assert columns["start_date"]["role"] == "time_dimension"
+        assert columns["end_date"]["role"] == "time_dimension"
+        assert columns["end_date"]["granularity"] == "day"
+
+    def test_a_non_temporal_field_is_not_promoted(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        dataset = self._dataset([self._field("region")])
+
+        columns = {c["name"]: c for c in GenerationTools._osi_dataset_columns(dataset)}
+
+        assert columns["region"]["role"] == "field"

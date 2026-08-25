@@ -162,6 +162,9 @@ class SemanticDatasetStorage(BaseEmbeddingStore):
                     pa.field("catalog_name", pa.string()),
                     pa.field("database_name", pa.string()),
                     pa.field("schema_name", pa.string()),
+                    # A key may span several columns, so this is a list of
+                    # groups rather than a flag on each field row.
+                    pa.field("unique_keys_json", pa.string()),
                     # -- Content --
                     pa.field("description", pa.string()),
                     pa.field("ai_context_json", pa.string()),
