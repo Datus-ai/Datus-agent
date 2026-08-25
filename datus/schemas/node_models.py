@@ -436,6 +436,14 @@ class ExecuteSQLResult(BaseResult):
 
     sql_query: Optional[str] = Field("", description="The SQL query to execute")
     row_count: Optional[int] = Field(None, description="The number of rows returned")
+    error_code: Optional[str] = Field(
+        None,
+        description=(
+            "ErrorCode of a failure the caller may want to branch on — currently only a policy "
+            "refusal, which an API surface renders differently from a broken query. Absent on "
+            "engine errors, whose text is the whole story."
+        ),
+    )
     sql_return: Any = Field(  # TODO: change to Union[str, ArrowTable, List[Reuslt]]
         default=None, description="The result of SQL execution (string or Arrow data)"
     )

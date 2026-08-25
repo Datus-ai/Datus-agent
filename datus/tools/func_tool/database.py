@@ -2142,7 +2142,7 @@ class DBFuncTool:
             )
             if not decision.allowed:
                 raise DatusException(
-                    ErrorCode.TOOL_INVALID_INPUT,
+                    ErrorCode.POLICY_DENIED,
                     message=decision.reason or "Policy denied the query",
                 )
             enforced_sql = decision.sql if decision.sql is not None else sql
@@ -2153,7 +2153,12 @@ class DBFuncTool:
                     datasource=effective_datasource,
                 )
         except DatusException as exc:
-            return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql)
+            return ExecuteSQLResult(
+                success=False,
+                error=self._policy_error_text(exc),
+                error_code=exc.code.code,
+                sql_query=sql,
+            )
         if enforced_sql != sql:
             # A policy rewrite (e.g. an injected LIMIT) must still be a single
             # read-only statement — re-validate so it can't smuggle in DML/DDL.
@@ -2173,7 +2178,7 @@ class DBFuncTool:
             )
             if not result_decision.allowed:
                 raise DatusException(
-                    ErrorCode.TOOL_INVALID_INPUT,
+                    ErrorCode.POLICY_DENIED,
                     message=result_decision.reason or "Policy denied the query result",
                 )
             result.sql_return = result_decision.result
@@ -2185,7 +2190,24 @@ class DBFuncTool:
                 )
             return result
         except DatusException as exc:
-            return ExecuteSQLResult(success=False, error=str(exc), sql_query=enforced_sql)
+            return ExecuteSQLResult(
+                success=False,
+                error=self._policy_error_text(exc),
+                error_code=exc.code.code,
+                sql_query=enforced_sql,
+            )
+
+    @staticmethod
+    def _policy_error_text(exc: DatusException) -> str:
+        """What to put in ``error`` for a failure that reached the caller.
+
+        A policy refusal is already a sentence written for whoever is reading
+        it — SaaS composes it from the attribute they are missing — so it goes
+        out without the ``error_code=`` prefix that would otherwise be the
+        first thing they see. Everything else keeps the prefixed form the logs
+        and the existing callers expect.
+        """
+        return exc.detail if exc.code is ErrorCode.POLICY_DENIED else str(exc)
 
     def guard_estimated_rows(
         self,

@@ -120,6 +120,12 @@ class ErrorCode(Enum):
 
     # Plugin store errors
     PLUGIN_STORE_ERROR = ("400030", "Plugin store error: {error_message}")
+
+    # Read refused by a policy plugin, as opposed to a malformed request.
+    # Distinct from TOOL_INVALID_INPUT so a caller can tell "you may not see
+    # this" from "your query is wrong" — the two want different UI, and only
+    # one of them is worth a retry button.
+    POLICY_DENIED = ("400040", "Policy denied the read: {error_message}")
     PACKAGE_BUILD_ERROR = ("400031", "Package build error: {error_message}")
 
     # Storage errors - Vector Database Operations
@@ -205,6 +211,11 @@ class DatusException(Exception):
     def __init__(self, code: ErrorCode, message=None, message_args=None, *args):
         self.code = code
         self.message_args = message_args or {}
+        #: The message on its own. ``message`` prefixes it with the code, which
+        #: is right for a log and wrong for anything a person reads — a policy
+        #: refusal already explains itself and does not need "error_code=" in
+        #: front of it.
+        self.detail = self.build_detail(message, message_args)
         self.message = self.build_msg(message, message_args)
         super().__init__(self.message, *args)
 
@@ -227,6 +238,10 @@ class DatusException(Exception):
         return names
 
     def build_msg(self, message: Optional[str] = None, message_args: Optional[Dict[str, Any]] = None) -> str:
+        return f"error_code={self.code.code}, error_message={self.build_detail(message, message_args)}"
+
+    def build_detail(self, message: Optional[str] = None, message_args: Optional[Dict[str, Any]] = None) -> str:
+        """The message without the ``error_code=`` prefix."""
         if message:
             final_message = message
         elif message_args:
@@ -248,7 +263,7 @@ class DatusException(Exception):
                     final_message = formatted
         else:
             final_message = self.code.desc
-        return f"error_code={self.code.code}, error_message={final_message}"
+        return final_message
 
 
 def setup_exception_handler(console_logger=None, prefix_wrap_func=None):

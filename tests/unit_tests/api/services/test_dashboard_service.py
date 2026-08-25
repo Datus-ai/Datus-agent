@@ -32,6 +32,7 @@ from datus.api.services.dashboard_service import (
     _validate_params,
 )
 from datus.schemas.gen_visual_dashboard_models import TemplateParamDecl
+from datus.utils.exceptions import ErrorCode
 
 _SAMPLE_SQL_J2 = "SELECT * FROM sales WHERE region = :region;\n"
 _SAMPLE_META = {
@@ -668,6 +669,38 @@ async def test_run_query_connector_returns_unsuccessful_envelope(tmp_path: Path,
     assert result.success is False
     assert result.errorCode == "QUERY_EXECUTION_FAILED"
     assert "syntax error" in (result.errorMessage or "")
+
+
+@pytest.mark.asyncio
+async def test_run_query_reports_a_policy_refusal_as_its_own_code(tmp_path: Path, monkeypatch):
+    """A refusal is not a failed query, and the viewer renders it differently.
+
+    Folded into QUERY_EXECUTION_FAILED it arrived as
+    ``query failed: error_code=400002, error_message=<the only useful part>``,
+    which a dashboard then repeated once per panel under a retry button that
+    could not help.
+    """
+    _write_dashboard(tmp_path)
+
+    class _Denied:
+        success = False
+        error = "you have no value for store_id, which this project's row policies filter by."
+        error_code = ErrorCode.POLICY_DENIED.code
+
+    _patch_failing_executor(monkeypatch, exec_result=_Denied())
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "POLICY_DENIED"
+    # Verbatim: no "query failed:" in front of a sentence already written for
+    # whoever is reading it.
+    assert result.errorMessage == _Denied.error
 
 
 @pytest.mark.asyncio
