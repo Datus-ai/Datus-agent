@@ -833,13 +833,19 @@ class ExplorerService:
         """
         from datus.tools.middleware import transform_tool_args
 
-        effective = policy_context
-        if effective is None:
-            effective = getattr(self.agent_config, "policy_context", None)
+        # Falsy, not ``is None``: ``AppContext.policy_context`` defaults to an
+        # empty dict, so the route always passes one. Testing identity would
+        # let that empty dict shadow a context pinned on the config — and an
+        # empty context is the strictest reading there is, so a single-node
+        # deployment would find its own previews refused.
+        effective = policy_context or getattr(self.agent_config, "policy_context", None)
 
         args = transform_tool_args(
             "query_metrics",
             {"metrics": [metric_name], "where": where},
+            # The registry a direct caller does not have: manifests declare
+            # these as ``semantic_tools.query_metrics``.
+            category="semantic_tools",
             # Lazy: reading the metric catalogue costs an adapter round trip,
             # and a project with no policy plugin has nothing to spend it on.
             context=lambda: {
@@ -851,7 +857,9 @@ class ExplorerService:
                 self.agent_config.active_plugin_names() if hasattr(self.agent_config, "active_plugin_names") else None
             ),
         )
-        narrowed = args.get("where")
+        # Default to the original: the contract lets a transformer return any
+        # dict, and reading a missing key as "no filter" would widen the query.
+        narrowed = args.get("where", where)
         if narrowed != where:
             logger.info(f"Metric policy narrowed the preview of '{metric_name}'")
         return narrowed
@@ -920,7 +928,14 @@ class ExplorerService:
                 )
 
             try:
-                where = self._narrow_by_metric_policy(tools, metric_name, request.where, policy_context)
+                # Off the loop: building the transformer context reads the
+                # adapter's metric catalogue, and ``metric_datasets`` resolves
+                # that synchronously — on the loop thread it would park the
+                # whole API process for the length of an adapter round trip.
+                # Same reason the compile below is handed to a thread.
+                where = await asyncio.to_thread(
+                    self._narrow_by_metric_policy, tools, metric_name, request.where, policy_context
+                )
             except ToolTransformDenied as exc:
                 # The transformer declines rather than guesses when it cannot
                 # resolve which datasets a metric reads. Its own words name what

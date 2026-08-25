@@ -777,6 +777,7 @@ class TestTransformToolArgsWithoutANode:
             "query_metrics",
             {"where": "status = 'paid'"},
             context={"policy_context": {"row_filter": {"access_mode": "scoped"}}},
+            category="semantic_tools",
             transformers_by_pattern={"semantic_tools.query_metrics": [narrow]},
         )
 
@@ -793,6 +794,7 @@ class TestTransformToolArgsWithoutANode:
             "query_metrics",
             {},
             context={},
+            category="semantic_tools",
             transformers_by_pattern={"semantic_tools.query_metrics": [first, second]},
         )
 
@@ -809,7 +811,50 @@ class TestTransformToolArgsWithoutANode:
             "query_metrics",
             {"where": None},
             context={},
+            category="semantic_tools",
             transformers_by_pattern={"semantic_tools.query_*": [narrow]},
+        )
+
+        assert args["where"] == "policed"
+
+    def test_a_category_pattern_needs_its_category(self):
+        """Without one, a category-qualified pattern must not match.
+
+        The degraded version compared trailing segments, so ``db_tools.*``
+        matched every tool — a SQL-oriented transformer would have been handed
+        ``{"metrics": [...]}`` and refused the call. Erring towards no match is
+        the safe half of that.
+        """
+
+        def narrow(name, args, ctx):
+            return {**args, "where": "policed"}
+
+        unmatched = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            transformers_by_pattern={"semantic_tools.query_metrics": [narrow]},
+        )
+        assert unmatched["where"] is None
+
+        wrong_group = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            category="semantic_tools",
+            transformers_by_pattern={"db_tools.*": [narrow]},
+        )
+        assert wrong_group["where"] is None
+
+    def test_a_bare_glob_matches_without_a_category(self):
+        def narrow(name, args, ctx):
+            return {**args, "where": "policed"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            transformers_by_pattern={"query_*": [narrow]},
         )
 
         assert args["where"] == "policed"
@@ -825,6 +870,7 @@ class TestTransformToolArgsWithoutANode:
                 "query_metrics",
                 {},
                 context={},
+                category="semantic_tools",
                 transformers_by_pattern={"semantic_tools.query_metrics": [refuse]},
             )
 
@@ -837,6 +883,7 @@ class TestTransformToolArgsWithoutANode:
                 "query_metrics",
                 {},
                 context={},
+                category="semantic_tools",
                 transformers_by_pattern={"semantic_tools.query_metrics": [broken]},
             )
 
@@ -851,6 +898,7 @@ class TestTransformToolArgsWithoutANode:
                 "query_metrics",
                 {},
                 context={},
+                category="semantic_tools",
                 transformers_by_pattern={"semantic_tools.query_metrics": [later]},
             )
 
@@ -883,6 +931,7 @@ class TestTransformToolArgsWithoutANode:
             "query_metrics",
             {},
             context=build_context,
+            category="semantic_tools",
             transformers_by_pattern={"semantic_tools.query_metrics": [lambda n, a, c: a]},
         )
         assert calls == [1]

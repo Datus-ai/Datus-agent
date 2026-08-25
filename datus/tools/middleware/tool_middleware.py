@@ -39,7 +39,6 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
-from fnmatch import fnmatch
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from agents import FunctionTool
@@ -210,6 +209,7 @@ def transform_tool_args(
     args: Dict[str, Any],
     *,
     context: Union[Dict[str, Any], ContextProvider],
+    category: Optional[str] = None,
     transformers_by_pattern: Optional[Dict[str, List[ToolTransformer]]] = None,
     active_plugin_names: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
@@ -234,19 +234,23 @@ def transform_tool_args(
     for the model; here it is a :class:`ToolTransformDenied` for the caller to
     map onto its own surface.
 
-    Matching is ``fnmatch`` on the bare ``tool_name`` against the declared
-    patterns' trailing segment — the same glob :func:`tool_name_matches` uses,
-    minus the category half, since a direct caller has no tool registry to
-    resolve ``category.*`` forms against.
+    Matching is :func:`tool_name_matches`, the same one the node path uses, so
+    ``category.*`` and bare globs mean here exactly what they mean in a plugin
+    manifest. ``category`` stands in for the tool registry a direct caller does
+    not have: it knows which group it is calling (``semantic_tools`` for
+    ``query_metrics``), and without it a category-qualified pattern cannot
+    match — which is the safe direction, since the alternative is a
+    SQL-oriented transformer being handed metric arguments.
     """
     if transformers_by_pattern is None:
         transformers_by_pattern = collect_plugin_tool_transformers(active_plugin_names)
     if not transformers_by_pattern:
         return args
 
+    registry = {tool_name: category} if category else {}
     matched: List[ToolTransformer] = []
     for pattern, transformers in transformers_by_pattern.items():
-        if fnmatch(tool_name, pattern.rsplit(".", 1)[-1]):
+        if tool_name_matches(tool_name, registry, parse_tool_patterns([pattern])):
             matched.extend(transformers)
     if not matched:
         return args
