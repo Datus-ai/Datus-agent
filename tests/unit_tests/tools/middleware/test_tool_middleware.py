@@ -11,6 +11,7 @@ node-level ``apply_tool_transformers`` matching/skipping behavior.
 """
 
 import dataclasses
+import gc
 import json
 from types import SimpleNamespace
 
@@ -797,6 +798,22 @@ class TestTransformToolArgsWithoutANode:
 
         assert args["where"] == "ab"
 
+    def test_matches_a_trailing_glob(self):
+        # ``tool_name_matches`` globs both halves; the trailing half has to glob
+        # here too, or a manifest declaring ``semantic_tools.query_*`` would
+        # silently enforce nothing for a direct caller.
+        def narrow(name, args, ctx):
+            return {**args, "where": "policed"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            transformers_by_pattern={"semantic_tools.query_*": [narrow]},
+        )
+
+        assert args["where"] == "policed"
+
     def test_a_raising_transformer_denies(self):
         # Fail-closed, like the wrapper. The wrapper answers the model with a
         # payload; a direct caller has no model, so it gets an exception.
@@ -823,7 +840,7 @@ class TestTransformToolArgsWithoutANode:
                 transformers_by_pattern={"semantic_tools.query_metrics": [broken]},
             )
 
-    def test_an_async_transformer_denies_rather_than_being_dropped(self):
+    def test_an_async_transformer_denies_rather_than_being_dropped(self, recwarn):
         # The wrapper awaits these; this entry point is synchronous, and
         # silently ignoring the coroutine would skip the policy.
         async def later(name, args, ctx):
@@ -836,6 +853,11 @@ class TestTransformToolArgsWithoutANode:
                 context={},
                 transformers_by_pattern={"semantic_tools.query_metrics": [later]},
             )
+
+        # The coroutine is closed on the way out: left un-awaited it warns when
+        # the GC gets to it, burying the denial under unrelated noise.
+        gc.collect()
+        assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
 
     def test_a_callable_context_is_resolved_only_when_something_matches(self):
         """Assembling the context can cost an adapter round trip.

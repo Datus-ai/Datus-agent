@@ -39,6 +39,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
+from fnmatch import fnmatch
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from agents import FunctionTool
@@ -233,9 +234,10 @@ def transform_tool_args(
     for the model; here it is a :class:`ToolTransformDenied` for the caller to
     map onto its own surface.
 
-    Matching is on the bare ``tool_name`` against the declared patterns'
-    trailing segment, since a direct caller has no tool registry to resolve
-    ``category.*`` forms against.
+    Matching is ``fnmatch`` on the bare ``tool_name`` against the declared
+    patterns' trailing segment — the same glob :func:`tool_name_matches` uses,
+    minus the category half, since a direct caller has no tool registry to
+    resolve ``category.*`` forms against.
     """
     if transformers_by_pattern is None:
         transformers_by_pattern = collect_plugin_tool_transformers(active_plugin_names)
@@ -244,7 +246,7 @@ def transform_tool_args(
 
     matched: List[ToolTransformer] = []
     for pattern, transformers in transformers_by_pattern.items():
-        if pattern.rsplit(".", 1)[-1] in (tool_name, "*"):
+        if fnmatch(tool_name, pattern.rsplit(".", 1)[-1]):
             matched.extend(transformers)
     if not matched:
         return args
@@ -259,6 +261,12 @@ def transform_tool_args(
             logger.warning("Tool transformer %s denied '%s': %s", transformer_name, tool_name, exc)
             raise ToolTransformDenied(str(exc) or type(exc).__name__) from exc
         if inspect.isawaitable(result):
+            # Close it first: an un-awaited coroutine warns at collection time
+            # and keeps its frame alive, which would make the denial noisy and
+            # harder to read than the refusal itself.
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
             raise ToolTransformDenied(
                 f"transformer {transformer_name} is async; transform_tool_args is a synchronous entry point"
             )
