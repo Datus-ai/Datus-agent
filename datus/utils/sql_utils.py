@@ -892,6 +892,27 @@ def is_single_statement(sql: str) -> bool:
     return _first_statement(normalized) == normalized
 
 
+#: Leading ``EXPLAIN`` and the option forms the dialects spell it with, so the
+#: statement being explained can be classified on its own.
+#:
+#: Matched textually rather than off the parse tree because the tree is not
+#: dependable here: postgres parses ``EXPLAIN ...`` to a ``Command`` whose inner
+#: node is a bare string, mysql to a ``Describe`` with a real node, and
+#: ``EXPLAIN (ANALYZE, BUFFERS) DELETE ...`` fails to parse on mysql outright.
+_EXPLAIN_PREFIX_RE = re.compile(
+    r"""^EXPLAIN\b\s*
+        (?:
+            \([^)]*\)                 # postgres: EXPLAIN (ANALYZE, BUFFERS)
+          | ANALYZE\b | ANALYSE\b
+          | VERBOSE\b | EXTENDED\b | PARTITIONS\b
+          | FORMAT\s*=?\s*\w+
+          | QUERY\s+PLAN\b           # sqlite
+        )*
+        \s*""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLType]:
     """Classify one SQL statement and identify read-only safety violations.
 
@@ -908,6 +929,34 @@ def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLTy
     sql_type = parse_sql_type(sql, dialect)
     if sql_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
         return READ_ONLY_NON_READ, sql_type
+
+    if normalized_sql[:7].upper() == "EXPLAIN":
+        # `EXPLAIN ANALYZE <write>` RUNS the write — that is what ANALYZE means
+        # in postgres and mysql. Classifying the whole thing as EXPLAIN and
+        # stopping there let `EXPLAIN ANALYZE DELETE FROM orders` through every
+        # gate built on this helper, on a deployment whose entire promise is
+        # that no non-read statement may run.
+        #
+        # Refused whenever the explained statement is not itself a read, rather
+        # than only when ANALYZE is spelled out. Deciding on the option keyword
+        # would mean enumerating every dialect's spelling correctly forever, and
+        # getting that wrong fails open; a read-only caller has no need to
+        # explain a write either way.
+        #
+        # Keyed on the statement text, not on `sql_type`: sqlglot parses EXPLAIN
+        # to a `Describe` on mysql, which classifies as METADATA_SHOW rather
+        # than EXPLAIN, so branching on the type would have left mysql — one of
+        # the two dialects where ANALYZE actually executes — uncovered.
+        inner = _EXPLAIN_PREFIX_RE.sub("", normalized_sql, count=1).strip()
+        if not inner:
+            return READ_ONLY_NON_READ, sql_type
+        inner_type = parse_sql_type(inner, dialect)
+        if inner_type not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+            # Reuses READ_ONLY_NON_READ rather than adding a code: callers map
+            # codes to their own wording with a dict lookup, and an unmapped
+            # code would raise KeyError inside a security gate. Returning the
+            # inner type also makes the refusal say `delete`, not `explain`.
+            return READ_ONLY_NON_READ, inner_type
 
     if sql_type == SQLType.METADATA_SHOW:
         first_word = cleaned.split()[0].upper() if cleaned else ""

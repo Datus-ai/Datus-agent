@@ -2123,3 +2123,97 @@ class TestDeploymentReadOnlyRefusal:
         refusal = deployment_read_only_refusal(self._Config(True), "DROP TABLE t", "sqlite")
 
         assert "ddl" in refusal
+
+
+class TestValidateReadOnlySqlExplain:
+    """`EXPLAIN ANALYZE <write>` executes the write.
+
+    That is what ANALYZE means in postgres and mysql: the plan is measured by
+    running the statement. Classifying the whole thing as EXPLAIN and stopping
+    there let `EXPLAIN ANALYZE DELETE FROM orders` through every gate built on
+    this helper — the tool path, `POST /sql/execute`, the MCP surface and the
+    workflow guard — on a deployment whose entire promise is that no non-read
+    statement may run.
+    """
+
+    _DIALECTS = ("postgres", "mysql", "sqlite", "duckdb", "")
+
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN SELECT * FROM t",
+            "EXPLAIN ANALYZE SELECT * FROM t",
+            "EXPLAIN QUERY PLAN SELECT 1",
+            "EXPLAIN VERBOSE SELECT 1",
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT 1",
+        ],
+    )
+    def test_explaining_a_read_is_still_allowed(self, sql, dialect):
+        """The gate must not cost a read-only caller its query plans."""
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation is None
+
+    @pytest.mark.parametrize("dialect", _DIALECTS)
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN ANALYZE DELETE FROM orders",
+            "EXPLAIN ANALYZE INSERT INTO t VALUES (1)",
+            "EXPLAIN ANALYZE UPDATE t SET a = 1",
+            "EXPLAIN ANALYZE DROP TABLE t",
+            "EXPLAIN ANALYZE TRUNCATE TABLE t",
+        ],
+    )
+    def test_explain_analyze_of_a_write_is_refused(self, sql, dialect):
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "EXPLAIN (ANALYZE, BUFFERS) DELETE FROM orders",
+            "EXPLAIN ANALYSE DELETE FROM orders",
+            "explain analyze delete from orders",
+            "EXPLAIN   ANALYZE   DELETE FROM orders",
+            "EXPLAIN VERBOSE INSERT INTO t VALUES (1)",
+            "EXPLAIN FORMAT=JSON DELETE FROM orders",
+        ],
+    )
+    def test_every_spelling_of_the_options_is_stripped(self, sql):
+        """The option list is matched textually across dialects. Deciding on the
+        ANALYZE keyword alone would mean enumerating every spelling correctly
+        forever, and getting that wrong fails open."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_explaining_a_write_is_refused_even_without_analyze(self):
+        """Conservative on purpose. Plain `EXPLAIN DELETE` only plans on
+        postgres, but a read-only caller has no need to explain a write, and
+        refusing on the inner statement rather than on an option keyword is the
+        rule that cannot fail open."""
+        violation, _ = validate_read_only_sql("EXPLAIN DELETE FROM orders", "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_the_refusal_names_the_inner_statement(self):
+        """`explain` would tell an operator nothing about what was attempted."""
+        _, sql_type = validate_read_only_sql("EXPLAIN ANALYZE DELETE FROM orders", "postgres")
+
+        assert sql_type == SQLType.DELETE
+
+    @pytest.mark.parametrize("sql", ["EXPLAIN", "EXPLAIN   ", "EXPLAIN ANALYZE"])
+    def test_an_explain_with_nothing_to_explain_is_refused(self, sql):
+        """Fail closed: nothing was classified, so nothing was cleared."""
+        violation, _ = validate_read_only_sql(sql, "postgres")
+
+        assert violation == READ_ONLY_NON_READ
+
+    def test_a_write_smuggled_after_an_explain_is_still_multi_statement(self):
+        """The shape check runs first and stays the answer."""
+        violation, _ = validate_read_only_sql("EXPLAIN SELECT 1; DROP TABLE t", "postgres")
+
+        assert violation == READ_ONLY_MULTI_STATEMENT
