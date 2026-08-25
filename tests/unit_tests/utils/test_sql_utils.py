@@ -2268,6 +2268,25 @@ class TestValidateReadOnlySqlDataModifyingCte:
 
         assert violation is None
 
+    @pytest.mark.parametrize("dialect", ["postgres", "starrocks", "not_a_dialect", "totally-made-up", ""])
+    def test_the_walk_survives_a_dialect_sqlglot_does_not_know(self, dialect):
+        """The raw dialect name used to go straight to `parse_one`, so a name
+        sqlglot rejects raised, the walk was skipped, and the CTE went through —
+        the check silently did not apply to exactly the deployments whose
+        dialect the classifier already has to work around."""
+        sql = "WITH deleted AS (DELETE FROM orders RETURNING *) SELECT * FROM deleted"
+
+        violation, _ = validate_read_only_sql(sql, dialect)
+
+        assert violation == READ_ONLY_NON_READ
+
+    @pytest.mark.parametrize("dialect", ["postgres", "not_a_dialect"])
+    def test_an_unknown_dialect_does_not_refuse_ordinary_reads(self, dialect):
+        """The retry must widen coverage, not turn every read into a refusal."""
+        violation, _ = validate_read_only_sql("WITH ok AS (SELECT 1) SELECT * FROM ok", dialect)
+
+        assert violation is None
+
     def test_unparseable_input_is_still_refused_for_being_unclassifiable(self):
         """The walk answers False on input it cannot parse, deliberately: the
         type check already refuses it, and claiming "embeds a write" would make

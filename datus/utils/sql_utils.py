@@ -924,20 +924,31 @@ def _embeds_write_statement(sql: str, dialect: str) -> bool:
     That statement's top-level node is a SELECT, so classifying by root alone
     called it a read and let it through every gate — while it deletes the rows.
 
-    Unparseable input returns False rather than True: the caller already refuses
-    anything it cannot classify, and answering True here would make the reason
-    reported for it wrong.
+    Normalizes the dialect the same way ``parse_sql_type`` does and retries
+    without one. Passing the raw name meant a dialect sqlglot does not know
+    raised ``ValueError``, the walk was skipped, and the CTE above went through
+    — the check silently did not apply to exactly the deployments whose dialect
+    the classifier had to work around in the first place.
+
+    Returns False when nothing could be parsed at all. That is a known limit
+    rather than a guarantee: ``parse_sql_type`` has a fallback that rescues
+    vendor SELECTs sqlglot cannot parse, so a statement it rescues is treated as
+    a read while this function cannot see inside it. Detecting that would mean
+    refusing unparseable reads outright, which is the very thing the fallback
+    exists to avoid.
     """
-    try:
-        parsed = sqlglot.parse_one(sql, read=dialect or None)
-    except Exception:
-        return False
-    if parsed is None:
-        return False
-    return any(
-        isinstance(node, (expressions.Insert, expressions.Update, expressions.Delete, expressions.Merge))
-        for node in parsed.walk()
-    )
+    for read in (parse_dialect(dialect), None):
+        try:
+            parsed = sqlglot.parse_one(sql, read=read)
+        except Exception:
+            continue
+        if parsed is None:
+            continue
+        return any(
+            isinstance(node, (expressions.Insert, expressions.Update, expressions.Delete, expressions.Merge))
+            for node in parsed.walk()
+        )
+    return False
 
 
 def validate_read_only_sql(sql: str, dialect: str) -> tuple[Optional[str], SQLType]:
