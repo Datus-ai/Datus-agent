@@ -39,12 +39,13 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from agents import FunctionTool
 
 # Pattern matching intentionally shares the proxy layer's semantics
 # ("category.*", bare tool name, fnmatch globs) so operators learn one syntax.
+from datus.plugins.registry import collect_plugin_tool_transformers
 from datus.tools.proxy.proxy_tool import parse_tool_patterns, tool_name_matches
 from datus.utils.loggings import get_logger
 
@@ -193,6 +194,76 @@ def wrap_tool_with_transformers(
     }
     carried["on_invoke_tool"] = transforming_invoke
     return FunctionTool(**carried)
+
+
+class ToolTransformDenied(Exception):
+    """A transformer refused a call made outside the agent's tool loop.
+
+    The loop answers a refusal with a payload the model reads and can act on;
+    a direct caller has no model, so it gets an exception instead.
+    """
+
+
+def transform_tool_args(
+    tool_name: str,
+    args: Dict[str, Any],
+    *,
+    context: Dict[str, Any],
+    transformers_by_pattern: Optional[Dict[str, List[ToolTransformer]]] = None,
+    active_plugin_names: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    """Run the active plugins' transformers over one call's arguments.
+
+    The same transformers :func:`apply_tool_transformers` wraps a node's tools
+    with, for a caller that has no node: the Hub metric endpoints reach the
+    semantic adapter through a direct Python call, so nothing wraps them and a
+    metric policy that filters the agent's ``query_metrics`` did not touch
+    them at all.
+
+    ``context`` is the caller's to build — the node version reads
+    ``policy_context`` and the metric catalogue off the node, and there is no
+    node here. A transformer needs at least ``agent_config``,
+    ``policy_context`` and, for metric policies, ``metric_datasets``.
+
+    Fail-closed like the wrapper: a transformer that raises, or returns
+    anything but a dict, denies the call. The wrapper turns that into a payload
+    for the model; here it is a :class:`ToolTransformDenied` for the caller to
+    map onto its own surface.
+
+    Matching is on the bare ``tool_name`` against the declared patterns'
+    trailing segment, since a direct caller has no tool registry to resolve
+    ``category.*`` forms against.
+    """
+    if transformers_by_pattern is None:
+        transformers_by_pattern = collect_plugin_tool_transformers(active_plugin_names)
+    if not transformers_by_pattern:
+        return args
+
+    matched: List[ToolTransformer] = []
+    for pattern, transformers in transformers_by_pattern.items():
+        if pattern.rsplit(".", 1)[-1] in (tool_name, "*"):
+            matched.extend(transformers)
+    if not matched:
+        return args
+
+    current = args
+    for transformer in matched:
+        transformer_name = getattr(transformer, "__name__", repr(transformer))
+        try:
+            result = transformer(tool_name, current, context)
+        except Exception as exc:
+            logger.warning("Tool transformer %s denied '%s': %s", transformer_name, tool_name, exc)
+            raise ToolTransformDenied(str(exc) or type(exc).__name__) from exc
+        if inspect.isawaitable(result):
+            raise ToolTransformDenied(
+                f"transformer {transformer_name} is async; transform_tool_args is a synchronous entry point"
+            )
+        if not isinstance(result, dict):
+            raise ToolTransformDenied(
+                f"transformer {transformer_name} returned {type(result).__name__} instead of an argument dict"
+            )
+        current = result
+    return current
 
 
 def _metric_catalog_providers(node: Any) -> List[Any]:

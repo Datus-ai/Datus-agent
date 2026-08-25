@@ -18,8 +18,10 @@ import pytest
 from agents import FunctionTool
 
 from datus.tools.middleware.tool_middleware import (
+    ToolTransformDenied,
     apply_tool_transformers,
     tool_is_transformed,
+    transform_tool_args,
     wrap_tool_with_transformers,
 )
 from datus.tools.registry.tool_registry import ToolRegistry
@@ -741,3 +743,96 @@ class TestApplyToolTransformers:
         await node.tools[0].on_invoke_tool(None, json.dumps({"sql": "base"}))
         assert json.loads(record[0])["sql"].startswith("base|")
         assert set(json.loads(record[0])["sql"].split("|")[1:]) == {"byname", "bycat"}
+
+
+class TestTransformToolArgsWithoutANode:
+    """The same transformers, for a caller that has no agent node.
+
+    The Hub metric endpoints reach the semantic adapter through a direct Python
+    call. Nothing wraps their tools because there are none, so a metric policy
+    that filters the agent's ``query_metrics`` did not touch them at all.
+    """
+
+    def test_passes_through_when_no_transformer_matches(self):
+        def other(name, args, ctx):
+            raise AssertionError("must not run for a different tool")
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": "a = 1"},
+            context={},
+            transformers_by_pattern={"db_tools.execute_sql": [other]},
+        )
+
+        assert args == {"where": "a = 1"}
+
+    def test_matches_a_pattern_by_its_trailing_segment(self):
+        # Declared as ``semantic_tools.query_metrics`` in the plugin manifest;
+        # a direct caller has no tool registry to resolve the group against.
+        def narrow(name, args, ctx):
+            return {**args, "where": f"({args['where']}) AND store_id IN ('S1')"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": "status = 'paid'"},
+            context={"policy_context": {"row_filter": {"access_mode": "scoped"}}},
+            transformers_by_pattern={"semantic_tools.query_metrics": [narrow]},
+        )
+
+        assert args["where"] == "(status = 'paid') AND store_id IN ('S1')"
+
+    def test_chains_transformers_in_order(self):
+        def first(name, args, ctx):
+            return {**args, "where": "a"}
+
+        def second(name, args, ctx):
+            return {**args, "where": args["where"] + "b"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {},
+            context={},
+            transformers_by_pattern={"semantic_tools.query_metrics": [first, second]},
+        )
+
+        assert args["where"] == "ab"
+
+    def test_a_raising_transformer_denies(self):
+        # Fail-closed, like the wrapper. The wrapper answers the model with a
+        # payload; a direct caller has no model, so it gets an exception.
+        def refuse(name, args, ctx):
+            raise RuntimeError("the semantic adapter reports no dataset for them")
+
+        with pytest.raises(ToolTransformDenied, match="no dataset"):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                transformers_by_pattern={"semantic_tools.query_metrics": [refuse]},
+            )
+
+    def test_a_non_dict_return_denies(self):
+        def broken(name, args, ctx):
+            return "not a dict"
+
+        with pytest.raises(ToolTransformDenied, match="str"):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                transformers_by_pattern={"semantic_tools.query_metrics": [broken]},
+            )
+
+    def test_an_async_transformer_denies_rather_than_being_dropped(self):
+        # The wrapper awaits these; this entry point is synchronous, and
+        # silently ignoring the coroutine would skip the policy.
+        async def later(name, args, ctx):
+            return args
+
+        with pytest.raises(ToolTransformDenied, match="async"):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                transformers_by_pattern={"semantic_tools.query_metrics": [later]},
+            )
