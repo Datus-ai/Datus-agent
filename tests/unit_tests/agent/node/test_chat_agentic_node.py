@@ -2190,3 +2190,56 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         names = {tool.name for tool in node.tools}
         assert "add_memory" in names
         assert "bash" not in names
+
+    @staticmethod
+    def _stub_platform_doc(node, name="search_document"):
+        """Give the node a platform-doc tool with a real, named tool in it.
+
+        The genuine `PlatformDocSearchTool` builds fine in tests but exposes
+        nothing — there is no indexed docstore for the fixture project — so
+        asserting against its (empty) tool names passes whether or not the
+        rebuild re-adds it. Stub it so the assertion has something to be wrong
+        about.
+        """
+        stub = MagicMock()
+        tool = MagicMock()
+        tool.name = name
+        stub.available_tools.return_value = [tool]
+        node._platform_doc_tool = stub
+        return name
+
+    def test_platform_doc_tools_survive_a_rebuild(self, real_agent_config, mock_llm_create):
+        """`_setup_platform_doc_tools` mounts *after* the initial
+        `_rebuild_tools`, and the rebuild never re-added it — so a task-database
+        switch, which rebuilds, silently dropped platform docs from the LLM's
+        surface mid-session.
+        """
+        node = self._node(real_agent_config)
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+
+        assert name in {tool.name for tool in node.tools}
+
+    def test_the_rebuild_does_not_duplicate_platform_doc_tools(self, real_agent_config, mock_llm_create):
+        """Setup mounts it once after the first rebuild; later rebuilds mount it
+        from the attribute. Neither path may double-count."""
+        node = self._node(real_agent_config)
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+        node._rebuild_tools()
+
+        assert [tool.name for tool in node.tools].count(name) == 1
+
+    def test_an_excluded_platform_doc_family_stays_out_across_a_rebuild(self, real_agent_config, mock_llm_create):
+        """The re-add is gated like everything else — otherwise the rebuild
+        would hand the family back to a node that excluded it."""
+        node = self._node(real_agent_config, tools="db_tools.*")
+        assert node._platform_doc_tool is None
+        # Even if something later populated the attribute, the gate holds.
+        name = self._stub_platform_doc(node)
+
+        node._rebuild_tools()
+
+        assert name not in {tool.name for tool in node.tools}

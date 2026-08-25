@@ -395,6 +395,14 @@ class ChatAgenticNode(AgenticNode):
         # dispatcher's only structured way to learn how the run ended.
         if getattr(self, "task_result_tool", None):
             self.tools.extend(self.task_result_tool.available_tools())
+        # Rebuilt here rather than only in setup_tools, where it is mounted
+        # *after* the initial rebuild and so was never re-added by a later one.
+        # `_update_database_connection` rebuilds on a task-database switch, which
+        # silently dropped platform docs from the LLM's surface mid-session.
+        # Gated like the rest: a node that excluded the family must not get it
+        # back on the next rebuild.
+        if self._platform_doc_tool and self._family_enabled(self._selected_tool_families(), "platform_doc_tools"):
+            self.tools.extend(self._platform_doc_tool.available_tools())
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()
         # The rebuilt list holds fresh, unwrapped FunctionTool instances —
