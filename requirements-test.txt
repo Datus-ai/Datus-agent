@@ -273,12 +273,13 @@ cryptography==46.0.7 ; platform_machine != 'ppc64le' and platform_machine != 's3
     --hash=sha256:fdd1736fed309b4300346f88f74cd120c27c56852c3838cab416e7a166f67298 \
     --hash=sha256:ffca7aa1d00cf7d6469b988c581598f2259e46215e0140af408966a24cf086ce
     # via secretstorage
-datus-semantic-core==0.2.3 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+datus-semantic-core==0.2.3 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
     --hash=sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d \
     --hash=sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42
     # via datus-semantic-dosi
-datus-semantic-dosi @ https://github.com/Datus-ai/datus-semantic-adapter/archive/04b260bddee5ddbb296aff3e1652181b13c9af19.tar.gz#subdirectory=datus-semantic-dosi ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:15b44b45de856cdb0d35fb201308a55207bef37e298502b1a7515fcd37762f3d
+datus-semantic-dosi==0.1.7 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
+    --hash=sha256:2f25b214a68f7aa05fe3edaab510ee9d9463b0fe6cc65813782f795b09eeac24 \
+    --hash=sha256:6fdc54fd54dd6b8334205f1a46db9a7fd2f692223f178180e9f0f39cee062dd4
 datus-storage-base==0.1.5 \
     --hash=sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c \
     --hash=sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3
@@ -297,8 +298,34 @@ docutils==0.22.2 \
     --hash=sha256:9fdb771707c8784c8f2728b67cb2c691305933d68137ef95a75db5f4dfbc213d \
     --hash=sha256:b0e98d679283fc3bb0ead8a5da7f501baa632654e7056e9c5846842213d674d8
     # via readme-renderer
-dosi-engine==0.1.6 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:a70baca8287bf97aa20d1c1e4a1af1bd9757de883be57dfd510539dd61a8f1d2
+dosi-engine==0.1.7 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
+    --hash=sha256:1ec355eed88d650b75f9ae99bffd11e96b5797956ddad0a99fc47127645c5edc \
+    --hash=sha256:2533082d2b8151685f773635e0bdb96f7476e0d0cb5d7b426986e2e0b43f1b8c \
+    --hash=sha256:371a54bc629411917c8d94bbc803e1f5d4f166cf87b15abd35432c8ea56434d4
+    # via datus-semantic-dosi
+duckdb==1.5.2 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
+    --hash=sha256:0b291786014df1133f8f18b9df4d004484613146e858d71a21791e0fcca16cf4 \
+    --hash=sha256:2a1de4f4d454b8c97aec546c82003fc834d3422ce4bc6a19902f3462ef293bed \
+    --hash=sha256:35579b8e3a064b5eaf15b0eafc558056a13f79a0a62e34cc4baf57119daecfec \
+    --hash=sha256:411ad438bd4140f189a10e7f515781335962c5d18bd07837dc6d202e3985253d \
+    --hash=sha256:4420b3f47027a7849d0e1815532007f377fa95ee5810b47ea717d35525c12f79 \
+    --hash=sha256:486c862bf7f163c0110b6d85b3e5c031d224a671cca468f12ebb1d3a348f6b39 \
+    --hash=sha256:52a21823f3fbb52f0f0e5425e20b07391ad882464b955879499b5ff0b45a376b \
+    --hash=sha256:638da0d5102b6cb6f7d47f83d0600708ac1d3cb46c5e9aaabc845f9ba4d69246 \
+    --hash=sha256:6b0fe75c148000f060aa1a27b293cacc0ea08cc1cad724fbf2143d56070a3785 \
+    --hash=sha256:70631c847ca918ee710ec874241b00cf9d2e5be90762cbb2a0389f17823c08f7 \
+    --hash=sha256:8d599758b4e48bf12e18c9b960cf491d219f0c4972d19a45489c05cc5ab36f83 \
+    --hash=sha256:98c0535cd6d901f61a5ea3c2e26a1fd28482953d794deb183daf568e3aa5dda6 \
+    --hash=sha256:bb42e6ed543902e14eae647850da24103a89f0bc2587dec5601b1c1f213bd2ed \
+    --hash=sha256:be37680ddb380015cb37318e378c53511c45c4f0d8fac5599d22b7d092b9217a \
+    --hash=sha256:c99ef73a277c8921bc0a1f16dee38d924484251d9cfd20951748c20fcd5ed855 \
+    --hash=sha256:c9f3e0b71b8a50fccfb42794899285d9d318ce2503782b9dd54868e5ecd0ad31 \
+    --hash=sha256:ce0b8141a10d37ecef729c45bc41d334854013f4389f1488bd6035c5579aaac1 \
+    --hash=sha256:d72b8856b1839d35648f38301b058f6232f4d36b463fe4dc8f4d3fdff2df1a2e \
+    --hash=sha256:e6495b00cad16888384119842797c49316a96ae1cb132bb03856d980d95afee1 \
+    --hash=sha256:ea58ff5b0880593a280cf5511734b17711b32ee1f58b47d726e8600848358160 \
+    --hash=sha256:ef461bca07313412dc09961c4a4757a851f56b95ac01c58fac6007632b7b94f2 \
+    --hash=sha256:fc85a5dbcbe6eccac1113c72370d1d3aacfdd49198d63950bdf7d8638a307f00
     # via datus-semantic-dosi
 execnet==2.1.1 \
     --hash=sha256:26dee51f1b80cebd6d0ca8e74dd8745419761d3bef34163928cbebbdc4749fdc \
