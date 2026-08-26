@@ -273,13 +273,13 @@ cryptography==46.0.7 ; platform_machine != 'ppc64le' and platform_machine != 's3
     --hash=sha256:fdd1736fed309b4300346f88f74cd120c27c56852c3838cab416e7a166f67298 \
     --hash=sha256:ffca7aa1d00cf7d6469b988c581598f2259e46215e0140af408966a24cf086ce
     # via secretstorage
-datus-semantic-core==0.2.3 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+datus-semantic-core==0.2.3 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
     --hash=sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d \
     --hash=sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42
     # via datus-semantic-dosi
-datus-semantic-dosi==0.1.6 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:5d35b14232dc5f3b20d8c5695925a684ec534ccb9801cd14e3e6345dd78b9d27 \
-    --hash=sha256:d58387316d03e5c580ddab5b05e606cf8605eed267ffbc69cbce1809e18efce2
+datus-semantic-dosi==0.1.7 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
+    --hash=sha256:2f25b214a68f7aa05fe3edaab510ee9d9463b0fe6cc65813782f795b09eeac24 \
+    --hash=sha256:6fdc54fd54dd6b8334205f1a46db9a7fd2f692223f178180e9f0f39cee062dd4
 datus-storage-base==0.1.5 \
     --hash=sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c \
     --hash=sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3
@@ -298,10 +298,12 @@ docutils==0.22.2 \
     --hash=sha256:9fdb771707c8784c8f2728b67cb2c691305933d68137ef95a75db5f4dfbc213d \
     --hash=sha256:b0e98d679283fc3bb0ead8a5da7f501baa632654e7056e9c5846842213d674d8
     # via readme-renderer
-dosi-engine==0.1.6 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:a70baca8287bf97aa20d1c1e4a1af1bd9757de883be57dfd510539dd61a8f1d2
+dosi-engine==0.1.7 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
+    --hash=sha256:1ec355eed88d650b75f9ae99bffd11e96b5797956ddad0a99fc47127645c5edc \
+    --hash=sha256:2533082d2b8151685f773635e0bdb96f7476e0d0cb5d7b426986e2e0b43f1b8c \
+    --hash=sha256:371a54bc629411917c8d94bbc803e1f5d4f166cf87b15abd35432c8ea56434d4
     # via datus-semantic-dosi
-duckdb==1.5.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+duckdb==1.5.2 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
     --hash=sha256:0b291786014df1133f8f18b9df4d004484613146e858d71a21791e0fcca16cf4 \
     --hash=sha256:2a1de4f4d454b8c97aec546c82003fc834d3422ce4bc6a19902f3462ef293bed \
     --hash=sha256:35579b8e3a064b5eaf15b0eafc558056a13f79a0a62e34cc4baf57119daecfec \
