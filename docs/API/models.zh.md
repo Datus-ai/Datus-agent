@@ -32,8 +32,8 @@ GET /api/v1/models
       },
       {
         "provider": "deepseek",
-        "id": "deepseek-chat",
-        "name": "DeepSeek Chat",
+        "id": "deepseek-v4-flash",
+        "name": "DeepSeek V4 Flash",
         "context_length": 65536
       }
     ],
@@ -62,7 +62,7 @@ GET /api/v1/models
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `provider` | `string` | `providers.yml` 中的 provider 标识（例如 `"openai"`、`"deepseek"`） |
-| `id` | `string` | SDK 使用的模型标识（例如 `"gpt-4.1"`、`"deepseek-chat"`） |
+| `id` | `string` | SDK 使用的模型标识（例如 `"gpt-4.1"`、`"deepseek-v4-flash"`） |
 | `name` | `string?` | 便于阅读的模型名称 |
 | `context_length` | `int?` | 最大上下文窗口（token 数） |
 | `max_tokens` | `int?` | 最大输出 token 数 |

@@ -32,7 +32,7 @@ agent:
       type: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+      model: deepseek-v4-flash
       save_llm_trace: true  # 为此模型启用跟踪
 ```
 
@@ -60,7 +60,7 @@ output_content: "SELECT * FROM users;"
 
 目前，LLM trace 功能主要在 DeepSeek 模型中实现：
 
-- ✅ DeepSeek Chat (deepseek-chat)
+- ✅ DeepSeek V4 Flash (deepseek-v4-flash)
 - ✅ DeepSeek Reasoner (deepseek-reasoner) - 包含推理内容
 - 🔄 其他模型（OpenAI、Claude、Qwen）有基本接口，可以扩展
 

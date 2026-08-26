@@ -32,8 +32,8 @@ No request body or query parameters required.
       },
       {
         "provider": "deepseek",
-        "id": "deepseek-chat",
-        "name": "DeepSeek Chat",
+        "id": "deepseek-v4-flash",
+        "name": "DeepSeek V4 Flash",
         "context_length": 65536
       }
     ],
@@ -62,7 +62,7 @@ No request body or query parameters required.
 | Field | Type | Description |
 |-------|------|-------------|
 | `provider` | `string` | Provider key from `providers.yml` (e.g., `"openai"`, `"deepseek"`) |
-| `id` | `string` | Model slug as consumed by the SDK (e.g., `"gpt-4.1"`, `"deepseek-chat"`) |
+| `id` | `string` | Model slug as consumed by the SDK (e.g., `"gpt-4.1"`, `"deepseek-v4-flash"`) |
 | `name` | `string?` | Human-readable model name |
 | `context_length` | `int?` | Maximum context window in tokens |
 | `max_tokens` | `int?` | Maximum completion tokens |

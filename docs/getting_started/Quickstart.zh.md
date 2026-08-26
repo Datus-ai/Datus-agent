@@ -63,7 +63,7 @@ datus
 | Provider | 默认模型 | 环境变量 |
 |---|---|---|
 | `openai` | `gpt-4.1` | `OPENAI_API_KEY` |
-| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `deepseek` | `deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
 | `claude` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `gemini-2.5-pro` | `GEMINI_API_KEY` |
 

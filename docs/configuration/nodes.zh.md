@@ -174,7 +174,7 @@ agentic_nodes:
 ```
 
 ## 模型分配建议
-- 结构关联：`gpt-3.5-turbo`、`deepseek-chat`；复杂结构用 `gpt-4`、`claude-4-sonnet`
-- SQL 生成：建议 `deepseek-chat`、`gpt-4-turbo`、`claude-4-sonnet`
+- 结构关联：`gpt-3.5-turbo`、`deepseek-v4-flash`；复杂结构用 `gpt-4`、`claude-4-sonnet`
+- SQL 生成：建议 `deepseek-v4-flash`、`gpt-4-turbo`、`claude-4-sonnet`
 - 推理：`claude-4-sonnet`、`gpt-4-turbo`、`claude-4-opus`，或 `gemini-2.5-flash`
 - 输出/对话：`claude-4-sonnet`、`gpt-4-turbo`

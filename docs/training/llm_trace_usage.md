@@ -32,7 +32,7 @@ agent:
       type: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+      model: deepseek-v4-flash
       save_llm_trace: true  # Enable tracing for this model
 ```
 
@@ -60,7 +60,7 @@ output_content: "SELECT * FROM users;"
 
 Currently, LLM trace functionality is primarily implemented in DeepSeek models:
 
-- ✅ DeepSeek Chat (deepseek-chat)
+- ✅ DeepSeek V4 Flash (deepseek-v4-flash)
 - ✅ DeepSeek Reasoner (deepseek-reasoner) - includes reasoning content
 - 🔄 Other models (OpenAI, Claude, Qwen) have basic interfaces and can be extended
 
