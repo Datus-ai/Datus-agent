@@ -199,7 +199,7 @@ Providers are defined in `conf/providers.yml` and activated by adding credential
 | Provider | Typical models | Interface Type | Auth |
 |----------|----------------|----------------|------|
 | `openai` | `gpt-5.2`, `gpt-4.1`, `o3` | `openai` | API key |
-| `deepseek` | `deepseek-v4-flash`, `deepseek-reasoner` | `deepseek` | API key |
+| `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | `deepseek` | API key |
 | `claude` | `claude-sonnet-4-5`, `claude-opus-4-5` | `claude` | API key |
 | `kimi` | `kimi-k2.5`, `kimi-k2-thinking` | `kimi` | API key |
 | `qwen` | `qwen3-max`, `qwen3-coder-plus` | `openai` | API key |

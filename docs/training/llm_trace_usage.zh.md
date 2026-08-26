@@ -53,15 +53,15 @@ output_content: "SELECT * FROM users;"
 
 - **system_prompt**：系统提示词（如果使用消息格式）
 - **user_prompt**：用户输入提示词
-- **reason_content**：推理内容（仅适用于推理模型，如 deepseek-reasoner）
+- **reason_content**：开启思考模式时返回的推理内容（例如使用 `deepseek-v4-flash` 时）
 - **output_content**：模型输出内容
 
 ## 支持的模型
 
 目前，LLM trace 功能主要在 DeepSeek 模型中实现：
 
-- ✅ DeepSeek V4 Flash (deepseek-v4-flash)
-- ✅ DeepSeek Reasoner (deepseek-reasoner) - 包含推理内容
+- ✅ DeepSeek V4 Flash (`deepseek-v4-flash`) - 开启思考模式时包含推理内容
+- ✅ DeepSeek V4 Pro (`deepseek-v4-pro`)
 - 🔄 其他模型（OpenAI、Claude、Qwen）有基本接口，可以扩展
 
 ## 文件组织
@@ -123,7 +123,7 @@ reason_content: ""
 output_content: "SELECT * FROM users WHERE status = 'active';"
 ```
 
-### 带推理的输出（DeepSeek Reasoner）
+### 带推理的输出（DeepSeek V4 Flash 思考模式）
 
 ```yaml
 system_prompt: "You are an expert SQL developer."

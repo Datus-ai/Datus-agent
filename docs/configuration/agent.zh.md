@@ -122,7 +122,7 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 | 提供方 | 典型模型 | 接口类型 | 认证方式 |
 |---|---|---|---|
 | `openai` | `gpt-5.2`、`gpt-4.1`、`o3` | `openai` | API Key |
-| `deepseek` | `deepseek-v4-flash`、`deepseek-reasoner` | `deepseek` | API Key |
+| `deepseek` | `deepseek-v4-pro`、`deepseek-v4-flash` | `deepseek` | API Key |
 | `claude` | `claude-sonnet-4-5`、`claude-opus-4-5` | `claude` | API Key |
 | `kimi` | `kimi-k2.5`、`kimi-k2-thinking` | `kimi` | API Key |
 | `qwen` | `qwen3-max`、`qwen3-coder-plus` | `openai` | API Key |

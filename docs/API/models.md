@@ -34,7 +34,7 @@ No request body or query parameters required.
         "provider": "deepseek",
         "id": "deepseek-v4-flash",
         "name": "DeepSeek V4 Flash",
-        "context_length": 65536
+        "context_length": 1048576
       }
     ],
     "providers": ["openai", "deepseek"],
