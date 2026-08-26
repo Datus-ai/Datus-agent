@@ -293,7 +293,7 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: db_tools, date_parsing_tools
+      tools: db_tools
       mcp: ''
       rules: []
     datus_schools_context:
@@ -301,7 +301,7 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: context_search_tools, db_tools, date_parsing_tools
+      tools: context_search_tools, db_tools
       mcp: ''
       rules: []
   workflow:

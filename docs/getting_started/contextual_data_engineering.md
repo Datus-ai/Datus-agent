@@ -300,7 +300,7 @@ Open `~/.datus/conf/agent.yml` and append the following two blocks under `agent:
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: db_tools, date_parsing_tools
+      tools: db_tools
       mcp: ''
       rules: []
     datus_schools_context:
@@ -308,7 +308,7 @@ Open `~/.datus/conf/agent.yml` and append the following two blocks under `agent:
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: context_search_tools, db_tools, date_parsing_tools
+      tools: context_search_tools, db_tools
       mcp: ''
       rules: []
   workflow:
