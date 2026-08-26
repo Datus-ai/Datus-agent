@@ -6,6 +6,7 @@
 import asyncio
 import inspect
 import json
+from types import UnionType
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union, get_args, get_origin
 
 import json_repair
@@ -39,7 +40,9 @@ def coerce_llm_arg(value: Any, annotation: Any) -> Any:
 
     origin = get_origin(annotation)
     args = get_args(annotation)
-    if origin is Union:  # Optional[X] / X | None
+    # ``Optional[X]`` gives ``typing.Union``; the PEP 604 form ``X | None``
+    # gives ``types.UnionType``. Both mean the same thing here.
+    if origin is Union or origin is UnionType:
         inner = [a for a in args if a is not type(None)]
         if len(inner) != 1:
             return value

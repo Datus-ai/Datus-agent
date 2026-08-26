@@ -612,3 +612,30 @@ class TestStringifiedArgumentCoercion:
 
     def test_bool_is_not_treated_as_an_int(self):
         assert self._call(flag=True)["flag"] is True
+
+    def test_pep604_optional_int_is_coerced(self):
+        """``int | None`` reports types.UnionType, not typing.Union."""
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, top_n: int | None = None):
+                """Probe tool."""
+                seen["top_n"] = top_n
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "top_n": "7"})))
+        assert seen["top_n"] == 7
+
+    def test_pep604_optional_list_is_coerced(self):
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, kinds: list[str] | None = None):
+                """Probe tool."""
+                seen["kinds"] = kinds
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "kinds": '["dataset"]'})))
+        assert seen["kinds"] == ["dataset"]
