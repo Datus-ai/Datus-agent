@@ -35,6 +35,9 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
 def _folded(name: str) -> str:
     """Fold an identifier the way SQLite resolves one.
 
@@ -42,10 +45,20 @@ def _folded(name: str) -> str:
     through ``PRAGMA table_info`` and ``sqlite_master.name`` — exactly as they were
     declared. Comparing a definition's spelling against the catalog's would call a
     column that is already there missing, and re-adding it fails outright with
-    "duplicate column name". ``lower()`` rather than ``casefold()`` because SQLite's
-    ``NOCASE`` folds A-Z only, and ``_IDENTIFIER_RE`` keeps identifiers to ASCII.
+    "duplicate column name".
+
+    A-Z only, because that is the whole of SQLite's ``NOCASE``. ``str.lower()`` folds
+    wider: it maps U+212A KELVIN SIGN to ASCII ``k`` (U+006B). A legacy column named
+    U+212A would therefore answer for a definition's ASCII ``K``, the ``ALTER TABLE``
+    would be skipped, and the required column would never exist — while SQLite, which
+    folds neither, keeps the two as separate columns. The two spell identically on
+    screen, so this is stated in codepoints rather than shown.
+
+    Catalog names arrive from the live database through ``PRAGMA table_info`` and
+    ``sqlite_master`` and never pass ``_IDENTIFIER_RE``, so they cannot be assumed
+    ASCII at all.
     """
-    return name.lower()
+    return name.translate(_ASCII_FOLD)
 
 
 def _safe_ident(name: str) -> str:

@@ -585,6 +585,34 @@ class TestIdentifierFolding:
         assert columns == ["Id", "Name", "Value"]
         assert rows == [("folded", "v1")]
 
+    def test_non_ascii_column_does_not_shadow_the_ascii_one(self, tmp_path):
+        """SQLite's NOCASE folds A-Z only, so U+212A KELVIN SIGN is not ASCII `K`.
+
+        `str.lower()` maps it onto `k`, which would make a legacy `\u212a` column
+        answer for the definition's `K` and leave the required column uncreated.
+        """
+        db_file = os.path.join(str(tmp_path), "kelvin.db")
+        self._raw_create(db_file, 'CREATE TABLE items (id INTEGER PRIMARY KEY, "\u212a" TEXT)')
+
+        db = SqliteRdbDatabase(db_file)
+        db.ensure_table(
+            TableDefinition(
+                table_name="items",
+                columns=[
+                    ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                    ColumnDef(name="K", col_type="TEXT"),
+                ],
+            )
+        )
+
+        conn = sqlite3.connect(db_file)
+        try:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(items)")]
+        finally:
+            conn.close()
+        # Both survive: SQLite treats them as different columns, and so must we.
+        assert columns == ["id", "\u212a", "K"]
+
     def test_constraint_rebuild_keeps_a_column_stored_under_another_case(self, tmp_path):
         """The rebuild copies only columns it recognises; a case mismatch would drop data."""
         db_file = os.path.join(str(tmp_path), "rebuild.db")
