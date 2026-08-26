@@ -168,9 +168,10 @@ class TestIsValidSubagentId:
         svc = _mock_svc_with_nodes()
         assert _is_valid_subagent_id(svc, "feedback") is True
 
-    def test_semantic_modeling_is_visible_only_for_dosi(self):
+    def test_semantic_modeling_exists_on_every_dialect(self):
+        """The Dosi-only gate lives in the 400 branch, not in this existence check."""
         svc = _mock_svc_with_nodes()
-        assert _is_valid_subagent_id(svc, "semantic_modeling") is False
+        assert _is_valid_subagent_id(svc, "semantic_modeling") is True
 
         svc.agent_config.resolve_semantic_adapter.return_value = "dosi"
         assert _is_valid_subagent_id(svc, "semantic_modeling") is True
@@ -243,6 +244,34 @@ class TestStreamChat404Gate:
 
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail == f"{retired_type} is retired. Use semantic_modeling instead."
+
+    @pytest.mark.asyncio
+    async def test_semantic_modeling_on_legacy_project_is_400_not_404(self):
+        """A query-only project must say so — the old 404 read as "agent missing"."""
+        svc = _mock_svc_with_nodes()
+        ctx = MagicMock()
+        request = StreamChatInput(message="/build-kb", subagent_id="semantic_modeling")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await stream_chat(request, svc, ctx, MagicMock())
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
+        )
+
+    @pytest.mark.asyncio
+    async def test_semantic_modeling_on_dosi_project_streams(self):
+        svc = _mock_svc_with_nodes()
+        svc.agent_config.resolve_semantic_adapter.return_value = "dosi"
+        svc.chat.stream_chat = MagicMock(return_value=AsyncMock().__aiter__())
+        ctx = MagicMock(user_id="u1")
+        request = StreamChatInput(message="/build-kb", subagent_id="semantic_modeling")
+
+        response = await stream_chat(request, svc, ctx, MagicMock())
+
+        assert isinstance(response, StreamingResponse)
+        assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_none_subagent_bypasses_gate(self):
