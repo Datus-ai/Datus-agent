@@ -2461,3 +2461,53 @@ class TestSystemPromptSnapshot:
         sm_custom.save_system_prompt_snapshot("chat_session_tmp", "P", dict(self.META))
         leftovers = [f for f in os.listdir(sm_custom.session_dir) if f.endswith(".tmp")]
         assert leftovers == []
+
+
+class TestTitleSidecar:
+    """A major compact clears the session and re-adds only an assistant recap,
+    so the first-user-message scan has nothing left to find. The sidecar keeps
+    the sidebar label the operator recognises."""
+
+    def _seed(self, sm, session_id, messages):
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            conn.commit()
+        _insert_messages(sm.session_dir, session_id, messages)
+
+    def test_title_survives_a_history_that_lost_its_user_rows(self, sm):
+        """Post-compact shape: an assistant recap and no user rows at all."""
+        session_id = "compacted-session"
+        sm.save_title_sidecar(session_id, "How many buses ran today?")
+        self._seed(sm, session_id, [
+            {"role": "assistant", "content": "Recap of the conversation.", "created_at": "2025-01-01T01:00:00"},
+        ])
+
+        info = sm.get_session_info(session_id)
+        assert info["first_user_message"] == "How many buses ran today?"
+
+    def test_the_sidecar_wins_over_a_later_user_message(self, sm):
+        """Post-compact the earliest surviving user row is mid-conversation, so
+        the scan alone would silently retitle the chat."""
+        session_id = "retitled-session"
+        sm.save_title_sidecar(session_id, "How many buses ran today?")
+        self._seed(sm, session_id, [
+            {"role": "user", "content": "And by route?", "created_at": "2025-01-01T02:00:00"},
+        ])
+
+        assert sm.get_session_info(session_id)["first_user_message"] == "How many buses ran today?"
+
+    def test_no_sidecar_leaves_the_scan_untouched(self, sm):
+        session_id = "normal-session"
+        self._seed(sm, session_id, [
+            {"role": "user", "content": "What is SQL?", "created_at": "2025-01-01T00:00:00"},
+        ])
+        assert sm.get_session_info(session_id)["first_user_message"] == "What is SQL?"
+
+    def test_an_empty_title_is_never_written(self, sm):
+        """A later compact sees no user rows; it must not clobber a good title."""
+        session_id = "guard-session"
+        sm.save_title_sidecar(session_id, "How many buses ran today?")
+        sm.save_title_sidecar(session_id, "   ")
+        assert sm._read_title_sidecar(session_id) == "How many buses ran today?"

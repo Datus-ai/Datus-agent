@@ -1907,6 +1907,24 @@ class AgenticNode(Node):
             return None
         return path
 
+    def _preserve_session_title(self) -> None:
+        """Save the session's current title so a compact cannot erase it.
+
+        Best-effort: a lost title must never fail a compact, and
+        ``session_manager`` is a property that resolves a path manager, so it can
+        raise for a node with no project context.
+        """
+        if not self.session_id:
+            return
+        try:
+            manager = self.session_manager
+            info = manager.get_session_info(self.session_id) or {}
+            title = (info.get("first_user_message") or "").strip()
+            if title:
+                manager.save_title_sidecar(self.session_id, title)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not preserve the session title before compacting: %s", exc)
+
     async def _major_compact(self, *, reason: str) -> Dict[str, Any]:
         """LLM-driven full-history compact pass.
 
@@ -1935,6 +1953,10 @@ class AgenticNode(Node):
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
 
         logger.info("Starting major compact for session %s (reason=%s)", self.session_id, reason)
+        # Capture the chat's title BEFORE the history is cleared: the compact
+        # re-adds only an assistant recap, leaving no user rows for the sidebar's
+        # first-user-message scan to find.
+        self._preserve_session_title()
         history_jsonl_path = await self._dump_session_history_jsonl()
 
         sys_prompt = self._get_system_prompt()
