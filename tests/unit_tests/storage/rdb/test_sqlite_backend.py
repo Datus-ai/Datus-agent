@@ -638,6 +638,46 @@ class TestIdentifierFolding:
         rows = table.query(_Item)
         assert [(r.name, r.value) for r in rows] == [("kept", "payload")]
 
+    def test_constraint_comparison_does_not_fold_wider_than_sqlite(self, tmp_path):
+        """`str.upper()` maps U+00DF to "SS"; SQLite keeps those columns apart.
+
+        A stored `UNIQUE(<U+00DF>)` would then compare equal to a definition's
+        `UNIQUE(SS)`, and the rebuild would be skipped as though already done.
+        SQLite accepts both unquoted, so both reach `_norm` in the same shape.
+        """
+        db_file = os.path.join(str(tmp_path), "sharp_s.db")
+        self._raw_create(
+            db_file,
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, \u00df TEXT, SS TEXT, UNIQUE(\u00df))",
+            "INSERT INTO items (\u00df, SS) VALUES ('old', 'kept')",
+        )
+
+        db = SqliteRdbDatabase(db_file)
+        db.ensure_table(
+            TableDefinition(
+                table_name="items",
+                columns=[
+                    ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                    ColumnDef(name="SS", col_type="TEXT"),
+                ],
+                constraints=["UNIQUE(SS)"],
+            )
+        )
+
+        conn = sqlite3.connect(db_file)
+        try:
+            stored = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name = 'items' COLLATE NOCASE"
+            ).fetchone()
+            payload = conn.execute("SELECT SS FROM items").fetchall()
+        finally:
+            conn.close()
+        stored_ddl = stored[0].replace(" ", "") if stored else ""
+        # The rebuild ran: the constraint the definition asked for is the one in place.
+        assert "UNIQUE(SS)" in stored_ddl
+        assert "UNIQUE(\u00df)" not in stored_ddl
+        assert payload == [("kept",)]
+
     def test_constraint_migration_runs_for_a_table_named_in_another_case(self, tmp_path):
         """`sqlite_master.name` stores the declared spelling; the lookup must fold."""
         db_file = os.path.join(str(tmp_path), "master.db")
