@@ -11,10 +11,10 @@
         <link rel="canonical" href="https://docs.datus.ai/dev/dev/getting_started/contextual_data_engineering/">
       
       
-        <link rel="prev" href="../data_engineering_quickstart/">
+        <link rel="prev" href="../Quickstart/">
       
       
-        <link rel="next" href="../dashboard_copilot/">
+        <link rel="next" href="../data_engineering_quickstart/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Contextual Data Engineering - Datus Docs</title>
+        <title>Build a Context-Rich Agent - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#contextual-data-engineering-concepts-hands-on-tutorial" class="md-skip">
+        <a href="#build-a-context-rich-agent-california-schools" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Contextual Data Engineering
+              Build a Context-Rich Agent
             
           </span>
         </div>
@@ -457,6 +457,8 @@
     
       
         
+          
+        
       
         
       
@@ -478,8 +480,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -493,8 +496,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_2">
@@ -506,6 +515,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -521,35 +532,7 @@
   <span class="md-ellipsis">
     
   
-    Quickstart
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../data_engineering_quickstart/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Data Engineering Quickstart
+    Install and First Query
   
 
     
@@ -586,7 +569,7 @@
   <span class="md-ellipsis">
     
   
-    Contextual Data Engineering
+    Build a Context-Rich Agent
   
 
     
@@ -604,7 +587,7 @@
   <span class="md-ellipsis">
     
   
-    Contextual Data Engineering
+    Build a Context-Rich Agent
   
 
     
@@ -797,10 +780,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-4-understand-the-cli-compatibility-scopes" class="md-nav__link">
+  <a href="#step-4-bootstrap-reference-sql-sql-tab" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 4 — Understand the CLI compatibility scopes
+        Step 4 — Bootstrap Reference SQL (SQL tab)
       
     </span>
   </a>
@@ -808,10 +791,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-5-bootstrap-reference-sql-sql-tab" class="md-nav__link">
+  <a href="#step-5-browse-what-you-built" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 5 — Bootstrap Reference SQL (SQL tab)
+        Step 5 — Browse what you built
       
     </span>
   </a>
@@ -819,26 +802,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-6-browse-what-you-built" class="md-nav__link">
+  <a href="#step-6-create-two-subagents" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 6 — Browse what you built
+        Step 6 — Create two subagents
       
     </span>
   </a>
   
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-7-create-two-subagents" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 7 — Create two subagents
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Step 7 — Create two subagents">
+    <nav class="md-nav" aria-label="Step 6 — Create two subagents">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -858,10 +830,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-8-benchmark-baseline-vs-context-rich" class="md-nav__link">
+  <a href="#step-7-benchmark-baseline-vs-context-rich" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 8 — Benchmark baseline vs context-rich
+        Step 7 — Benchmark baseline vs context-rich
       
     </span>
   </a>
@@ -869,10 +841,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-9-multi-round-benchmark" class="md-nav__link">
+  <a href="#step-8-multi-round-benchmark" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 9 — Multi-round benchmark
+        Step 8 — Multi-round benchmark
       
     </span>
   </a>
@@ -932,15 +904,71 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_1_2_4" id="__nav_1_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scenario Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
-      <a href="../dashboard_copilot/" class="md-nav__link">
+      <a href="../data_engineering_quickstart/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Dashboard Copilot
+    End-to-End Data Engineering
   
 
     
@@ -949,6 +977,42 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dashboard_copilot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Turn a Dashboard into a Copilot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4685,10 +4749,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-4-understand-the-cli-compatibility-scopes" class="md-nav__link">
+  <a href="#step-4-bootstrap-reference-sql-sql-tab" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 4 — Understand the CLI compatibility scopes
+        Step 4 — Bootstrap Reference SQL (SQL tab)
       
     </span>
   </a>
@@ -4696,10 +4760,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-5-bootstrap-reference-sql-sql-tab" class="md-nav__link">
+  <a href="#step-5-browse-what-you-built" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 5 — Bootstrap Reference SQL (SQL tab)
+        Step 5 — Browse what you built
       
     </span>
   </a>
@@ -4707,26 +4771,15 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-6-browse-what-you-built" class="md-nav__link">
+  <a href="#step-6-create-two-subagents" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 6 — Browse what you built
+        Step 6 — Create two subagents
       
     </span>
   </a>
   
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#step-7-create-two-subagents" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Step 7 — Create two subagents
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Step 7 — Create two subagents">
+    <nav class="md-nav" aria-label="Step 6 — Create two subagents">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4746,10 +4799,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-8-benchmark-baseline-vs-context-rich" class="md-nav__link">
+  <a href="#step-7-benchmark-baseline-vs-context-rich" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 8 — Benchmark baseline vs context-rich
+        Step 7 — Benchmark baseline vs context-rich
       
     </span>
   </a>
@@ -4757,10 +4810,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#step-9-multi-round-benchmark" class="md-nav__link">
+  <a href="#step-8-multi-round-benchmark" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 9 — Multi-round benchmark
+        Step 8 — Multi-round benchmark
       
     </span>
   </a>
@@ -4830,9 +4883,9 @@
   
 
 
-<h1 id="contextual-data-engineering-concepts-hands-on-tutorial">Contextual Data Engineering: Concepts &amp; Hands-on Tutorial<a class="headerlink" href="#contextual-data-engineering-concepts-hands-on-tutorial" title="Permanent link">&para;</a></h1>
-<p>This page is split into two halves. <strong>Part 1</strong> explains the concepts behind Contextual Data Engineering — what it is, why it matters, and how Datus models long-term data context. <strong>Part 2</strong> is a step-by-step walkthrough that puts those concepts into practice with the bundled California Schools dataset, using the <code>/bootstrap</code> REPL flow that you will use every day in your own projects.</p>
-<p>If you have ten minutes, skip the prose and jump to <a href="#part-2--hands-on-tutorial-california-schools">Part 2 — Hands-on Tutorial</a>.</p>
+<h1 id="build-a-context-rich-agent-california-schools">Build a Context-Rich Agent: California Schools<a class="headerlink" href="#build-a-context-rich-agent-california-schools" title="Permanent link">&para;</a></h1>
+<p>This guide first explains how Datus models long-term data context, then applies the idea in a hands-on California Schools tutorial. You will build a knowledge base, give a subagent access to that context, and compare it with a baseline agent.</p>
+<p>If you already understand the concepts, jump to <a href="#part-2-hands-on-tutorial-california-schools">Part 2 — Hands-on Tutorial</a>.</p>
 <hr />
 <h2 id="part-1-concepts">Part 1 — Concepts<a class="headerlink" href="#part-1-concepts" title="Permanent link">&para;</a></h2>
 <h3 id="whats-contextual-data-engineering">What's Contextual Data Engineering<a class="headerlink" href="#whats-contextual-data-engineering" title="Permanent link">&para;</a></h3>
@@ -4883,12 +4936,7 @@
 <p>The subagent's scoped context forms an ideal RL environment (environment + question + SQL) for continuous training and evaluation.</p>
 <h4 id="tools-and-components">Tools and Components<a class="headerlink" href="#tools-and-components" title="Permanent link">&para;</a></h4>
 <p><strong>Datus CLI</strong></p>
-<p>An interactive <a href="../../cli/introduction/">CLI for data engineers</a> with context-aware compression and search tools. Provides three "magic commands":</p>
-<ul>
-<li><code>/</code> to chat and orchestrate</li>
-<li><code>@</code> to view and recall context</li>
-<li><code>!</code> to execute node/tool actions</li>
-</ul>
+<p>An interactive <a href="../../cli/introduction/">CLI for data engineers</a> with context-aware compression and search tools. Type a question in natural language and Datus routes it to the appropriate agent. Slash commands such as <code>/datasource</code> and <code>/model</code> manage the session; <code>@Agent &lt;name&gt;</code> explicitly routes one turn to a subagent, while <code>/agent &lt;name&gt;</code> selects the active subagent for subsequent turns. Press <strong>Tab</strong> on an empty prompt to switch between natural-language, SQL, and Bash input modes.</p>
 <p><strong>Datus Agent</strong></p>
 <p>A <a href="../../benchmark/benchmark_manual/">benchmarking and bootstrap utility</a> — the batch companion to the CLI. Used to:</p>
 <ul>
@@ -4911,7 +4959,6 @@
 <li>A baseline benchmark result and a context-rich one to compare</li>
 <li>A multi-round evaluation that demonstrates how context evolution improves SQL accuracy</li>
 </ol>
-<p>Reading time ≈ 5 minutes; total runtime ≈ 15 minutes (the LLM-driven bootstrap steps are the slow part).</p>
 <h3 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h3>
 <p>You need:</p>
 <ul>
@@ -4954,7 +5001,7 @@
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>&gt; /bootstrap
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>   Schema   SQL   Template   Semantic Modeling   Knowledge    (Tab or ←/→ to switch)
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>   Schema   SQL   Template   Semantic Modeling    (Tab or ←/→ to switch)
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  Schema
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>  Crawl the live database schema into the metadata RAG.
@@ -4993,15 +5040,7 @@
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>⏺ 💬 semantic_modeling bootstrap completed
 </span></code></pre></div>
 <p>Datus writes validated Dosi YAML to the project's <code>subject/semantic_models/</code> directory and reconciles both semantic objects and metrics to the Knowledge Base.</p>
-<h3 id="step-4-understand-the-cli-compatibility-scopes">Step 4 — Understand the CLI compatibility scopes<a class="headerlink" href="#step-4-understand-the-cli-compatibility-scopes" title="Permanent link">&para;</a></h3>
-<p>The interactive bootstrap has one <strong>Semantic Modeling</strong> tab and always runs the full Dosi workflow. For automation, the historical component names remain as compatibility aliases:</p>
-<ul>
-<li><code>--components semantic_model</code> runs datasets-only authoring and preserves every existing metric definition.</li>
-<li><code>--components metrics</code> or <code>--components semantic_modeling</code> runs full datasets-and-metrics authoring.</li>
-<li>Combining semantic components executes once; full scope wins.</li>
-</ul>
-<p>For more on metrics, see the <a href="../../knowledge_base/metrics/">metrics documentation</a>.</p>
-<h3 id="step-5-bootstrap-reference-sql-sql-tab">Step 5 — Bootstrap Reference SQL (SQL tab)<a class="headerlink" href="#step-5-bootstrap-reference-sql-sql-tab" title="Permanent link">&para;</a></h3>
+<h3 id="step-4-bootstrap-reference-sql-sql-tab">Step 4 — Bootstrap Reference SQL (SQL tab)<a class="headerlink" href="#step-4-bootstrap-reference-sql-sql-tab" title="Permanent link">&para;</a></h3>
 <p>Switch to the <strong>SQL</strong> tab and fill in:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datasource:   california_schools
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>sql_dir:      ~/.datus/benchmark/california_schools/reference_sql
@@ -5035,14 +5074,14 @@
 </span></code></pre></div>
 <p>Datus parses every <code>.sql</code> file under <code>sql_dir</code>, generates a natural-language summary, extracts joins and filters, and indexes the result under the supplied subject leaves.</p>
 <p>For more, see the <a href="../../knowledge_base/reference_sql/">reference SQL docs</a>.</p>
-<h3 id="step-6-browse-what-you-built">Step 6 — Browse what you built<a class="headerlink" href="#step-6-browse-what-you-built" title="Permanent link">&para;</a></h3>
+<h3 id="step-5-browse-what-you-built">Step 5 — Browse what you built<a class="headerlink" href="#step-5-browse-what-you-built" title="Permanent link">&para;</a></h3>
 <p>Still inside the REPL:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>/subject
 </span></code></pre></div>
 <p>You should see the subject tree populated with metrics and SQL summaries:</p>
 <p><img alt="Subject Tree Structure" src="../../assets/tutorial_subject_tree.png" /></p>
 <p>Use <code>/catalog</code> to inspect table/column metadata. These two screens are the primary way you (and the AI) navigate the knowledge base going forward.</p>
-<h3 id="step-7-create-two-subagents">Step 7 — Create two subagents<a class="headerlink" href="#step-7-create-two-subagents" title="Permanent link">&para;</a></h3>
+<h3 id="step-6-create-two-subagents">Step 6 — Create two subagents<a class="headerlink" href="#step-6-create-two-subagents" title="Permanent link">&para;</a></h3>
 <p>Open <code>~/.datus/conf/agent.yml</code> and append the following two blocks under <code>agent:</code> — <code>agentic_nodes</code> (defining the two subagents) and <code>workflow</code> (defining their orchestration pipelines):</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="nt">datus_schools</span><span class="p">:</span>
@@ -5050,7 +5089,7 @@
 </span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">'1.0'</span>
 </span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="nt">prompt_language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">en</span>
 </span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">''</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db_tools, date_parsing_tools</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db_tools</span>
 </span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">      </span><span class="nt">mcp</span><span class="p">:</span><span class="w"> </span><span class="s">''</span>
 </span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">      </span><span class="nt">rules</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 </span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">    </span><span class="nt">datus_schools_context</span><span class="p">:</span>
@@ -5058,7 +5097,7 @@
 </span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">'1.0'</span>
 </span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="w">      </span><span class="nt">prompt_language</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">en</span>
 </span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">''</span>
-</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">context_search_tools, db_tools, date_parsing_tools</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">context_search_tools, db_tools</span>
 </span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="w">      </span><span class="nt">mcp</span><span class="p">:</span><span class="w"> </span><span class="s">''</span>
 </span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="w">      </span><span class="nt">rules</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 </span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="w">  </span><span class="nt">workflow</span><span class="p">:</span>
@@ -5071,16 +5110,17 @@
 </span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">execute_sql</span>
 </span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">output</span>
 </span></code></pre></div>
-<p>The key contrast is <code>context_search_tools</code>: only <code>datus_schools_context</code> can read the metrics and reference SQL you built in Steps 3–5. That difference is exactly what the next benchmark measures.</p>
+<p>The key contrast is <code>context_search_tools</code>: only <code>datus_schools_context</code> can read the metrics and reference SQL you built in Steps 2–4. That difference is exactly what the next benchmark measures.</p>
 <h4 id="invoking-a-subagent">Invoking a subagent<a class="headerlink" href="#invoking-a-subagent" title="Permanent link">&para;</a></h4>
 <p><code>/agent</code> with no argument opens the TUI (Enter switches the active agent); with a name it switches the default agent to <code>&lt;name&gt;</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>/agent datus_schools_context          # then type your question on the next line
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>/agent datus_schools_context
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>What's the average SAT score by school type?
 </span></code></pre></div>
 <p>For one-off routing on a single question, use the <code>@Agent &lt;name&gt;</code> mention:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>What's the average SAT score by school type? @Agent datus_schools_context
 </span></code></pre></div>
 <p>The same subagents can also be served from <a href="../../web_chatbot/introduction/">Datus-Chat</a>.</p>
-<h3 id="step-8-benchmark-baseline-vs-context-rich">Step 8 — Benchmark baseline vs context-rich<a class="headerlink" href="#step-8-benchmark-baseline-vs-context-rich" title="Permanent link">&para;</a></h3>
+<h3 id="step-7-benchmark-baseline-vs-context-rich">Step 7 — Benchmark baseline vs context-rich<a class="headerlink" href="#step-7-benchmark-baseline-vs-context-rich" title="Permanent link">&para;</a></h3>
 <p>Outside the REPL, run the baseline first:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>datus-agent<span class="w"> </span>benchmark<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span>--datasource<span class="w"> </span>california_schools<span class="w"> </span><span class="se">\</span>
@@ -5105,7 +5145,7 @@
 </span></code></pre></div>
 <p><img alt="Evaluation Results" src="../../assets/eval_schools.png" /></p>
 <p>Diff <code>schools1.txt</code> and <code>schools2.txt</code>. The context-rich agent produces more semantically correct SQL, fewer hallucinated columns, and better joins — because it can recall the reference-SQL patterns and metric definitions you built earlier.</p>
-<h3 id="step-9-multi-round-benchmark">Step 9 — Multi-round benchmark<a class="headerlink" href="#step-9-multi-round-benchmark" title="Permanent link">&para;</a></h3>
+<h3 id="step-8-multi-round-benchmark">Step 8 — Multi-round benchmark<a class="headerlink" href="#step-8-multi-round-benchmark" title="Permanent link">&para;</a></h3>
 <p>This is the most powerful demonstration of contextual data engineering — repeated runs that let context evolve:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>datus-agent<span class="w"> </span>multi-round-benchmark<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span>--config<span class="w"> </span>~/.datus/conf/agent.yml<span class="w"> </span><span class="se">\</span>
@@ -5159,6 +5199,7 @@
 </table>
 <p>The same workflow applies to any domain — point <code>/bootstrap</code> at your own success stories and SQL directory, and you have a real, evolvable knowledge base in under an hour.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
+<p>To try a different hands-on scenario, return to <a href="../">Choose Your Getting Started Path</a>.</p>
 <div class="grid cards">
 <ul>
 <li>
@@ -5223,7 +5264,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../data_engineering_quickstart/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Data Engineering Quickstart">
+          <a href="../Quickstart/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Install and First Query">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -5233,20 +5274,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Data Engineering Quickstart
+                Install and First Query
               </div>
             </div>
           </a>
         
         
           
-          <a href="../dashboard_copilot/" class="md-footer__link md-footer__link--next" aria-label="Next: Dashboard Copilot">
+          <a href="../data_engineering_quickstart/" class="md-footer__link md-footer__link--next" aria-label="Next: End-to-End Data Engineering">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Dashboard Copilot
+                End-to-End Data Engineering
               </div>
             </div>
             <div class="md-footer__button md-icon">

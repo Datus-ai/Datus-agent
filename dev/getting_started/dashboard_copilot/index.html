@@ -11,7 +11,7 @@
         <link rel="canonical" href="https://docs.datus.ai/dev/dev/getting_started/dashboard_copilot/">
       
       
-        <link rel="prev" href="../contextual_data_engineering/">
+        <link rel="prev" href="../data_engineering_quickstart/">
       
       
         <link rel="next" href="../../cli/introduction/">
@@ -29,7 +29,7 @@
     
     
       
-        <title>Dashboard Copilot - Datus Docs</title>
+        <title>Turn a Dashboard into a Copilot - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#dashboard-copilot" class="md-skip">
+        <a href="#turn-a-dashboard-into-a-copilot" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Dashboard Copilot
+              Turn a Dashboard into a Copilot
             
           </span>
         </div>
@@ -457,6 +457,8 @@
     
       
         
+          
+        
       
         
       
@@ -478,8 +480,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -493,8 +496,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_2">
@@ -506,6 +515,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -521,35 +532,7 @@
   <span class="md-ellipsis">
     
   
-    Quickstart
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../data_engineering_quickstart/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Data Engineering Quickstart
+    Install and First Query
   
 
     
@@ -577,7 +560,93 @@
   <span class="md-ellipsis">
     
   
-    Contextual Data Engineering
+    Build a Context-Rich Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_1_2_4" id="__nav_1_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_2_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_1_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scenario Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data_engineering_quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    End-to-End Data Engineering
   
 
     
@@ -614,7 +683,7 @@
   <span class="md-ellipsis">
     
   
-    Dashboard Copilot
+    Turn a Dashboard into a Copilot
   
 
     
@@ -632,7 +701,7 @@
   <span class="md-ellipsis">
     
   
-    Dashboard Copilot
+    Turn a Dashboard into a Copilot
   
 
     
@@ -1020,6 +1089,14 @@
     </ul>
   
 </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
       
     </li>
   
@@ -4974,9 +5051,13 @@
   
 
 
-<h1 id="dashboard-copilot">Dashboard Copilot<a class="headerlink" href="#dashboard-copilot" title="Permanent link">&para;</a></h1>
+<h1 id="turn-a-dashboard-into-a-copilot">Turn a Dashboard into a Copilot<a class="headerlink" href="#turn-a-dashboard-into-a-copilot" title="Permanent link">&para;</a></h1>
 <p>Transform a Superset dashboard into two AI subagents: a main subagent for self-service SQL and an attribution subagent for metric comparison and root-cause analysis.</p>
 <p>This tutorial walks through the complete flow with the Superset plugin, the generic <code>dashboard-bootstrap</code> skill, and the Dosi semantic adapter. Dashboard discovery and SQL export belong to the plugin; the skill coordinates user selection and routes exported SQL to Datus's builtin context-building agents.</p>
+<div class="admonition info">
+<p class="admonition-title">What this tutorial starts from</p>
+<p>This guide starts with an existing Superset dashboard. To build a data pipeline and create a new dashboard instead, follow <a href="../data_engineering_quickstart/">End-to-End Data Engineering</a>. If this is your first time using Datus, complete <a href="../Quickstart/">Install and First Query</a> first.</p>
+</div>
 <h2 id="why-dashboard-copilot">Why Dashboard Copilot?<a class="headerlink" href="#why-dashboard-copilot" title="Permanent link">&para;</a></h2>
 <p>Traditional BI dashboards are static: they show predefined charts and metrics, but users cannot ask follow-up questions or explore data beyond what has been pre-built. Dashboard Copilot turns the dashboard into analysis agents that can:</p>
 <ul>
@@ -5038,12 +5119,11 @@
 </ul>
 <p>Open Superset and confirm that the example <strong>World Bank's Data</strong> dashboard is available.</p>
 <h2 id="step-2-install-the-superset-plugin-and-dosi-adapter">Step 2: Install the Superset plugin and Dosi adapter<a class="headerlink" href="#step-2-install-the-superset-plugin-and-dosi-adapter" title="Permanent link">&para;</a></h2>
-<p>Install the Superset plugin from the Datus Plugins repository:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>clone<span class="w"> </span>--depth<span class="w"> </span><span class="m">1</span><span class="w"> </span>https://github.com/Datus-ai/Datus-Plugins.git<span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/Datus-Plugins"</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span><span class="s2">"src:</span><span class="nv">$HOME</span><span class="s2">/Datus-Plugins/datus-superset-plugin"</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>info<span class="w"> </span>superset
+<p>Install the Superset plugin from the Datus Plugins Git repository:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span><span class="s2">"git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>info<span class="w"> </span>superset
 </span></code></pre></div>
-<p>If that checkout already exists, update it and reinstall with <code>--force</code> instead of cloning it again.</p>
+<p>To update an existing Git installation, run <code>datus plugin upgrade superset</code>.</p>
 <p>Install the Dosi semantic adapter into the same Python environment as Datus:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>datus-semantic-dosi
 </span></code></pre></div>
@@ -5332,6 +5412,8 @@
 <p>Context construction can succeed even when configuration persistence is unavailable. Confirm that the loaded <code>agent.yml</code> exists and is writable, and restart Datus after the final report says the two nodes were created or updated.</p>
 <h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="../data_engineering_quickstart/">End-to-End Data Engineering</a> — build a pipeline and dashboard from source data.</li>
+<li><a href="../">Choose Your Getting Started Path</a> — compare all getting-started guides.</li>
 <li><a href="../../skills/dashboard_bootstrap/">Dashboard Bootstrap</a> — complete generic workflow contract.</li>
 <li><a href="../../plugin/introduction/">Plugins</a> — plugin installation, profiles, activation, and permissions.</li>
 <li><a href="../../adapters/dosi_semantic_adapter/">Dosi Semantic Adapter</a> — Dosi installation and semantic behavior.</li>
@@ -5369,7 +5451,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../contextual_data_engineering/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Contextual Data Engineering">
+          <a href="../data_engineering_quickstart/" class="md-footer__link md-footer__link--prev" aria-label="Previous: End-to-End Data Engineering">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -5379,7 +5461,7 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Contextual Data Engineering
+                End-to-End Data Engineering
               </div>
             </div>
           </a>

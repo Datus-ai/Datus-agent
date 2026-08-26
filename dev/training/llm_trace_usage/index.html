@@ -455,6 +455,8 @@
     
       
         
+          
+        
       
         
       
@@ -476,8 +478,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2" >
         
           
-          <label class="md-nav__link" for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting_started/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -491,8 +494,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_2">
@@ -504,6 +513,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -519,35 +530,7 @@
   <span class="md-ellipsis">
     
   
-    Quickstart
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../getting_started/data_engineering_quickstart/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Data Engineering Quickstart
+    Install and First Query
   
 
     
@@ -575,7 +558,91 @@
   <span class="md-ellipsis">
     
   
-    Contextual Data Engineering
+    Build a Context-Rich Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_1_2_4" id="__nav_1_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scenario Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/data_engineering_quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    End-to-End Data Engineering
   
 
     
@@ -603,7 +670,7 @@
   <span class="md-ellipsis">
     
   
-    Dashboard Copilot
+    Turn a Dashboard into a Copilot
   
 
     
@@ -612,6 +679,14 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4228,10 +4303,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#output-with-reasoning-deepseek-reasoner" class="md-nav__link">
+  <a href="#output-with-reasoning-deepseek-v4-flash-thinking-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output with Reasoning (DeepSeek Reasoner)
+        Output with Reasoning (DeepSeek V4 Flash Thinking Mode)
       
     </span>
   </a>
@@ -4669,10 +4744,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#output-with-reasoning-deepseek-reasoner" class="md-nav__link">
+  <a href="#output-with-reasoning-deepseek-v4-flash-thinking-mode" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Output with Reasoning (DeepSeek Reasoner)
+        Output with Reasoning (DeepSeek V4 Flash Thinking Mode)
       
     </span>
   </a>
@@ -4743,7 +4818,7 @@
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.deepseek.com</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek-chat</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek-v4-flash</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">save_llm_trace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># Enable tracing for this model</span>
 </span></code></pre></div>
 <h2 id="output-format">Output Format<a class="headerlink" href="#output-format" title="Permanent link">&para;</a></h2>
@@ -4758,14 +4833,14 @@
 <ul>
 <li><strong>system_prompt</strong>: System prompt (if using message format)</li>
 <li><strong>user_prompt</strong>: User input prompt</li>
-<li><strong>reason_content</strong>: Reasoning content (only applicable to reasoning models like deepseek-reasoner)</li>
+<li><strong>reason_content</strong>: Reasoning content returned when thinking mode is enabled (for example, with <code>deepseek-v4-flash</code>)</li>
 <li><strong>output_content</strong>: Model output content</li>
 </ul>
 <h2 id="supported-models">Supported Models<a class="headerlink" href="#supported-models" title="Permanent link">&para;</a></h2>
 <p>Currently, LLM trace functionality is primarily implemented in DeepSeek models:</p>
 <ul>
-<li>✅ DeepSeek Chat (deepseek-chat)</li>
-<li>✅ DeepSeek Reasoner (deepseek-reasoner) - includes reasoning content</li>
+<li>✅ DeepSeek V4 Flash (<code>deepseek-v4-flash</code>) - includes reasoning content when thinking mode is enabled</li>
+<li>✅ DeepSeek V4 Pro (<code>deepseek-v4-pro</code>)</li>
 <li>🔄 Other models (OpenAI, Claude, Qwen) have basic interfaces and can be extended</li>
 </ul>
 <h2 id="file-organization">File Organization<a class="headerlink" href="#file-organization" title="Permanent link">&para;</a></h2>
@@ -4808,7 +4883,7 @@
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nt">reason_content</span><span class="p">:</span><span class="w"> </span><span class="s">""</span>
 </span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="nt">output_content</span><span class="p">:</span><span class="w"> </span><span class="s">"SELECT</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">FROM</span><span class="nv"> </span><span class="s">users</span><span class="nv"> </span><span class="s">WHERE</span><span class="nv"> </span><span class="s">status</span><span class="nv"> </span><span class="s">=</span><span class="nv"> </span><span class="s">'active';"</span>
 </span></code></pre></div>
-<h3 id="output-with-reasoning-deepseek-reasoner">Output with Reasoning (DeepSeek Reasoner)<a class="headerlink" href="#output-with-reasoning-deepseek-reasoner" title="Permanent link">&para;</a></h3>
+<h3 id="output-with-reasoning-deepseek-v4-flash-thinking-mode">Output with Reasoning (DeepSeek V4 Flash Thinking Mode)<a class="headerlink" href="#output-with-reasoning-deepseek-v4-flash-thinking-mode" title="Permanent link">&para;</a></h3>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">"You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">an</span><span class="nv"> </span><span class="s">expert</span><span class="nv"> </span><span class="s">SQL</span><span class="nv"> </span><span class="s">developer."</span>
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nt">user_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">"Find</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">top</span><span class="nv"> </span><span class="s">5</span><span class="nv"> </span><span class="s">customers</span><span class="nv"> </span><span class="s">by</span><span class="nv"> </span><span class="s">revenue"</span>
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nt">reason_content</span><span class="p">:</span><span class="w"> </span><span class="s">"I</span><span class="nv"> </span><span class="s">need</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">join</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">customers</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">orders</span><span class="nv"> </span><span class="s">tables,</span><span class="nv"> </span><span class="s">sum</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">order</span><span class="nv"> </span><span class="s">amounts,</span><span class="nv"> </span><span class="s">group</span><span class="nv"> </span><span class="s">by</span><span class="nv"> </span><span class="s">customer,</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">limit</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">top</span><span class="nv"> </span><span class="s">5..."</span>
