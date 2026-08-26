@@ -1727,6 +1727,19 @@ class AgenticNode(Node):
         except Exception:
             ratio = 0.0
         if cfg.major.enabled and ratio >= cfg.major.token_threshold:
+            if mid_turn:
+                # A mid-turn major cannot help. The in-flight agents-SDK run
+                # holds the conversation in memory, so clearing the session
+                # shrinks nothing the model is being sent: occupancy does not
+                # drop, and the trigger fires again after the very next tool
+                # call. Only the compact at the START of the next turn, before
+                # the session is loaded into a run, changes what the model sees.
+                logger.info(
+                    "Mid-turn major compact suppressed (ratio=%.2f): the live run's context "
+                    "cannot shrink; compacting at next turn start instead.",
+                    ratio,
+                )
+                return "noop"
             return "major"
         if mid_turn:
             return "noop"
