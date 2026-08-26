@@ -343,7 +343,15 @@ class ReportArtifactTools:
             # strict-mode JSON schema rejects ``additionalProperties: true``
             # which ``Dict[str, Any]`` emits. We validate the shape
             # ourselves via :func:`coerce_uses_arg` once the call lands.
-            trans_to_function_tool(self.save_query, strict_mode=False),
+            # ``required_params`` keeps the schema telling the model these four
+            # are mandatory: the Python defaults exist only so an incomplete
+            # call reaches save_query's own validation (a retryable error)
+            # instead of a raw TypeError that kills the whole report.
+            trans_to_function_tool(
+                self.save_query,
+                strict_mode=False,
+                required_params=("name", "sql", "goal", "hypothesis"),
+            ),
             trans_to_function_tool(self.validate_render),
         ]
 
@@ -564,10 +572,17 @@ class ReportArtifactTools:
 
     def save_query(
         self,
-        name: str,
-        sql: str,
-        goal: str,
-        hypothesis: str,
+        # These four carry defaults on purpose. save_query is the only report
+        # tool built with strict_mode=False, so the tool API does not enforce
+        # "required" — a model that omits one reaches Python and raises a raw
+        # TypeError, which aborts the whole report run with no artifact. With
+        # defaults the call lands in the validation below and returns a
+        # retryable error the agent can act on. ``required_params`` on the
+        # registration keeps the advertised schema saying these are mandatory.
+        name: str = "",
+        sql: str = "",
+        goal: str = "",
+        hypothesis: str = "",
         uses: Optional[Dict[str, Any]] = None,
         caveats: str = "",
         datasource: str = "",
@@ -640,7 +655,10 @@ class ReportArtifactTools:
         if not name or not QUERY_SLUG_RE.fullmatch(name):
             return FuncToolResult(
                 success=0,
-                error=f"name must match {QUERY_SLUG_RE.pattern}; got {name!r}",
+                error=(
+                    f"name must match {QUERY_SLUG_RE.pattern}; got {name!r}. "
+                    "Retry save_query with ALL of: name, sql, goal, hypothesis."
+                ),
             )
         if not sql or not sql.strip():
             return FuncToolResult(success=0, error="sql must not be empty")
