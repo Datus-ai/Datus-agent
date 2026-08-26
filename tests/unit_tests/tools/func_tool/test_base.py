@@ -639,3 +639,17 @@ class TestStringifiedArgumentCoercion:
         tool = trans_to_function_tool(Tool().probe)
         asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "kinds": '["dataset"]'})))
         assert seen["kinds"] == ["dataset"]
+
+    def test_bare_list_annotation_is_coerced(self):
+        """``list`` and ``list | None`` report no origin of their own."""
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, kinds: list | None = None):
+                """Probe tool."""
+                seen["kinds"] = kinds
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "kinds": '["dataset"]'})))
+        assert seen["kinds"] == ["dataset"]

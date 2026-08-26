@@ -50,7 +50,9 @@ def coerce_llm_arg(value: Any, annotation: Any) -> Any:
         origin = get_origin(annotation)
         args = get_args(annotation)
 
-    if origin in (list, List):
+    # ``list[str]`` reports origin ``list``; a bare ``list`` reports no origin
+    # at all, so the annotation itself has to be checked too.
+    if origin in (list, List) or annotation in (list, List):
         text = value.strip()
         if not text:
             return value
