@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" role="img" aria-label="How Datus works: the author half turns data engineering into semantics (explore, build context, model semantics), the semantic layer sits in the middle as the asset your team owns, and the consume half delivers it as subagents, SQL, metrics, and dashboards, measured by benchmarks; feedback flows back into context.">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .box { fill: #f6f8fa; stroke: #d0d7de; }
+    .bar { fill: #f4f1fd; stroke: #c9bcf5; }
+    .label { fill: #57606a; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
+    .num { fill: #654FF0; font-size: 11px; font-weight: 700; }
+    .title { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .title-accent { fill: #654FF0; font-size: 14px; font-weight: 600; }
+    .sub { fill: #57606a; font-size: 11px; }
+    .flow { stroke: #8c959f; stroke-width: 1.5; fill: none; }
+    .flow-accent { stroke: #654FF0; stroke-width: 1.5; fill: none; }
+    .flowlabel-accent { fill: #654FF0; font-size: 11px; }
+    .arrow { fill: #8c959f; }
+    .arrow-accent { fill: #654FF0; }
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #161b22; stroke: #30363d; }
+      .bar { fill: #1c1832; stroke: #4c3d8f; }
+      .label { fill: #8b949e; }
+      .num { fill: #a78bfa; }
+      .title { fill: #e6edf3; }
+      .title-accent { fill: #a78bfa; }
+      .sub { fill: #8b949e; }
+      .flow { stroke: #6e7681; }
+      .flow-accent { stroke: #a78bfa; }
+      .flowlabel-accent { fill: #a78bfa; }
+      .arrow { fill: #6e7681; }
+      .arrow-accent { fill: #a78bfa; }
+    }
+  </style>
+  <defs>
+    <marker id="hw-ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L8,4 L0,8 z" class="arrow"/>
+    </marker>
+    <marker id="hw-ah-accent" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L8,4 L0,8 z" class="arrow-accent"/>
+    </marker>
+  </defs>
+
+  <!-- Feedback loop: Measure back into Build Context (routed along the top) -->
+  <path d="M 955 344 L 978 344 L 978 22 L 560 22 L 560 44" class="flow-accent" marker-end="url(#hw-ah-accent)"/>
+  <text x="730" y="16" text-anchor="middle" class="flowlabel-accent">analyst feedback · corrections · success stories flow back into context</text>
+
+  <!-- ===== Author half ===== -->
+  <text x="45" y="40" class="label">AUTHOR · THE FRONT HALF: FROM DATA ENGINEERING TO SEMANTICS</text>
+
+  <rect x="45" y="48" width="290" height="92" rx="10" class="box"/>
+  <text x="61" y="72" class="num">1</text>
+  <text x="190" y="76" text-anchor="middle" class="title">Explore</text>
+  <text x="190" y="98" text-anchor="middle" class="sub">chat with your database</text>
+  <text x="190" y="114" text-anchor="middle" class="sub">@table · @file references</text>
+
+  <line x1="335" y1="94" x2="353" y2="94" class="flow" marker-end="url(#hw-ah)"/>
+
+  <rect x="355" y="48" width="290" height="92" rx="10" class="box"/>
+  <text x="371" y="72" class="num">2</text>
+  <text x="500" y="76" text-anchor="middle" class="title">Build Context</text>
+  <text x="500" y="98" text-anchor="middle" class="sub">/init · /bootstrap · /build-kb</text>
+  <text x="500" y="114" text-anchor="middle" class="sub">schema · reference SQL · knowledge</text>
+
+  <line x1="645" y1="94" x2="663" y2="94" class="flow" marker-end="url(#hw-ah)"/>
+
+  <rect x="665" y="48" width="290" height="92" rx="10" class="box"/>
+  <text x="681" y="72" class="num">3</text>
+  <text x="810" y="76" text-anchor="middle" class="title">Model Semantics</text>
+  <text x="810" y="98" text-anchor="middle" class="sub">datasets · models · metrics</text>
+  <text x="810" y="114" text-anchor="middle" class="sub">mined from SQL history · validated</text>
+
+  <!-- Author -> asset -->
+  <line x1="500" y1="140" x2="500" y2="176" class="flow-accent" marker-end="url(#hw-ah-accent)"/>
+  <text x="510" y="164" class="flowlabel-accent">create · validate · promote</text>
+
+  <!-- ===== Semantic layer asset ===== -->
+  <rect x="45" y="178" width="910" height="66" rx="10" class="bar"/>
+  <text x="500" y="206" text-anchor="middle" class="title-accent">Semantic Layer · the asset your team owns</text>
+  <text x="500" y="226" text-anchor="middle" class="sub">OSI semantic models &amp; metrics · verified keys · executed by the OSI-native Dosi engine</text>
+
+  <!-- Asset -> consume -->
+  <line x1="500" y1="244" x2="500" y2="280" class="flow-accent" marker-end="url(#hw-ah-accent)"/>
+  <text x="510" y="268" class="flowlabel-accent">grounded consumption</text>
+
+  <!-- ===== Consume half ===== -->
+  <text x="45" y="292" class="label">CONSUME · THE BACK HALF: SQL · METRICS · DASHBOARDS · CHATBOTS</text>
+
+  <rect x="45" y="300" width="290" height="92" rx="10" class="box"/>
+  <text x="61" y="324" class="num">4</text>
+  <text x="190" y="328" text-anchor="middle" class="title">Create Subagent</text>
+  <text x="190" y="350" text-anchor="middle" class="sub">/agent manager</text>
+  <text x="190" y="366" text-anchor="middle" class="sub">curated context · tools · rules</text>
+
+  <line x1="335" y1="346" x2="353" y2="346" class="flow" marker-end="url(#hw-ah)"/>
+
+  <rect x="355" y="300" width="290" height="92" rx="10" class="box"/>
+  <text x="371" y="324" class="num">5</text>
+  <text x="500" y="328" text-anchor="middle" class="title">Deliver</text>
+  <text x="500" y="350" text-anchor="middle" class="sub">web · API · MCP · Slack/Feishu · IDE</text>
+  <text x="500" y="366" text-anchor="middle" class="sub">AskMetrics · reports · dashboards</text>
+
+  <line x1="645" y1="346" x2="663" y2="346" class="flow" marker-end="url(#hw-ah)"/>
+
+  <rect x="665" y="300" width="290" height="92" rx="10" class="box"/>
+  <text x="681" y="324" class="num">6</text>
+  <text x="810" y="328" text-anchor="middle" class="title">Measure</text>
+  <text x="810" y="350" text-anchor="middle" class="sub">benchmark SQL accuracy</text>
+  <text x="810" y="366" text-anchor="middle" class="sub">BIRD · Spider 2.0-Snow · your own datasets</text>
+</svg>
