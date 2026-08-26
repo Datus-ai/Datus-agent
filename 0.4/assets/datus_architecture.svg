@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" role="img" aria-label="Datus architecture: three role-based entry points on top (Datus-CLI for data engineers, Datus-Chat for analysts, Datus-API for other agents), the agent core with subagents, skills, and the context engine in the middle, and connected systems at the bottom: LLMs, data warehouses, the Dosi semantic layer, job schedulers, BI tools, and MCPs.">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .band { fill: #f6f8fa; stroke: #d0d7de; }
+    .band-accent { fill: #f4f1fd; stroke: #c9bcf5; }
+    .chip { fill: #ffffff; stroke: #d0d7de; }
+    .chip-accent { fill: #ffffff; stroke: #c9bcf5; }
+    .label { fill: #57606a; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
+    .label-accent { fill: #654FF0; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
+    .title { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .sub { fill: #57606a; font-size: 11px; }
+    .flow { stroke: #8c959f; stroke-width: 1.5; fill: none; }
+    .flow-accent { stroke: #654FF0; stroke-width: 1.5; fill: none; }
+    .flowlabel { fill: #57606a; font-size: 11px; }
+    .flowlabel-accent { fill: #654FF0; font-size: 11px; }
+    .arrow { fill: #8c959f; }
+    .arrow-accent { fill: #654FF0; }
+    @media (prefers-color-scheme: dark) {
+      .band { fill: #161b22; stroke: #30363d; }
+      .band-accent { fill: #1c1832; stroke: #4c3d8f; }
+      .chip { fill: #0d1117; stroke: #30363d; }
+      .chip-accent { fill: #0d1117; stroke: #4c3d8f; }
+      .label { fill: #8b949e; }
+      .label-accent { fill: #a78bfa; }
+      .title { fill: #e6edf3; }
+      .sub { fill: #8b949e; }
+      .flow { stroke: #6e7681; }
+      .flow-accent { stroke: #a78bfa; }
+      .flowlabel { fill: #8b949e; }
+      .flowlabel-accent { fill: #a78bfa; }
+      .arrow { fill: #6e7681; }
+      .arrow-accent { fill: #a78bfa; }
+    }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L8,4 L0,8 z" class="arrow"/>
+    </marker>
+    <marker id="ah-accent" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L8,4 L0,8 z" class="arrow-accent"/>
+    </marker>
+  </defs>
+
+  <!-- entry points by role -->
+  <text x="190" y="52" text-anchor="middle" class="label">FOR DATA ENGINEERS</text>
+  <text x="500" y="52" text-anchor="middle" class="label">FOR DATA ANALYSTS</text>
+  <text x="810" y="52" text-anchor="middle" class="label">FOR OTHER AGENTS</text>
+
+  <rect x="70" y="68" width="240" height="76" rx="10" class="chip"/>
+  <text x="190" y="100" text-anchor="middle" class="title">Datus-CLI</text>
+  <text x="190" y="122" text-anchor="middle" class="sub">interactive REPL &#183; build &amp; explore</text>
+
+  <rect x="380" y="68" width="240" height="76" rx="10" class="chip"/>
+  <text x="500" y="100" text-anchor="middle" class="title">Datus-Chat</text>
+  <text x="500" y="122" text-anchor="middle" class="sub">web &#183; Slack / Feishu &#183; VS Code</text>
+
+  <rect x="690" y="68" width="240" height="76" rx="10" class="chip"/>
+  <text x="810" y="100" text-anchor="middle" class="title">Datus-API</text>
+  <text x="810" y="122" text-anchor="middle" class="sub">REST &#183; MCP server</text>
+
+  <line x1="312" y1="106" x2="376" y2="106" class="flow" marker-end="url(#ah)"/>
+  <line x1="622" y1="106" x2="686" y2="106" class="flow" marker-end="url(#ah)"/>
+
+  <!-- flows between entries and the core -->
+  <line x1="190" y1="150" x2="190" y2="204" class="flow" marker-start="url(#ah)" marker-end="url(#ah)"/>
+  <line x1="500" y1="150" x2="500" y2="204" class="flow-accent" marker-end="url(#ah-accent)"/>
+  <text x="512" y="182" class="flowlabel-accent">feedback</text>
+  <line x1="810" y1="204" x2="810" y2="150" class="flow" marker-end="url(#ah)"/>
+
+  <!-- the agent core -->
+  <rect x="70" y="210" width="860" height="230" rx="12" class="band"/>
+  <text x="94" y="240" class="label-accent">DATUS AGENT</text>
+
+  <rect x="150" y="258" width="330" height="74" rx="10" class="chip"/>
+  <text x="315" y="288" text-anchor="middle" class="title">Subagent</text>
+  <text x="315" y="310" text-anchor="middle" class="sub">curated context &#183; tools &#183; rules, per domain</text>
+
+  <rect x="520" y="258" width="330" height="74" rx="10" class="chip"/>
+  <text x="685" y="288" text-anchor="middle" class="title">Skill</text>
+  <text x="685" y="310" text-anchor="middle" class="sub">packaged tools &#183; marketplace</text>
+
+  <rect x="150" y="350" width="700" height="70" rx="10" class="chip-accent"/>
+  <text x="500" y="378" text-anchor="middle" class="title">Context engine</text>
+  <text x="500" y="400" text-anchor="middle" class="sub">metadata &#183; metrics &#183; reference SQL &#183; knowledge &#183; local files</text>
+
+  <!-- connected systems -->
+  <text x="70" y="490" class="label">CONNECTED SYSTEMS &#183; VIA ADAPTERS &amp; PLUGINS</text>
+
+  <rect x="70" y="506" width="130" height="72" rx="10" class="chip"/>
+  <text x="135" y="536" text-anchor="middle" class="title">LLMs</text>
+  <text x="135" y="556" text-anchor="middle" class="sub">10+ providers</text>
+
+  <rect x="216" y="506" width="130" height="72" rx="10" class="chip"/>
+  <text x="281" y="536" text-anchor="middle" class="title">Warehouses</text>
+  <text x="281" y="556" text-anchor="middle" class="sub">15 databases</text>
+
+  <rect x="362" y="506" width="130" height="72" rx="10" class="chip-accent"/>
+  <text x="427" y="536" text-anchor="middle" class="title">Semantic layer</text>
+  <text x="427" y="556" text-anchor="middle" class="sub">Dosi engine</text>
+
+  <rect x="508" y="506" width="130" height="72" rx="10" class="chip"/>
+  <text x="573" y="536" text-anchor="middle" class="title">Job scheduler</text>
+  <text x="573" y="556" text-anchor="middle" class="sub">Airflow</text>
+
+  <rect x="654" y="506" width="130" height="72" rx="10" class="chip"/>
+  <text x="719" y="536" text-anchor="middle" class="title">BI tools</text>
+  <text x="719" y="556" text-anchor="middle" class="sub">Superset &#183; Grafana</text>
+
+  <rect x="800" y="506" width="130" height="72" rx="10" class="chip"/>
+  <text x="865" y="536" text-anchor="middle" class="title">MCPs</text>
+  <text x="865" y="556" text-anchor="middle" class="sub">server &amp; client</text>
+</svg>
