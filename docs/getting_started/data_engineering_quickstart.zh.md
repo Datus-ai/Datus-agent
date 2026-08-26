@@ -229,7 +229,7 @@ datus --datasource lever_duckdb
 不要自行运行具体 plugin 命令，让主 agent 验证两个服务：
 
 ```text
-Using the enabled local profiles, ask the Airflow plugin for its server version and health, then ask the Superset plugin for health and the available databases. Perform read-only checks only and report any connectivity or authentication error.
+使用已启用的 local profiles，先通过 Airflow plugin 查询服务端版本和健康状态，再通过 Superset plugin 查询健康状态和可用数据库。只执行只读检查，并报告所有连接或身份验证错误。
 ```
 
 始终在启动 Datus 前完成 plugin 配置和启用。plugin skill 和环境上下文会在
@@ -259,7 +259,7 @@ provider/model 写入 `./.datus/config.yml`。
 先要求 agent 创建目标 schema：
 
 ```text
-Please set up the target schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
+请在当前 DuckDB 数据库中创建目标 schema：staging、intermediate 和 marts。保持已有的 raw schema 不变。
 ```
 
 这条教程只构建一条窄但完整的依赖链：`marts.lever__requisition_enhanced`。
@@ -268,7 +268,7 @@ Please set up the target schemas staging, intermediate, and marts in the current
 先要求 agent 检查物理源表字段，避免把 source-to-target 重命名误判为字段缺失：
 
 ```text
-Inspect the schemas and sample rows for raw.requisition, raw.user, raw.requisition_posting, and raw.requisition_offer. Before generating SQL, confirm these source-to-target renames from the physical columns: raw.requisition.id to requisition_id, name to requisition_name, creator_id to creator_user_id, owner_id to owner_user_id, and hiring_manager_id to hiring_manager_user_id; raw.user.id to user_id, name to user_name, and external_directory_id to external_directory_user_id. Do not create NULL placeholders for columns that exist in the source tables.
+检查 raw.requisition、raw.user、raw.requisition_posting 和 raw.requisition_offer 的 schema 和样例行。生成 SQL 前，根据物理列确认以下源到目标重命名：raw.requisition 的 id 改为 requisition_id、name 改为 requisition_name、creator_id 改为 creator_user_id、owner_id 改为 owner_user_id、hiring_manager_id 改为 hiring_manager_user_id；raw.user 的 id 改为 user_id、name 改为 user_name、external_directory_id 改为 external_directory_user_id。对于源表中已经存在的列，不要创建 NULL 占位列。
 ```
 
 再要求 agent 根据 `lever__requisition_enhanced` 和
@@ -276,7 +276,7 @@ Inspect the schemas and sample rows for raw.requisition, raw.user, raw.requisiti
 staging 表。agent 会把任务分发到建表流程：
 
 ```text
-Read ./docs/data_contract.yaml and create the staging tables needed for marts.lever__requisition_enhanced: staging.stg_lever__requisition from raw.requisition, staging.stg_lever__user from raw.user, staging.stg_lever__requisition_posting from raw.requisition_posting, and staging.stg_lever__requisition_offer from raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
+读取 ./docs/data_contract.yaml，并创建 marts.lever__requisition_enhanced 所需的 staging 表：基于 raw.requisition 创建 staging.stg_lever__requisition，基于 raw.user 创建 staging.stg_lever__user，基于 raw.requisition_posting 创建 staging.stg_lever__requisition_posting，基于 raw.requisition_offer 创建 staging.stg_lever__requisition_offer。字段设计和源到目标映射以 contract 为准。
 ```
 
 这四张 staging 表就是 requisition enhanced 示例需要的最小 raw-to-staging 输入。
@@ -289,7 +289,7 @@ Read ./docs/data_contract.yaml and create the staging tables needed for marts.le
 创建 intermediate 表：
 
 ```text
-Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
+读取 ./docs/data_contract.yaml，基于 staging.stg_lever__requisition 和 staging.stg_lever__user 创建 intermediate.int_lever__requisition_users。字段设计、关联关系和源到目标映射以 contract 为准。
 ```
 
 再生成面向分析的 marts 表。契约中定义 `marts.lever__requisition_enhanced`
@@ -302,7 +302,7 @@ Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_us
 创建 marts 表：
 
 ```text
-Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
+读取 ./docs/data_contract.yaml，基于 intermediate.int_lever__requisition_users、staging.stg_lever__requisition_posting 和 staging.stg_lever__requisition_offer 创建 marts.lever__requisition_enhanced。业务逻辑以 contract 为准：保留全部基础 requisition 行，按 requisition_id 统计关联的 posting 和 offer 数量，将缺失数量填充为 0，并添加 has_posting 和 has_offer 标记。
 ```
 
 这条链路的基本顺序始终是：
@@ -344,7 +344,7 @@ NULL，请返回前面的 schema 检查，修正源字段映射后再继续。
 保存并验证用于刷新同一条契约生成链路的 SQL；每天早上 8 点的调度将在步骤 6 中创建：
 
 ```text
-Collect the exact SQL statements that successfully created the staging, intermediate, and marts schemas and built the four staging tables, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced. Keep them in dependency order and write them to ./jobs/daily_lever_requisition_enhanced.sql. Do not replace validated statements with newly invented SQL. Execute the saved file once against lever_duckdb and confirm it reproduces the same non-zero validation results.
+汇总已经成功创建 staging、intermediate 和 marts schema，以及四张 staging 表、intermediate.int_lever__requisition_users 和 marts.lever__requisition_enhanced 的准确 SQL 语句。按依赖顺序将它们写入 ./jobs/daily_lever_requisition_enhanced.sql，不要用新生成的 SQL 替换已经验证过的语句。在 lever_duckdb 上执行一次保存后的文件，并确认仍能得到相同的非零校验结果。
 ```
 
 ## 步骤 6：发布并运行天级 Airflow DAG
@@ -357,7 +357,7 @@ Airflow plugin 可以查询 DAG、检查源码和导入错误、触发运行，�
 `/opt/airflow/dags` 的主机目录。要求 agent 编写、发布并验证 DAG：
 
 ```text
-Use the Airflow plugin with profile local and follow its airflow skill. Create ./dags/daily_lever_requisition_enhanced.py for DAG id daily_lever_requisition_enhanced with schedule 0 8 * * *, catchup disabled, and a fixed timezone-aware start date. At runtime, read /workspace/jobs/daily_lever_requisition_enhanced.sql, resolve the duckdb_dacomp_lever Airflow connection with BaseHook, reconstruct the DuckDB SQLAlchemy URL from the connection schema or host, and execute the validated SQL inside a committed transaction. Keep the project source file, then use the filesystem tools to write identical content to the local profile's configured dags_folder. Confirm the two files are identical. Wait until the Airflow plugin reports the DAG, check import errors and DAG details, then trigger it once and wait for completion. After the wait finishes, read the latest run again and show the final dag_run_id and state. If it fails, inspect task states and logs before reporting the error.
+使用 local profile 的 Airflow plugin，并遵循其 airflow skill。创建 ./dags/daily_lever_requisition_enhanced.py，DAG ID 为 daily_lever_requisition_enhanced，schedule 为 0 8 * * *，关闭 catchup，并使用固定且带时区的开始日期。DAG 运行时读取 /workspace/jobs/daily_lever_requisition_enhanced.sql，通过 BaseHook 获取 duckdb_dacomp_lever Airflow connection，根据 connection 的 schema 或 host 还原 DuckDB SQLAlchemy URL，并在显式提交的事务中执行已经验证的 SQL。保留项目内的源文件，然后使用 filesystem tools 将完全相同的内容写入 local profile 配置的 dags_folder，并确认两个文件一致。等待 Airflow plugin 能查询到该 DAG，检查 import errors 和 DAG 详情，然后触发一次并等待运行完成。等待结束后再次读取最新 run，显示最终的 dag_run_id 和 state。如果运行失败，先检查 task states 和 logs，再报告错误。
 ```
 
 发布和触发操作可能需要确认。同一个 agent prompt 已包含必要的回查；如需重复
@@ -380,7 +380,7 @@ Use the Airflow plugin with profile local and follow its airflow skill. Create .
 datasource 名称，不是 DuckDB 或 Postgres 内部真实的 database/catalog 名。
 
 ```text
-Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
+请将 lever_duckdb datasource 中的源表 marts.lever__requisition_enhanced 复制到 superset_serving datasource，目标表为 public.lever__requisition_enhanced；如果目标表已经存在则替换。然后验证源表和目标表的行数。
 ```
 
 如果 `public.lever__requisition_enhanced` 还不存在，传输工具会根据源查询结果列
@@ -396,7 +396,7 @@ Please copy the source table marts.lever__requisition_enhanced from the lever_du
 skill：
 
 ```text
-Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Keep this quickstart dashboard to exactly three charts: a total requisitions KPI, requisitions by status, and requisitions by team. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the three planned queries on that Datus datasource first. Register the table as a physical Superset Dataset, then create the requisition operations dashboard and its three charts. Reuse matching Dataset, Dashboard, or Chart resources left by an earlier attempt instead of creating duplicates. Store only non-sensitive Dataset, Dashboard, and Chart request bodies in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets. Use the typed CLI commands, and inspect the installed OpenAPI schema only if a typed request is rejected. Every chart must contain matching params and query_context JSON strings. Attach all three charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run the KPI query plus one grouped chart query. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
+使用 local profile 的 Superset plugin，并遵循 superset-dashboard-authoring skill。这个快速上手 Dashboard 只创建三个 Chart：招聘需求总数 KPI、按 status 统计招聘需求、按 team 统计招聘需求。发现 Superset 中名为 examples 的 Database，并将其不含凭据的连接标识唯一解析到 superset_serving Datus datasource。先在该 Datus datasource 上验证 public.lever__requisition_enhanced 和计划使用的三个查询。将这张表注册为物理 Superset Dataset，然后创建 requisition operations Dashboard 及其三个 Chart。如果之前的尝试留下了匹配的 Dataset、Dashboard 或 Chart，请直接复用，不要重复创建。只把不含敏感信息的 Dataset、Dashboard 和 Chart 请求体保存在项目目录内的 JSON 文件中；不要持久化身份验证或登录请求体、token、cookie、密码或其他 secret。优先使用 typed CLI commands，仅在 typed request 被拒绝时才检查当前安装版本的 OpenAPI schema。每个 Chart 的 params 和 query_context JSON 字符串必须匹配。把三个 Chart 全部关联到 Dashboard，并更新完整的 position_json 布局，确保 Dashboard 不是空白页面。回读 Database、Dataset、Dashboard 和 Charts，确认 Database connection 仍标识为 postgres:5432/superset_examples，并执行 KPI 查询和一个分组 Chart 查询。返回 Database、Dataset、Dashboard、Chart IDs 以及 Dashboard URL。
 ```
 
 数据准备是单独的 ETL / 调度步骤。创建仪表盘前，目标表或 SQL dataset
