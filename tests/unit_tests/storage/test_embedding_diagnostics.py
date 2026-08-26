@@ -32,6 +32,49 @@ class TestIsDatasourceScopeError:
         assert is_datasource_scope_error("error_code=300019 embedding download failed") is False
 
 
+class TestFormatContextUnavailableMany:
+    EMBEDDING_ERROR = "error_code=300019: embedding download failed"
+    GENERIC_ERROR = "lance table corrupted"
+
+    def test_mixed_causes_get_neutral_headline_with_all_details(self):
+        from datus.storage.embedding_diagnostics import format_context_unavailable_many
+
+        message = format_context_unavailable_many([self.EMBEDDING_ERROR, self.GENERIC_ERROR])
+        # Property: one member's marker must not relabel the whole batch.
+        assert "embedding model is unavailable" not in message
+        assert "Hugging Face" not in message
+        assert self.EMBEDDING_ERROR in message
+        assert self.GENERIC_ERROR in message
+
+    def test_uniform_embedding_batch_keeps_embedding_remediation(self):
+        from datus.storage.embedding_diagnostics import format_context_unavailable_many
+
+        message = format_context_unavailable_many([self.EMBEDDING_ERROR, "error_code=300019: cache gone"])
+        assert "embedding model is unavailable" in message
+        assert "Hugging Face" in message
+
+    def test_uniform_scope_batch_keeps_datasource_hint(self):
+        from datus.storage.embedding_diagnostics import format_context_unavailable_many
+
+        message = format_context_unavailable_many([DATASOURCE_SCOPE_ERROR, f"prefix; {DATASOURCE_SCOPE_ERROR}"])
+        assert "no datasource is selected" in message
+
+    def test_single_error_matches_single_classifier(self):
+        from datus.storage.embedding_diagnostics import (
+            format_context_unavailable,
+            format_context_unavailable_many,
+        )
+
+        assert format_context_unavailable_many([self.GENERIC_ERROR]) == format_context_unavailable(self.GENERIC_ERROR)
+
+    def test_empty_batch_yields_generic_message(self):
+        from datus.storage.embedding_diagnostics import format_context_unavailable_many
+
+        message = format_context_unavailable_many([])
+        assert "Context search and @ references are disabled" in message
+        assert "Details:" not in message
+
+
 class TestFormatContextUnavailable:
     def test_embedding_error_keeps_embedding_remediation(self):
         message = format_context_unavailable("error_code=300019: embedding download failed")

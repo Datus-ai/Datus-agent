@@ -687,7 +687,7 @@ class TestAutoInstallAdapterSingleFlight:
 
         def fake_run(*args, **kwargs):
             entered.set()
-            release.wait(timeout=1)
+            release.wait(timeout=3)
             return SimpleNamespace(returncode=1, stderr="simulated failure")
 
         def _install():
@@ -775,7 +775,7 @@ class TestAdapterInstallStatus:
 
         def fake_run(*args, **kwargs):
             entered.set()
-            release.wait(timeout=1)
+            release.wait(timeout=3)
             return SimpleNamespace(returncode=1, stderr="simulated failure")
 
         def _install():
@@ -811,6 +811,16 @@ class TestAdapterInstallStatus:
 
         mgr = DBManager({})
         assert mgr.adapter_install_status("faketype") is dm.AdapterInstallStatus.NOT_ATTEMPTED
+
+    def test_registered_wins_over_attempted_memo(self):
+        # Property: the status is self-contained — once the connector is
+        # registered (e.g. a concurrent caller's install just succeeded), the
+        # permanent "attempted" memo must not be read as a failure.
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.add("faketype")
+        with patch("datus.tools.db_tools.db_manager.connector_registry.is_registered", return_value=True):
+            assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.REGISTERED
 
 
 # ---------------------------------------------------------------------------

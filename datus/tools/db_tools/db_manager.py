@@ -4,7 +4,7 @@
 
 import dataclasses
 import threading
-from enum import Enum
+from enum import StrEnum
 from typing import Callable, Dict, Optional, Set, Tuple, Union
 
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
@@ -35,14 +35,16 @@ _adapter_install_attempted: Set[str] = set()
 _adapter_install_active: Set[str] = set()
 
 
-class AdapterInstallStatus(str, Enum):
-    """Install state of a missing adapter, for UI layers to message accurately.
+class AdapterInstallStatus(StrEnum):
+    """Install state of an adapter's connector, for UI layers to message accurately.
 
-    Only meaningful while the connector is unregistered: a successful install
-    registers the connector, after which ``missing_connector_type`` reports no
-    gap and this status is moot.
+    Self-contained: consults the connector registry first, so a concurrently
+    completed install reports ``REGISTERED`` rather than leaking the
+    "attempted" memo as a false failure — callers need no particular read
+    ordering relative to ``missing_connector_type``.
     """
 
+    REGISTERED = "registered"  # connector available; any earlier attempt is moot
     NOT_ATTEMPTED = "not_attempted"  # next connection attempt will auto-install
     INSTALLING = "installing"  # an install subprocess is running right now
     FAILED = "failed"  # attempted this process and the connector is still missing
@@ -50,6 +52,8 @@ class AdapterInstallStatus(str, Enum):
 
 def adapter_install_status(db_type: str) -> AdapterInstallStatus:
     """Return the process-wide auto-install state for *db_type*."""
+    if connector_registry.is_registered(db_type):
+        return AdapterInstallStatus.REGISTERED
     if db_type in _adapter_install_active:
         return AdapterInstallStatus.INSTALLING
     if db_type in _adapter_install_attempted:
@@ -68,8 +72,11 @@ def _auto_install_adapter(db_type: str) -> None:
         if db_type in _adapter_install_attempted:
             logger.debug("Adapter '%s' auto-install already attempted; skipping", db_type)
             return
-        _adapter_install_attempted.add(db_type)
+        # Active before attempted: lock-free status readers must never see
+        # "attempted but not active" for an install that is about to run —
+        # that combination means FAILED.
         _adapter_install_active.add(db_type)
+        _adapter_install_attempted.add(db_type)
         try:
             _run_adapter_install(db_type)
         finally:

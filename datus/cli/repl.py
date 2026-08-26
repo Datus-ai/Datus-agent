@@ -82,7 +82,7 @@ from datus.cli.tui.live_display_state import LiveDisplayState
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
-from datus.storage.embedding_diagnostics import format_context_unavailable, is_datasource_scope_error
+from datus.storage.embedding_diagnostics import format_context_unavailable_many, is_datasource_scope_error
 from datus.tools.db_tools.db_manager import AdapterInstallStatus, db_manager_instance
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
@@ -1392,7 +1392,7 @@ class DatusCLI:
         if not real_errors:
             print_info(self.console, "@ table/metric/SQL references will populate once a datasource is selected.")
             return
-        warning = format_context_unavailable("; ".join(real_errors))
+        warning = format_context_unavailable_many(real_errors)
         self.startup_warnings.append(warning)
         logger.warning("REPL context autocomplete preload degraded: %s", warning)
         print_warning(self.console, warning)
@@ -2604,14 +2604,20 @@ class DatusCLI:
                     f"Database adapter datus-{missing_connector} is still installing from an earlier "
                     "attempt; waiting for it to finish...",
                 )
-            else:
+            elif install_status is AdapterInstallStatus.FAILED:
                 print_warning(
                     self.console,
                     f"Database adapter datus-{missing_connector} is unavailable — auto-install failed "
-                    f"earlier in this session. Install it manually: uv pip install datus-{missing_connector}",
+                    f"earlier in this session. Install it manually: pip install datus-{missing_connector}",
                 )
+            # REGISTERED: the connector became available between the probe and
+            # this status read (e.g. the background sync finished the install);
+            # nothing to announce.
 
-        install_may_be_running = missing_connector and install_status is not AdapterInstallStatus.FAILED
+        install_may_be_running = missing_connector and install_status in (
+            AdapterInstallStatus.NOT_ATTEMPTED,
+            AdapterInstallStatus.INSTALLING,
+        )
 
         try:
             try:
@@ -2620,23 +2626,25 @@ class DatusCLI:
                 )
             except TimeoutError:
                 if install_may_be_running:
-                    self.console.print(
-                        f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds while "
+                    print_error(
+                        self.console,
+                        f"Database connection timed out after {timeout_seconds} seconds while "
                         f"the datus-{missing_connector} adapter install may still be running in the background. "
-                        "Reconnect with /database once it finishes."
+                        "Reconnect with /database once it finishes.",
                     )
                 else:
-                    self.console.print(
-                        f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
+                    print_error(
+                        self.console,
+                        f"Database connection timed out after {timeout_seconds} seconds. "
                         f"Please check if the database server for datasource '{current_datasource}' is running "
-                        "and accessible."
+                        "and accessible.",
                     )
                 logger.error(f"Database connection timeout for datasource: {current_datasource}")
                 self.db_connector = None
                 return
 
             if not self.db_connector:
-                self.console.print("[red]Error:[/] No database connection.")
+                print_error(self.console, "No database connection.")
                 return
 
             # Update context based on dialect
@@ -2655,15 +2663,16 @@ class DatusCLI:
                 )
                 logger.debug(f"Connection test result: {connection_result}")
             except TimeoutError:
-                self.console.print(
-                    f"[red]Error:[/] Connection test timed out after {timeout_seconds} seconds. "
-                    f"The database server for datasource '{current_datasource}' may be unresponsive."
+                print_error(
+                    self.console,
+                    f"Connection test timed out after {timeout_seconds} seconds. "
+                    f"The database server for datasource '{current_datasource}' may be unresponsive.",
                 )
                 logger.error(f"Connection test timeout for datasource: {current_datasource}")
                 self.db_connector = None
 
         except Exception as e:
-            self.console.print(f"[red]Error:[/] Failed to connect to database: {str(e)}")
+            print_error(self.console, f"Failed to connect to database: {str(e)}")
             logger.error(f"Database connection failed for datasource {current_datasource}: {e}")
             self.db_connector = None
 

@@ -306,6 +306,25 @@ class TestPreLoadStorage:
         assert "lance cache unavailable" in cli.startup_warnings[0]
         assert "no datasource is selected" not in cli.startup_warnings[0]
 
+    def test_pre_load_storage_mixed_real_causes_get_neutral_headline(self, cli):
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error="error_code=300019: embedding download failed"),
+            metric_completer=SimpleNamespace(last_error="lance table corrupted"),
+            sql_completer=SimpleNamespace(last_error=None),
+        )
+
+        cli._pre_load_storage()
+
+        # Property: an embedding failure in one completer must not relabel an
+        # unrelated failure in another — mixed batches keep a neutral headline
+        # with every cause in the details.
+        assert len(cli.startup_warnings) == 1
+        warning = cli.startup_warnings[0]
+        assert "Hugging Face" not in warning
+        assert "embedding download failed" in warning
+        assert "lance table corrupted" in warning
+
     def test_pre_load_storage_embedding_error_keeps_embedding_remediation(self, cli):
         cli.at_completer = SimpleNamespace(
             reload_data=MagicMock(),
@@ -1976,9 +1995,24 @@ class TestInitConnectionTimeout:
         output = _console_text(cli)
         # Property: once the process-wide memo says the install failed, the
         # REPL must not claim an install is happening — it must hand the user
-        # the manual command instead.
+        # the manual command, phrased the way every doc and hint in the
+        # project phrases it (plain pip; uv may be absent on this machine).
         assert "Installing" not in output
-        assert "uv pip install datus-oracle" in output
+        assert "Install it manually: pip install datus-oracle" in output
+
+    def test_registered_status_announces_nothing(self, cli):
+        # The connector became available between the missing-probe and the
+        # status read (concurrent install finished): no announcement at all.
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
+
+        self._wire(cli, missing="oracle", install_status=AdapterInstallStatus.REGISTERED)
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        assert "Installing" not in output
+        assert "unavailable" not in output
+        assert "still installing" not in output
 
     def test_in_progress_install_announced_as_waiting(self, cli):
         from datus.tools.db_tools.db_manager import AdapterInstallStatus
