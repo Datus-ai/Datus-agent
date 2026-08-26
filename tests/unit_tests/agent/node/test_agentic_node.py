@@ -2179,12 +2179,17 @@ class TestPostCompactOccupancyReset:
 
         assert node.running_turn_usage.session_total_tokens == 1
 
-    def test_a_missing_meter_is_not_an_error(self):
-        """The compact has already succeeded; nothing here may fail it."""
+    def test_the_restored_mirror_is_set_when_there_is_no_snapshot(self):
+        """A node with no in-memory snapshot still has to end up with a current
+        fallback, because that is what `_history_token_ratio_sync` reads next."""
         node = _make_simple_node(context_length=100_000)
         node.running_turn_usage = None
+        node._restored_context_used = 95_000
 
-        node._reset_context_occupancy(1_200)  # must not raise
+        node._reset_context_occupancy(1_200)
+
+        assert node._restored_context_used == 1_200
+        assert node._history_token_ratio_sync() < 0.8
 
     def test_the_ratio_is_safe_even_when_persistence_fails(self):
         """`persist_context_state` swallows save failures and updates its mirrors
