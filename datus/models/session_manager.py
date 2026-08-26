@@ -412,6 +412,17 @@ class SessionManager:
             except OSError as exc:
                 logger.warning("Failed to remove session archive dir %s: %s", archive_root, exc)
 
+        # The title sidecar holds the deleted conversation's first user message,
+        # so it must not outlive it: leaving it behind keeps user text on disk
+        # after a delete, and would retitle a later session that reuses the id.
+        title_path = self.title_sidecar_path(session_id)
+        if os.path.isfile(title_path):
+            try:
+                os.remove(title_path)
+                logger.debug(f"Deleted session title sidecar: {title_path}")
+            except OSError as exc:
+                logger.warning("Failed to remove session title sidecar %s: %s", title_path, exc)
+
         # The frozen system prompt belongs to the deleted conversation.
         self.delete_system_prompt_snapshot(session_id)
 

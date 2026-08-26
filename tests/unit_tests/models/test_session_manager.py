@@ -2511,3 +2511,25 @@ class TestTitleSidecar:
         sm.save_title_sidecar(session_id, "How many buses ran today?")
         sm.save_title_sidecar(session_id, "   ")
         assert sm._read_title_sidecar(session_id) == "How many buses ran today?"
+
+    def test_deleting_a_session_removes_its_title_sidecar(self, sm):
+        """The sidecar holds user text, so it must not outlive the session — and
+        a later session reusing the id must not inherit the old title."""
+        session_id = "deleted-session"
+        self._seed(sm, session_id, [
+            {"role": "user", "content": "How many buses ran today?", "created_at": "2025-01-01T00:00:00"},
+        ])
+        sm.save_title_sidecar(session_id, "How many buses ran today?")
+        assert os.path.isfile(sm.title_sidecar_path(session_id))
+
+        sm.delete_session(session_id)
+
+        assert not os.path.isfile(sm.title_sidecar_path(session_id))
+
+    def test_deleting_a_session_without_a_sidecar_is_fine(self, sm):
+        session_id = "no-sidecar-session"
+        self._seed(sm, session_id, [
+            {"role": "user", "content": "What is SQL?", "created_at": "2025-01-01T00:00:00"},
+        ])
+        sm.delete_session(session_id)  # must not raise
+        assert not os.path.isfile(sm.title_sidecar_path(session_id))
