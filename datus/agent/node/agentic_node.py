@@ -1942,13 +1942,20 @@ class AgenticNode(Node):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not reset running_turn_usage after compact: %s", exc)
 
-        try:
-            if context_length:
+        # Set the in-memory mirrors FIRST. ``persist_context_state`` updates them
+        # only after a successful save, and it returns early when there is no
+        # resolvable state path — so relying on it would leave
+        # ``_restored_context_used`` at the pre-compact value. Once
+        # ``running_turn_usage`` is cleared at turn end,
+        # ``_history_token_ratio_sync`` falls back to exactly that value, and the
+        # re-compact loop this fix exists to close would reopen through it.
+        self._restored_context_used = post_compact_tokens
+        if context_length:
+            self._restored_context_length = context_length
+            try:
                 self.persist_context_state(post_compact_tokens, context_length)
-            else:
-                self._restored_context_used = post_compact_tokens
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not persist post-compact context state: %s", exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not persist post-compact context state: %s", exc)
 
     async def _major_compact(self, *, reason: str) -> Dict[str, Any]:
         """LLM-driven full-history compact pass.

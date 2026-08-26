@@ -2185,3 +2185,23 @@ class TestPostCompactOccupancyReset:
         node.running_turn_usage = None
 
         node._reset_context_occupancy(1_200)  # must not raise
+
+    def test_the_ratio_is_safe_even_when_persistence_fails(self):
+        """`persist_context_state` swallows save failures and updates its mirrors
+        only on success. If the reset relied on it, the stale pre-compact value
+        would survive in `_restored_context_used` and re-trigger a compact as
+        soon as `running_turn_usage` is cleared at turn end."""
+        node = _make_simple_node(context_length=100_000)
+        node.running_turn_usage = SimpleNamespace(
+            session_total_tokens=95_000, input_tokens=95_000, context_length=100_000
+        )
+        node._restored_context_used = 95_000
+        node._restored_context_length = 100_000
+
+        with patch.object(AgenticNode, "persist_context_state", side_effect=OSError("disk full")):
+            node._reset_context_occupancy(1_200)
+
+        # Turn end clears the in-memory snapshot; the fallback must be current.
+        node.running_turn_usage = None
+        assert node._restored_context_used == 1_200
+        assert node._history_token_ratio_sync() < 0.8
