@@ -5,6 +5,7 @@
 """Tests for SQLite RDB backend CRUD interface."""
 
 import os
+import sqlite3
 from dataclasses import dataclass
 
 import pytest
@@ -449,8 +450,6 @@ class TestMigrateConstraints:
     def test_noop_when_table_missing(self, tmp_path):
         """Skip rebuild when table does not exist yet."""
         db = self._make_db(tmp_path)
-        import sqlite3
-
         conn = sqlite3.connect(db.db_file)
         SqliteRdbDatabase._migrate_constraints(conn, self._new_def())
         conn.close()
@@ -536,3 +535,111 @@ class TestMigrateConstraints:
         new_table.insert(_NewNode(parent_id=1, name="dup", datasource_id="ds1"))
         with pytest.raises(UniqueViolationError):
             new_table.insert(_NewNode(parent_id=1, name="dup", datasource_id="ds1"))
+
+
+class TestIdentifierFolding:
+    """SQLite resolves ASCII identifiers case-insensitively but reports them as declared.
+
+    So a live table whose columns differ from the definition only by case is the *same*
+    table — comparing the catalog's spelling against the definition's makes the backend
+    think a column is missing, or that a column it is about to copy is not wanted.
+    """
+
+    @staticmethod
+    def _raw_create(db_file, create_statement, *inserts):
+        """Build the table outside the backend, so its declared case is ours to choose."""
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(create_statement)
+            for insert in inserts:
+                conn.execute(insert)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_column_differing_only_by_case_is_not_re_added(self, tmp_path):
+        """`ALTER TABLE ADD COLUMN name` on a table declaring `Name` is a duplicate."""
+        db_file = os.path.join(str(tmp_path), "case.db")
+        self._raw_create(db_file, "CREATE TABLE items (Id INTEGER PRIMARY KEY, Name TEXT, Value TEXT)")
+
+        db = SqliteRdbDatabase(db_file)
+        table = db.ensure_table(
+            TableDefinition(
+                table_name="items",
+                columns=[
+                    ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                    ColumnDef(name="name", col_type="TEXT"),
+                    ColumnDef(name="value", col_type="TEXT"),
+                ],
+            )
+        )
+        table.insert(_Item(name="folded", value="v1"))
+
+        conn = sqlite3.connect(db_file)
+        try:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(items)")]
+            rows = conn.execute("SELECT Name, Value FROM items").fetchall()
+        finally:
+            conn.close()
+        # No second `id`/`name`/`value` bolted on beside the declared ones.
+        assert columns == ["Id", "Name", "Value"]
+        assert rows == [("folded", "v1")]
+
+    def test_constraint_rebuild_keeps_a_column_stored_under_another_case(self, tmp_path):
+        """The rebuild copies only columns it recognises; a case mismatch would drop data."""
+        db_file = os.path.join(str(tmp_path), "rebuild.db")
+        self._raw_create(
+            db_file,
+            "CREATE TABLE items (Id INTEGER PRIMARY KEY, Name TEXT, Value TEXT, UNIQUE(Name))",
+            "INSERT INTO items (Name, Value) VALUES ('kept', 'payload')",
+        )
+
+        db = SqliteRdbDatabase(db_file)
+        table = db.ensure_table(
+            TableDefinition(
+                table_name="items",
+                columns=[
+                    ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                    ColumnDef(name="name", col_type="TEXT"),
+                    ColumnDef(name="value", col_type="TEXT"),
+                ],
+                constraints=["UNIQUE(name, value)"],
+            )
+        )
+
+        rows = table.query(_Item)
+        assert [(r.name, r.value) for r in rows] == [("kept", "payload")]
+
+    def test_constraint_migration_runs_for_a_table_named_in_another_case(self, tmp_path):
+        """`sqlite_master.name` stores the declared spelling; the lookup must fold."""
+        db_file = os.path.join(str(tmp_path), "master.db")
+        self._raw_create(
+            db_file,
+            "CREATE TABLE Items (id INTEGER PRIMARY KEY, name TEXT, value TEXT, UNIQUE(name))",
+            "INSERT INTO Items (name, value) VALUES ('kept', 'payload')",
+        )
+
+        db = SqliteRdbDatabase(db_file)
+        db.ensure_table(
+            TableDefinition(
+                table_name="items",
+                columns=[
+                    ColumnDef(name="id", col_type="INTEGER", primary_key=True, autoincrement=True),
+                    ColumnDef(name="name", col_type="TEXT"),
+                    ColumnDef(name="value", col_type="TEXT"),
+                ],
+                constraints=["UNIQUE(name, value)"],
+            )
+        )
+
+        conn = sqlite3.connect(db_file)
+        try:
+            stored = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name = 'items' COLLATE NOCASE"
+            ).fetchone()
+            payload = conn.execute("SELECT name, value FROM items").fetchall()
+        finally:
+            conn.close()
+        stored_ddl = stored[0].replace(" ", "") if stored else ""
+        assert "UNIQUE(name,value)" in stored_ddl
+        assert payload == [("kept", "payload")]

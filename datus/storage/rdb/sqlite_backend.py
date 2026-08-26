@@ -35,6 +35,19 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 
 
+def _folded(name: str) -> str:
+    """Fold an identifier the way SQLite resolves one.
+
+    SQLite matches identifiers case-insensitively for ASCII but reports them back —
+    through ``PRAGMA table_info`` and ``sqlite_master.name`` — exactly as they were
+    declared. Comparing a definition's spelling against the catalog's would call a
+    column that is already there missing, and re-adding it fails outright with
+    "duplicate column name". ``lower()`` rather than ``casefold()`` because SQLite's
+    ``NOCASE`` folds A-Z only, and ``_IDENTIFIER_RE`` keeps identifiers to ASCII.
+    """
+    return name.lower()
+
+
 def _safe_ident(name: str) -> str:
     """Validate and quote a SQL identifier to prevent injection."""
     if not _IDENTIFIER_RE.fullmatch(name):
@@ -255,11 +268,11 @@ class SqliteRdbDatabase(RdbDatabase):
         """Add columns that exist in the definition but not in the live table."""
         safe_table = _safe_ident(table_def.table_name)
         cursor = conn.execute(f"PRAGMA table_info({safe_table})")
-        existing_cols = {row[1] for row in cursor.fetchall()}
+        existing_cols = {_folded(row[1]) for row in cursor.fetchall()}
         if not existing_cols:
             return  # table doesn't exist yet — CREATE TABLE will handle it
         for col in table_def.columns:
-            if col.name not in existing_cols:
+            if _folded(col.name) not in existing_cols:
                 col_ddl = _sqlite_col_ddl(col)
                 conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {col_ddl}")
                 logger.info(f"Migrated: ALTER TABLE {safe_table} ADD COLUMN {col_ddl}")
@@ -294,7 +307,7 @@ class SqliteRdbDatabase(RdbDatabase):
         # was first created. This is the only way to inspect inline constraints
         # because SQLite has no information_schema or constraint catalog.
         cursor = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name = ? COLLATE NOCASE",
             (table_def.table_name,),
         )
         row = cursor.fetchone()
@@ -323,8 +336,12 @@ class SqliteRdbDatabase(RdbDatabase):
 
         # Only transfer columns that exist in both the old table and the new definition.
         # This safely handles columns that may have been added by _migrate_missing_columns.
-        new_col_names = {col.name for col in table_def.columns}
-        transfer_cols = ", ".join(c for c in existing_cols if c in new_col_names)
+        # Matched on the folded name, because a column the old table declared as "Name"
+        # is the definition's "name" — treating them as different silently drops the
+        # column, and its data, on the rebuild below. The old spelling is what gets
+        # emitted, which both tables resolve to.
+        new_col_names = {_folded(col.name) for col in table_def.columns}
+        transfer_cols = ", ".join(c for c in existing_cols if _folded(c) in new_col_names)
 
         # Build DDL for the temp table using the new definition (correct constraints).
         col_parts = [_sqlite_col_ddl(col) for col in table_def.columns] + list(table_def.constraints)
