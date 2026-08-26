@@ -2480,9 +2480,13 @@ class TestTitleSidecar:
         """Post-compact shape: an assistant recap and no user rows at all."""
         session_id = "compacted-session"
         sm.save_title_sidecar(session_id, "How many buses ran today?")
-        self._seed(sm, session_id, [
-            {"role": "assistant", "content": "Recap of the conversation.", "created_at": "2025-01-01T01:00:00"},
-        ])
+        self._seed(
+            sm,
+            session_id,
+            [
+                {"role": "assistant", "content": "Recap of the conversation.", "created_at": "2025-01-01T01:00:00"},
+            ],
+        )
 
         info = sm.get_session_info(session_id)
         assert info["first_user_message"] == "How many buses ran today?"
@@ -2492,17 +2496,25 @@ class TestTitleSidecar:
         the scan alone would silently retitle the chat."""
         session_id = "retitled-session"
         sm.save_title_sidecar(session_id, "How many buses ran today?")
-        self._seed(sm, session_id, [
-            {"role": "user", "content": "And by route?", "created_at": "2025-01-01T02:00:00"},
-        ])
+        self._seed(
+            sm,
+            session_id,
+            [
+                {"role": "user", "content": "And by route?", "created_at": "2025-01-01T02:00:00"},
+            ],
+        )
 
         assert sm.get_session_info(session_id)["first_user_message"] == "How many buses ran today?"
 
     def test_no_sidecar_leaves_the_scan_untouched(self, sm):
         session_id = "normal-session"
-        self._seed(sm, session_id, [
-            {"role": "user", "content": "What is SQL?", "created_at": "2025-01-01T00:00:00"},
-        ])
+        self._seed(
+            sm,
+            session_id,
+            [
+                {"role": "user", "content": "What is SQL?", "created_at": "2025-01-01T00:00:00"},
+            ],
+        )
         assert sm.get_session_info(session_id)["first_user_message"] == "What is SQL?"
 
     def test_an_empty_title_is_never_written(self, sm):
@@ -2516,9 +2528,13 @@ class TestTitleSidecar:
         """The sidecar holds user text, so it must not outlive the session — and
         a later session reusing the id must not inherit the old title."""
         session_id = "deleted-session"
-        self._seed(sm, session_id, [
-            {"role": "user", "content": "How many buses ran today?", "created_at": "2025-01-01T00:00:00"},
-        ])
+        self._seed(
+            sm,
+            session_id,
+            [
+                {"role": "user", "content": "How many buses ran today?", "created_at": "2025-01-01T00:00:00"},
+            ],
+        )
         sm.save_title_sidecar(session_id, "How many buses ran today?")
         assert os.path.isfile(sm.title_sidecar_path(session_id))
 
@@ -2528,8 +2544,12 @@ class TestTitleSidecar:
 
     def test_deleting_a_session_without_a_sidecar_is_fine(self, sm):
         session_id = "no-sidecar-session"
-        self._seed(sm, session_id, [
-            {"role": "user", "content": "What is SQL?", "created_at": "2025-01-01T00:00:00"},
-        ])
+        self._seed(
+            sm,
+            session_id,
+            [
+                {"role": "user", "content": "What is SQL?", "created_at": "2025-01-01T00:00:00"},
+            ],
+        )
         sm.delete_session(session_id)  # must not raise
         assert not os.path.isfile(sm.title_sidecar_path(session_id))
