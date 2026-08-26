@@ -215,9 +215,10 @@ dev = [
 ]
 ci = [
     "datus-storage-postgresql>=0.1.5",
-    # dosi-engine publishes manylinux wheels only, so the marker keeps a macOS
-    # checkout resolvable; that platform builds the engine from source instead.
-    "datus-semantic-dosi>=0.1.6 ; platform_machine == 'x86_64' and sys_platform == 'linux'",
+    # Pinned exactly: 0.1.7 is the first release that itself pins
+    # dosi-engine==0.1.7, whose wheels cover manylinux (x86_64/aarch64) and
+    # macOS arm64; the marker keeps other platforms resolvable.
+    "datus-semantic-dosi==0.1.7 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'darwin')",
 ]
 
 [tool.coverage.run]
