@@ -103,11 +103,13 @@ uv run datus-agent check-db --config conf/agent.yml --datasource local_duckdb
 uv run datus --config conf/agent.yml --datasource local_duckdb
 ```
 
-Inside the REPL, SQL is detected automatically:
+Inside the REPL, press **Tab** on an empty line to switch to `sql>` mode before running SQL:
 
 ```text
-> show tables;
-> select * from tree;
+                          # Tab switches to SQL mode
+sql> show tables;
+sql> select * from tree;
+                          # Esc returns to chat mode
 > /help
 ```
 

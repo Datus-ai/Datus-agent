@@ -75,16 +75,21 @@ datus
 
 ## 3. 开始使用
 
-启动后会看到 banner 与提示符 `>`，提示符接受三种输入：
+启动后会看到 banner 与绿色提示符 `>`。在空输入行按 **Tab**，可以依次切换三种输入模式：对话 `>` → `sql>` → `bash>`；按 **Esc** 或 **Ctrl+C** 返回对话模式：
 
-- **斜杠命令** —— `/help`、`/datasource`、`/model`、`/exit` 等
-- **SQL** —— `SELECT …`、`DESCRIBE …`、`SHOW …` 自动识别并对当前数据源执行
-- **自然语言** —— 其余输入交给 agent
+- **对话模式 `>`**（默认）—— 自然语言输入交给 Agent；`/help`、`/datasource`、`/model`、`/exit` 等斜杠命令在每种模式下都可使用。
+- **SQL 模式 `sql>`** —— 提示符和分隔线变为红色，并启用 SQL 语法高亮；输入内容会经过与 Agent 调用 `execute_sql` 相同的权限与 SQL policy 检查。只读查询直接执行，写入和 DDL 会先请求确认。使用 `\` + Enter 可以继续输入下一行。
+- **Bash 模式 `bash>`** —— 提示符变为黄色；输入内容通过与 Agent 相同的权限检查后作为 shell 命令执行。命中 `deny` 规则的命令会被阻止，其他未匹配规则的命令会请求确认。
+
+手动执行 SQL 或 Bash 时，命令行会立即显示并附带 `· running Ns` 状态；完成后会展示包含命令和结果的执行块。执行结果也会作为一轮上下文发送给模型，方便 Agent 接着分析，并随 session 保存，之后可通过 `/resume` 恢复。
 
 ```text title="示例"
 > /tables
-> desc gold_vs_bitcoin
 > Detailed analysis of gold–Bitcoin correlation.
+                          # 在空输入行按 Tab，切换到 SQL 模式
+sql> desc gold_vs_bitcoin
+                          # 再按一次 Tab，切换到 Bash 模式
+bash> git status
 ```
 
 自然语言提问后，Datus 实时流式展示思考、工具调用、SQL 与最终 markdown 报告，底部 pinned 行显示当前正在跑的工具：
