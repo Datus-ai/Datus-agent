@@ -1,8 +1,11 @@
-# Dashboard Copilot
+# Turn a Dashboard into a Copilot
 
 Transform a Superset dashboard into two AI subagents: a main subagent for self-service SQL and an attribution subagent for metric comparison and root-cause analysis.
 
 This tutorial walks through the complete flow with the Superset plugin, the generic `dashboard-bootstrap` skill, and the Dosi semantic adapter. Dashboard discovery and SQL export belong to the plugin; the skill coordinates user selection and routes exported SQL to Datus's builtin context-building agents.
+
+!!! info "What this tutorial starts from"
+    This guide starts with an existing Superset dashboard. To build a data pipeline and create a new dashboard instead, follow [End-to-End Data Engineering](data_engineering_quickstart.md). If this is your first time using Datus, complete [Install and First Query](Quickstart.md) first.
 
 ## Why Dashboard Copilot?
 
@@ -496,6 +499,8 @@ Context construction can succeed even when configuration persistence is unavaila
 
 ## Next steps
 
+- [End-to-End Data Engineering](data_engineering_quickstart.md) — build a pipeline and dashboard from source data.
+- [Choose Your Getting Started Path](index.md) — compare all getting-started guides.
 - [Dashboard Bootstrap](../skills/dashboard_bootstrap.md) — complete generic workflow contract.
 - [Plugins](../plugin/introduction.md) — plugin installation, profiles, activation, and permissions.
 - [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.md) — Dosi installation and semantic behavior.

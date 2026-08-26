@@ -1,9 +1,12 @@
-# 数据工程快速开始
+# 端到端数据工程
 
-本指南使用开源的 DAComp 数据工程数据集，串起一条完整的本地 Datus
+本场景教程使用开源的 DAComp 数据工程数据集，串起一条完整的本地 Datus
 工作流：理解数仓分层设计、在本地 DuckDB workbench 文件中交互式建表、
 生成 ETL、产出 marts 数据、提交 Airflow 天级任务，并把结果写入 Superset
 创建仪表盘。
+
+!!! info "本教程从哪里开始"
+    本教程从源数据开始，新建数据管道和 Dashboard。如果你已有 Superset Dashboard，希望把它转换成分析 Agent，请阅读[将 Dashboard 变成 Copilot](dashboard_copilot.zh.md)。第一次使用 Datus 时，建议先完成[安装并完成第一次提问](Quickstart.zh.md)。
 
 本文通过 Datus plugin 使用 Airflow 和 Superset。Datus datasource 负责 SQL
 执行与数据传输，plugin 则通过 Airflow 和 Superset API 发现、创建、运行和
@@ -445,3 +448,10 @@ namespace。
 
 workspace namespace 发生变化时，需要重建 demo project 并重新生成 DAG，
 确保 DAG 使用当前的 `lake.ws_<workspace_id>` namespace。
+
+## 后续步骤
+
+- [将 Dashboard 变成 Copilot](dashboard_copilot.zh.md) —— 从已有 Superset Dashboard 构建分析子代理。
+- [构建上下文增强 Agent](contextual_data_engineering.zh.md) —— 构建可复用上下文，并比较回答质量。
+- [Plugin](../plugin/introduction.zh.md) —— 配置 Airflow、Superset 和其他集成。
+- [选择上手路径](index.md) —— 对比所有入门指南。

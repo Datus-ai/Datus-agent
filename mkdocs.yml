@@ -6,10 +6,12 @@ nav:
   - Home:
     - Overview: index.md
     - Getting Started:
-      - Quickstart: getting_started/Quickstart.md
-      - Data Engineering Quickstart: getting_started/data_engineering_quickstart.md
-      - Contextual Data Engineering: getting_started/contextual_data_engineering.md
-      - Dashboard Copilot: getting_started/dashboard_copilot.md
+      - Choose Your Path: getting_started/index.md
+      - Install and First Query: getting_started/Quickstart.md
+      - Build a Context-Rich Agent: getting_started/contextual_data_engineering.md
+      - Scenario Tutorials:
+        - End-to-End Data Engineering: getting_started/data_engineering_quickstart.md
+        - Turn a Dashboard into a Copilot: getting_started/dashboard_copilot.md
     - CLI:
       - Introduction: cli/introduction.md
       - Chat Command: cli/chat_command.md
@@ -131,10 +133,12 @@ plugins:
             Home: 首页
             Overview: 概览
             Getting Started: 入门指南
-            Quickstart: 快速开始
-            Data Engineering Quickstart: 数据工程快速开始
-            Contextual Data Engineering: 上下文数据工程
-            Dashboard Copilot: Dashboard Copilot
+            Choose Your Path: 选择上手路径
+            Install and First Query: 安装并完成第一次提问
+            Build a Context-Rich Agent: 构建上下文增强 Agent
+            Scenario Tutorials: 场景教程
+            End-to-End Data Engineering: 端到端数据工程
+            Turn a Dashboard into a Copilot: 将 Dashboard 变成 Copilot
             CLI: 命令行
             Introduction: 介绍
             Chat Command: 聊天命令

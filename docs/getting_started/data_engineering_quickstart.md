@@ -1,10 +1,13 @@
-# Data Engineering Quickstart
+# End-to-End Data Engineering
 
-This guide walks through a complete local Datus workflow using the open DAComp
+This scenario tutorial walks through a complete local Datus workflow using the open DAComp
 data-engineering dataset. You will inspect the warehouse design, build layered
 tables interactively in a local DuckDB workbench file, generate ETL jobs,
 produce marts data, submit a daily Airflow job, and publish the result to
 Superset.
+
+!!! info "What this tutorial starts from"
+    This guide starts with source data and creates a new pipeline and dashboard. If you already have a Superset dashboard and want to turn it into analysis agents, follow [Turn a Dashboard into a Copilot](dashboard_copilot.md). If this is your first time using Datus, complete [Install and First Query](Quickstart.md) first.
 
 This guide uses Datus plugins to work with Airflow and Superset. Datus
 datasources handle SQL execution and data movement, while the plugins discover,
@@ -471,3 +474,10 @@ only; the physical write boundary is the workspace namespace.
 
 When the workspace namespace changes, recreate the demo project and regenerate
 the DAG so it uses the current `lake.ws_<workspace_id>` namespace.
+
+## Next Steps
+
+- [Turn a Dashboard into a Copilot](dashboard_copilot.md) — build analysis subagents from an existing Superset dashboard.
+- [Build a Context-Rich Agent](contextual_data_engineering.md) — build reusable context and compare answer quality.
+- [Plugins](../plugin/introduction.md) — configure Airflow, Superset, and other integrations.
+- [Choose Your Getting Started Path](index.md) — compare all getting-started guides.
