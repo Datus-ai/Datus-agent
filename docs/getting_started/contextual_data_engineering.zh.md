@@ -322,7 +322,8 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
 `/agent` 不带参数会打开 TUI（Enter 切换当前 agent）；带名字则把默认 agent 切到 `<name>`：
 
 ```text
-/agent datus_schools_context          # 之后在下一行输入你的问题
+/agent datus_schools_context
+What's the average SAT score by school type?
 ```
 
 如果只想就单条提问临时路由到某个 subagent，使用 `@Agent <name>` 提示：

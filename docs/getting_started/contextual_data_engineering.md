@@ -329,7 +329,8 @@ The key contrast is `context_search_tools`: only `datus_schools_context` can rea
 `/agent` with no argument opens the TUI (Enter switches the active agent); with a name it switches the default agent to `<name>`:
 
 ```text
-/agent datus_schools_context          # then type your question on the next line
+/agent datus_schools_context
+What's the average SAT score by school type?
 ```
 
 For one-off routing on a single question, use the `@Agent <name>` mention:
