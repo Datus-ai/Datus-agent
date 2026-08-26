@@ -15,6 +15,7 @@ class ExecuteSQLInput(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "datasource": "prod_warehouse",
                 "database_name": "sales_db",
                 "sql_query": "SELECT * FROM users WHERE status = 'active'",
                 "result_format": "csv",
@@ -24,6 +25,11 @@ class ExecuteSQLInput(BaseModel):
         }
     )
 
+    # Which connection profile to run against. A project can bind several, and
+    # the dotted table names in the SQL carry no datasource level — so the
+    # editor tab's datasource has to travel with the statement or it silently
+    # runs on the project's default warehouse instead.
+    datasource: Optional[str] = Field(None, description="Datasource to execute against; null means the current one")
     database_name: Optional[str] = Field(None, description="Database name")
     sql_query: str = Field(..., description="SQL query to execute")
     result_format: str = Field("arrow", description="Result format (arrow, csv, json)")
@@ -72,6 +78,7 @@ class ExecuteContextInput(BaseModel):
         json_schema_extra={
             "example": {
                 "context_type": "tables",
+                "datasource": "prod_warehouse",
                 "database_name": "sales_db",
                 "schema_name": "public",
                 "args": "",

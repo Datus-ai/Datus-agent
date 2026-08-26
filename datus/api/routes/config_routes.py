@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from datus.api import deps
 from datus.api.deps import AppContextDep, ServiceDep
 from datus.api.models.base_models import Result
+from datus.api.models.config_models import DatasourceListData, DatasourceSummary
 from datus.configuration.agent_config import _SAFE_NAME_RE, DbConfig, load_model_config
 from datus.configuration.agent_config_loader import configuration_manager
 from datus.models.base import LLMBaseModel
@@ -144,6 +145,43 @@ async def get_agent_config_endpoint(
             "datasources": flat_datasources,
             "home": config.home,
         },
+    )
+
+
+@router.get(
+    "/config/datasources",
+    response_model=Result[DatasourceListData],
+    summary="List Datasources",
+    description="Names and types of the project's configured datasources. Carries no credentials.",
+)
+async def list_datasources_endpoint(
+    svc: ServiceDep,
+) -> Result[DatasourceListData]:
+    """The datasource roster, for clients that need to name them.
+
+    Separate from ``/config/agent`` on purpose. That endpoint returns the raw
+    ``DbConfig`` of every datasource — decrypted password, credential-bearing
+    ``uri``, Snowflake key passphrase — plus the models block with its API keys.
+    Anything a catalog UI does on project entry has to be reachable without
+    that, or every member who opens a project is handed the warehouse
+    credentials.
+    """
+    config = svc.agent_config
+    current = config.current_datasource or ""
+
+    summaries = [
+        DatasourceSummary(
+            name=name,
+            type=(db_config.type.value if hasattr(db_config.type, "value") else str(db_config.type)),
+            is_current=(name == current),
+        )
+        for name, db_config in config.datasource_configs.items()
+        if db_config is not None
+    ]
+
+    return Result(
+        success=True,
+        data=DatasourceListData(datasources=summaries, current_datasource=current),
     )
 
 

@@ -348,7 +348,7 @@ class ServiceClientRegistry:
         """Capture the agent_config state that affects built tool instances.
 
         ``SemanticTools`` bakes ``current_datasource`` into ``MetricRAG`` /
-        ``SemanticModelRAG`` at init time and resolves the adapter against
+        ``SemanticDatasetRAG`` at init time and resolves the adapter against
         the active datasource. ``BIFuncTool.read_connector`` is similarly
         pulled via ``db_manager.get_conn(current_datasource)``
         on first use. If any of those change, cached instances must be

@@ -57,8 +57,6 @@ SYS_SUB_AGENTS = {
     "gen_table",
     "gen_job",
     "gen_skill",
-    "gen_dashboard",
-    "scheduler",
     "feedback",
 }
 
@@ -69,7 +67,10 @@ RETIRED_SYS_SUB_AGENTS = frozenset({"gen_semantic_model", "gen_metrics"})
 # Subset of SYS_SUB_AGENTS hidden from user-facing listings (autocomplete and
 # the ".agent" selector). Internal agents may still be invoked by their owning
 # workflow; retired agents are rejected by the shared node factory.
-HIDDEN_SYS_SUB_AGENTS = {"feedback", *RETIRED_SYS_SUB_AGENTS}
+HIDDEN_SYS_SUB_AGENTS = {
+    "feedback",
+    *RETIRED_SYS_SUB_AGENTS,
+}
 
 
 class SQLType(StrEnum):

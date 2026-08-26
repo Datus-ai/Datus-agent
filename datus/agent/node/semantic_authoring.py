@@ -65,7 +65,7 @@ def resolve_authoring_format(
     """Resolve the semantic authoring format from the global semantic adapter."""
     del node_config
 
-    adapter = _resolve_semantic_adapter(agent_config)
+    adapter = resolve_semantic_adapter_type(agent_config)
 
     if is_osi_semantic_adapter(adapter):
         return AUTHORING_FORMAT_OSI
@@ -73,12 +73,14 @@ def resolve_authoring_format(
 
 
 def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
-    """Resolve the active semantic adapter, defaulting to MetricFlow."""
+    """Resolve the active semantic adapter, using the configured built-in default."""
     adapter = _resolve_semantic_adapter(agent_config)
     normalized = str(adapter or "").strip().lower()
     if normalized:
         return normalized
-    return AUTHORING_FORMAT_METRICFLOW
+    from datus.configuration.agent_config import DEFAULT_SEMANTIC_ADAPTER
+
+    return DEFAULT_SEMANTIC_ADAPTER
 
 
 def is_semantic_modeling_available(agent_config: Any = None) -> bool:
@@ -251,28 +253,16 @@ def _dataset_table_references(agent_config: Any, dataset: Dict[str, Any], datase
     return references if not parse_errors else []
 
 
-def validate_osi_core_document(document: Any) -> Optional[str]:
-    """Validate one parsed document with the OSI package's canonical schema."""
-    if not isinstance(document, dict):
-        return "YAML document must be an object"
-    try:
-        from datus_semantic_osi.errors import OSIValidationError
-        from datus_semantic_osi.profile import validate_osi_core_schema
-    except ImportError as exc:
-        return f"OSI schema validator is unavailable: {exc}"
-
-    try:
-        validate_osi_core_schema(document)
-    except OSIValidationError as exc:
-        return str(exc)
-    return None
-
-
 def validate_osi_authoring_document(document: Any, *, semantic_adapter: str) -> Optional[str]:
-    """Validate an OSI-shaped authoring document with its selected adapter."""
+    """Validate an OSI-shaped authoring document with its selected adapter.
+
+    Dosi is the only adapter that authors. Anything else is query-only, so
+    there is no validator to fall back to — saying so is more useful than
+    validating a document that will never be written.
+    """
 
     if str(semantic_adapter or "").strip().lower() != "dosi":
-        return validate_osi_core_document(document)
+        return QUERY_ONLY_MIGRATION_MESSAGE
     if not isinstance(document, dict):
         return "YAML document must be an object"
     try:

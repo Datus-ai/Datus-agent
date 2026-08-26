@@ -90,6 +90,34 @@ jobs:
           sed -i "s|home: .datus_test_data|home: $DATUS_TEST_HOME|g" tests/conf/agent.yml
           sed -i "s|project_root: .datus_test_data/workspace|project_root: $DATUS_TEST_HOME/workspace|g" tests/conf/agent.yml
 
+      - name: Pre-install the DuckDB excel extension
+        run: |
+          # `read_xlsx` lives in an autoloadable extension DuckDB fetches over
+          # HTTPS on first use. Fetching it from inside a test would make the
+          # spreadsheet suite network-dependent, which CI tests must not be — so
+          # it is installed once here, and the tests then LOAD it locally. Same
+          # posture as the runtime image, which bakes it for egress-less pods.
+          EXT_DIR="${GITHUB_WORKSPACE}/.duckdb/extensions"
+          echo "DATUS_DUCKDB_EXTENSION_DIRECTORY=$EXT_DIR" >> "$GITHUB_ENV"
+          uv run python - <<'PY'
+          import os
+          import duckdb
+
+          ext_dir = os.path.join(os.environ["GITHUB_WORKSPACE"], ".duckdb", "extensions")
+          con = duckdb.connect(":memory:")
+          con.execute(f"SET extension_directory='{ext_dir}'")
+          con.execute("INSTALL excel")
+          con.close()
+
+          # Same check the tests will make: load it with autoinstall off, so a
+          # failure here is a build failure rather than a mysterious test skip.
+          con = duckdb.connect(":memory:")
+          con.execute(f"SET extension_directory='{ext_dir}'")
+          con.execute("SET autoinstall_known_extensions=false")
+          con.execute("LOAD excel")
+          print(f"duckdb {duckdb.__version__}: excel extension ready in {ext_dir}")
+          PY
+
       - name: Load environment variables
         run: |
           echo "Loading environment variables from .env file..."

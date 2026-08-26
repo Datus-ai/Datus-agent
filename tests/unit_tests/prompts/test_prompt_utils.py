@@ -286,13 +286,17 @@ class TestGenMetricsV12Template:
 
     def test_v12_template_renders_without_error(self):
         """v1.2 template renders with minimal context and produces non-empty output."""
+        from jinja2 import FileSystemLoader
+        from jinja2.sandbox import SandboxedEnvironment
+
         from datus.prompts.prompt_manager import PromptManager
 
-        pm = PromptManager()
         # Use only the default_templates_dir (no user templates needed)
-        from jinja2 import Environment, FileSystemLoader
+        pm = PromptManager()
 
-        env = Environment(
+        # Mirrors PromptManager._get_env: production renders these templates in a
+        # sandbox, so a bare Environment here would stop being representative.
+        env = SandboxedEnvironment(
             loader=FileSystemLoader([str(pm.default_templates_dir)]),
             trim_blocks=True,
             lstrip_blocks=True,
@@ -325,12 +329,15 @@ class TestGenMetricsV12Template:
         ],
     )
     def test_sql_file_evidence_is_read_directly(self, template_name):
-        from jinja2 import Environment, FileSystemLoader
+        from jinja2 import FileSystemLoader
+        from jinja2.sandbox import SandboxedEnvironment
 
         from datus.prompts.prompt_manager import PromptManager
 
         pm = PromptManager()
-        env = Environment(
+        # Mirrors PromptManager._get_env: production renders these templates in a
+        # sandbox, so a bare Environment here would stop being representative.
+        env = SandboxedEnvironment(
             loader=FileSystemLoader([str(pm.default_templates_dir)]),
             trim_blocks=True,
             lstrip_blocks=True,
@@ -355,12 +362,16 @@ class TestGenMetricsV12Template:
 
     def test_v12_template_mentions_skill(self):
         """v1.2 template should reference skills and gen-metrics."""
+        from jinja2 import FileSystemLoader
+        from jinja2.sandbox import SandboxedEnvironment
+
         from datus.prompts.prompt_manager import PromptManager
 
         pm = PromptManager()
-        from jinja2 import Environment, FileSystemLoader
 
-        env = Environment(
+        # Mirrors PromptManager._get_env: production renders these templates in a
+        # sandbox, so a bare Environment here would stop being representative.
+        env = SandboxedEnvironment(
             loader=FileSystemLoader([str(pm.default_templates_dir)]),
             trim_blocks=True,
             lstrip_blocks=True,

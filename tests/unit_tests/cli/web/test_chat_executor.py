@@ -161,8 +161,7 @@ class TestChatExecutorStream:
         node = _FakeNode()
         cli = MagicMock()
         cli.at_completer.parse_at_context.return_value = ([], [], [], None)
-        cli.chat_commands._should_create_new_node.return_value = True
-        cli.chat_commands._create_new_node.return_value = node
+        cli.chat_commands.get_or_create_node.return_value = node
         cli.chat_commands.create_node_input.return_value = ({"q": "x"}, None)
         cli.actions = []
 
@@ -191,8 +190,7 @@ class TestChatExecutorStream:
         node = _FakeNode()
         cli = MagicMock()
         cli.at_completer.parse_at_context.return_value = ([], [], [], None)
-        cli.chat_commands._should_create_new_node.return_value = False
-        cli.chat_commands.current_node = node
+        cli.chat_commands.get_or_create_node.return_value = node
         cli.chat_commands.create_node_input.return_value = ({"q": "x"}, None)
         cli.actions = []
 
@@ -223,8 +221,7 @@ class TestChatExecutorStream:
         node = _FakeNode()
         cli = MagicMock()
         cli.at_completer.parse_at_context.return_value = ([], [], [], None)
-        cli.chat_commands._should_create_new_node.return_value = True
-        cli.chat_commands._create_new_node.return_value = node
+        cli.chat_commands.get_or_create_node.return_value = node
         cli.chat_commands.create_node_input.return_value = ({"q": "x"}, None)
         cli.actions = []
 

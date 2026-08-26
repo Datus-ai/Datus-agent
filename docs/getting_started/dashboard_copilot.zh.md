@@ -1,477 +1,508 @@
-# Dashboard Copilot
+# 将 Dashboard 变成 Copilot
 
-只需一条命令，即可将您的 BI 仪表盘转化为智能 AI 子代理。本指南将带您完成 Superset + PostgreSQL 的部署、Datus 配置，以及使用 `bootstrap-bi` 命令从仪表盘自动生成上下文和子代理。
+将 Superset 仪表盘转换成两个 AI 子代理：一个用于自助取数和生成 SQL 的主子代理，以及一个用于指标对比和根因分析的归因子代理。
+
+本教程使用 Superset plugin、通用 `dashboard-bootstrap` skill 和 Dosi semantic adapter 完成整个流程。Dashboard 发现和 SQL 导出由 plugin 负责；skill 负责用户选择和流程编排，并将导出的 SQL 路由给 Datus 的内置 context 构建 agent。
+
+!!! info "本教程从哪里开始"
+    本教程从已有 Superset Dashboard 开始。如果你希望从源数据构建数据管道并创建新的 Dashboard，请阅读[端到端数据工程](data_engineering_quickstart.zh.md)。第一次使用 Datus 时，建议先完成[安装并完成第一次提问](Quickstart.zh.md)。
 
 ## 为什么选择 Dashboard Copilot？
 
-传统 BI 仪表盘是静态的——它们展示预定义的图表和指标，但用户无法提出后续问题或探索预构建内容之外的数据。**Datus Dashboard Copilot 将这些静态仪表盘转化为动态分析助手**，能够：
+传统 BI 仪表盘是静态的：它们展示预定义的图表和指标，但用户无法提出后续问题，也不能探索预构建内容之外的数据。Dashboard Copilot 将仪表盘转换成分析 agent，使其能够：
 
-- 使用与仪表盘相同的数据和业务逻辑回答临时问题
-- 在指标发生意外变化时进行根因分析
-- 生成与仪表盘语义模型保持一致的新 SQL 查询
-- 提供归因分析，解释指标变化的驱动因素
+- 使用与仪表盘相同的表和 SQL 证据回答临时问题；
+- 在仪表盘 Knowledge Base 范围内生成 SQL；
+- 跨时间和维度比较指标；
+- 对指标变化进行归因和根因分析。
 
-只需一条命令，Datus 就能从现有仪表盘中提取所有上下文——SQL 查询、表关系、指标定义和业务逻辑——并创建像您的仪表盘一样理解数据的 AI 子代理。
+Bootstrap 首先构建 reference SQL 和 semantic metrics，然后创建两个带 scoped context 的子代理：
 
-Bootstrap 过程会自动生成两个专门的子代理：一个**主子代理**用于在仪表盘语义范围内自助取数与生成 SQL，另一个**归因子代理**用于指标对比、维度归因和根因分析。
+- **主子代理**：基于仪表盘的 tables、metrics 和 reference SQL 提供自助取数。
+- **归因子代理**：提供指标对比、维度归因和根因分析。
 
 ![Dashboard to Agent 架构](../assets/dashboard_to_agent.png)
 
 ## 前置条件
 
-开始之前，请确保您已具备：
+开始前需要安装：
 
-- Docker Desktop 已安装并运行
-- Python 3.12 并已安装 Datus
+- Docker Desktop，或支持 Docker Compose 的 Docker Engine；
+- Python 3.12 和 Datus；
+- Git、`curl` 和 `unzip`。
 
-## 步骤 1：部署 Superset + PostgreSQL
+以下命令使用 `~/datus-dashboard-copilot-demo` 作为工作目录。它会部署本教程固定使用的 Superset 示例环境，并将生成的 SQL 和 semantic assets 保存在该目录下。
 
-可快速启动一个本地 Superset 环境：
+## 步骤 1：部署 Superset 和 PostgreSQL
+
+下载本地 Superset 环境：
 
 ```bash
-mkdir -p /tmp/datus-superset && cd /tmp/datus-superset
-curl -L -o datus-dashboard-copilot-stack-v1.zip https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-dashboard-copilot-stack-v1.zip
-unzip -jo datus-dashboard-copilot-stack-v1.zip '*/superset/docker-compose.yml' '*/superset/superset_config.py'
-docker compose up -d
+mkdir -p ~/datus-dashboard-copilot-demo
+cd ~/datus-dashboard-copilot-demo
+
+curl -L -o datus-dashboard-copilot-stack-v1.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-dashboard-copilot-stack-v1.zip
+
+unzip -jo datus-dashboard-copilot-stack-v1.zip \
+  '*/superset/docker-compose.yml' \
+  '*/superset/superset_config.py'
 ```
 
-待服务就绪后确认：
+Superset 示例数据库将 PostgreSQL 连接标识为 `postgres:5432/superset_examples`。`dashboard-bootstrap` 会将这个连接 identity 与已配置的 Datus datasource 匹配。为了让运行在宿主机上的 Datus 使用同一地址，本地演示需要暴露相同端口，并让宿主机能够解析 Compose service name：
 
 ```bash
+cat > docker-compose.override.yml <<'YAML'
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+YAML
+
+grep -qE '(^|[[:space:]])postgres([[:space:]]|$)' /etc/hosts || \
+  echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
+```
+
+!!! note "连接 identity"
+    `postgres` host alias 仅用于本地演示。真实环境中，应将 Datus 配置为 Superset Database connection 已经使用的实际 endpoint。backend、endpoint 和物理 database/catalog 必须唯一匹配到一个 Datus datasource；只有 table 或 schema 名称相同不能作为匹配依据。
+
+启动服务：
+
+```bash
+docker compose up -d
+docker compose ps
 docker compose logs -f superset
 ```
 
-现在您可以通过 [http://localhost:8088](http://localhost:8088) 访问 Superset，默认凭据为 `admin/admin`。
-PostgreSQL 暴露在 `127.0.0.1:5433`，默认库为 `superset_examples`，用户名/密码为 `superset`。
+Superset 就绪后停止跟随日志。本地服务信息如下：
 
-!!! note "Helm 方式（可选）"
-    如果您更偏好 Kubernetes，也可以使用仓库中的 Helm 部署流程。
+- Superset：[http://localhost:8088](http://localhost:8088)，用户名/密码为 `admin/admin`；
+- PostgreSQL：`postgres:5432`，数据库为 `superset_examples`，用户名/密码为 `superset/superset`。
 
-## 步骤 2：配置 Datus
+打开 Superset，确认示例 Dashboard **World Bank's Data** 已存在。
 
-配置 Datus 以连接 PostgreSQL 数据库和 Superset 仪表盘。
+## 步骤 2：安装 Superset plugin 和 Dosi adapter
 
-### 更新 agent.yml
+从 Datus Plugins Git 仓库安装 Superset plugin：
 
-将以下配置添加到您的 `~/.datus/conf/agent.yml`：
+```bash
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"
+datus plugin info superset
+```
+
+如需更新已有的 Git 安装，运行 `datus plugin upgrade superset`。
+
+将 Dosi semantic adapter 安装到 Datus 所在的同一个 Python 环境：
+
+```bash
+python -m pip install datus-semantic-dosi
+```
+
+如果所有组件都使用源码开发，请按照 [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.zh.md) 中的 editable install 命令安装。
+
+## 步骤 3：配置演示项目
+
+### 使用环境变量保存演示凭据
+
+示例环境使用仅限本机的公开凭据，但仍不应将它们直接写入 `agent.yml`：
+
+```bash
+export SUPERSET_PASSWORD=admin
+export SUPERSET_PG_PASSWORD=superset
+```
+
+后续需要在仍然保留这些环境变量的 shell 中启动 Datus。
+
+### 更新 `agent.yml`
+
+将以下内容合并到 `~/.datus/conf/agent.yml` 已有的 `agent:` 节点中，并保留现有的 model provider 配置。
 
 ```yaml
 agent:
   services:
     datasources:
-      superset:
+      superset-pg:
         type: postgresql
-        host: 127.0.0.1
-        port: 5433
+        host: postgres
+        port: 5432
         username: superset
-        password: superset
+        password: ${SUPERSET_PG_PASSWORD}
         database: superset_examples
         schema: public
+
     semantic_layer:
-      metricflow:
-        type: metricflow
-    bi_platforms:
-      superset:
-        type: superset
+      dosi:
+        type: dosi
+        default: true
+
+  plugins:
+    superset:
+      local:
+        default: true
         api_base_url: http://localhost:8088
+        auth_mode: login
         username: admin
-        password: admin
-        dataset_db:
-          datasource_ref: superset
-          bi_database_name: examples
+        password: ${SUPERSET_PASSWORD}
+        provider: db
+        verify_ssl: "true"
+        timeout: "30"
 ```
 
-!!! note "配置说明"
-    - **services.datasources**：定义用于 SQL 执行的数据源连接
-    - **services.semantic_layer**：注册 metric 与 semantic model 工作流使用的语义适配器
-    - **services.bi_platforms**：定义 BI 平台凭据，并将 Superset 中的 `examples` 数据库连接映射到 Datus 的 `superset` datasource
+后面的启动命令会显式选择 `superset-pg`。如果现有配置中已有其他 semantic adapter 被标记为 `default: true`，请先清除该标记，再将 Dosi 设置为本演示的默认 adapter。
 
-!!! tip
-    也可以在 REPL 内通过斜杠命令交互式添加：`/datasource` 添加 SQL 数据源，`/services` 添加 semantic layer、BI platform 与 scheduler。
+Superset plugin 会返回每条已选择查询的脱敏 source identity，`dashboard-bootstrap` 会分别将每个 identity 与已配置的 Datus datasources 匹配，因此一个 Dashboard 可以包含来自多个物理数据库的查询。
 
-## 步骤 3：从仪表盘 Bootstrap
+!!! tip "使用 plugin skill 配置 profile"
+    也可以不手工编辑 plugin 配置。启动 Datus 后输入：`使用 login auth 和 SUPERSET_PASSWORD 环境变量，为 http://localhost:8088 配置名为 local 的 Superset plugin profile。` Plugin 的 `superset-setup` skill 只会写入环境变量引用，不会写入明文密码。
 
-在 Datus REPL 内使用 `/bootstrap-bi` 斜杠命令，从 Superset 仪表盘自动生成上下文和子代理。我们将以世界银行数据仪表盘为例。
+### 启用并验证 plugin
 
-### 启动 REPL
+为当前项目启用 plugin 和 profile：
 
 ```bash
-datus
+cd ~/datus-dashboard-copilot-demo
+datus plugin enable superset --profile local
 ```
 
-### 设置模型
+在启动 LLM workflow 前，先验证身份认证和 Dashboard discovery：
 
-`/bootstrap-bi` 会调用 LLM 生成 SQL Summary、语义模型与指标。开始之前先用 `/model` 选定要使用的模型，详见 [模型命令](../cli/other_commands.zh.md#model)。
+```bash
+datus superset --profile local status health
+datus superset --profile local dashboards list
+```
+
+Dashboard 列表中应包含 **World Bank's Data**。此时 plugin 已经可以向 agent 提供 `superset-query-export` skill。
+
+## 步骤 4：Bootstrap World Bank Dashboard
+
+### 启动 Datus 并选择模型
+
+始终从演示目录启动 Datus，以便导出的 SQL、Knowledge Base artifacts、semantic models 和项目配置都写入该目录：
+
+```bash
+cd ~/datus-dashboard-copilot-demo
+datus --datasource superset-pg
+```
+
+选择 LLM provider 和 model：
 
 ```text
 > /model
 ```
 
-### 运行 `/bootstrap-bi`
+Provider 配置方式参见 [Model 命令](../cli/other_commands.zh.md#model)。
+
+### 启动 skill 驱动流程
+
+输入一条自然语言请求：
 
 ```text
-> /bootstrap-bi
+使用 local profile 的 Superset plugin，按照 dashboard-bootstrap skill bootstrap World Bank's Data dashboard。选择所有可导出的 dashboard queries 同时用于 reference SQL 和 metric evidence。先展示 Generation Manifest，等待我确认后再写入任何内容。
 ```
 
-### 交互流程
-
-以测试集中的 `World Bank's Data` 看板为例进行初始化。
-
-**1. 选择 BI platform**
+也可以使用 slash command 启动相同流程：
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Pick a configured BI platform:
-  → superset               superset     http://localhost:8088
-
-
-
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   ↵ select   Esc cancel
+> /bootstrap-bi 使用 Superset local profile 和 World Bank's Data dashboard；选择所有可导出查询用于 reference SQL 和 metrics
 ```
 
-**2. 选择看板**
+两种方式都会执行相同的 `dashboard-bootstrap` workflow。
 
-```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-filter:
-────────────────────────────────────────────────────────────────────────────
-    16       Slack Dashboard
-    15       COVID Vaccine Dashboard
-    14       Unicode Test
-    13       FCC New Coder Survey 2018
-    12       Featured Charts
-    11       Video Game Sales
-    10       Sales Dashboard
-    8        deck.gl Demo
-    7        Misc Charts
-    6        USA Births Names
-  → 5        World Bank's Data
-    9        [ untitled dashboard ]
+### Agent 在确认前执行的操作
 
-────────────────────────────────────────────────────────────────────────────
-  type to filter   ↑↓ navigate   ↵ select   m manual URL   Esc back
+主 agent 会加载两个 skills：
+
+1. `dashboard-bootstrap`：负责通用 workflow；
+2. `superset-query-export`：描述 Superset discovery 和 export 命令。
+
+随后通过 plugin 执行：
+
+```bash
+datus superset --profile local dashboards list
+datus superset --profile local context candidates <dashboard-id>
 ```
 
-**3. 选择用于参考 SQL 的图表**
+`context candidates` 是只读操作。它返回稳定 candidate ID、Chart 名称、是否可导出，以及从每个 Chart 的真实 Superset Dataset 和 Database connection 解析出的脱敏 source identity。
 
-每个选中图表的 SQL 会作为主子代理的 reference SQL。
+在本示例环境中，World Bank 查询应解析为：
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Select charts for reference SQL (9/9 selected):
-  → [x] 281    Treemap (agg)
-    [x] 276    % Rural (agg)
-    [x] 277    Life Expectancy VS Rural % (agg)
-    [x] 274    Most Populated Countries (agg)
-    [x] 280    Box plot (agg)
-    [x] 278    Rural Breakdown (agg)
-    [x] 273    World's Population (agg)
-    [x] 279    World's Pop Growth (agg)
-    [x] 275    Growth Rate (agg)
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+backend: postgresql
+host: postgres
+port: 5432
+database: superset_examples
+dataset: public.wb_health_population
+matched Datus datasource: superset-pg
 ```
 
-**4. 选择用于指标提取的图表**
+Agent 会分别询问哪些查询用于 reference SQL，哪些用于 metric evidence。本教程为两个集合选择全部可导出查询。聚合是推荐信号，metric 选择仍然需要明确确认。
 
-这些图表中的聚合表达式会被挖掘成指标定义。默认仅勾选带聚合（`(agg)` 标记）的图表。
+### 检查 Generation Manifest
+
+导出任何 SQL 前，Agent 会展示类似下面的 Generation Manifest：
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Select charts for metrics (9/9 selected):
-  → [x] 281    Treemap (agg)
-    [x] 276    % Rural (agg)
-    [x] 277    Life Expectancy VS Rural % (agg)
-    [x] 274    Most Populated Countries (agg)
-    [x] 280    Box plot (agg)
-    [x] 278    Rural Breakdown (agg)
-    [x] 273    World's Population (agg)
-    [x] 279    World's Pop Growth (agg)
-    [x] 275    Growth Rate (agg)
+Generation Manifest
 
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+Plugin/profile: superset / local
+Dashboard: World Bank's Data (<stable dashboard id>)
+Reference SQL: 全部 9 个可导出的 Chart candidates
+Metrics: 全部 9 个可导出的 Chart candidates，归入 World Bank 业务域
+Query sources: postgresql/postgres:5432/superset_examples -> superset-pg（resolved，active）
+Excluded: 无；如果当前 Superset 示例中存在失败或隐藏 Chart，则会列出
+Export mode: selective
+Subagents: superset_world_bank_s, superset_world_bank_s_attribution
 ```
 
-**5. 选择关联的表**
+Chart 和 Dashboard ID 取决于具体安装环境。请使用 manifest 实际展示的 ID，不要复制本文中的其他示例 ID。
+
+在下一条消息中确认：
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Review tables to scope (1/1 selected):
-  → [x] public.wb_health_population
-
-
-
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+> 确认 Generation Manifest，继续执行。
 ```
 
-**6. 选择并发数**
+SQL export 在 plugin 权限中属于 `ask` 操作。确认 manifest 后，Datus 可能会再显示一次系统权限提示；批准本次精确的 selective export 命令即可继续。
 
-后续构建会并行调用 LLM，可根据网络与配额选择线程池大小（默认 3，可加大以加速）。
+## 自动构建流程
 
-    ─────────────────────────────── Bootstrap BI ───────────────────────────────
-    ────────────────────────────────────────────────────────────────────────────
-      Pick a thread-pool size for parallel LLM calls:
-        1 threads
-      → 3 threads
-        5 threads
-        10 threads
-    ────────────────────────────────────────────────────────────────────────────
-      ↑↓ navigate   ↵ select   Esc back
+确认后，skill 会编排四个阶段。具体消息和生成名称可能随 model 略有变化，但 owner 和 artifact 路径保持不变。
 
-### 自动化构建
+### 1. Plugin 导出 SQL
 
-确认上述选择后，Datus 进入自动化构建流程，依次完成元数据爬取、参考 SQL 生成、语义模型构建和指标提取。
-
-**1. 元数据爬取**
-
-爬取并索引所选表的 schema 信息：
+Superset plugin 编译已确认的 Charts，并将每条完整查询写入独立 SQL 文件：
 
 ```text
-⏺ 💬 Dashboard: World Bank's Data (id=5)
-
-⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=3
-
-⏺ 💬 Crawling metadata for 1 table(s)…
-
-⏺ 🔧 schema_crawl()
-  └─ ✓
-
-⏺ 💬 Metadata crawl finished.
-
-
+reference_sql/superset/world-bank-s-data/
+├── manifest.json
+├── <chart-id>-<chart-name>-q1.sql
+├── ...
+└── _source/
+    ├── dashboard.json
+    └── chart-<id>.json
 ```
 
-**2. 生成参考 SQL**
+`dashboard-sql-export/v1` manifest 为每条查询记录已确认的 candidate identity、source identity、SQL 文件、SHA-256 checksum 和状态。Skill 只路由已确认且成功的条目，不会让 LLM 重建失败的 SQL。
 
-针对每个选中的图表，系统生成结构化的 SQL Summary（用途、表、维度、指标、业务意义），写入 `subject/sql_summaries/`，作为后续 SQL 生成的参考样例：
+### 2. 构建 Reference SQL
+
+每条成功导出的完整 SQL 都会单独交给一个内置 `gen_sql_summary` task。选择九个 World Bank Charts 时，会在以下目录生成九个独立 SQL summaries：
 
 ```text
-⏺ 💬 Wrote 9 chart SQL(s) to /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql.
-
-⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
-
-⏺ 💬 Processing 9 SQL item(s) with concurrency=3.
-
-⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
-  ⎿  Done (2 tool uses · 20.0s)
-⏺ 💬 gen_sql_summary (/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql):
-
-
-SQL Summary: Population by Region and Country
-
-📋 Overview
-
-This SQL query is sourced from the World Bank's Data Superset dashboard and powers a Treemap chart. It aggregates total population figures grouped by region and country code.
-
-────────────────────────────────────────────────────────────────────────────
-🔍 Query Breakdown
-
-
-  Element         Details
- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Table           public.wb_health_population
-  Metric          SUM('SP_POP_TOTL') — Total population indicator
-  Dimensions      region, country_code
-  Time Filter     From 1960-01-01 up to 2026-04-28 (full historical range)
-  Result Limit    50,000 rows
-  Visualization   Treemap chart
-
-
-────────────────────────────────────────────────────────────────────────────
-📊 Business Purpose
-
-This query supports a World Bank population distribution analysis, visualizing how total population is distributed across different world regions and countries over time. The
-Treemap layout makes it easy to compare relative population sizes at a glance.
-
-────────────────────────────────────────────────────────────────────────────
-💾 Saved File
-
- • Path: subject/sql_summaries/population_by_region_country_07f5c7b14f0355b0b64183b0993bc45e.yaml
- • Subject Tree: superset/world_bank_s
- • ID: 07f5c7b14f0355b0b64183b0993bc45e
-
-⏺ 💬 Indexed 9 reference SQL item(s).
-
-⏺ 💬 Collected 9 reference SQL identifier(s).
+subject/sql_summaries/
 ```
 
-**3. 统一语义建模**
-
-Datus 将所有图表 SQL 交给一次 Dosi `semantic_modeling` 流程，统一创作并校验 dataset、relationship 和 metric：
+简化后的 task 结果如下：
 
 ```text
-⏺ semantic_modeling(World Bank's Data)
-  ⎿  Dosi YAML validated and reconciled to the Knowledge Base
-⏺ 💬 semantic_modeling completed: 9 SQL queries, 1 dataset, 4 core metrics
+⏺ gen_sql_summary(World Bank Chart: Treemap)
+  ⎿ SQL Summary: Population by Region and Country
+     Table: public.wb_health_population
+     Metric evidence: SUM(SP_POP_TOTL)
+     Dimensions: region, country_code
+     Saved: subject/sql_summaries/<generated-name>.yaml
+
+⏺ gen_sql_summary(... 其余八条已确认查询 ...)
+  ⎿ 9 个 reference SQL 条目已同步到 Knowledge Base
 ```
 
-**4. 对账语义资产**
+Skill 不会把多个 Chart queries 合并成一个 summary，也不会用 LLM 改写的 SQL 替换 plugin 导出的原始 SQL。
 
-通过校验的 Dosi YAML 是唯一事实源。Bootstrap 会在成功返回前，将其中的语义对象和去重后的指标完整同步到 Knowledge Base。
+### 3. 统一 Semantic Modeling
 
-### 输出
-
-Bootstrap 完成后，您将获得可直接使用的子代理：
+已确认的 metric SQLs 会归入同一个 World Bank 业务域，并一起交给一个内置 `semantic_modeling` task：
 
 ```text
-⏺ save_subagents(superset_world_bank_s)
-  ⎿  Done (2 tool uses · 0.0s)
-⏺ 💬 Sub-Agent build successful.
+⏺ semantic_modeling(World Bank domain)
+  ⎿ 已检查 public.wb_health_population
+     已生成 Dosi dataset、dimensions 和 reusable metrics
+     Dosi YAML 校验通过
+     Metric dry-run SQL 校验通过
+     Semantic assets 已 reconcile 到 Knowledge Base
+```
+
+Dosi YAML 写入：
+
+```text
+subject/semantic_models/superset-pg/
+```
+
+准确 metric 名称可能随当前 Dashboard SQL 和 model 而变化，但生成的定义必须保留 SQL 证据，不能只根据 Chart 标题猜测计算逻辑。
+
+### 4. 创建 Dashboard Subagents
+
+Context 构建完成后，如果当前 `agent.yml` 可写，`dashboard-bootstrap` 会加载 `create-subagent`。它从已经成功同步的 artifacts 中解析精确的 table、metric 和 reference-SQL subject references，然后创建或更新：
+
+```text
+superset_world_bank_s
+superset_world_bank_s_attribution
+```
+
+主节点使用内置 `gen_sql` 行为，归因节点使用内置 `gen_report` 行为。两个节点共享相同的 `superset-pg` 成功 scoped context，并使用对应的内置 prompt templates。
+
+成功的最终报告类似：
+
+```text
+Dashboard bootstrap complete
+
+Plugin/profile: superset / local
+Dashboard: World Bank's Data
+SQL export: 9 succeeded, 0 failed
+Reference SQL: 9 synchronized
+Semantic modeling: World Bank domain validated and synchronized
+Subagents created:
+  - superset_world_bank_s
+  - superset_world_bank_s_attribution
+Configuration: ~/.datus/conf/agent.yml
+```
+
+Skill 只报告 `context built`。除非单独执行过结果对账测试，否则不会宣称 Dosi metrics 与 Superset 数值完全等价。
+
+### 加载生成的 Subagents
+
+当前进程不会热加载已写入的 `agentic_nodes`。退出后，从同一项目目录重新启动 Datus：
+
+```bash
+cd ~/datus-dashboard-copilot-demo
+datus --datasource superset-pg
+```
+
+打开 agent selector：
+
+```text
 > /agent
-───────────────────────────── Agent Management ─────────────────────────────
-   Custom   Built-in    (Tab or ←/→ to switch)
-────────────────────────────────────────────────────────────────────────────
-    superset_world_bank_s
-    superset_world_bank_s_attribution
-    + Add agent…
-
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Enter set as current   e edit   a add   d delete   Tab/←→ switch   Esc back   Ctrl+C cancel
 ```
 
-## 步骤 4：使用生成的子代理
-
-Bootstrap 一次生成两个子代理：用于自助取数的**主子代理**，以及面向指标分析的**归因子代理**。两者均可通过 `@Agent <name>`（例如 `@Agent superset_world_bank_s`）直接调用，也可在 `/agent` 中切换为当前默认 agent。
-
-### SQL 取数 — 主子代理
-
-主子代理基于仪表盘的表与参考 SQL 生成查询并取数，适合临时分析、明细取数等场景。
-
-```bash
-> @Agent superset_world_bank_s show top 10 countries by life expectancy in 2020
-```
+此时应该能看到两个生成的节点：
 
 ```text
-⏴ superset_world_bank_s(Top 10 countries by life expectancy in 2020 using World Bank data)
-  ⎿  Done ✓ (7 tool uses · 42.9s)
-
-
-🌍 Top 10 Countries by Life Expectancy
-
-▌ ⚠️ Note: The dataset only contains data up to 2013. Year 2020 is not available — results below are for the most recent available year: 2013.
-
-────────────────────────────────────────────────────────────────────────────
-🏆 Top 10 Countries by Life Expectancy at Birth (2013)
-
-
-  Rank   Country                   Region                       Life Expectancy
- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  🥇 1   🇭🇰 Hong Kong SAR, China   East Asia & Pacific          83.83 yrs
-  🥈 2   🇯🇵 Japan                  East Asia & Pacific          83.33 yrs
-  🥉 3   🇮🇸 Iceland                Europe & Central Asia        83.12 yrs
-  4      🇨🇭 Switzerland            Europe & Central Asia        82.75 yrs
-  5      🇪🇸 Spain                  Europe & Central Asia        82.43 yrs
-  6      🇱🇮 Liechtenstein          Europe & Central Asia        82.38 yrs
-  7      🇸🇬 Singapore              East Asia & Pacific          82.35 yrs
-  8      🇮🇹 Italy                  Europe & Central Asia        82.29 yrs
-  9      🇦🇺 Australia              East Asia & Pacific          82.20 yrs
-  10     🇮🇱 Israel                 Middle East & North Africa   82.06 yrs
-
-────────────────────────────────────────────────────────────────────────────
-📌 Key Insights
-
- • 🥇 Hong Kong SAR, China leads globally at 83.83 years
- • 🌏 East Asia & Pacific dominates with 4 out of 10 top countries (Hong Kong, Japan, Singapore, Australia)
- • 🌍 Europe & Central Asia is strongly represented with 5 entries (Iceland, Switzerland, Spain, Liechtenstein, Italy)
- • All top 10 countries exceed 82 years of life expectancy at birth
- • 🇮🇱 Israel is the sole representative from the Middle East & North Africa region
+Custom
+  superset_world_bank_s
+  superset_world_bank_s_attribution
 ```
 
-### 归因分析 — 归因子代理
+## 步骤 5：使用生成的 Subagents
 
-归因子代理面向指标和语义模型工作，专注于指标对比、维度重要性排序与增量贡献归因，适合回答「为什么」类问题。其能力包括：
+两个 subagents 都可以通过 `@Agent <name>` 调用，也可以在 `/agent` 中设置为默认 agent。
 
-- **自动维度重要性排序** —— 识别哪些维度对指标变化影响最大
-- **增量贡献计算** —— 量化每个因素对整体变化的贡献
-- **根因识别** —— 精确定位驱动指标变动的具体值
+### 使用主子代理自助取数
 
-```bash
-> @Agent superset_world_bank_s_attribution compare 2014 and 2004, find the reason of population growth
-```
-
-分析生成包含关键发现的完整报告：
+主子代理基于 Dashboard 的 table 和 reference SQL scope 生成并执行 SQL。输入：
 
 ```text
-⏴ superset_world_bank_s_attribution(Attribution analysis for population growth between 2004 and 2014 using World Bank data)
-  ⎿  Done ✓ (15 tool uses · 71.3s)
-
-
-🌍 World Population Growth: 2004 vs 2014 — Attribution Analysis
-
-Global population grew from ~6.41 billion (2004) to ~7.24 billion (2014), an increase of +825 million people (+12.7%). Here's what drove it:
-
-────────────────────────────────────────────────────────────────────────────
-
-📊 Population by Region
-
-
-  Region                       2004    2014    Δ Growth   Δ %
- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  East Asia & Pacific          2.09B   2.24B   +148.6M    +7.1%
-  South Asia                   1.49B   1.72B   +234.4M    +15.8%
-  Europe & Central Asia        870M    903M    +32.9M     +3.8%
-  Sub-Saharan Africa           742M    974M    +231.9M    +31.2% 🔴
-  Latin America & Caribbean    556M    626M    +70.8M     +12.7%
-  Middle East & North Africa   340M    417M    +77.5M     +22.8%
-  North America                325M    354M    +29.6M     +9.1%
-
-
-────────────────────────────────────────────────────────────────────────────
-
-🔍 Root Cause Attribution
-
-1. 🍼 Fertility Rate — Top Driver (Score: 8.77)
-
-The single most powerful factor. Sub-Saharan Africa (~5.0+ births/woman) and South Asia (~2.8) sustained large birth cohorts. Even with modest fertility declines, the sheer base
-population size translated into massive absolute additions.
-
-2. 👶 Infant Mortality Rate Decline — Driver #2 (Score: 1.65)
-
-More children survived to adulthood, compounding population growth:
-
- • South Asia: 57.8 → ~39.3 deaths/1,000 births (−32%)
- • Sub-Saharan Africa: Still high (~71.5), but declining — more children surviving
-
-3. 🌾 Rural Population Growth Rate — Driver #3 (Score: 1.65)
-
-High rural growth (especially Sub-Saharan Africa and South Asia) correlates with higher fertility norms and limited access to family planning services.
-
-4. 🔄 Net Migration — Minor Factor (Score: 1.0)
-
-Redistributes population globally but has minimal impact on total world population.
+> @Agent superset_world_bank_s 查询 2010 年预期寿命最高的 10 个国家
 ```
 
-报告包括：
+示例结果：
 
-- **整体增长指标** - 总人口、增长率和农村人口百分比的对比
-- **主要区域贡献者** - 哪些区域推动了人口增长最多
-- **主要国家贡献者** - 各国对变化的贡献
-- **结论** - 解释指标变动的关键洞察摘要
+```text
+2010 年出生时预期寿命最高的 10 个国家
 
-## 子代理对比
+排名  国家                       地区                         预期寿命
+1     Hong Kong SAR, China       East Asia & Pacific          82.98 年
+2     Japan                      East Asia & Pacific          82.84 年
+3     Switzerland                Europe & Central Asia        82.25 年
+4     Iceland                    Europe & Central Asia        82.04 年
+5     Spain                      Europe & Central Asia        81.63 年
+6     Italy                      Europe & Central Asia        81.54 年
+7     Australia                  East Asia & Pacific          81.70 年
+8     Singapore                  East Asia & Pacific          81.54 年
+9     Sweden                     Europe & Central Asia        81.45 年
+10    Israel                     Middle East & North Africa   81.60 年
+```
 
-`/bootstrap-bi` 一次生成两个子代理，分工互补：
+数值取决于示例数据集版本。如果请求的年份不存在，agent 应明确说明，而不是静默替换成其他时间。
 
-| 子代理 | 命名约定 | 适用场景 | 工作上下文 |
-|---|---|---|---|
-| **主子代理** | `{platform}_{dashboard}` | 自助取数、临时查询、明细分析 | 仪表盘的表 + 参考 SQL + 语义模型 |
-| **归因子代理** | `{platform}_{dashboard}_attribution` | 指标对比、根因分析、增量贡献归因 | 仪表盘的指标 + 语义模型 |
+### 使用归因子代理分析指标变化
 
-需要写 SQL 的问题交给主子代理；需要回答「为什么变化」「哪个维度影响最大」类问题，交给归因子代理。
+归因子代理使用已生成的 metrics 和 semantic dimensions。输入：
 
-## 下一步
+```text
+> @Agent superset_world_bank_s_attribution 对比 2013 年和 2003 年，解释人口增长原因
+```
 
-现在您已经拥有了由仪表盘驱动的子代理，可以探索更多功能：
+归因报告应包含：
 
-- **[子代理介绍](../subagent/introduction.md)** - 了解更多子代理功能
-- **[知识库](../knowledge_base/introduction.md)** - 管理和扩展您的上下文
-- **[指标](../knowledge_base/metrics.md)** - 定义和管理您的指标
-- **[语义模型](../knowledge_base/semantic_model.md)** - 自定义您的语义层
+- 总体人口变化；
+- 地区和国家级贡献者；
+- 维度级贡献或重要性；
+- 最主要的驱动因素及相关限制；
+- 基于 metric 查询结果得出的结论。
+
+简化示例：
+
+```text
+世界人口增长：2003 年与 2013 年对比
+
+总体变化：该期间总人口增加。
+
+贡献最大的地区
+- South Asia
+- Sub-Saharan Africa
+- East Asia & Pacific
+
+主要驱动因素
+1. South Asia 庞大的人口基数和持续增长。
+2. Sub-Saharan Africa 较高的人口增长速度。
+3. East Asia & Pacific 持续但相对放缓的绝对增长。
+
+报告会列出得出结论时使用的 metric queries、dimensions、对比周期和限制。
+```
+
+以上示例文本不是固定 benchmark。这里的“可复现”是指可以重复执行相同的 plugin/skill workflow、使用相同的源 SQL、由相同 owner 生成 artifacts，并创建相同 scope 的 agents；LLM 的具体措辞和 subject 分类可能不同。
+
+## Subagent 对比
+
+| Subagent | 命名 | 适用场景 | 工作上下文 |
+| --- | --- | --- | --- |
+| **主子代理** | `{platform}_{dashboard}` | 临时查询、明细取数、自助生成 SQL | Dashboard tables + 精确 reference SQL + metrics |
+| **归因子代理** | `{platform}_{dashboard}_attribution` | 指标对比、根因分析、维度归因 | Dashboard metrics + semantic dimensions + reference SQL |
+
+将“X 是什么？”或“展示 Y”这类问题交给主子代理；将“为什么 Z 发生变化？”或“哪个维度驱动了变化？”这类问题交给归因子代理。
+
+## 故障排查
+
+### Agent 看不到 plugin
+
+运行：
+
+```bash
+datus plugin list
+datus plugin enable superset --profile local
+```
+
+然后重新启动 session。Plugin prompt 和 skill context 会在 session 启动时准备。
+
+### Dashboard 查询无法匹配 `superset-pg`
+
+检查脱敏 connection identities：
+
+```bash
+datus superset --profile local context candidates <dashboard-id>
+```
+
+本演示中必须返回 PostgreSQL `postgres:5432/superset_examples`。确认 Datus datasource 使用相同 endpoint 和物理 database；只有 `public.wb_health_population` 表名不能作为数据源身份依据。
+
+### 部分 Charts 导出失败
+
+Plugin 会在 `manifest.json` 中记录失败。Chart 可能丢失了 Dataset、使用暂不支持的 visualization-specific query shape，或者没有返回 compiled SQL。保留成功条目；修复 Superset 后只重试失败 candidates。不要让 LLM 猜测替代 SQL。
+
+### 无法生成 Metrics
+
+确认已经安装 `datus-semantic-dosi`，并且当前选择的 semantic adapter 是 `dosi`。MetricFlow 和普通 OSI project 在该 workflow 中只支持查询。
+
+### 没有创建 Subagents
+
+即使 configuration persistence 不可用，context 构建也可能成功。确认当前加载的 `agent.yml` 存在且可写；最终报告显示两个节点已创建或更新后，重新启动 Datus 即可看到它们。
+
+## 后续步骤
+
+- [端到端数据工程](data_engineering_quickstart.zh.md) —— 从源数据构建数据管道和 Dashboard。
+- [选择上手路径](index.md) —— 对比所有入门指南。
+- [Dashboard Bootstrap](../skills/dashboard_bootstrap.zh.md) — 完整通用 workflow contract。
+- [Plugins](../plugin/introduction.zh.md) — plugin 安装、profiles、启用和权限。
+- [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.zh.md) — Dosi 安装和语义行为。
+- [Subagent 简介](../subagent/introduction.zh.md) — subagent 能力和调用方式。
+- [Knowledge Base](../knowledge_base/introduction.zh.md) — 检查和扩展生成的 context。
+- [Metrics](../knowledge_base/metrics.zh.md) — 管理已同步的 metrics。
+- [Semantic Models](../knowledge_base/semantic_model.zh.md) — 检查生成的 semantic assets。

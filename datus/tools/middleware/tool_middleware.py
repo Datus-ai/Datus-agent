@@ -15,7 +15,7 @@ Both execution paths (the SDK Runner and the native Claude loop) converge on
 call. Python callers that invoke tool methods directly (e.g. reference-template
 execution) bypass ``FunctionTool`` entirely — enforcement that must also cover
 those paths needs its own tool-layer check (see
-``DBFuncTool._enforce_sql_policy``).
+``DBFuncTool.execute_read_enforced``).
 
 Transformer contract (duck-typed so plugin packages never import ``datus.*``):
 
@@ -28,7 +28,7 @@ Transformer contract (duck-typed so plugin packages never import ``datus.*``):
   and the wrapped tool never runs (fail closed). Returning anything that is
   not a dict is treated the same way.
 * ``context`` carries request-scoped data injected at wrap time (see
-  :func:`apply_tool_transformers`): ``node_name``, ``principal``,
+  :func:`apply_tool_transformers`): ``node_name``, ``policy_context``,
   ``project_root``.
 * A rewrite changes what executes, not what the conversation records: the
   model's own arguments are restored onto the tool call afterwards.
@@ -39,12 +39,13 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from agents import FunctionTool
 
 # Pattern matching intentionally shares the proxy layer's semantics
 # ("category.*", bare tool name, fnmatch globs) so operators learn one syntax.
+from datus.plugins.registry import collect_plugin_tool_transformers
 from datus.tools.proxy.proxy_tool import parse_tool_patterns, tool_name_matches
 from datus.utils.loggings import get_logger
 
@@ -125,7 +126,7 @@ def wrap_tool_with_transformers(
     and the tool's own malformed-arguments error path stays authoritative.
 
     ``context_provider`` is called once per invocation so request-scoped values
-    (e.g. a per-request principal set on the owning tool instance after wrap
+    (e.g. a per-request policy context set on the owning tool instance after wrap
     time) are read fresh, not frozen at wrap time.
     """
 
@@ -193,6 +194,103 @@ def wrap_tool_with_transformers(
     }
     carried["on_invoke_tool"] = transforming_invoke
     return FunctionTool(**carried)
+
+
+class ToolTransformDenied(Exception):
+    """A transformer refused a call made outside the agent's tool loop.
+
+    The loop answers a refusal with a payload the model reads and can act on;
+    a direct caller has no model, so it gets an exception instead.
+    """
+
+
+def transform_tool_args(
+    tool_name: str,
+    args: Dict[str, Any],
+    *,
+    context: Union[Dict[str, Any], ContextProvider],
+    category: Optional[str] = None,
+    transformers_by_pattern: Optional[Dict[str, List[ToolTransformer]]] = None,
+    active_plugin_names: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    """Run the active plugins' transformers over one call's arguments.
+
+    The same transformers :func:`apply_tool_transformers` wraps a node's tools
+    with, for a caller that has no node: the Hub metric endpoints reach the
+    semantic adapter through a direct Python call, so nothing wraps them and a
+    metric policy that filters the agent's ``query_metrics`` did not touch
+    them at all.
+
+    ``context`` is the caller's to build — the node version reads
+    ``policy_context`` and the metric catalogue off the node, and there is no
+    node here. A transformer needs at least ``agent_config``,
+    ``policy_context`` and, for metric policies, ``metric_datasets``. Pass a
+    callable when assembling it costs something: it is called only once a
+    transformer actually matches, so a deployment with no policy plugin never
+    pays to read a metric catalogue nobody will look at.
+
+    Fail-closed like the wrapper: a transformer that raises, or returns
+    anything but a dict, denies the call. The wrapper turns that into a payload
+    for the model; here it is a :class:`ToolTransformDenied` for the caller to
+    map onto its own surface.
+
+    Matching is :func:`tool_name_matches`, the same one the node path uses, so
+    ``category.*`` and bare globs mean here exactly what they mean in a plugin
+    manifest. ``category`` stands in for the tool registry a direct caller does
+    not have: it knows which group it is calling (``semantic_tools`` for
+    ``query_metrics``), and without it a category-qualified pattern cannot
+    match — the safe direction, since the alternative is a SQL-oriented
+    transformer being handed metric arguments. Skipping one is logged: an
+    unenforced policy is what this exists to fix, and it should not be able to
+    happen quietly here either.
+    """
+    if transformers_by_pattern is None:
+        transformers_by_pattern = collect_plugin_tool_transformers(active_plugin_names)
+    if not transformers_by_pattern:
+        return args
+
+    registry = {tool_name: category} if category else {}
+    if not registry and any("." in pattern for pattern in transformers_by_pattern):
+        # Skipping is the safe half of the trade-off, but silence is not: a
+        # policy that quietly does not run is the exact failure this entry
+        # point exists to fix, and the next caller to forget a category would
+        # reproduce it with nobody looking.
+        logger.warning(
+            "Tool transformers: category-qualified patterns skipped for '%s' — the caller passed no category",
+            tool_name,
+        )
+    matched: List[ToolTransformer] = []
+    for pattern, transformers in transformers_by_pattern.items():
+        if tool_name_matches(tool_name, registry, parse_tool_patterns([pattern])):
+            matched.extend(transformers)
+    if not matched:
+        return args
+
+    resolved_context = context() if callable(context) else context
+    current = args
+    for transformer in matched:
+        transformer_name = getattr(transformer, "__name__", repr(transformer))
+        try:
+            result = transformer(tool_name, current, resolved_context)
+        except Exception as exc:
+            logger.warning("Tool transformer %s denied '%s': %s", transformer_name, tool_name, exc)
+            raise ToolTransformDenied(str(exc) or type(exc).__name__) from exc
+        if inspect.isawaitable(result):
+            # Close it first: an un-awaited coroutine warns at collection time
+            # and keeps its frame alive, which would make the denial noisy and
+            # harder to read than the refusal itself.
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
+            raise ToolTransformDenied(
+                f"transformer {transformer_name} is async; transform_tool_args is a synchronous entry point"
+            )
+        if not isinstance(result, dict):
+            raise ToolTransformDenied(
+                f"transformer {transformer_name} returned {type(result).__name__} instead of an argument dict"
+            )
+        current = result
+    return current
 
 
 def _metric_catalog_providers(node: Any) -> List[Any]:
@@ -290,15 +388,15 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
 
     def context_provider() -> Dict[str, Any]:
         # Read request-scoped values fresh on every tool call: the API layer
-        # assigns ``principal`` onto a per-request clone of the config, which
+        # assigns ``policy_context`` onto a per-request clone of the config, which
         # is also where ``DBFuncTool`` reads its own copy from. Reading the
         # config directly covers nodes whose tool set excludes ``db_tools`` and
         # therefore never build a DBFuncTool at all (``ask_metrics`` is one).
         agent_config = getattr(node, "agent_config", None)
-        principal = getattr(agent_config, "principal", None)
+        policy_context = getattr(agent_config, "policy_context", None)
         return {
             "node_name": node_name,
-            "principal": dict(principal) if isinstance(principal, dict) else {},
+            "policy_context": dict(policy_context) if isinstance(policy_context, dict) else {},
             "project_root": getattr(agent_config, "project_root", None),
             # Live AgentConfig reference so transformers can read their own
             # plugin profile (``get_plugin_profile``) and datasource metadata.

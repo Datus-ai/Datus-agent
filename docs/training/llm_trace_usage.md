@@ -32,7 +32,7 @@ agent:
       type: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+      model: deepseek-v4-flash
       save_llm_trace: true  # Enable tracing for this model
 ```
 
@@ -53,15 +53,15 @@ output_content: "SELECT * FROM users;"
 
 - **system_prompt**: System prompt (if using message format)
 - **user_prompt**: User input prompt
-- **reason_content**: Reasoning content (only applicable to reasoning models like deepseek-reasoner)
+- **reason_content**: Reasoning content returned when thinking mode is enabled (for example, with `deepseek-v4-flash`)
 - **output_content**: Model output content
 
 ## Supported Models
 
 Currently, LLM trace functionality is primarily implemented in DeepSeek models:
 
-- ✅ DeepSeek Chat (deepseek-chat)
-- ✅ DeepSeek Reasoner (deepseek-reasoner) - includes reasoning content
+- ✅ DeepSeek V4 Flash (`deepseek-v4-flash`) - includes reasoning content when thinking mode is enabled
+- ✅ DeepSeek V4 Pro (`deepseek-v4-pro`)
 - 🔄 Other models (OpenAI, Claude, Qwen) have basic interfaces and can be extended
 
 ## File Organization
@@ -125,7 +125,7 @@ reason_content: ""
 output_content: "SELECT * FROM users WHERE status = 'active';"
 ```
 
-### Output with Reasoning (DeepSeek Reasoner)
+### Output with Reasoning (DeepSeek V4 Flash Thinking Mode)
 
 ```yaml
 system_prompt: "You are an expert SQL developer."

@@ -110,6 +110,9 @@ class TestAnyExtensionIsAccessible:
     """No operation gates on the file extension. Real repositories carry shell
     scripts, Terraform, notebooks and extension-less dotfiles, and the agent
     must be able to read back anything it can write.
+
+    The one exception is ``read_file`` on binary tabular formats, which is
+    redirected rather than refused — see :class:`TestTabularFilesRedirect`.
     """
 
     @pytest.mark.parametrize(
@@ -904,3 +907,68 @@ class TestPathZones:
         files = result.result["files"]
         assert files
         assert all(Path(p).is_absolute() for p in files)
+
+
+class TestTabularFilesRedirect:
+    """``read_file`` on a spreadsheet points at the tool that can actually read it.
+
+    Left to the generic UTF-8 path these fail with "Cannot read binary file",
+    which says the read failed but not what to do instead; in practice the model
+    then retries through bash. The redirect turns a dead end into a one-turn
+    correction.
+    """
+
+    @pytest.mark.parametrize("name", ["book.xlsx", "book.xlsm", "book.xls", "data.parquet"])
+    def test_binary_tabular_read_names_the_alternative(self, tmp_path, name):
+        (tmp_path / name).write_bytes(b"PK\x03\x04binary-ish")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file(name)
+
+        assert result.success == 0
+        assert "load_file_as_table" in result.error
+
+    @pytest.mark.parametrize("name", ["book.xlsb", "sheet.ods"])
+    def test_formats_nothing_can_read_say_so_in_one_turn(self, tmp_path, name):
+        """Pointing these at load_file_as_table would only spend a round trip to
+        arrive at the same answer, since it rejects them too."""
+        (tmp_path / name).write_bytes(b"PK\x03\x04")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file(name)
+
+        assert result.success == 0
+        assert "load_file_as_table" not in result.error
+        # Name both conversion targets: the message's whole job is telling the
+        # user what to re-save as, so "mentions one of them" is not the contract.
+        assert ".xlsx" in result.error
+        assert ".csv" in result.error
+
+    def test_extension_match_is_case_insensitive(self, tmp_path):
+        (tmp_path / "BOOK.XLSX").write_bytes(b"PK\x03\x04")
+        tool = _make_tool(str(tmp_path))
+        assert "load_file_as_table" in tool.read_file("BOOK.XLSX").error
+
+    @pytest.mark.parametrize("name", ["data.csv", "data.tsv"])
+    def test_text_tabular_formats_still_read_normally(self, tmp_path, name):
+        """CSV is text: read_file genuinely works and a small one is cheapest to just read."""
+        (tmp_path / name).write_text("a,b\n1,2\n")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file(name)
+
+        assert result.success == 1
+        assert "1,2" in result.result
+
+    def test_missing_file_still_reports_not_found(self, tmp_path):
+        """Existence is checked first; a redirect for a file that isn't there would mislead."""
+        tool = _make_tool(str(tmp_path))
+        result = tool.read_file("absent.xlsx")
+        assert result.success == 0
+        assert "not found" in result.error.lower()
+        assert "load_file_as_table" not in result.error
+
+    def test_writing_a_spreadsheet_path_is_still_allowed(self, tmp_path):
+        """Only reads are redirected — the write side has no extension gate."""
+        tool = _make_tool(str(tmp_path))
+        assert tool.write_file("out.xlsx", "not really a spreadsheet").success == 1

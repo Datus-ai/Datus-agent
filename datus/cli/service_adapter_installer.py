@@ -53,6 +53,16 @@ _PKG_PREFIXES: dict[str, Tuple[str, str]] = {
     "semantic_layer": ("datus-semantic-", "datus_semantic_"),
 }
 
+# Some adapters need an install extra to provide their query backend. Keep the
+# import module unchanged so registration still targets the adapter itself.
+_PACKAGE_OVERRIDES: dict[Tuple[str, str], str] = {
+    ("semantic_layer", "osi"): "datus-semantic-osi[metricflow]",
+}
+
+_REQUIRED_IMPORTS: dict[Tuple[str, str], Tuple[str, ...]] = {
+    ("semantic_layer", "osi"): ("datus_semantic_osi", "datus_semantic_metricflow"),
+}
+
 
 # Entry-point group each section's adapter packages register under.
 # ``datus-bi-<x>`` exposes ``datus.bi_adapters`` → ``<x> = datus_bi_<x>:register``;
@@ -101,7 +111,8 @@ def package_for(section: str, adapter_type: str) -> Tuple[str, str]:
     if not type_token:
         raise ValueError("adapter_type must be a non-empty string")
     pkg_prefix, import_prefix = prefixes
-    return f"{pkg_prefix}{type_token}", f"{import_prefix}{type_token}"
+    package = _PACKAGE_OVERRIDES.get((section, type_token), f"{pkg_prefix}{type_token}")
+    return package, f"{import_prefix}{type_token}"
 
 
 def is_adapter_installed(section: str, adapter_type: str) -> bool:
@@ -110,8 +121,10 @@ def is_adapter_installed(section: str, adapter_type: str) -> bool:
         _, import_name = package_for(section, adapter_type)
     except ValueError:
         return False
+    type_token = (adapter_type or "").strip().lower()
+    required_imports = _REQUIRED_IMPORTS.get((section, type_token), (import_name,))
     try:
-        return importlib.util.find_spec(import_name) is not None
+        return all(importlib.util.find_spec(name) is not None for name in required_imports)
     except (ImportError, ValueError):
         # ``find_spec`` raises ``ValueError`` on partially-initialized
         # parent packages and ``ImportError`` when an ancestor is

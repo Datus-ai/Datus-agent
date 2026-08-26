@@ -476,16 +476,19 @@ class OpenAICompatibleModel(LLMBaseModel):
                 else:
                     # Max retries reached or non-retryable error. Surface the
                     # upstream message verbatim — the wrapper code/desc is
-                    # often too generic (300002 = "Invalid request format,
-                    # content, or model response") and operators end up
-                    # grepping litellm tracebacks to figure out what really
-                    # broke. Keep ``str(e)`` on the same line so a single
-                    # CloudWatch entry has everything.
+                    # often too generic (300002 covers both a rejected request
+                    # and an unusable response) and operators end up grepping
+                    # litellm tracebacks to figure out what really broke. Keep
+                    # ``str(e)`` on the same line so a single CloudWatch entry
+                    # has everything, and carry it on the exception too: the
+                    # log is not visible to whoever catches this (the CLI
+                    # prints the exception message, and the permission
+                    # reviewer's fail-closed warning quotes it).
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
                         f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
-                    raise DatusException(error_code)
+                    raise DatusException(error_code, message_args={"error_detail": str(e)})
             except Exception as e:
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
@@ -535,17 +538,43 @@ class OpenAICompatibleModel(LLMBaseModel):
                     continue
                 else:
                     # Max retries reached or non-retryable error — same
-                    # reasoning as the sync ``_with_retry`` path: append
-                    # the upstream message so a single log line carries
-                    # both the wrapper classification and the raw cause.
+                    # reasoning as the sync ``_with_retry`` path: carry the
+                    # upstream message on both the log line and the exception.
                     logger.error(
                         f"API error in {operation_name} after {attempt + 1} attempts: "
                         f"{error_code.code} - {error_code.desc}. upstream={e!s}"
                     )
-                    raise DatusException(error_code)
+                    raise DatusException(error_code, message_args={"error_detail": str(e)})
             except Exception as e:
                 logger.error(f"Unexpected error in {operation_name}: {str(e)}")
                 raise
+
+    def _suppresses_sampling_params(self) -> bool:
+        """True when the routed provider rejects ``temperature`` / ``top_p``.
+
+        Neither sampling knob is ever sent to Anthropic:
+          * ``top_p`` — rejected alongside ``temperature`` with HTTP 400 /
+            ``invalid_request_error`` (the claude-sonnet-4.x family enforces
+            this strictly).
+          * ``temperature`` — the claude-*-5 family rejects it outright
+            ("`temperature` is deprecated for this model."), which made those
+            models fail EVERY call.
+
+        Gating on the family rather than a per-model spec means a newly
+        released Claude model works on day one instead of 400ing until the
+        catalog catches up. The gate reads the **routed** provider
+        (``litellm_adapter.provider``), not the model class — operators may
+        configure ``type=openai`` with a Claude model name, in which case
+        ``LiteLLMAdapter`` auto-routes to Anthropic and the suppression must
+        still apply. ``anthropic`` is covered as the documented alias of
+        ``claude`` (see :class:`~datus.utils.constants.LLMProvider`) so a
+        routed provider under either spelling is treated the same.
+
+        Every request path must consult this: ``generate`` for completions and
+        ``_build_agent`` for the Agents-SDK tool / streaming path. Anthropic
+        applies its own defaults for both parameters.
+        """
+        return getattr(self.litellm_adapter, "provider", "") in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC)
 
     def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """
@@ -580,25 +609,21 @@ class OpenAICompatibleModel(LLMBaseModel):
             if self.default_headers:
                 params["extra_headers"] = self.default_headers
 
-            # Anthropic rejects requests carrying BOTH ``temperature`` and
-            # ``top_p`` with HTTP 400 / ``invalid_request_error`` (the
-            # claude-sonnet-4.x family enforces this strictly). The gate is
-            # the **routed** provider (``litellm_adapter.provider``), not the
-            # model class — operators may configure ``type=openai`` but a
-            # Claude model name, in which case ``LiteLLMAdapter`` auto-routes
-            # to Anthropic; the suppression must still apply or the request
-            # 400s. ``temperature`` wins (mirrors the historical
-            # ``ClaudeModel.generate`` contract); ``top_p`` is dropped
-            # unconditionally for Claude regardless of kwargs / model_config
-            # / non-reasoning default.
             routed_provider = getattr(self.litellm_adapter, "provider", "")
-            suppress_top_p = routed_provider == LLMProvider.CLAUDE
+
+            # Neither sampling knob is ever sent to Anthropic — see
+            # ``_suppresses_sampling_params`` for which providers and why.
+            # Suppression is unconditional, ahead of kwargs and model_config
+            # alike: no caller-supplied value can make such a request valid.
+            suppress_sampling_params = self._suppresses_sampling_params()
+            suppress_top_p = suppress_sampling_params
 
             # Add temperature: priority is kwargs > model_config > default (0.7).
             # An explicit ``None`` in kwargs is the caller's "drop this param"
-            # signal — kept for symmetry with the top_p path even though
-            # Anthropic accepts ``temperature`` alone.
-            if "temperature" in kwargs:
+            # signal, kept symmetric with the top_p path.
+            if suppress_sampling_params:
+                pass
+            elif "temperature" in kwargs:
                 if kwargs["temperature"] is not None:
                     params["temperature"] = kwargs["temperature"]
             elif self.model_config.temperature is not None:
@@ -1060,10 +1085,16 @@ class OpenAICompatibleModel(LLMBaseModel):
         # Build ModelSettings with provider-specific configurations
         model_settings_kwargs = {"include_usage": True}
 
-        if self.model_config.temperature is not None:
+        # Same gate the completion path applies (see
+        # ``_suppresses_sampling_params``): a configured value must not reach
+        # Anthropic through the Agents-SDK tool / streaming path either, or a
+        # claude-*-5 tool call 400s on a knob the completion path already drops.
+        suppress_sampling_params = self._suppresses_sampling_params()
+
+        if not suppress_sampling_params and self.model_config.temperature is not None:
             model_settings_kwargs["temperature"] = self.model_config.temperature
 
-        if self.model_config.top_p is not None:
+        if not suppress_sampling_params and self.model_config.top_p is not None:
             model_settings_kwargs["top_p"] = self.model_config.top_p
 
         # Apply model_specs.max_tokens as a fallback so streaming/tool calls

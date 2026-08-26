@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Any, Final, Iterable, List, Literal, Optional
 
 import yaml
 
@@ -15,12 +15,52 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.semantic_authoring_agentic_node import SemanticAuthoringAgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
+from datus.schemas.action_history import ActionHistory
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+_SUPPORTED_SEMANTIC_MODELING_STATUSES: Final[frozenset[str]] = frozenset({"generated", "skipped", "blocked"})
+_SEMANTIC_MODELING_RESULT_RETRY_PROMPT: Final[str] = """Your semantic model changes have been preserved.
+Return only one JSON object with this shape:
+{
+  "status": "generated",
+  "blocker_code": null,
+  "skip_reason": null,
+  "output": "brief summary of reused and changed semantic objects"
+}
+Use status "blocked" or "skipped" only when appropriate under the original instructions.
+You may use the available tools first if more work or verification is needed.
+"""
+
+
+class SemanticModelingResultRetryPolicy:
+    """Retry once when semantic modeling returns an unsupported outcome status."""
+
+    max_attempts: int = 2
+
+    def __init__(self, node: "SemanticModelingAgenticNode"):
+        self.node = node
+
+    def reset(self, ctx: StreamRunContext) -> None:
+        return None
+
+    def should_retry(self, ctx: StreamRunContext) -> bool:
+        response_content = self.node._response_content(ctx)
+        status, _, _, _ = self.node._parse_semantic_modeling_response(response_content)
+        return status not in _SUPPORTED_SEMANTIC_MODELING_STATUSES
+
+    def next_prompt(self, ctx: StreamRunContext) -> str:
+        return _SEMANTIC_MODELING_RESULT_RETRY_PROMPT
+
+    def on_retry_actions(self, ctx: StreamRunContext) -> Iterable[ActionHistory]:
+        return ()
+
+    def finalise(self, ctx: StreamRunContext) -> None:
+        return None
 
 
 class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
@@ -253,6 +293,19 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         context["authoring_scope"] = self.authoring_scope
         return context
 
+    def _get_retry_policy(self) -> SemanticModelingResultRetryPolicy:
+        return SemanticModelingResultRetryPolicy(self)
+
+    @staticmethod
+    def _response_content(ctx: StreamRunContext) -> Any:
+        response_content = ctx.response_content
+        if not response_content and ctx.last_successful_output:
+            raw_output = ctx.last_successful_output.get("raw_output", "")
+            response_content = (
+                raw_output if isinstance(raw_output, dict) or raw_output else str(ctx.last_successful_output)
+            )
+        return response_content
+
     @staticmethod
     def _parse_semantic_modeling_response(content: Any) -> tuple[Optional[str], Optional[str], Optional[str], str]:
         """Parse the unified node's small outcome envelope."""
@@ -284,12 +337,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
     def _build_success_result(self, ctx: StreamRunContext) -> SemanticModelingNodeResult:
         """Validate and reconcile the selected artifact after the LLM tool stream."""
-        response_content = ctx.response_content
-        if not response_content and ctx.last_successful_output:
-            raw_output = ctx.last_successful_output.get("raw_output", "")
-            response_content = (
-                raw_output if isinstance(raw_output, dict) or raw_output else str(ctx.last_successful_output)
-            )
+        response_content = self._response_content(ctx)
 
         status, blocker_code, skip_reason, extracted_output = self._parse_semantic_modeling_response(response_content)
         if extracted_output:
@@ -297,7 +345,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         if not isinstance(response_content, str):
             response_content = str(response_content) if response_content else ""
 
-        if status not in {"generated", "skipped", "blocked"}:
+        if status not in _SUPPORTED_SEMANTIC_MODELING_STATUSES:
             raise RuntimeError("semantic_modeling must return a supported status.")
         if blocker_code is not None and status != "blocked":
             raise RuntimeError("blocker_code is only valid when status='blocked'.")

@@ -615,14 +615,14 @@ class TestE2EIntegration:
                 # Verify bootstrap data via store managers
                 from datus.storage.metric.store import MetricRAG
                 from datus.storage.reference_sql.store import ReferenceSqlRAG
-                from datus.storage.semantic_model.store import SemanticModelRAG
+                from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 
                 total_semantic_model_rows = 0
                 total_metrics_rows = 0
                 total_reference_sql_rows = 0
 
                 for name in [sub_agent_name, attr_name]:
-                    sm_size = SemanticModelRAG(agent_config, sub_agent_name=name).get_size()
+                    sm_size = SemanticDatasetRAG(agent_config, sub_agent_name=name).get_size()
                     m_size = MetricRAG(agent_config, sub_agent_name=name).get_metrics_size()
                     rs_size = ReferenceSqlRAG(agent_config, sub_agent_name=name).get_reference_sql_size()
                     total_semantic_model_rows += sm_size

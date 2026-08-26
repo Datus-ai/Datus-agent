@@ -3,6 +3,7 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from itertools import chain, repeat
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator, NoReturn
@@ -17,6 +18,7 @@ from datus.api.models.table_models import (
     ValidateSemanticModelData,
     ValidateSemanticModelInput,
 )
+from datus.api.services import database_service
 from datus.api.services.database_service import DatasourceService
 from datus.storage.semantic_model.artifact_file import artifact_revision, semantic_artifact_lock
 from datus.tools.db_tools.db_manager import DBManager
@@ -598,6 +600,166 @@ class TestListDatabases:
         result = svc.list_databases(request)
         assert result.data.current_database == "california_schools"
 
+    def test_list_databases_stamps_the_datasource(self, real_agent_config):
+        """Every row names the datasource it came from.
+
+        A client rendering several bound datasources in one tree cannot file the
+        rows without it — and cannot address a table afterwards.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.list_databases(ListDatabasesInput())
+        assert result.data.current_datasource == real_agent_config.current_datasource
+        assert {db.datasource for db in result.data.databases} == {real_agent_config.current_datasource}
+
+    def test_list_databases_rejects_an_unknown_datasource(self, real_agent_config):
+        """An undeclared name is an error, not a silent fall-back.
+
+        Falling back to the current datasource would file another warehouse's
+        databases under the requested one in the caller's tree.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.list_databases(ListDatabasesInput(datasource_id="not_bound"))
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+
+class TestPerDatasourceResolution:
+    """Table metadata addressed at a datasource other than the current one."""
+
+    def test_connector_for_defaults_to_current(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector, database = svc._connector_for()
+        assert connector is svc.current_db_connector
+        assert database == svc.current_db_name
+
+    def test_connector_for_rejects_unknown_datasource(self, real_agent_config):
+        from datus.utils.exceptions import DatusException
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        with pytest.raises(DatusException, match="datasource"):
+            svc._connector_for("not_bound")
+
+    def test_connector_for_normalizes_an_unreachable_datasource(self, real_agent_config):
+        """Declared but unreachable raises DatusException from the db manager.
+
+        Every caller here turns ValueError into a clean error Result, so leaving
+        DatusException to escape loses that — and catching DatusException in the
+        callers would swallow unrelated ones from deeper in the stack.
+        """
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["broken"] = real_agent_config.services.datasources[current]
+
+        with patch.object(
+            svc.db_manager,
+            "first_conn_with_name",
+            side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
+        ):
+            # Re-raised as-is: it is already the structured type the boundary maps.
+            with pytest.raises(DatusException):
+                svc._connector_for("broken")
+
+        # Nothing unusable was remembered for the next request.
+        assert "broken" not in svc._datasource_connectors
+
+    def test_connector_for_rejects_a_null_connector(self, real_agent_config):
+        """Symmetric with the current-datasource branch, which already does."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["empty"] = real_agent_config.services.datasources[current]
+
+        from datus.utils.exceptions import DatusException
+
+        with patch.object(svc.db_manager, "first_conn_with_name", return_value=("db", None)):
+            with pytest.raises(DatusException, match="no usable connection"):
+                svc._connector_for("empty")
+
+        assert "empty" not in svc._datasource_connectors
+
+    def test_connector_for_opens_and_remembers_another_datasource(self, real_agent_config):
+        """The happy path for a non-current datasource: opened on first use, then
+        reused — DBManager hands back a fresh wrapper per call, and the column
+        cache keys off the name rather than the object."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+        connector = MagicMock(database_name="")
+
+        with patch.object(svc.db_manager, "first_conn_with_name", return_value=("second_db", connector)) as opened:
+            first = svc._connector_for("second")
+            again = svc._connector_for("second")
+
+        assert first == (connector, "second_db")
+        assert again is first
+        assert opened.call_count == 1
+
+    def test_connector_for_rejects_a_current_datasource_with_no_connection(self, real_agent_config):
+        from datus.utils.exceptions import DatusException
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_db_connector = None
+
+        with pytest.raises(DatusException, match="no usable connection"):
+            svc._connector_for(real_agent_config.current_datasource)
+
+    def test_connector_for_wraps_an_unstructured_failure(self, real_agent_config):
+        """A plain exception from the db manager still reaches the caller as the
+        structured database error, so the boundary maps one type, and the
+        original message survives inside it."""
+        from datus.utils.exceptions import DatusException
+
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        with patch.object(svc.db_manager, "first_conn_with_name", side_effect=ValueError("bad uri")):
+            with pytest.raises(DatusException, match="bad uri"):
+                svc._connector_for("second")
+
+    def test_connector_for_rejects_when_nothing_is_configured(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_datasource = ""
+
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException, match="no datasource configured"):
+            svc._connector_for(None)
+
+    def test_table_detail_reports_an_unknown_datasource(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.get_table_schema("frpm", datasource="not_bound")
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+    def test_column_cache_is_keyed_by_datasource(self, real_agent_config):
+        """Two bound warehouses commonly hold a same-named table.
+
+        Without the datasource in the key, the second one would be served the
+        first one's columns from cache — wrong answers, no error anywhere.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        detail = svc.get_table_schema("frpm")
+        assert detail.success is True
+
+        current = real_agent_config.current_datasource
+        keys = list(svc._columns_cache)
+        assert keys and all(k.startswith(f"{current}\t") for k in keys)
+
+        # A second datasource asking for the same table name must miss.
+        # `datasource_configs` is a property that copies, so the registration has
+        # to go through `services.datasources` — otherwise `_connector_for`
+        # rejects "other" as unknown and this would pass for the wrong reason.
+        svc.agent_config.services.datasources["other"] = svc.agent_config.services.datasources[current]
+        svc._datasource_connectors["other"] = (svc.current_db_connector, "california_schools")
+        assert svc._connector_for("other")[0] is svc.current_db_connector
+        assert svc._cached_columns("frpm", "other") is None
+        # The current datasource still hits, with the columns it actually cached.
+        assert [c.name for c in svc._cached_columns("frpm", current) or []] == [
+            c.name for c in detail.data.table.columns
+        ]
+
 
 class _FakeServerConnector:
     """No-schema (server-style) connector that distinguishes its configured
@@ -913,6 +1075,217 @@ class TestGetTablesColumns:
         result = svc.get_tables_columns(["schools", "frpm"])
         assert result.success is False
         assert result.errorCode == "INVALID_PARAMETERS"
+
+    @pytest.mark.parametrize(
+        "limit",
+        [
+            "not-a-number",
+            None,
+            0,
+            -5,
+            float("inf"),  # YAML `.inf` — what an operator writes for "no limit"
+            "inf",
+            0.5,  # truncates to 0, so falls back for being non-positive
+            True,  # YAML `true`/`yes`/`on`; bool is an int subclass, so -> 1
+        ],
+        ids=["text", "null", "zero", "negative", "inf", "inf-text", "fraction", "yaml-true"],
+    )
+    def test_a_bad_limit_falls_back_instead_of_breaking(self, real_agent_config, limit):
+        """A typo in agent.yml must not take the endpoint down.
+
+        Two tables on purpose: several of these values coerce to a bound of 1,
+        which a single-table batch could not tell apart from the real default.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"max_prefetch_tables": limit}
+        result = svc.get_tables_columns(["schools", "frpm"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools", "frpm"]
+
+    @pytest.mark.parametrize(
+        "budget",
+        [float("inf"), "inf", "not-a-number", None, 0, -1],
+        ids=["inf", "inf-text", "text", "null", "zero", "negative"],
+    )
+    def test_a_bad_budget_falls_back_to_a_real_deadline(self, real_agent_config, budget):
+        """Infinity is the dangerous one: it passes `> 0` and removes the deadline."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": budget}
+
+        # The default budget is finite, so a clock jump past it stops the batch.
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools"])
+
+        assert result.success is True
+        assert result.data.tables == []
+
+
+@contextmanager
+def _fake_monotonic(reading) -> Iterator[None]:
+    """Drive database_service's clock without touching the stdlib one.
+
+    The module does ``import time``, so ``database_service.time`` *is* the
+    stdlib module — patching ``...database_service.time.monotonic`` swaps it
+    process-wide, and every other caller in the window (another thread, a
+    library timer) then reads the fake. Rebinding the module-level name instead
+    keeps the fake local to this module.
+    """
+    stand_in = SimpleNamespace(monotonic=reading)
+    with patch.object(database_service, "time", stand_in):
+        yield
+
+
+class TestGetTablesColumnsBounds:
+    """A prefetch batch must yield to the rest of the service, not compete.
+
+    Columns cost one serial round-trip per table behind the connector lock, so
+    an unbounded batch on a slow source holds that lock — and a to_thread
+    worker — for minutes, starving interactive metadata reads.
+    """
+
+    def test_stops_once_the_budget_is_spent(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        # A fake clock rather than a tiny budget: a real one relies on two
+        # consecutive monotonic() readings differing, which they do not on a
+        # platform whose clock resolution is coarse (~15.6ms on Windows).
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
+
+        # An exhausted budget omits tables rather than failing the batch.
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_omitted_tables_stay_fetchable(self, real_agent_config):
+        """What a bound leaves out, the client can still ask for one at a time."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+
+        clock = chain([0.0], repeat(1e9))
+        with _fake_monotonic(lambda: next(clock)):
+            assert svc.get_tables_columns(["schools"]).data.tables == []
+
+        detail = svc.get_table_schema("schools")
+
+        assert detail.success is True
+        assert detail.data.table.columns
+
+    def test_budget_spent_mid_batch_returns_the_partial_result(self, real_agent_config):
+        """The clock runs out after the first table; the second is omitted."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"prefetch_budget_seconds": 5}
+        # deadline = 0 + 5; then: first check 1 (under), second check 99 (over).
+        # Trailing repeat so an extra reading — another thread, or a future
+        # version of the method taking one more — degrades the assertion rather
+        # than raising StopIteration from inside the code under test.
+        clock = chain([0.0, 1.0], repeat(99.0))
+        with _fake_monotonic(lambda: next(clock)):
+            result = svc.get_tables_columns(["schools", "frpm"])
+
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+
+    def test_a_second_batch_does_not_queue_behind_the_first(self, real_agent_config):
+        """A batch that cannot take the gate returns instead of pinning a worker."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        svc._prefetch_gate_for(real_agent_config.current_datasource).acquire()
+        try:
+            result = svc.get_tables_columns(["schools"])
+        finally:
+            svc._prefetch_gate_for(real_agent_config.current_datasource).release()
+
+        assert result.success is True
+        assert result.data.tables == []
+        assert spy.call_count == 0
+
+    def test_cache_hits_are_served_while_the_gate_is_held(self, real_agent_config):
+        """Warm tables cost nothing, so no bound should withhold them."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.get_tables_columns(["schools"])
+
+        svc._prefetch_gate_for(real_agent_config.current_datasource).acquire()
+        try:
+            result = svc.get_tables_columns(["schools", "frpm"])
+        finally:
+            svc._prefetch_gate_for(real_agent_config.current_datasource).release()
+
+        # schools is cached; frpm would need the source, so it is omitted.
+        assert [t.table for t in result.data.tables] == ["schools"]
+        assert result.data.tables[0].columns
+
+    def test_a_busy_datasource_does_not_gate_another(self, real_agent_config):
+        """The gate is per datasource, not per service.
+
+        Each datasource has its own connector and its own cache entries, so a
+        prefetch running against one must not withhold another's — on this code
+        path a single `list_tables` runs for seconds, and one global gate made
+        expanding two datasources' trees queue for no reason.
+        """
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        held = svc._prefetch_gate_for(current)
+        held.acquire()
+        try:
+            other = svc._prefetch_gate_for("second")
+            assert other is not held
+            assert other.acquire(blocking=False) is True
+            other.release()
+        finally:
+            held.release()
+
+    def test_schema_locks_are_per_datasource(self, real_agent_config):
+        """Same reasoning for the connector lock the batch serializes on."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+
+        first = svc._schema_lock_for(current)
+        assert first is svc._schema_lock_for(current)
+        assert first is not svc._schema_lock_for("second")
+
+    def test_locks_tolerate_an_instance_built_without_init(self):
+        """The contract the lazy init exists for.
+
+        Parts of this suite build the service via ``__new__`` to skip its heavy
+        constructor, and cli_service was broken exactly this way once — the
+        accessors have to stand up a dict on first use rather than assume one.
+        """
+        svc = DatasourceService.__new__(DatasourceService)
+
+        lock = svc._schema_lock_for("prod")
+        gate = svc._prefetch_gate_for("prod")
+
+        assert lock is svc._schema_lock_for("prod")
+        assert gate is svc._prefetch_gate_for("prod")
+        assert lock is not svc._schema_lock_for("lake")
+
+    def test_the_gate_is_released_for_the_next_batch(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+
+        first = svc.get_tables_columns(["schools"])
+        second = svc.get_tables_columns(["frpm"])
+
+        assert [t.table for t in first.data.tables] == ["schools"]
+        assert [t.table for t in second.data.tables] == ["frpm"]
+
+    def test_the_gate_is_released_when_a_table_blows_up(self, real_agent_config):
+        """An exception mid-batch must not leave the gate held forever."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        with patch.object(svc, "get_table_schema", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                svc.get_tables_columns(["schools"])
+
+        assert svc.get_tables_columns(["schools"]).data.tables
 
 
 class TestSchemaOnlyDialectCatalog:

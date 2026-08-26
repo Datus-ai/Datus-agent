@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import pandas as pd
@@ -378,6 +379,114 @@ def init_semantic_yaml_semantic_model(
         logger.info(f"Successfully synced to vector store: {result.get('message')}")
         return True, ""
     return False, result.get("error", "Unknown error")
+
+
+def semantic_yaml_files(root: Path) -> list[Path]:
+    """Every authored semantic YAML under ``root``, in a stable order."""
+    if root.is_file():
+        return [root]
+    if not root.is_dir():
+        return []
+    found = {path for pattern in ("*.yml", "*.yaml") for path in root.rglob(pattern)}
+    # ``metrics`` holds per-metric fragments, not whole semantic models; the
+    # authoring inventory skips them for the same reason.
+    return sorted(path for path in found if "metrics" not in path.relative_to(root).parts)
+
+
+def sync_semantic_yaml_tree(
+    agent_config: AgentConfig,
+    root: str = "",
+) -> tuple[bool, str, int]:
+    """Re-project authored YAML into the Knowledge Base, file by file.
+
+    This is the plain YAML-to-KB refresh: no LLM, no network, no warehouse
+    access. ``sync_osi_to_db`` replaces one artifact at a time and is
+    idempotent, so running it again is always safe — which is what makes it
+    usable both as a storage-format migration and as a manual "I edited the
+    YAML, reload it" action.
+
+    ``root`` defaults to the active datasource's semantic-model directory; a
+    file path syncs exactly that file.
+    """
+    from datus.agent.node.semantic_authoring import _osi_semantic_model_dir
+
+    target = Path(root).expanduser() if root else _osi_semantic_model_dir(agent_config)
+    if target is None:
+        return False, "Unable to resolve the semantic model directory for the active datasource", 0
+    if not target.exists():
+        return False, f"Semantic model path not found: {target}", 0
+
+    files = semantic_yaml_files(target)
+    if not files:
+        # Deleting the last model is the strongest form of the case this
+        # prunes for, so it cannot return before reconciling.
+        pruned = _prune_rows_for_missing_artifacts(agent_config, []) if target.is_dir() else 0
+        suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
+        return True, f"No semantic YAML found under {target}{suffix}", 0
+
+    from datus.tools.func_tool.generation_tools import GenerationTools
+
+    tools = GenerationTools(agent_config=agent_config, authoring_format="osi")
+    synced = 0
+    failures: list[str] = []
+    for path in files:
+        rejection = reject_non_dosi_semantic_yaml(str(path), agent_config)
+        if rejection:
+            failures.append(f"{path.name}: {rejection}")
+            continue
+        try:
+            result = tools.sync_osi_to_db(str(path), include_semantic_objects=True, include_metrics=True)
+        except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
+            logger.exception(f"Failed to sync semantic YAML file '{path}'")
+            failures.append(f"{path.name}: {e}")
+            continue
+        if result.get("success"):
+            synced += 1
+        else:
+            failures.append(f"{path.name}: {result.get('error', 'Unknown error')}")
+
+    if failures:
+        return False, f"Synced {synced}/{len(files)} semantic YAML file(s); failed: " + "; ".join(failures), synced
+
+    # A directory sync reconciles the tree, so a model whose file was deleted or
+    # renamed has to lose its rows. Per-artifact replacement cannot do this: it
+    # is scoped to a yaml_path, and a file that no longer exists is never
+    # visited. Left behind, its rows keep describe_table offering a model whose
+    # yaml_path does not open.
+    pruned = _prune_rows_for_missing_artifacts(agent_config, files) if target.is_dir() else 0
+    suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
+    return True, f"Synced {synced} semantic YAML file(s) from {target}{suffix}", synced
+
+
+def _prune_rows_for_missing_artifacts(agent_config: AgentConfig, present: list[Path]) -> int:
+    """Drop rows whose source YAML is no longer on disk. Returns artifacts pruned."""
+    from datus.storage.metric.store import MetricRAG
+    from datus.storage.semantic_dataset.store import SemanticDatasetRAG
+
+    keep = {str(path.resolve(strict=False)) for path in present}
+    pruned: set[str] = set()
+    try:
+        rags = [SemanticDatasetRAG(agent_config), MetricRAG(agent_config)]
+    except Exception:  # noqa: BLE001 - pruning must never fail an otherwise good sync
+        logger.exception("Failed to open semantic stores while pruning deleted semantic models")
+        return 0
+    for rag in rags:
+        try:
+            stored = rag.list_artifact_paths()
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to list artifact paths while pruning deleted semantic models")
+            continue
+        for yaml_path in stored:
+            if str(Path(yaml_path).resolve(strict=False)) in keep or Path(yaml_path).exists():
+                continue
+            try:
+                rag.delete_artifact_rows(yaml_path)
+                pruned.add(yaml_path)
+            except Exception:  # noqa: BLE001
+                logger.exception(f"Failed to prune rows for deleted semantic model '{yaml_path}'")
+    if pruned:
+        logger.info(f"Pruned knowledge-base rows for {len(pruned)} deleted semantic YAML file(s)")
+    return len(pruned)
 
 
 def refresh_semantic_yaml_profile_descriptions(

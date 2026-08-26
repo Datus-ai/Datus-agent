@@ -11,6 +11,7 @@ from datus.agent.workflow import Workflow
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import ExecuteSQLInput, ExecuteSQLResult
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import deployment_read_only_refusal
 
 logger = get_logger(__name__)
 
@@ -91,6 +92,16 @@ class ExecuteSQLNode(Node):
                     success=False,
                     error="Database connection not initialized in workflow",
                 )
+            # This node hands the generated SQL straight to the connector, so
+            # none of DBFuncTool's gates apply to it and the deployment-wide
+            # switch would otherwise not reach the workflow pipeline at all.
+            # `POST /workflows/run` makes that pipeline API-reachable, and the
+            # SQL here is whatever gen_sql produced — not something that can be
+            # assumed to be a read.
+            refusal = deployment_read_only_refusal(self.agent_config, self.input.sql_query, db_connector.dialect)
+            if refusal:
+                return ExecuteSQLResult(success=False, error=refusal)
+
             logger.debug(f"SQL execution input: {self.input}")
             result = db_connector.execute(self.input)
             logger.debug(f"SQL execution result: {result}")

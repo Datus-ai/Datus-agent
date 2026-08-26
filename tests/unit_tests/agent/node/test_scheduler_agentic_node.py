@@ -344,45 +344,6 @@ class TestSchedulerRegistration:
         assert isinstance(result, SchedulerNodeInput)
         assert result.database is None
 
-    def test_node_factory_creates_scheduler(self, real_agent_config, mock_llm_create):
-        """Node.new_instance should create SchedulerAgenticNode for TYPE_SCHEDULER."""
-        _add_scheduler_config(real_agent_config)
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.node import Node
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-            from datus.configuration.node_type import NodeType
-
-            node = Node.new_instance(
-                node_id="test_factory",
-                description="Factory test",
-                node_type=NodeType.TYPE_SCHEDULER,
-                agent_config=real_agent_config,
-            )
-            assert isinstance(node, SchedulerAgenticNode)
-            assert node.get_node_name() == "scheduler"
-
-    def test_sub_agent_resolve_node_type(self, real_agent_config, mock_llm_create):
-        """SubAgentTaskTool._resolve_node_type should resolve scheduler."""
-        from datus.configuration.node_type import NodeType
-        from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
-
-        tool = SubAgentTaskTool(agent_config=real_agent_config)
-        node_type, node_name = tool._resolve_node_type("scheduler")
-        assert node_type == NodeType.TYPE_SCHEDULER
-        assert node_name == "scheduler"
-
-    def test_sub_agent_create_builtin_node(self, real_agent_config, mock_llm_create):
-        """SubAgentTaskTool._create_builtin_node should create SchedulerAgenticNode."""
-        _add_scheduler_config(real_agent_config)
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-            from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
-
-            tool = SubAgentTaskTool(agent_config=real_agent_config)
-            node = tool._create_builtin_node("scheduler")
-            assert isinstance(node, SchedulerAgenticNode)
-            assert node.get_node_name() == "scheduler"
-
     def test_sub_agent_build_node_input(self, real_agent_config, mock_llm_create):
         """SubAgentTaskTool._build_node_input should return SchedulerNodeInput."""
         _add_scheduler_config(real_agent_config)
@@ -399,80 +360,6 @@ class TestSchedulerRegistration:
             # ``database`` is a physical-database context field, not a datasource slot; the
             # builder leaves it unset rather than mislabeling it with current_datasource.
             assert result.database is None
-
-    def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
-        """Node.new_instance with input_data should set node.input."""
-        _add_scheduler_config(real_agent_config)
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.node import Node
-            from datus.configuration.node_type import NodeType
-            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-            input_data = SchedulerNodeInput(user_message="Submit a daily job")
-            node = Node.new_instance(
-                node_id="test_factory_input",
-                description="Factory test",
-                node_type=NodeType.TYPE_SCHEDULER,
-                input_data=input_data,
-                agent_config=real_agent_config,
-            )
-            assert isinstance(node.input, SchedulerNodeInput)
-            assert node.input.user_message == "Submit a daily job"
-
-    def test_from_dict_input_deserialization(self, real_agent_config, mock_llm_create):
-        """Node.from_dict should deserialize SchedulerNodeInput from dict."""
-        _add_scheduler_config(real_agent_config)
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.node import Node
-            from datus.configuration.node_type import NodeType
-            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-            node_dict = {
-                "id": "test_from_dict",
-                "description": "From dict test",
-                "type": NodeType.TYPE_SCHEDULER,
-                "input": {"user_message": "List jobs", "database": "test_db"},
-                "result": None,
-                "status": "completed",
-                "start_time": None,
-                "end_time": None,
-                "dependencies": [],
-                "metadata": {},
-            }
-            node = Node.from_dict(node_dict, agent_config=real_agent_config)
-            assert isinstance(node.input, SchedulerNodeInput)
-            assert node.input.user_message == "List jobs"
-
-    def test_from_dict_result_deserialization(self, real_agent_config, mock_llm_create):
-        """Node.from_dict should deserialize SchedulerNodeResult from dict."""
-        _add_scheduler_config(real_agent_config)
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.node import Node
-            from datus.configuration.node_type import NodeType
-
-            node_dict = {
-                "id": "test_from_dict_result",
-                "description": "From dict result test",
-                "type": NodeType.TYPE_SCHEDULER,
-                "input": None,
-                "result": {
-                    "success": True,
-                    "response": "Job submitted",
-                    "scheduler_result": {"job_id": "dag_123"},
-                    "tokens_used": 300,
-                },
-                "status": "completed",
-                "start_time": None,
-                "end_time": None,
-                "dependencies": [],
-                "metadata": {},
-            }
-            node = Node.from_dict(node_dict, agent_config=real_agent_config)
-            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeResult
-
-            assert isinstance(node.result, SchedulerNodeResult)
-            assert node.result.response == "Job submitted"
-            assert node.result.scheduler_result == {"job_id": "dag_123"}
 
 
 # ---------------------------------------------------------------------------
@@ -716,28 +603,6 @@ class TestSchedulerCustomNodeName:
                 agent_config=real_agent_config, execution_mode="workflow", node_name="etl_scheduler"
             )
             assert node.max_turns == 50  # from etl_scheduler, not scheduler's 25
-
-    def test_node_factory_passes_node_name(self, real_agent_config, mock_llm_create):
-        """Node.new_instance() should pass node_name to SchedulerAgenticNode."""
-        _add_scheduler_config(real_agent_config)
-        real_agent_config.agentic_nodes["my_jobs"] = {
-            "system_prompt": "scheduler",
-            "max_turns": 10,
-            "scheduler_service": "airflow_local",
-        }
-        with patch(_SCHEDULER_TOOLS_PATCH, return_value=_make_mock_scheduler_tools()):
-            from datus.agent.node.node import Node
-            from datus.configuration.node_type import NodeType
-
-            node = Node.new_instance(
-                node_id="test_factory",
-                description="Factory test",
-                node_type=NodeType.TYPE_SCHEDULER,
-                agent_config=real_agent_config,
-                node_name="my_jobs",
-            )
-            assert node.get_node_name() == "my_jobs"
-            assert node.max_turns == 10
 
     def test_alias_system_prompt_template_name(self, real_agent_config, mock_llm_create):
         """Alias config should be able to choose its own prompt template."""

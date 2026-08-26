@@ -16,9 +16,15 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.datasource_scope import add_datasource_scope_to_rows, resolve_datasource_id
+from datus.storage.datasource_scope import resolve_datasource_id
 from datus.storage.metric.store import MetricStorage, build_metric_id
-from datus.storage.semantic_model.store import SemanticModelStorage
+from datus.storage.semantic_dataset.store import (
+    KIND_DATASET,
+    KIND_FIELD,
+    SemanticDatasetRAG,
+    dataset_row_id,
+    field_row_id,
+)
 from datus.storage.subject_tree.store import SubjectTreeStore
 from datus.tools.semantic_tools.models import SemanticModelInfo
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -39,17 +45,14 @@ class SemanticStorageManager:
         """
         self.agent_config = agent_config
         self.datasource_id = resolve_datasource_id(agent_config)
-        self.semantic_model_store: Optional[SemanticModelStorage] = None
+        self.semantic_model_store: Optional[SemanticDatasetRAG] = None
         self.metric_store: Optional[MetricStorage] = None
         self.subject_tree_store: Optional[SubjectTreeStore] = None
 
-    def _ensure_semantic_model_store(self) -> SemanticModelStorage:
+    def _ensure_semantic_model_store(self) -> SemanticDatasetRAG:
         """Lazy init semantic model storage."""
         if self.semantic_model_store is None:
-            from datus.storage.semantic_model.store import SemanticModelRAG
-
-            rag = SemanticModelRAG(self.agent_config, datasource_id=self.datasource_id)
-            self.semantic_model_store = rag.storage
+            self.semantic_model_store = SemanticDatasetRAG(self.agent_config, datasource_id=self.datasource_id)
         return self.semantic_model_store
 
     def _ensure_metric_store(self) -> MetricStorage:
@@ -71,6 +74,21 @@ class SemanticStorageManager:
                 datasource_id=self.datasource_id,
             )
         return self.subject_tree_store
+
+    def _split_qualified_table_name(self, table_ref: str) -> tuple[str, dict[str, str]]:
+        """Return (table leaf, coordinates) for a possibly qualified name."""
+        empty = {"catalog_name": "", "database_name": "", "schema_name": ""}
+        if "." not in table_ref:
+            return table_ref, empty
+        from datus.utils.sql_utils import parse_table_name_parts
+
+        try:
+            parsed = parse_table_name_parts(table_ref, dialect=self.agent_config.db_type or "snowflake")
+        except Exception as exc:
+            # An unparseable name is still better stored whole than dropped.
+            logger.warning(f"Could not parse qualified table name {table_ref!r}: {exc}")
+            return table_ref, empty
+        return parsed.get("table_name") or table_ref, {key: parsed.get(key) or "" for key in empty}
 
     def store_semantic_model(
         self,
@@ -127,138 +145,95 @@ class SemanticStorageManager:
         if "semantic_model_name" not in model_data:
             raise ValueError("model_data must contain 'semantic_model_name' field")
 
-        store = self._ensure_semantic_model_store()
+        rag = self._ensure_semantic_model_store()
         semantic_model_name = model_data["semantic_model_name"]
-        table_name = model_data.get("table_name", "")
-        catalog = model_data.get("catalog_name", "")
-        database = model_data.get("database_name", "")
-        schema = model_data.get("schema_name", "")
-        updated_at = datetime.now()
+        raw_table_name = model_data.get("table_name", "")
+        # An adapter model always binds a physical table. Without one the row
+        # would look like a query-backed dataset and no table lookup could ever
+        # reach it, so it is refused here as it is on the typed path above.
+        if not raw_table_name:
+            raise DatusException(
+                ErrorCode.SEMANTIC_ADAPTER_SYNC_FAILED,
+                message_args={"error_message": f"semantic model '{semantic_model_name}' missing physical table_name"},
+            )
+        # An adapter may report a qualified name. Table lookups match
+        # ``source_table`` against the leaf a connector reports, so the
+        # qualifiers belong in the coordinate columns -- the same split the
+        # Dosi authoring path performs.
+        table_name, parsed_parts = self._split_qualified_table_name(raw_table_name)
+        catalog = model_data.get("catalog_name", "") or parsed_parts["catalog_name"]
+        database = model_data.get("database_name", "") or parsed_parts["database_name"]
+        schema = model_data.get("schema_name", "") or parsed_parts["schema_name"]
+        updated_at = datetime.now().replace(microsecond=0)
+        # An adapter reports one model per physical table, so the dataset takes
+        # the table's name; datasets authored in Dosi carry their own.
+        dataset_name = table_name
+        coordinates = {"catalog_name": catalog, "database_name": database, "schema_name": schema}
 
-        # Build fully qualified table name (filter empty parts)
-        table_fq_name = ".".join(p for p in [catalog, database, schema, table_name] if p)
-
-        # Store table object
-        table_id = f"table:{table_fq_name}"
-        table_obj = {
-            "id": table_id,
-            "kind": "table",
-            "name": table_name,
-            "fq_name": table_fq_name,
-            "semantic_model_name": semantic_model_name,
-            "catalog_name": catalog,
-            "database_name": database,
-            "schema_name": schema,
-            "table_name": table_name,
-            "description": model_data.get("description", ""),
-            "is_dimension": False,
-            "is_measure": False,
-            "is_entity_key": False,
-            "is_deprecated": False,
-            "yaml_path": "",
-            "updated_at": updated_at,
-        }
-        store.batch_store(add_datasource_scope_to_rows([table_obj], self.datasource_id))
-
-        # Store dimensions
-        dimensions = model_data.get("dimensions", [])
-        dim_objects = []
-        for dim in dimensions:
-            # Skip dimensions without name field
-            if not isinstance(dim, dict) or "name" not in dim:
-                logger.warning(f"Skipping dimension without 'name' field in model '{semantic_model_name}'")
-                continue
-            dim_fq_name = f"{table_fq_name}.{dim['name']}"
-            dim_id = f"column:{dim_fq_name}"
-            dim_obj = {
-                "id": dim_id,
-                "kind": "column",
-                "name": dim["name"],
-                "fq_name": dim_fq_name,
+        rows = [
+            {
+                "id": dataset_row_id(semantic_model_name, dataset_name),
+                "kind": KIND_DATASET,
                 "semantic_model_name": semantic_model_name,
-                "catalog_name": catalog,
-                "database_name": database,
-                "schema_name": schema,
-                "table_name": table_name,
-                "description": dim.get("description", ""),
-                "is_dimension": True,
-                "is_measure": False,
-                "is_entity_key": False,
-                "is_deprecated": False,
+                "dataset_name": dataset_name,
+                "name": dataset_name,
+                "source_table": table_name,
+                "source_query": "",
+                "description": model_data.get("description", ""),
+                "search_text": " ".join(
+                    part
+                    for part in (semantic_model_name, dataset_name, table_name, model_data.get("description", ""))
+                    if part
+                ),
                 "yaml_path": "",
                 "updated_at": updated_at,
+                **coordinates,
             }
-            dim_objects.append(dim_obj)
-        if dim_objects:
-            store.batch_store(add_datasource_scope_to_rows(dim_objects, self.datasource_id))
+        ]
 
-        # Store measures
-        measures = model_data.get("measures", [])
-        measure_objects = []
-        for measure in measures:
-            # Skip measures without name field
-            if not isinstance(measure, dict) or "name" not in measure:
-                logger.warning(f"Skipping measure without 'name' field in model '{semantic_model_name}'")
-                continue
-            measure_fq_name = f"{table_fq_name}.{measure['name']}"
-            measure_id = f"column:{measure_fq_name}"
-            measure_obj = {
-                "id": measure_id,
-                "kind": "column",
-                "name": measure["name"],
-                "fq_name": measure_fq_name,
-                "semantic_model_name": semantic_model_name,
-                "catalog_name": catalog,
-                "database_name": database,
-                "schema_name": schema,
-                "table_name": table_name,
-                "description": measure.get("description", ""),
-                "is_dimension": False,
-                "is_measure": True,
-                "is_entity_key": False,
-                "is_deprecated": False,
-                "yaml_path": "",
-                "updated_at": updated_at,
-            }
-            measure_objects.append(measure_obj)
-        if measure_objects:
-            store.batch_store(add_datasource_scope_to_rows(measure_objects, self.datasource_id))
+        # An adapter's measures are not fields of the dataset — metrics live in
+        # their own store — so only dimensions and identifiers become rows.
+        field_groups = (
+            ("dimensions", {"is_dimension": True}),
+            ("identifiers", {"is_primary_key": True}),
+        )
+        counts = {}
+        for key, flags in field_groups:
+            entries = model_data.get(key, []) or []
+            counts[key] = 0
+            for entry in entries:
+                if not isinstance(entry, dict) or "name" not in entry:
+                    logger.warning(f"Skipping {key[:-1]} without 'name' field in model '{semantic_model_name}'")
+                    continue
+                field_name = entry["name"]
+                rows.append(
+                    {
+                        "id": field_row_id(semantic_model_name, dataset_name, field_name),
+                        "kind": KIND_FIELD,
+                        "semantic_model_name": semantic_model_name,
+                        "dataset_name": dataset_name,
+                        "name": field_name,
+                        "source_table": table_name,
+                        "expr": entry.get("expr") or field_name,
+                        "description": entry.get("description", ""),
+                        "search_text": " ".join(
+                            part for part in (dataset_name, field_name, entry.get("description", "")) if part
+                        ),
+                        "yaml_path": "",
+                        "updated_at": updated_at,
+                        **flags,
+                        **coordinates,
+                    }
+                )
+                counts[key] += 1
 
-        # Store identifiers (entity keys)
-        identifiers = model_data.get("identifiers", [])
-        identifier_objects = []
-        for identifier in identifiers:
-            # Skip identifiers without name field
-            if not isinstance(identifier, dict) or "name" not in identifier:
-                logger.warning(f"Skipping identifier without 'name' field in model '{semantic_model_name}'")
-                continue
-            identifier_fq_name = f"{table_fq_name}.{identifier['name']}"
-            identifier_id = f"column:{identifier_fq_name}"
-            identifier_obj = {
-                "id": identifier_id,
-                "kind": "column",
-                "name": identifier["name"],
-                "fq_name": identifier_fq_name,
-                "semantic_model_name": semantic_model_name,
-                "catalog_name": catalog,
-                "database_name": database,
-                "schema_name": schema,
-                "table_name": table_name,
-                "description": identifier.get("description", ""),
-                "is_dimension": False,
-                "is_measure": False,
-                "is_entity_key": True,
-                "is_deprecated": False,
-                "yaml_path": "",
-                "updated_at": updated_at,
-            }
-            identifier_objects.append(identifier_obj)
-        if identifier_objects:
-            store.batch_store(add_datasource_scope_to_rows(identifier_objects, self.datasource_id))
+        # Keyed on storage_key so re-syncing an adapter reconciles its rows
+        # instead of appending a second copy of every one of them.
+        rag.upsert_batch(rows)
 
         logger.info(
             f"Stored semantic model '{semantic_model_name}': "
-            f"{len(dimensions)} dimensions, {len(measures)} measures, {len(identifiers)} identifiers"
+            f"{counts['dimensions']} dimensions, {counts['identifiers']} identifiers"
         )
 
     def store_metric(

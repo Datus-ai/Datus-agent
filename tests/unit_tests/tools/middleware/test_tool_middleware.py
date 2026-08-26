@@ -11,15 +11,19 @@ node-level ``apply_tool_transformers`` matching/skipping behavior.
 """
 
 import dataclasses
+import gc
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
 from agents import FunctionTool
 
 from datus.tools.middleware.tool_middleware import (
+    ToolTransformDenied,
     apply_tool_transformers,
     tool_is_transformed,
+    transform_tool_args,
     wrap_tool_with_transformers,
 )
 from datus.tools.registry.tool_registry import ToolRegistry
@@ -194,16 +198,16 @@ class TestWrapToolWithTransformers:
     @pytest.mark.asyncio
     async def test_context_provider_called_per_invocation(self):
         tool = _make_tool()
-        principal_holder = {"tenant": "t1"}
+        context_holder = {"tenant": "t1"}
         seen = []
 
         def transformer(tool_name, args, context):
-            seen.append(context["principal"])
+            seen.append(context["policy_context"])
             return args
 
-        wrapped = wrap_tool_with_transformers(tool, [transformer], lambda: {"principal": dict(principal_holder)})
+        wrapped = wrap_tool_with_transformers(tool, [transformer], lambda: {"policy_context": dict(context_holder)})
         await wrapped.on_invoke_tool(None, "{}")
-        principal_holder["tenant"] = "t2"
+        context_holder["tenant"] = "t2"
         await wrapped.on_invoke_tool(None, "{}")
 
         assert seen == [{"tenant": "t1"}, {"tenant": "t2"}]
@@ -340,7 +344,7 @@ class TestOriginalArgumentsSurviveRewrite:
         ctx = _make_ctx(sent)
 
         def deny(tool_name, args, context):
-            raise PermissionError("no principal")
+            raise PermissionError("policy context denied")
 
         wrapped = wrap_tool_with_transformers(_make_write_back_tool(), [deny])
         result = await wrapped.on_invoke_tool(ctx, sent)
@@ -399,7 +403,7 @@ def _make_node(tools, registry_map=None, proxied=None):
         proxied_tool_names=proxied or set(),
         get_node_name=lambda: "chat",
         db_func_tool=SimpleNamespace(),
-        agent_config=SimpleNamespace(project_root="/proj", principal={"tenant": {"id": "t1"}}),
+        agent_config=SimpleNamespace(project_root="/proj", policy_context={"tenant": {"id": "t1"}}),
     )
 
 
@@ -492,36 +496,36 @@ class TestApplyToolTransformers:
         await node.tools[0].on_invoke_tool(None, "{}")
 
         assert seen["node_name"] == "chat"
-        assert seen["principal"] == {"tenant": {"id": "t1"}}
+        assert seen["policy_context"] == {"tenant": {"id": "t1"}}
         assert seen["project_root"] == "/proj"
         assert seen["agent_config"] is node.agent_config
         assert seen["metric_datasets"] is None
 
     @pytest.mark.asyncio
-    async def test_principal_reaches_a_node_without_db_tools(self):
+    async def test_policy_context_reaches_a_node_without_db_tools(self):
         """``ask_metrics`` builds no DBFuncTool, and a metric policy still needs
-        the principal.
+        policy context.
         """
         seen = []
 
         def transformer(tool_name, args, context):
-            seen.append(context["principal"])
+            seen.append(context["policy_context"])
             return args
 
         node = _make_node([_make_tool("query_metrics")])
         node.db_func_tool = None
-        node.agent_config.principal = {"store_ids": ["S001"]}
+        node.agent_config.policy_context = {"row_filter": {"store_ids": ["S001"]}}
         apply_tool_transformers(node, {"query_metrics": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
 
-        assert seen == [{"store_ids": ["S001"]}]
+        assert seen == [{"row_filter": {"store_ids": ["S001"]}}]
 
     @pytest.mark.asyncio
-    async def test_principal_absent_from_the_config_stays_empty(self):
+    async def test_policy_context_absent_from_the_config_stays_empty(self):
         seen = []
 
         def transformer(tool_name, args, context):
-            seen.append(context["principal"])
+            seen.append(context["policy_context"])
             return args
 
         node = _make_node([_make_tool("query_metrics")])
@@ -708,17 +712,17 @@ class TestApplyToolTransformers:
         assert seen["metric_datasets"] == {"revenue": ["orders"]}
 
     @pytest.mark.asyncio
-    async def test_principal_read_fresh_per_call(self):
+    async def test_policy_context_read_fresh_per_call(self):
         seen = []
 
         def transformer(tool_name, args, context):
-            seen.append(context["principal"])
+            seen.append(context["policy_context"])
             return args
 
         node = _make_node([_make_tool("execute_sql")])
         apply_tool_transformers(node, {"execute_sql": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
-        node.agent_config.principal = {"tenant": {"id": "t2"}}
+        node.agent_config.policy_context = {"tenant": {"id": "t2"}}
         await node.tools[0].on_invoke_tool(None, "{}")
 
         assert seen == [{"tenant": {"id": "t1"}}, {"tenant": {"id": "t2"}}]
@@ -741,3 +745,221 @@ class TestApplyToolTransformers:
         await node.tools[0].on_invoke_tool(None, json.dumps({"sql": "base"}))
         assert json.loads(record[0])["sql"].startswith("base|")
         assert set(json.loads(record[0])["sql"].split("|")[1:]) == {"byname", "bycat"}
+
+
+class TestTransformToolArgsWithoutANode:
+    """The same transformers, for a caller that has no agent node.
+
+    The Hub metric endpoints reach the semantic adapter through a direct Python
+    call. Nothing wraps their tools because there are none, so a metric policy
+    that filters the agent's ``query_metrics`` did not touch them at all.
+    """
+
+    def test_passes_through_when_no_transformer_matches(self):
+        def other(name, args, ctx):
+            raise AssertionError("must not run for a different tool")
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": "a = 1"},
+            context={},
+            transformers_by_pattern={"db_tools.execute_sql": [other]},
+        )
+
+        assert args == {"where": "a = 1"}
+
+    def test_matches_a_pattern_by_its_trailing_segment(self):
+        # Declared as ``semantic_tools.query_metrics`` in the plugin manifest;
+        # a direct caller has no tool registry to resolve the group against.
+        def narrow(name, args, ctx):
+            return {**args, "where": f"({args['where']}) AND store_id IN ('S1')"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": "status = 'paid'"},
+            context={"policy_context": {"row_filter": {"access_mode": "scoped"}}},
+            category="semantic_tools",
+            transformers_by_pattern={"semantic_tools.query_metrics": [narrow]},
+        )
+
+        assert args["where"] == "(status = 'paid') AND store_id IN ('S1')"
+
+    def test_chains_transformers_in_order(self):
+        def first(name, args, ctx):
+            return {**args, "where": "a"}
+
+        def second(name, args, ctx):
+            return {**args, "where": args["where"] + "b"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {},
+            context={},
+            category="semantic_tools",
+            transformers_by_pattern={"semantic_tools.query_metrics": [first, second]},
+        )
+
+        assert args["where"] == "ab"
+
+    def test_matches_a_trailing_glob(self):
+        # ``tool_name_matches`` globs both halves; the trailing half has to glob
+        # here too, or a manifest declaring ``semantic_tools.query_*`` would
+        # silently enforce nothing for a direct caller.
+        def narrow(name, args, ctx):
+            return {**args, "where": "policed"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            category="semantic_tools",
+            transformers_by_pattern={"semantic_tools.query_*": [narrow]},
+        )
+
+        assert args["where"] == "policed"
+
+    def test_a_category_pattern_needs_its_category(self):
+        """Without one, a category-qualified pattern must not match.
+
+        The degraded version compared trailing segments, so ``db_tools.*``
+        matched every tool — a SQL-oriented transformer would have been handed
+        ``{"metrics": [...]}`` and refused the call. Erring towards no match is
+        the safe half of that.
+        """
+
+        def narrow(name, args, ctx):
+            return {**args, "where": "policed"}
+
+        unmatched = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            transformers_by_pattern={"semantic_tools.query_metrics": [narrow]},
+        )
+        assert unmatched["where"] is None
+
+        wrong_group = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            category="semantic_tools",
+            transformers_by_pattern={"db_tools.*": [narrow]},
+        )
+        assert wrong_group["where"] is None
+
+    def test_skipping_a_category_pattern_is_logged(self, caplog):
+        """Not matching is the right call; doing it in silence is not.
+
+        An unenforced policy is the failure this entry point exists to fix, and
+        a caller that forgets its category would reproduce it exactly.
+        """
+        with caplog.at_level(logging.WARNING):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                transformers_by_pattern={"semantic_tools.query_metrics": [lambda n, a, c: a]},
+            )
+
+        assert "no category" in caplog.text
+
+    def test_a_bare_pattern_is_not_worth_a_warning(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                transformers_by_pattern={"query_*": [lambda n, a, c: a]},
+            )
+
+        assert "no category" not in caplog.text
+
+    def test_a_bare_glob_matches_without_a_category(self):
+        def narrow(name, args, ctx):
+            return {**args, "where": "policed"}
+
+        args = transform_tool_args(
+            "query_metrics",
+            {"where": None},
+            context={},
+            transformers_by_pattern={"query_*": [narrow]},
+        )
+
+        assert args["where"] == "policed"
+
+    def test_a_raising_transformer_denies(self):
+        # Fail-closed, like the wrapper. The wrapper answers the model with a
+        # payload; a direct caller has no model, so it gets an exception.
+        def refuse(name, args, ctx):
+            raise RuntimeError("the semantic adapter reports no dataset for them")
+
+        with pytest.raises(ToolTransformDenied, match="no dataset"):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                category="semantic_tools",
+                transformers_by_pattern={"semantic_tools.query_metrics": [refuse]},
+            )
+
+    def test_a_non_dict_return_denies(self):
+        def broken(name, args, ctx):
+            return "not a dict"
+
+        with pytest.raises(ToolTransformDenied, match="str"):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                category="semantic_tools",
+                transformers_by_pattern={"semantic_tools.query_metrics": [broken]},
+            )
+
+    def test_an_async_transformer_denies_rather_than_being_dropped(self, recwarn):
+        # The wrapper awaits these; this entry point is synchronous, and
+        # silently ignoring the coroutine would skip the policy.
+        async def later(name, args, ctx):
+            return args
+
+        with pytest.raises(ToolTransformDenied, match="async"):
+            transform_tool_args(
+                "query_metrics",
+                {},
+                context={},
+                category="semantic_tools",
+                transformers_by_pattern={"semantic_tools.query_metrics": [later]},
+            )
+
+        # The coroutine is closed on the way out: left un-awaited it warns when
+        # the GC gets to it, burying the denial under unrelated noise.
+        gc.collect()
+        assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
+
+    def test_a_callable_context_is_resolved_only_when_something_matches(self):
+        """Assembling the context can cost an adapter round trip.
+
+        A deployment with no policy plugin should not pay to read a metric
+        catalogue that no transformer will look at.
+        """
+        calls = []
+
+        def build_context():
+            calls.append(1)
+            return {"policy_context": {}}
+
+        transform_tool_args(
+            "query_metrics",
+            {},
+            context=build_context,
+            transformers_by_pattern={"db_tools.execute_sql": [lambda n, a, c: a]},
+        )
+        assert calls == []
+
+        transform_tool_args(
+            "query_metrics",
+            {},
+            context=build_context,
+            category="semantic_tools",
+            transformers_by_pattern={"semantic_tools.query_metrics": [lambda n, a, c: a]},
+        )
+        assert calls == [1]

@@ -15,7 +15,8 @@ Runs once per interactive REPL launch, **before** the prompt loop opens, to:
    pick one synchronously.
 
 2. **Install missing adapter packages in the background**: every
-   configured service whose adapter Python package is not importable
+   configured service whose adapter Python package is not importable, plus the
+   built-in semantic default when no semantic service is configured,
    (``datus-bi-<x>``, ``datus-scheduler-<x>``, ``datus-semantic-<x>``)
    gets a ``pip install`` kicked off on a daemon thread, then a
    ``hot_reload_adapter`` so it becomes usable without a restart.
@@ -217,7 +218,9 @@ def _missing_install_targets(agent_config: Any) -> List[Tuple[str, str]]:
 
     The adapter type is read from the section-specific config object;
     BI uses ``DashboardConfig.adapter_type`` (alias may differ), while
-    Scheduler / Semantic store the type as a dict key or ``type`` field.
+    Scheduler / Semantic store the type as a dict key or ``type`` field. An
+    empty Semantic section contributes the built-in default resolved by
+    :meth:`AgentConfig.resolve_semantic_adapter`.
     """
     targets: List[Tuple[str, str]] = []
     bi = getattr(agent_config, "dashboard_config", {}) or {}
@@ -235,10 +238,16 @@ def _missing_install_targets(agent_config: Any) -> List[Tuple[str, str]]:
             targets.append(("schedulers", adapter_type))
 
     semantic = getattr(agent_config, "semantic_layer_configs", {}) or {}
-    for name, cfg in semantic.items():
-        # ``init_semantic_layer`` already enforces ``key == type``, so
-        # using the name directly is safe.
-        adapter_type = str(name).strip().lower()
+    if semantic:
+        semantic_types = semantic.keys()
+    else:
+        resolver = getattr(agent_config, "resolve_semantic_adapter", None)
+        resolved_default = resolver(None) if callable(resolver) else None
+        semantic_types = (resolved_default,) if resolved_default else ()
+    for name in semantic_types:
+        # ``init_semantic_layer`` already enforces ``key == type``. When the
+        # section is empty, ``name`` is the built-in default from the resolver.
+        adapter_type = str(name or "").strip().lower()
         if adapter_type and not is_adapter_installed("semantic_layer", adapter_type):
             targets.append(("semantic_layer", adapter_type))
 

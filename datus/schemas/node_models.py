@@ -38,6 +38,10 @@ class SqlTask(BaseModel):
     database_name: str = Field(default="", description="Name of the database for context")
     schema_name: str = Field(default="", description="Schema name for context")
     output_dir: str = Field(default="output", description="Output directory path")
+    artifact_profile: Literal["interactive", "benchmark_v1"] = Field(
+        default="interactive",
+        description="Output artifact profile; benchmark_v1 enables versioned benchmark artifacts",
+    )
     external_knowledge: str = Field(
         default="",
         description="Supplementary description / evidence supplied with the question "
@@ -432,6 +436,14 @@ class ExecuteSQLResult(BaseResult):
 
     sql_query: Optional[str] = Field("", description="The SQL query to execute")
     row_count: Optional[int] = Field(None, description="The number of rows returned")
+    error_code: Optional[str] = Field(
+        None,
+        description=(
+            "ErrorCode of a failure the caller may want to branch on — currently only a policy "
+            "refusal, which an API surface renders differently from a broken query. Absent on "
+            "engine errors, whose text is the whole story."
+        ),
+    )
     sql_return: Any = Field(  # TODO: change to Union[str, ArrowTable, List[Reuslt]]
         default=None, description="The result of SQL execution (string or Arrow data)"
     )
@@ -606,6 +618,10 @@ class OutputInput(BaseInput):
     task: str = Field(..., description="The task description")
     database_name: str = Field(..., description="The name of the database")
     output_dir: str = Field(..., description="The target directory to save the output")
+    artifact_profile: Literal["interactive", "benchmark_v1"] = Field(
+        default="interactive",
+        description="Output artifact profile inherited from the SQL task",
+    )
     gen_sql: str = Field(..., description="The generated SQL")
     sql_result: Optional[str] = Field(None, description="The result of SQL execution")
     row_count: Optional[int] = Field(None, description="The number of rows returned")

@@ -389,7 +389,7 @@ def test_schedulers_currently_only_airflow():
 def test_semantic_layer_lists_supported_builtin_adapters():
     from datus.cli.service_config_app import _BUILTIN_TYPES
 
-    assert _BUILTIN_TYPES["semantic_layer"] == ("metricflow", "osi", "dosi")
+    assert _BUILTIN_TYPES["semantic_layer"] == ("dosi", "metricflow", "osi")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -427,13 +427,13 @@ class TestSemanticTab:
         app = _build_app()
         app._tab = _Tab.SEMANTIC
         app._enter_type_picker()
-        assert app._type_choices == ["metricflow", "osi", "dosi"]
+        assert app._type_choices == ["dosi", "metricflow", "osi"]
 
     def test_type_picker_enter_emits_save_without_form(self):
         app = _build_app()
         app._tab = _Tab.SEMANTIC
         app._enter_type_picker()
-        app._type_cursor = 0  # metricflow
+        app._type_cursor = 0  # dosi, the built-in default
         with patch.object(app, "_finish") as mock_exit:
             app._on_type_picker_enter()
         # FORM view is skipped — selection is emitted straight from the picker.
@@ -442,8 +442,8 @@ class TestSemanticTab:
         assert isinstance(result, ServiceConfigSelection)
         assert result.action == "save"
         assert result.section == "semantic_layer"
-        assert result.name == "metricflow"
-        assert result.payload == {"type": "metricflow"}
+        assert result.name == "dosi"
+        assert result.payload == {"type": "dosi"}
 
     def test_enter_on_existing_entry_is_noop(self):
         app = _build_app(semantic={"metricflow": {"type": "metricflow"}})

@@ -448,6 +448,7 @@ class TestAllToolsNameContract:
             "list_tables",
             "describe_table",
             "execute_sql",
+            "load_file_as_table",
         }
         assert decorated.issubset(set(names))
 
@@ -488,9 +489,121 @@ class TestAllToolsNameContract:
             "list_tables",
             "describe_table",
             "execute_sql",
+            "load_file_as_table",
             # mounted directly by gen_job
             "transfer_query_result",
             "get_migration_capabilities",
             "suggest_table_layout",
             "validate_ddl",
         }
+
+
+@pytest.mark.acceptance
+class TestSqlReadOnlyDeploymentAgainstRealSqlite:
+    """``agent.sql_read_only`` end-to-end against a real connector.
+
+    The unit tests drive ``DBFuncTool`` with a mocked connector, which proves the
+    branch is taken but not that the write never lands. These run the same calls
+    against a real SQLite file and then assert the database is unchanged — the
+    property a deployment actually depends on.
+    """
+
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        import sqlite3
+
+        path = tmp_path / "readonly.db"
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO t (id, name) VALUES (1, 'original')")
+        conn.commit()
+        conn.close()
+        return path
+
+    def _tool(self, db_path, *, sql_read_only):
+        import copy
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+        from tests.conftest import load_acceptance_config
+
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path)))
+        # Deep-copied: hardening is one-way by design, so mutating the shared
+        # acceptance config would leak a read-only posture into every test that
+        # loads it afterwards.
+        config = copy.deepcopy(load_acceptance_config(datasource="ssb_sqlite", home="tests"))
+        if sql_read_only:
+            config.harden_sql_read_only()
+        return DBFuncTool(connector, agent_config=config)
+
+    @staticmethod
+    def _rows(db_path):
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            return conn.execute("SELECT id, name FROM t ORDER BY id").fetchall()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _tables(db_path):
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        try:
+            return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            conn.close()
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO t (id, name) VALUES (2, 'added')",
+            "UPDATE t SET name = 'changed'",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "CREATE TABLE t2 (id INT)",
+            "ALTER TABLE t ADD COLUMN extra TEXT",
+            "SELECT 1; DROP TABLE t",
+        ],
+    )
+    def test_writes_are_refused_and_the_database_is_untouched(self, db_path, sql):
+        tool = self._tool(db_path, sql_read_only=True)
+
+        result = tool.execute_sql(sql)
+
+        assert result.success == 0
+        assert self._rows(db_path) == [(1, "original")]
+        assert self._tables(db_path) == {"t"}
+
+    def test_reads_still_work(self, db_path):
+        tool = self._tool(db_path, sql_read_only=True)
+
+        result = tool.execute_sql("SELECT id, name FROM t")
+
+        assert result.success == 1
+
+    def test_writable_pragma_is_refused(self, db_path):
+        """Classifies as METADATA_SHOW but mutates the file."""
+        tool = self._tool(db_path, sql_read_only=True)
+
+        assert tool.execute_sql("PRAGMA journal_mode=WAL").success == 0
+
+    def test_transfer_query_result_is_refused(self, db_path):
+        """gen_job mounts this directly and it writes to the TARGET datasource
+        without going through execute_sql."""
+        tool = self._tool(db_path, sql_read_only=True)
+
+        result = tool.transfer_query_result(source_sql="SELECT * FROM t", target_table="copy_of_t")
+
+        assert result.success == 0
+        assert "copy_of_t" not in self._tables(db_path)
+
+    def test_the_same_writes_succeed_when_the_switch_is_off(self, db_path):
+        """The gate is opt-in: without it these calls really do mutate the
+        database, which is what makes the refusals above meaningful."""
+        tool = self._tool(db_path, sql_read_only=False)
+
+        assert tool.execute_sql("INSERT INTO t (id, name) VALUES (2, 'added')").success == 1
+        assert self._rows(db_path) == [(1, "original"), (2, "added")]

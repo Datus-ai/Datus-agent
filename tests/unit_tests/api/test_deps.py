@@ -143,7 +143,7 @@ class TestGetDatusService:
         mock_auth.authenticate = AsyncMock(
             side_effect=DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
-                message="Invalid X-Datus-Principal header value: expected a JSON object.",
+                message="Invalid X-Datus-Policy-Context header value: expected a JSON object.",
             )
         )
         mock_cache = MagicMock(spec=DatusServiceCache)
@@ -159,7 +159,7 @@ class TestGetDatusService:
             await get_datus_service(request)
 
         assert exc_info.value.status_code == 400
-        assert "Invalid X-Datus-Principal header value" in exc_info.value.detail
+        assert "Invalid X-Datus-Policy-Context header value" in exc_info.value.detail
         mock_cache.get_or_create.assert_not_called()
 
     async def test_no_fingerprint_when_config_is_none(self):
@@ -220,10 +220,10 @@ class TestGetDatusService:
 
     async def test_factory_loads_config_when_none(self, real_agent_config):
         """Factory in get_datus_service loads config when ctx.config is None."""
-        from datus.api.auth.no_auth_provider import NoAuthProvider
+        from datus.api.auth.header_context_provider import HeaderContextProvider
         from datus.api.services.datus_service import DatusService
 
-        auth_provider = NoAuthProvider()
+        auth_provider = HeaderContextProvider()
         cache = DatusServiceCache()
         deps._auth_provider = auth_provider
         deps._service_cache = cache
@@ -232,7 +232,7 @@ class TestGetDatusService:
         request = MagicMock()
         request.state = MagicMock()
         request.headers = {}
-        # NoAuthProvider returns AppContext with config=None
+        # HeaderContextProvider returns AppContext with config=None
         # Factory should call load_agent_config(datasource="test_ns")
         # This will fail because test_ns config doesn't exist in default paths,
         # but exercises the factory code path (lines 50-56)
@@ -245,3 +245,59 @@ class TestGetDatusService:
             assert "Failed to load agent config" in str(e)
         finally:
             await cache.shutdown()
+
+
+class TestGetScopedSubAgent:
+    """The gate that keeps an unrecognised sub-agent name from becoming an
+    unscoped read.
+
+    A service built from a name that matches no `agentic_nodes` key has no
+    scope filter at all, so the request would succeed and return everything.
+    Rejecting here — before any route body runs — means nothing unscoped is
+    built or cached from a caller's identifier mistake.
+    """
+
+    @staticmethod
+    def _request(sub_agent_name):
+        request = MagicMock()
+        request.state.app_context = AppContext(sub_agent_name=sub_agent_name)
+        return request
+
+    @staticmethod
+    def _svc(known=("analyst",)):
+        svc = MagicMock()
+        svc.has_sub_agent.side_effect = lambda name: name in known
+        return svc
+
+    def test_unscoped_request_passes_through(self):
+        """No name is not an unknown name — it is the single-tenant default."""
+        svc = self._svc()
+
+        assert deps.get_scoped_sub_agent(self._request(None), svc) is None
+        svc.has_sub_agent.assert_not_called()
+
+    def test_known_name_is_returned(self):
+        assert deps.get_scoped_sub_agent(self._request("analyst"), self._svc()) == "analyst"
+
+    def test_unknown_name_is_rejected_with_400(self):
+        with pytest.raises(HTTPException) as excinfo:
+            deps.get_scoped_sub_agent(self._request("no_such_sub_agent"), self._svc())
+
+        assert excinfo.value.status_code == 400
+
+    def test_rejection_names_the_offending_value(self):
+        """The caller needs to know which identifier was wrong."""
+        with pytest.raises(HTTPException) as excinfo:
+            deps.get_scoped_sub_agent(self._request("typo_analyst"), self._svc())
+
+        assert "typo_analyst" in str(excinfo.value.detail)
+
+    def test_rejection_does_not_enumerate_configured_sub_agents(self):
+        """Listing the other sub-agents to a consumer scoped to one of them is a
+        disclosure in its own right."""
+        with pytest.raises(HTTPException) as excinfo:
+            deps.get_scoped_sub_agent(self._request("nope"), self._svc(known=("analyst", "auditor")))
+
+        detail = str(excinfo.value.detail)
+        assert "analyst" not in detail
+        assert "auditor" not in detail

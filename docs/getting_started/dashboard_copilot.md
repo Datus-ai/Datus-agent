@@ -1,477 +1,509 @@
-# Dashboard Copilot
+# Turn a Dashboard into a Copilot
 
-Transform your BI dashboards into intelligent AI subagents with a single command. This guide walks you through deploying Superset with PostgreSQL, configuring Datus, and using the `bootstrap-bi` command to automatically generate context and subagents from your dashboard.
+Transform a Superset dashboard into two AI subagents: a main subagent for self-service SQL and an attribution subagent for metric comparison and root-cause analysis.
+
+This tutorial walks through the complete flow with the Superset plugin, the generic `dashboard-bootstrap` skill, and the Dosi semantic adapter. Dashboard discovery and SQL export belong to the plugin; the skill coordinates user selection and routes exported SQL to Datus's builtin context-building agents.
+
+!!! info "What this tutorial starts from"
+    This guide starts with an existing Superset dashboard. To build a data pipeline and create a new dashboard instead, follow [End-to-End Data Engineering](data_engineering_quickstart.md). If this is your first time using Datus, complete [Install and First Query](Quickstart.md) first.
 
 ## Why Dashboard Copilot?
 
-Traditional BI dashboards are static - they show predefined charts and metrics, but users cannot ask follow-up questions or explore data beyond what's been pre-built. **Datus Dashboard Copilot transforms these static dashboards into dynamic analysis copilots** that can:
+Traditional BI dashboards are static: they show predefined charts and metrics, but users cannot ask follow-up questions or explore data beyond what has been pre-built. Dashboard Copilot turns the dashboard into analysis agents that can:
 
-- Answer ad-hoc questions using the same data and business logic as your dashboard
-- Perform root cause analysis when metrics change unexpectedly
-- Generate new SQL queries that stay consistent with your dashboard's semantic model
-- Provide attribution analysis to explain what's driving metric changes
+- answer ad-hoc questions using the same tables and SQL evidence as the dashboard;
+- generate SQL constrained to the dashboard's Knowledge Base scope;
+- compare metrics across periods and dimensions;
+- provide attribution analysis for metric changes.
 
-With one command, Datus extracts all the context from your existing dashboard - the SQL queries, table relationships, metrics definitions, and business logic - and creates AI subagents that understand your data as well as your dashboard does.
+The bootstrap process builds reference SQL and semantic metrics first, then creates two scoped subagents:
 
-The bootstrap process automatically generates two specialized subagents: a **main subagent** for self-service SQL generation within the dashboard's semantic scope, and an **attribution subagent** for metric comparison, dimension-level attribution, and root-cause analysis.
+- **Main subagent**: self-service SQL over the dashboard's tables, metrics, and reference SQL.
+- **Attribution subagent**: metric comparison, dimension-level attribution, and root-cause analysis.
 
 ![Dashboard to Agent Architecture](../assets/dashboard_to_agent.png)
 
 ## Prerequisites
 
-Before you begin, ensure you have:
+Before starting, install:
 
-- Docker Desktop (or Docker Engine) with Docker Compose
-- Python 3.12 with Datus installed
+- Docker Desktop or Docker Engine with Docker Compose;
+- Python 3.12 and Datus;
+- Git, `curl`, and `unzip`.
 
-## Step 1: Deploy Superset + PostgreSQL
+The commands below use `~/datus-dashboard-copilot-demo` as the working directory. They deploy the pinned Superset example stack used by this tutorial and keep generated SQL and semantic assets in that directory.
 
-For a fast local bootstrap, use this Compose stack:
+## Step 1: Deploy Superset and PostgreSQL
+
+Download the local Superset stack:
 
 ```bash
-mkdir -p /tmp/datus-superset && cd /tmp/datus-superset
-curl -L -o datus-dashboard-copilot-stack-v1.zip https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-dashboard-copilot-stack-v1.zip
-unzip -jo datus-dashboard-copilot-stack-v1.zip '*/superset/docker-compose.yml' '*/superset/superset_config.py'
-docker compose up -d
+mkdir -p ~/datus-dashboard-copilot-demo
+cd ~/datus-dashboard-copilot-demo
+
+curl -L -o datus-dashboard-copilot-stack-v1.zip \
+  https://github.com/Datus-ai/datus-quickstart-data/releases/download/data-engineering-v1/datus-dashboard-copilot-stack-v1.zip
+
+unzip -jo datus-dashboard-copilot-stack-v1.zip \
+  '*/superset/docker-compose.yml' \
+  '*/superset/superset_config.py'
 ```
 
-Wait until services are healthy:
+The Superset example database identifies PostgreSQL as `postgres:5432/superset_examples`. `dashboard-bootstrap` matches this connection identity to a configured Datus datasource. For this host-side demo, expose the same port and make the Compose service name resolvable from the host:
 
 ```bash
+cat > docker-compose.override.yml <<'YAML'
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+YAML
+
+grep -qE '(^|[[:space:]])postgres([[:space:]]|$)' /etc/hosts || \
+  echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
+```
+
+!!! note "Connection identity"
+    The `postgres` host alias is only for this local demo. In a real deployment, configure Datus with the actual endpoint already used by the Superset Database connection. Backend, endpoint, and physical database/catalog must produce one unique Datus datasource match. A matching table or schema name alone is intentionally insufficient.
+
+Start the services:
+
+```bash
+docker compose up -d
+docker compose ps
 docker compose logs -f superset
 ```
 
-You can now access Superset at [http://localhost:8088](http://localhost:8088) with default credentials `admin/admin`.
-PostgreSQL is exposed at `127.0.0.1:5433` with default DB `superset_examples`, user/password `superset`.
+Stop following the logs after Superset is ready. The local services are:
 
-!!! note "Helm path (optional)"
-    If you still prefer Kubernetes, you can use the previous Helm flow in a dedicated local environment.
+- Superset: [http://localhost:8088](http://localhost:8088), username/password `admin/admin`;
+- PostgreSQL: `postgres:5432`, database `superset_examples`, username/password `superset/superset`.
 
-## Step 2: Configure Datus
+Open Superset and confirm that the example **World Bank's Data** dashboard is available.
 
-Configure Datus to connect to both the PostgreSQL database and Superset dashboard.
+## Step 2: Install the Superset plugin and Dosi adapter
 
-### Update agent.yml
+Install the Superset plugin from the Datus Plugins Git repository:
 
-Add the following configuration to your `~/.datus/conf/agent.yml`:
+```bash
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"
+datus plugin info superset
+```
+
+To update an existing Git installation, run `datus plugin upgrade superset`.
+
+Install the Dosi semantic adapter into the same Python environment as Datus:
+
+```bash
+python -m pip install datus-semantic-dosi
+```
+
+When developing all components from source, follow the editable-install commands in [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.md#install) instead.
+
+## Step 3: Configure the demo project
+
+### Set demo credentials as environment variables
+
+The demo stack uses public local-only credentials. Keep them out of `agent.yml` nevertheless:
+
+```bash
+export SUPERSET_PASSWORD=admin
+export SUPERSET_PG_PASSWORD=superset
+```
+
+Run Datus from a shell where these variables remain exported.
+
+### Update `agent.yml`
+
+Merge the following entries into the existing `agent:` section in `~/.datus/conf/agent.yml`. Preserve your existing model provider configuration.
 
 ```yaml
 agent:
   services:
     datasources:
-      superset:
+      superset-pg:
         type: postgresql
-        host: 127.0.0.1
-        port: 5433
+        host: postgres
+        port: 5432
         username: superset
-        password: superset
+        password: ${SUPERSET_PG_PASSWORD}
         database: superset_examples
         schema: public
+
     semantic_layer:
-      metricflow:
-        type: metricflow
-    bi_platforms:
-      superset:
-        type: superset
+      dosi:
+        type: dosi
+        default: true
+
+  plugins:
+    superset:
+      local:
+        default: true
         api_base_url: http://localhost:8088
+        auth_mode: login
         username: admin
-        password: admin
-        dataset_db:
-          datasource_ref: superset
-          bi_database_name: examples
+        password: ${SUPERSET_PASSWORD}
+        provider: db
+        verify_ssl: "true"
+        timeout: "30"
 ```
 
-!!! note "Configuration Sections"
-    - **services.datasources**: Defines datasource connections for SQL execution
-    - **services.semantic_layer**: Registers the semantic adapter used by metric and semantic-model workflows
-    - **services.bi_platforms**: Defines the BI platform credentials and maps Superset's `examples` database connection to the Datus `superset` datasource
+The launch command below selects `superset-pg` explicitly. If your existing configuration contains another semantic adapter marked `default: true`, clear that flag before making Dosi the default for this demo.
 
-!!! tip
-    You can also add entries interactively from inside the REPL via slash commands: `/datasource` for SQL datasources, and `/services` for semantic layer, BI platform, and scheduler entries.
+The Superset plugin returns the credential-free source identity of every selected query, and `dashboard-bootstrap` resolves each identity independently against the configured Datus datasources. This allows one Dashboard to contain queries from multiple physical databases.
 
-## Step 3: Bootstrap from Dashboard
+!!! tip "Configure the profile with the plugin skill"
+    Instead of editing the plugin section manually, start Datus and ask: `Configure the Superset plugin profile local for http://localhost:8088 using login auth and the SUPERSET_PASSWORD environment variable.` The plugin's `superset-setup` skill writes only an environment-variable reference, never the literal password.
 
-Now use the in-REPL `/bootstrap-bi` slash command to automatically generate context and subagents from your Superset dashboard. We'll use the World Bank's Data dashboard as an example.
+### Enable and verify the plugin
 
-### Launch the REPL
+Enable the plugin and profile for this project:
 
 ```bash
-datus
+cd ~/datus-dashboard-copilot-demo
+datus plugin enable superset --profile local
 ```
 
-### Set the Model
+Verify both authentication and dashboard discovery before starting the LLM workflow:
 
-`/bootstrap-bi` calls the LLM to produce SQL summaries, the semantic model, and metrics. Pick the model first via `/model` — see [Model Command](../cli/other_commands.md#model) for the full provider list.
+```bash
+datus superset --profile local status health
+datus superset --profile local dashboards list
+```
+
+You should see **World Bank's Data** in the dashboard list. The plugin is now ready to provide `superset-query-export` to the agent.
+
+## Step 4: Bootstrap the World Bank dashboard
+
+### Launch Datus and select a model
+
+Always launch Datus from the demo directory so exported SQL, Knowledge Base artifacts, semantic models, and project configuration are written there:
+
+```bash
+cd ~/datus-dashboard-copilot-demo
+datus --datasource superset-pg
+```
+
+Select an LLM provider and model:
 
 ```text
 > /model
 ```
 
-### Run `/bootstrap-bi`
+See [Model Command](../cli/other_commands.md#model) for provider configuration.
+
+### Start the skill-driven workflow
+
+Send one natural-language request:
 
 ```text
-> /bootstrap-bi
+Use the Superset plugin with profile local and follow the dashboard-bootstrap skill to bootstrap the World Bank's Data dashboard. Select all exportable dashboard queries for reference SQL and metric evidence. Show me the Generation Manifest and wait for confirmation before writing anything.
 ```
 
-### Interactive Flow
-
-We'll walk through bootstrap using the **World Bank's Data** dashboard from the Superset example set.
-
-**1. Pick a BI platform**
+You can also start the same workflow with the slash command:
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Pick a configured BI platform:
-  → superset               superset     http://localhost:8088
-
-
-
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   ↵ select   Esc cancel
+> /bootstrap-bi use Superset profile local and the World Bank's Data dashboard; select all exportable queries for reference SQL and metrics
 ```
 
-**2. Pick a dashboard**
+Both forms run the same `dashboard-bootstrap` workflow.
 
-```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-filter:
-────────────────────────────────────────────────────────────────────────────
-    16       Slack Dashboard
-    15       COVID Vaccine Dashboard
-    14       Unicode Test
-    13       FCC New Coder Survey 2018
-    12       Featured Charts
-    11       Video Game Sales
-    10       Sales Dashboard
-    8        deck.gl Demo
-    7        Misc Charts
-    6        USA Births Names
-  → 5        World Bank's Data
-    9        [ untitled dashboard ]
+### What the agent does before confirmation
 
-────────────────────────────────────────────────────────────────────────────
-  type to filter   ↑↓ navigate   ↵ select   m manual URL   Esc back
+The main agent loads two skills:
+
+1. `dashboard-bootstrap`, which owns the generic workflow;
+2. `superset-query-export`, which documents the Superset discovery and export commands.
+
+It then uses the plugin to:
+
+```bash
+datus superset --profile local dashboards list
+datus superset --profile local context candidates <dashboard-id>
 ```
 
-**3. Pick charts for reference SQL**
+`context candidates` is read-only. It returns stable candidate IDs, Chart names, exportability, and a credential-free source identity resolved through each Chart's real Superset Dataset and Database connection.
 
-The SQL behind each selected chart will be saved as a reference example for the main subagent.
+For this stack, the World Bank queries should resolve to:
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Select charts for reference SQL (9/9 selected):
-  → [x] 281    Treemap (agg)
-    [x] 276    % Rural (agg)
-    [x] 277    Life Expectancy VS Rural % (agg)
-    [x] 274    Most Populated Countries (agg)
-    [x] 280    Box plot (agg)
-    [x] 278    Rural Breakdown (agg)
-    [x] 273    World's Population (agg)
-    [x] 279    World's Pop Growth (agg)
-    [x] 275    Growth Rate (agg)
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+backend: postgresql
+host: postgres
+port: 5432
+database: superset_examples
+dataset: public.wb_health_population
+matched Datus datasource: superset-pg
 ```
 
-**4. Pick charts for metrics**
+The agent asks separately which queries should become reference SQL and which should provide metric evidence. This tutorial selects all exportable queries for both sets. Aggregation is a recommendation signal; the metric selection remains explicit.
 
-The aggregations in these charts will be mined for metric definitions. By default only charts with aggregations are pre-selected.
+### Review the Generation Manifest
+
+Before exporting any SQL, the agent prints a Generation Manifest similar to:
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Select charts for metrics (9/9 selected):
-  → [x] 281    Treemap (agg)
-    [x] 276    % Rural (agg)
-    [x] 277    Life Expectancy VS Rural % (agg)
-    [x] 274    Most Populated Countries (agg)
-    [x] 280    Box plot (agg)
-    [x] 278    Rural Breakdown (agg)
-    [x] 273    World's Population (agg)
-    [x] 279    World's Pop Growth (agg)
-    [x] 275    Growth Rate (agg)
+Generation Manifest
 
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+Plugin/profile: superset / local
+Dashboard: World Bank's Data (<stable dashboard id>)
+Reference SQL: all 9 exportable Chart candidates
+Metrics: all 9 exportable Chart candidates, grouped into the World Bank domain
+Query sources: postgresql/postgres:5432/superset_examples -> superset-pg (resolved, active)
+Excluded: none, unless the installed Superset example set contains a failed or hidden Chart
+Export mode: selective
+Subagents: superset_world_bank_s, superset_world_bank_s_attribution
 ```
 
-**5. Review tables in scope**
+Chart and Dashboard IDs are installation-specific; use the IDs shown by your manifest rather than copying IDs from this page.
+
+Confirm in the next message:
 
 ```text
-─────────────────────────────── Bootstrap BI ───────────────────────────────
-────────────────────────────────────────────────────────────────────────────
-  Review tables to scope (1/1 selected):
-  → [x] public.wb_health_population
-
-
-
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Space toggle   a all   n none   ↵ next   Esc back
+> Confirm the Generation Manifest and continue.
 ```
 
-**6. Pick a thread-pool size**
+SQL export is an `ask`-permission plugin command. Datus may display a separate permission prompt after this confirmation; approve the exact selective export command to continue.
 
-The build phase issues parallel LLM calls. Increase the pool size to speed things up if your provider quota allows. The default is 3.
+## Automated build
 
-    ─────────────────────────────── Bootstrap BI ───────────────────────────────
-    ────────────────────────────────────────────────────────────────────────────
-      Pick a thread-pool size for parallel LLM calls:
-        1 threads
-      → 3 threads
-        5 threads
-        10 threads
-    ────────────────────────────────────────────────────────────────────────────
-      ↑↓ navigate   ↵ select   Esc back
+After confirmation, the skill coordinates four phases. The messages and generated names vary slightly by model, but the ownership and artifact locations remain the same.
 
-### Automated Build
+### 1. Plugin SQL export
 
-After the picker confirms, Datus runs an automated build pipeline — metadata crawl, reference SQL, semantic model, and metrics extraction.
-
-**1. Metadata crawl**
-
-Crawls and indexes the schema of the in-scope tables:
+The Superset plugin compiles the confirmed Charts and writes one complete query per SQL file:
 
 ```text
-⏺ 💬 Dashboard: World Bank's Data (id=5)
-
-⏺ 💬 Selected 9/9 chart(s); 1 table(s); pool_size=3
-
-⏺ 💬 Crawling metadata for 1 table(s)…
-
-⏺ 🔧 schema_crawl()
-  └─ ✓
-
-⏺ 💬 Metadata crawl finished.
-
-
+reference_sql/superset/world-bank-s-data/
+├── manifest.json
+├── <chart-id>-<chart-name>-q1.sql
+├── ...
+└── _source/
+    ├── dashboard.json
+    └── chart-<id>.json
 ```
 
-**2. Reference SQL**
+The `dashboard-sql-export/v1` manifest records the confirmed candidate identity, source identity, SQL file, SHA-256 checksum, and status for every query. The skill routes only successful, confirmed entries; it does not reconstruct failed SQL with the LLM.
 
-For each selected chart, Datus generates a structured SQL Summary (purpose, table, dimensions, metrics, business intent) and writes it under `subject/sql_summaries/` so the main subagent can use them as few-shot references:
+### 2. Reference SQL construction
+
+Each successful exported SQL is sent in full to one builtin `gen_sql_summary` task. With the nine World Bank Charts selected, the build produces nine independent SQL summaries under:
 
 ```text
-⏺ 💬 Wrote 9 chart SQL(s) to /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql.
-
-⏺ 💬 Discovering SQL files under /Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql (mode=incremental)…
-
-⏺ 💬 Processing 9 SQL item(s) with concurrency=3.
-
-⏺ gen_sql_summary(/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql)
-  ⎿  Done (2 tool uses · 20.0s)
-⏺ 💬 gen_sql_summary (/Users/liuyufei/.datus/dashboard/superset/superset_world_bank_s_202604281951.sql):
-
-
-SQL Summary: Population by Region and Country
-
-📋 Overview
-
-This SQL query is sourced from the World Bank's Data Superset dashboard and powers a Treemap chart. It aggregates total population figures grouped by region and country code.
-
-────────────────────────────────────────────────────────────────────────────
-🔍 Query Breakdown
-
-
-  Element         Details
- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Table           public.wb_health_population
-  Metric          SUM('SP_POP_TOTL') — Total population indicator
-  Dimensions      region, country_code
-  Time Filter     From 1960-01-01 up to 2026-04-28 (full historical range)
-  Result Limit    50,000 rows
-  Visualization   Treemap chart
-
-
-────────────────────────────────────────────────────────────────────────────
-📊 Business Purpose
-
-This query supports a World Bank population distribution analysis, visualizing how total population is distributed across different world regions and countries over time. The
-Treemap layout makes it easy to compare relative population sizes at a glance.
-
-────────────────────────────────────────────────────────────────────────────
-💾 Saved File
-
- • Path: subject/sql_summaries/population_by_region_country_07f5c7b14f0355b0b64183b0993bc45e.yaml
- • Subject Tree: superset/world_bank_s
- • ID: 07f5c7b14f0355b0b64183b0993bc45e
-
-⏺ 💬 Indexed 9 reference SQL item(s).
-
-⏺ 💬 Collected 9 reference SQL identifier(s).
+subject/sql_summaries/
 ```
 
-**3. Unified semantic modeling**
-
-Datus sends all chart SQLs through one Dosi `semantic_modeling` run, which authors and validates the datasets, relationships, and metrics together:
+An abbreviated task result looks like:
 
 ```text
-⏺ semantic_modeling(World Bank's Data)
-  ⎿  Dosi YAML validated and reconciled to the Knowledge Base
-⏺ 💬 semantic_modeling completed: 9 SQL queries, 1 dataset, 4 core metrics
+⏺ gen_sql_summary(World Bank Chart: Treemap)
+  ⎿ SQL Summary: Population by Region and Country
+     Table: public.wb_health_population
+     Metric evidence: SUM(SP_POP_TOTL)
+     Dimensions: region, country_code
+     Saved: subject/sql_summaries/<generated-name>.yaml
+
+⏺ gen_sql_summary(... eight more confirmed queries ...)
+  ⎿ 9 reference SQL items synchronized to the Knowledge Base
 ```
 
-**4. Reconciled semantic assets**
+The skill never combines several Chart queries into one summary and never replaces the plugin-exported SQL with an LLM rewrite.
 
-The validated Dosi YAML is the source of truth. Bootstrap fully reconciles its semantic objects and deduplicated metrics to the Knowledge Base before reporting success.
+### 3. Unified semantic modeling
 
-### Output
-
-When bootstrap finishes, both subagents are saved and available for invocation via `@Agent <name>` or by switching the default through `/agent`:
+The confirmed metric SQLs are grouped into one World Bank business domain and sent together to one builtin `semantic_modeling` task:
 
 ```text
-⏺ save_subagents(superset_world_bank_s)
-  ⎿  Done (2 tool uses · 0.0s)
-⏺ 💬 Sub-Agent build successful.
+⏺ semantic_modeling(World Bank domain)
+  ⎿ Inspected public.wb_health_population
+     Authored Dosi dataset, dimensions, and reusable metrics
+     Dosi YAML validated
+     Metric dry-run SQL validated
+     Semantic assets reconciled to the Knowledge Base
+```
+
+The Dosi YAML is written under:
+
+```text
+subject/semantic_models/superset-pg/
+```
+
+The exact metric names can vary with the current dashboard SQL and model, but the generated definitions must preserve the SQL evidence rather than infer calculations from Chart titles alone.
+
+### 4. Dashboard subagent creation
+
+After context construction finishes, `dashboard-bootstrap` loads `create-subagent` when the active `agent.yml` is writable. It derives exact table, metric, and reference-SQL subject references from the successfully synchronized artifacts, then creates or updates:
+
+```text
+superset_world_bank_s
+superset_world_bank_s_attribution
+```
+
+The main node uses the builtin `gen_sql` behavior. The attribution node uses the builtin `gen_report` behavior. Both receive the same successful `superset-pg` scoped context and use the corresponding builtin prompt templates.
+
+A successful final report resembles:
+
+```text
+Dashboard bootstrap complete
+
+Plugin/profile: superset / local
+Dashboard: World Bank's Data
+SQL export: 9 succeeded, 0 failed
+Reference SQL: 9 synchronized
+Semantic modeling: World Bank domain validated and synchronized
+Subagents created:
+  - superset_world_bank_s
+  - superset_world_bank_s_attribution
+Configuration: ~/.datus/conf/agent.yml
+```
+
+The skill reports `context built`; it does not claim numerical equivalence with Superset unless a separate result-comparison test has been run.
+
+### Load the generated subagents
+
+The current process does not hot-reload written `agentic_nodes`. Exit and restart Datus from the same project directory:
+
+```bash
+cd ~/datus-dashboard-copilot-demo
+datus --datasource superset-pg
+```
+
+Open the agent selector:
+
+```text
 > /agent
-───────────────────────────── Agent Management ─────────────────────────────
-   Custom   Built-in    (Tab or ←/→ to switch)
-────────────────────────────────────────────────────────────────────────────
-    superset_world_bank_s
-    superset_world_bank_s_attribution
-    + Add agent…
-
-────────────────────────────────────────────────────────────────────────────
-  ↑↓ navigate   Enter set as current   e edit   a add   d delete   Tab/←→ switch   Esc back   Ctrl+C cancel
 ```
 
-## Step 4: Use the Generated Subagents
-
-`/bootstrap-bi` produces two subagents at once: a **main subagent** for self-service SQL, and an **attribution subagent** for metric-level analysis. Both are invocable with `@Agent <name>` (for example, `@Agent superset_world_bank_s`) and you can switch the default agent through `/agent`.
-
-### Self-service SQL — main subagent
-
-The main subagent generates and runs SQL grounded in the dashboard's tables and reference SQL — ideal for ad-hoc queries and detail lookups.
-
-```bash
-> @Agent superset_world_bank_s show top 10 countries by life expectancy in 2020
-```
+The two generated nodes should now appear:
 
 ```text
-⏴ superset_world_bank_s(Top 10 countries by life expectancy in 2020 using World Bank data)
-  ⎿  Done ✓ (7 tool uses · 42.9s)
-
-
-🌍 Top 10 Countries by Life Expectancy
-
-▌ ⚠️ Note: The dataset only contains data up to 2013. Year 2020 is not available — results below are for the most recent available year: 2013.
-
-────────────────────────────────────────────────────────────────────────────
-🏆 Top 10 Countries by Life Expectancy at Birth (2013)
-
-
-  Rank   Country                   Region                       Life Expectancy
- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  🥇 1   🇭🇰 Hong Kong SAR, China   East Asia & Pacific          83.83 yrs
-  🥈 2   🇯🇵 Japan                  East Asia & Pacific          83.33 yrs
-  🥉 3   🇮🇸 Iceland                Europe & Central Asia        83.12 yrs
-  4      🇨🇭 Switzerland            Europe & Central Asia        82.75 yrs
-  5      🇪🇸 Spain                  Europe & Central Asia        82.43 yrs
-  6      🇱🇮 Liechtenstein          Europe & Central Asia        82.38 yrs
-  7      🇸🇬 Singapore              East Asia & Pacific          82.35 yrs
-  8      🇮🇹 Italy                  Europe & Central Asia        82.29 yrs
-  9      🇦🇺 Australia              East Asia & Pacific          82.20 yrs
-  10     🇮🇱 Israel                 Middle East & North Africa   82.06 yrs
-
-────────────────────────────────────────────────────────────────────────────
-📌 Key Insights
-
- • 🥇 Hong Kong SAR, China leads globally at 83.83 years
- • 🌏 East Asia & Pacific dominates with 4 out of 10 top countries (Hong Kong, Japan, Singapore, Australia)
- • 🌍 Europe & Central Asia is strongly represented with 5 entries (Iceland, Switzerland, Spain, Liechtenstein, Italy)
- • All top 10 countries exceed 82 years of life expectancy at birth
- • 🇮🇱 Israel is the sole representative from the Middle East & North Africa region
+Custom
+  superset_world_bank_s
+  superset_world_bank_s_attribution
 ```
 
-### Attribution analysis — attribution subagent
+## Step 5: Use the generated subagents
 
-The attribution subagent works against metrics and the semantic model — ideal for "why did this change?" questions. It provides:
+Both subagents can be invoked with `@Agent <name>`, or selected as the default through `/agent`.
 
-- **Automatic dimension importance ranking** — identifies which dimensions most influence metric changes
-- **Delta contribution calculation** — quantifies each factor's contribution to the overall change
-- **Root cause identification** — pinpoints specific values driving metric movement
+### Self-service SQL with the main subagent
 
-```bash
-> @Agent superset_world_bank_s_attribution compare 2014 and 2004, find the reason of population growth
-```
-
-The analysis produces a structured Markdown report:
+The main subagent generates and runs SQL grounded in the dashboard's table and reference SQL scope. Ask:
 
 ```text
-⏴ superset_world_bank_s_attribution(Attribution analysis for population growth between 2004 and 2014 using World Bank data)
-  ⎿  Done ✓ (15 tool uses · 71.3s)
-
-
-🌍 World Population Growth: 2004 vs 2014 — Attribution Analysis
-
-Global population grew from ~6.41 billion (2004) to ~7.24 billion (2014), an increase of +825 million people (+12.7%). Here's what drove it:
-
-────────────────────────────────────────────────────────────────────────────
-
-📊 Population by Region
-
-
-  Region                       2004    2014    Δ Growth   Δ %
- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  East Asia & Pacific          2.09B   2.24B   +148.6M    +7.1%
-  South Asia                   1.49B   1.72B   +234.4M    +15.8%
-  Europe & Central Asia        870M    903M    +32.9M     +3.8%
-  Sub-Saharan Africa           742M    974M    +231.9M    +31.2% 🔴
-  Latin America & Caribbean    556M    626M    +70.8M     +12.7%
-  Middle East & North Africa   340M    417M    +77.5M     +22.8%
-  North America                325M    354M    +29.6M     +9.1%
-
-
-────────────────────────────────────────────────────────────────────────────
-
-🔍 Root Cause Attribution
-
-1. 🍼 Fertility Rate — Top Driver (Score: 8.77)
-
-The single most powerful factor. Sub-Saharan Africa (~5.0+ births/woman) and South Asia (~2.8) sustained large birth cohorts. Even with modest fertility declines, the sheer base
-population size translated into massive absolute additions.
-
-2. 👶 Infant Mortality Rate Decline — Driver #2 (Score: 1.65)
-
-More children survived to adulthood, compounding population growth:
-
- • South Asia: 57.8 → ~39.3 deaths/1,000 births (−32%)
- • Sub-Saharan Africa: Still high (~71.5), but declining — more children surviving
-
-3. 🌾 Rural Population Growth Rate — Driver #3 (Score: 1.65)
-
-High rural growth (especially Sub-Saharan Africa and South Asia) correlates with higher fertility norms and limited access to family planning services.
-
-4. 🔄 Net Migration — Minor Factor (Score: 1.0)
-
-Redistributes population globally but has minimal impact on total world population.
+> @Agent superset_world_bank_s show the top 10 countries by life expectancy in 2010
 ```
 
-The report includes:
+An example response is:
 
-- **Overall growth metrics** — comparison of total population, growth rate, and rural population percentage
-- **Top regional contributors** — which regions drove the most population increase
-- **Top country contributors** — individual country contributions
-- **Conclusion** — key insights explaining the metric movement
+```text
+Top 10 Countries by Life Expectancy at Birth (2010)
+
+Rank  Country                    Region                       Life Expectancy
+1     Hong Kong SAR, China       East Asia & Pacific          82.98 yrs
+2     Japan                      East Asia & Pacific          82.84 yrs
+3     Switzerland                Europe & Central Asia        82.25 yrs
+4     Iceland                    Europe & Central Asia        82.04 yrs
+5     Spain                      Europe & Central Asia        81.63 yrs
+6     Italy                      Europe & Central Asia        81.54 yrs
+7     Australia                  East Asia & Pacific          81.70 yrs
+8     Singapore                  East Asia & Pacific          81.54 yrs
+9     Sweden                     Europe & Central Asia        81.45 yrs
+10    Israel                     Middle East & North Africa   81.60 yrs
+```
+
+Values depend on the version of the example dataset. The agent should state when a requested year is unavailable instead of silently substituting another period.
+
+### Attribution analysis with the attribution subagent
+
+The attribution subagent works against the generated metrics and semantic dimensions. Ask:
+
+```text
+> @Agent superset_world_bank_s_attribution compare 2013 and 2003 and explain population growth
+```
+
+An attribution report should include:
+
+- the overall population change;
+- regional and country-level contributors;
+- dimension-level contribution or importance;
+- the strongest drivers and relevant caveats;
+- a conclusion grounded in metric query results.
+
+An abbreviated example:
+
+```text
+World Population Growth: 2003 vs 2013
+
+Overall change: total population increased across the period.
+
+Top regional contributors
+- South Asia
+- Sub-Saharan Africa
+- East Asia & Pacific
+
+Primary drivers
+1. Large base populations and sustained growth in South Asia.
+2. Higher population growth in Sub-Saharan Africa.
+3. Continued but slower absolute growth in East Asia & Pacific.
+
+The report lists the metric queries, dimensions, comparison periods, and
+limitations used to reach the conclusion.
+```
+
+Do not treat the sample prose above as a fixed benchmark. Reproducibility here means the same plugin/skill workflow, source SQL, artifact ownership, and scoped-agent construction can be replayed; LLM wording and generated subject classifications may vary.
 
 ## Subagent comparison
 
-`/bootstrap-bi` produces two complementary subagents:
-
 | Subagent | Naming | When to use | Working context |
-|---|---|---|---|
-| **Main** | `{platform}_{dashboard}` | Ad-hoc queries, detail lookups, self-service SQL | Dashboard tables + reference SQL + semantic model |
-| **Attribution** | `{platform}_{dashboard}_attribution` | Metric comparison, root-cause analysis, delta-contribution attribution | Dashboard metrics + semantic model |
+| --- | --- | --- | --- |
+| **Main** | `{platform}_{dashboard}` | Ad-hoc queries, detail lookups, self-service SQL | Dashboard tables + exact reference SQL + metrics |
+| **Attribution** | `{platform}_{dashboard}_attribution` | Metric comparison, root-cause analysis, dimension attribution | Dashboard metrics + semantic dimensions + reference SQL |
 
-Send "what is X?" / "show me Y" questions to the main subagent; send "why did Z change?" / "which dimension drove the move?" questions to the attribution subagent.
+Send “what is X?” or “show me Y” questions to the main subagent. Send “why did Z change?” or “which dimension drove the movement?” questions to the attribution subagent.
 
-## Next Steps
+## Troubleshooting
 
-Now that you have your dashboard-powered subagents, explore more:
+### The plugin is not visible to the agent
 
-- **[Subagent Introduction](../subagent/introduction.md)** - Learn more about subagent capabilities
-- **[Knowledge Base](../knowledge_base/introduction.md)** - Manage and extend your context
-- **[Metrics](../knowledge_base/metrics.md)** - Define and manage your metrics
-- **[Semantic Models](../knowledge_base/semantic_model.md)** - Customize your semantic layer
+Run:
+
+```bash
+datus plugin list
+datus plugin enable superset --profile local
+```
+
+Then restart the session. Plugin prompt and skill context are prepared when a session starts.
+
+### The Dashboard queries do not match `superset-pg`
+
+Inspect the credential-free identities:
+
+```bash
+datus superset --profile local context candidates <dashboard-id>
+```
+
+For this demo they must report PostgreSQL at `postgres:5432/superset_examples`. Confirm that the Datus datasource uses the same endpoint and physical database; `public.wb_health_population` alone is not sufficient identity evidence.
+
+### Some Charts fail to export
+
+The plugin records failures in `manifest.json`. A Chart may have lost its Dataset, may use an unsupported visualization-specific query shape, or may return no compiled SQL. Keep successful entries and retry only failed candidates after correcting Superset. Do not ask the LLM to invent replacement SQL.
+
+### Metrics cannot be authored
+
+Confirm that `datus-semantic-dosi` is installed and that `dosi` is the selected semantic adapter. MetricFlow and plain OSI projects are query-only for this workflow.
+
+### Subagents are not created
+
+Context construction can succeed even when configuration persistence is unavailable. Confirm that the loaded `agent.yml` exists and is writable, and restart Datus after the final report says the two nodes were created or updated.
+
+## Next steps
+
+- [End-to-End Data Engineering](data_engineering_quickstart.md) — build a pipeline and dashboard from source data.
+- [Choose Your Getting Started Path](index.md) — compare all getting-started guides.
+- [Dashboard Bootstrap](../skills/dashboard_bootstrap.md) — complete generic workflow contract.
+- [Plugins](../plugin/introduction.md) — plugin installation, profiles, activation, and permissions.
+- [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.md) — Dosi installation and semantic behavior.
+- [Subagent Introduction](../subagent/introduction.md) — subagent capabilities and invocation.
+- [Knowledge Base](../knowledge_base/introduction.md) — inspect and extend generated context.
+- [Metrics](../knowledge_base/metrics.md) — manage synchronized metrics.
+- [Semantic Models](../knowledge_base/semantic_model.md) — inspect generated semantic assets.

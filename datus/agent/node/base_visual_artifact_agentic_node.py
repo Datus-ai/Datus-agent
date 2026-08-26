@@ -268,6 +268,9 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     def _setup_db_tools(self) -> None:
         try:
             self.db_func_tool = DBFuncTool(
+                # Same anchor the filesystem tools use, so a path the model got
+                # from glob resolves identically in load_file_as_table.
+                filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
                 sub_agent_name=self.node_config.get("system_prompt"),
             )
@@ -323,6 +326,9 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             elif tool_type == "db_tools":
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
+                        # Same anchor the filesystem tools use, so a path the model got
+                        # from glob resolves identically in load_file_as_table.
+                        filesystem_root=self._resolve_workspace_root(),
                         agent_config=self.agent_config,
                         sub_agent_name=self.node_config.get("system_prompt"),
                     )

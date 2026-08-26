@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
-from datus_storage_base.conditions import and_, in_, like
+from datus_storage_base.conditions import Node, and_, in_, like
 from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 
 from datus.storage import BaseEmbeddingStore
@@ -148,7 +148,20 @@ class SubjectTreeStore:
         logger.info("SubjectTreeStore initialized")
 
     def _migrate_null_parents(self):
-        """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1)."""
+        """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1).
+
+        Reads before writing. This runs on *every* construction, so an unconditional
+        UPDATE puts a write on the path of consumers that only ever read — a role
+        holding just SELECT cannot construct the store at all, and everyone else pays
+        for a statement that almost always matches nothing.
+        """
+        legacy_rows = self._table.query(
+            SubjectNodeRecord,
+            where=[("parent_id", WhereOp.IS_NULL, None)],
+            columns=["node_id"],
+        )
+        if not legacy_rows:
+            return
         self._table.update(
             {"parent_id": ROOT_PARENT_ID},
             where=[("parent_id", WhereOp.IS_NULL, None)],
@@ -1227,7 +1240,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         return True
 
     def list_entries(
-        self, node_id: int, name: Optional[str] = None, limit: Optional[int] = None
+        self,
+        node_id: int,
+        name: Optional[str] = None,
+        limit: Optional[int] = None,
+        extra_conditions: Optional[List[Node]] = None,
     ) -> List[Dict[str, Any]]:
         """Get storage entries by subject node ID and entry name.
 
@@ -1239,6 +1256,10 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             node_id: Subject node ID (parent node in the subject tree)
             name: Entry name (e.g., metric name or SQL name)
             limit: Maximum number of results to return (default: None)
+            extra_conditions: Additional filter conditions, ANDed with the rest.
+                Callers reading on behalf of a scoped sub-agent must pass that
+                RAG's ``_sub_agent_conditions()``; this method applies no scope
+                of its own, so omitting them returns every entry under the node.
 
         Returns:
             List of entries matching the criteria, enriched with subject_path
@@ -1267,6 +1288,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             if name:
                 conditions.append(eq(NAME_COLUMN_NAME, name))
+
+            if extra_conditions:
+                conditions.extend(extra_conditions)
 
             where_clause = None if len(conditions) == 0 else and_(*conditions)
             # Execute search

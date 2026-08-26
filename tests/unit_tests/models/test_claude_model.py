@@ -28,6 +28,36 @@ from datus.models.claude_model import (
 # ---------------------------------------------------------------------------
 
 
+def _content_block(block_type: str, **attrs):
+    """A native Anthropic content block.
+
+    Every real block carries ``type``; a bare ``MagicMock`` does not, and that
+    looseness is what let ``content[0].text`` ship — the fixture answered to
+    any attribute the parser reached for.
+    """
+    block = MagicMock()
+    block.type = block_type
+    for name, value in attrs.items():
+        setattr(block, name, value)
+    return block
+
+
+def _text_block(text: str):
+    return _content_block("text", text=text)
+
+
+def _thinking_block(thinking: str = "considering the request"):
+    """A thinking block, which has ``.thinking`` and no ``.text``.
+
+    ``interleaved-thinking-2025-05-14`` rides in ``OAUTH_BETA_HEADERS``, so a
+    thinking-capable model on the native path leads with one of these.
+    """
+    block = MagicMock(spec=["type", "thinking"])
+    block.type = "thinking"
+    block.thinking = thinking
+    return block
+
+
 def _make_model_config(
     model="claude-sonnet-4-5",
     api_key="sk-ant-test",
@@ -370,10 +400,8 @@ class TestClaudeModelGenerate:
         cfg = _make_model_config(use_native_api=True)
         model = _make_claude_model(cfg)
 
-        content_block = MagicMock()
-        content_block.text = "native response"
         mock_response = MagicMock()
-        mock_response.content = [content_block]
+        mock_response.content = [_text_block("native response")]
         mock_create = MagicMock(return_value=mock_response)
         model.anthropic_client.messages.create = mock_create
 
@@ -385,10 +413,8 @@ class TestClaudeModelGenerate:
         cfg = _make_model_config(use_native_api=True)
         model = _make_claude_model(cfg)
 
-        content_block = MagicMock()
-        content_block.text = "ok"
         mock_response = MagicMock()
-        mock_response.content = [content_block]
+        mock_response.content = [_text_block("ok")]
         mock_create = MagicMock(return_value=mock_response)
         model.anthropic_client.messages.create = mock_create
 
@@ -411,6 +437,72 @@ class TestClaudeModelGenerate:
 
         result = model.generate("hello")
         assert result == ""
+
+
+class TestNativeThinkingBlocks:
+    """A leading thinking block must not cost us the answer.
+
+    Regression: ``content[0].text`` raised ``'BetaThinkingBlock' object has no
+    attribute 'text'`` and the caller saw a failed request instead of the
+    complete text sitting in the next block. It surfaced as an AI permission
+    review reporting "unavailable", but it breaks every non-streaming native
+    call: OAuth subscription tokens force this path and the client carries
+    ``interleaved-thinking-2025-05-14``, so the server may think whether or not
+    the caller asked it to — ``generate`` never forwards ``enable_thinking``.
+    """
+
+    @staticmethod
+    def _generate(content, prompt="review this"):
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+        mock_response = MagicMock()
+        mock_response.content = content
+        model.anthropic_client.messages.create = MagicMock(return_value=mock_response)
+        return model.generate(prompt)
+
+    def test_thinking_block_before_text_still_returns_the_text(self):
+        assert self._generate([_thinking_block(), _text_block('{"decision": "allow"}')]) == '{"decision": "allow"}'
+
+    def test_thinking_only_response_returns_empty_not_an_error(self):
+        """No text to return, but a truncated think must not raise."""
+        assert self._generate([_thinking_block()]) == ""
+
+    def test_redacted_thinking_block_is_skipped(self):
+        redacted = MagicMock(spec=["type", "data"])
+        redacted.type = "redacted_thinking"
+        redacted.data = "encrypted"
+
+        assert self._generate([redacted, _text_block("answer")]) == "answer"
+
+    def test_tool_use_block_is_skipped(self):
+        tool_use = MagicMock(spec=["type", "id", "name", "input"])
+        tool_use.type = "tool_use"
+
+        assert self._generate([_text_block("answer"), tool_use]) == "answer"
+
+    def test_multiple_text_blocks_are_joined(self):
+        assert self._generate([_text_block("first"), _text_block("second")]) == "first\nsecond"
+
+    def test_empty_text_block_does_not_add_a_blank_line(self):
+        assert self._generate([_text_block(""), _text_block("only")]) == "only"
+
+    def test_none_content_returns_empty(self):
+        assert self._generate(None) == ""
+
+    def test_json_survives_the_reviewer_round_trip(self):
+        """The concrete failure: a verdict that never reached the reviewer."""
+        import json
+
+        verdict = {
+            "risk_level": "low",
+            "user_authorization": "high",
+            "decision": "allow",
+            "confidence": 0.97,
+            "rationale": "deletes a temp dir, regenerable",
+        }
+        raw = self._generate([_thinking_block(), _text_block(json.dumps(verdict))])
+
+        assert json.loads(raw) == verdict
 
 
 # ---------------------------------------------------------------------------
@@ -1373,11 +1465,11 @@ class TestGenerateWithMcpStream:
         assert session.add_items.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_session_skip_persist_when_final_content_empty(self):
+    async def test_session_checkpoints_and_seals_when_final_content_empty(self):
         """When ``max_turns`` is exhausted while still tool-calling, ``final_content``
-        stays empty. Persisting an empty assistant text block would be rejected by
-        Anthropic on replay (``text content blocks must be non-empty``), so the
-        guard must skip ``add_items`` entirely.
+        stays empty. Every completed tool round must already be durable, and the
+        run must append a non-empty assistant seal so the next user turn replays
+        with valid role alternation.
         """
         from datus.schemas.action_history import ActionHistoryManager
 
@@ -1418,9 +1510,107 @@ class TestGenerateWithMcpStream:
 
         # final_response still yielded so the caller gets a response.
         final = next(a for a in actions if a.action_type == "final_response")
+        assert "max_turns=2" in final.output["raw_output"]
+        # Two complete tool rounds checkpointed, followed by one assistant seal.
+        assert session.add_items.await_count == 3
+        persisted = [item for call in session.add_items.await_args_list for item in call.args[0]]
+        assert persisted[0]["role"] == "user"
+        assert (
+            sum(
+                block.get("type") == "tool_use"
+                for item in persisted
+                for block in item.get("content", [])
+                if isinstance(block, dict)
+            )
+            == 2
+        )
+        assert (
+            sum(
+                block.get("type") == "tool_result"
+                for item in persisted
+                for block in item.get("content", [])
+                if isinstance(block, dict)
+            )
+            == 2
+        )
+        assert persisted[-1]["role"] == "assistant"
+        assert "max_turns=2" in persisted[-1]["content"][0]["text"]
+        assert all(
+            block.get("text", "x") != ""
+            for item in persisted
+            for block in item.get("content", [])
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+
+    @pytest.mark.asyncio
+    async def test_max_turns_keeps_delta_fragments_out_of_final_response(self):
+        """A final response containing text plus tool_use is incomplete as an
+        agent run. Its model-authored text is streamed and persisted, while the
+        incomplete final_response stays empty. Each delta is one fragment."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        text_start = MagicMock()
+        text_start.type = "text"
+        delta1 = MagicMock(type="text_delta", text="First fragment. ")
+        delta2 = MagicMock(type="text_delta", text="Second fragment.")
+        full_text = "First fragment. Second fragment."
+        final_msg = _make_response([_make_text_block(full_text), _make_tool_use_block()])
+        stream_manager = _FakeAsyncStreamManager(
+            [
+                _FakeStreamEvent("content_block_start", content_block=text_start),
+                _FakeStreamEvent("content_block_delta", delta=delta1),
+                _FakeStreamEvent("content_block_delta", delta=delta2),
+                _FakeStreamEvent("content_block_stop"),
+            ],
+            final_msg,
+        )
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        func_tool = MagicMock()
+        func_tool.name = "read_query"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="probe",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                max_turns=1,
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                session=session,
+            ):
+                actions.append(action)
+
+        deltas = [action for action in actions if action.action_type == "thinking_delta"]
+        assert [action.output["delta"] for action in deltas] == ["First fragment. ", "Second fragment."]
+        final = next(action for action in actions if action.action_type == "final_response")
         assert final.output["raw_output"] == ""
-        # Critically: we must NOT have persisted an empty assistant text block.
-        session.add_items.assert_not_awaited()
+
+        persisted = [item for call in session.add_items.await_args_list for item in call.args[0]]
+        text_blocks = [
+            block["text"]
+            for item in persisted
+            if item.get("role") == "assistant"
+            for block in item.get("content", [])
+            if block.get("type") == "text"
+        ]
+        assert full_text in text_blocks
+        assert any("max_turns=1" in text for text in text_blocks)
 
     @pytest.mark.asyncio
     async def test_prompt_list_variant_is_normalized_to_string(self):
@@ -1627,10 +1817,10 @@ class TestNativeTokenUsageStreaming:
         assert usage.input_tokens_details.cached_tokens == 200
 
     @pytest.mark.asyncio
-    async def test_native_loop_skips_durable_usage_when_no_final_text(self):
+    async def test_native_loop_persists_durable_usage_after_max_turn_seal(self):
         """When the loop exhausts max_turns mid-tool-call (no final text), the
-        session is not persisted — and neither should the usage row be, to
-        avoid a turn_usage row with no matching message."""
+        checkpointed messages are sealed into a valid turn, so cumulative usage
+        should be committed against that durable user turn."""
         from datus.schemas.action_history import ActionHistoryManager
 
         cfg = _make_model_config(use_native_api=True)
@@ -1673,8 +1863,8 @@ class TestNativeTokenUsageStreaming:
             ):
                 pass
 
-        assert stored == [], "no durable usage row when the turn produced no final text"
-        session.add_items.assert_not_awaited()
+        assert len(stored) == 1
+        assert session.add_items.await_count == 3
 
 
 def _make_recorder_hooks():

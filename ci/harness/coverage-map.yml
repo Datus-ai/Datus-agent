@@ -27,6 +27,8 @@ docs_coverage_policy:
   exclude:
     - path: docs/index.md
       reason: Documentation site landing page, not a user-facing flow.
+    - path: docs/getting_started/index.md
+      reason: Getting Started path chooser and section overview, not a discrete product flow.
     - path: docs/develop/README.md
       reason: Contributor/development guide, not a product flow.
     - path: docs/plugin/development.md
@@ -89,24 +91,30 @@ flow_groups:
         quality_sensitive: true
         docs:
           - docs/getting_started/dashboard_copilot.md
+          - docs/skills/dashboard_bootstrap.md
           - docs/getting_started/data_engineering_quickstart.md
           - docs/configuration/bi_platforms.md
         entrypoints:
-          - "CLI: datus bootstrap-bi"
-          - "CLI chat: dashboard generation subagent"
+          - "REPL: /bootstrap-bi compatibility skill shortcut"
+          - "CLI chat: natural-language dashboard bootstrap request"
         contracts:
-          - Bootstrap extracts semantic model, metrics, and reference SQL from documented BI context.
-          - Superset and Grafana integrations remain usable through BI tool contracts.
+          - The shortcut routes to the dashboard-bootstrap skill through the standard chat pipeline.
+          - The selected BI plugin exports confirmed SQL; builtin agents construct reference SQL and metrics.
+          - When configuration is mutable, the workflow uses create-subagent to persist the dashboard agent pair.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+              - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream
+              - tests/unit_tests/cli/test_core_entrypoint_acceptance.py::test_bootstrap_bi_routes_to_dashboard_bootstrap_skill
+              - tests/unit_tests/tools/skill_tools/test_dashboard_bootstrap_skill.py
+              - tests/unit_tests/tools/skill_tools/test_create_subagent_skill.py
               - tests/unit_tests/tools/func_tool/test_bi_tools.py
           nightly:
             status: covered
@@ -367,32 +375,31 @@ flow_groups:
           - docs/API/introduction.md
         entrypoints:
           - "REST API: /api/v1/chat/stream"
-          - "REST API header: X-Datus-Principal"
-          - DBFuncTool SQL policy enforcement
+          - "REST API header: X-Datus-Policy-Context"
+          - DBFuncTool policy runtime enforcement
         contracts:
-          - The default API auth provider parses request principals from X-Datus-Principal JSON.
-          - X-Datus-User-Id remains session identity and does not satisfy SQL policy principal fields.
-          - Enabled SQL policies fail fast when required principal fields are missing.
-          - Custom SQL policy providers can rewrite or deny protected read queries before database execution.
+          - The default API provider parses execution policy inputs from X-Datus-Policy-Context JSON.
+          - X-Datus-User-Id remains session identity and is not merged into policy context.
+          - Active policy runtimes validate context before any subagent starts.
+          - Policy plugins can rewrite or deny reads before execution and transform successful results afterward.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
-              - tests/unit_tests/tools/test_sql_policy.py
+              - tests/unit_tests/api/auth/test_header_context_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
+              - tests/unit_tests/tools/test_policy_runtime.py
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
-              - tests/unit_tests/tools/test_sql_policy.py
+              - tests/unit_tests/api/auth/test_header_context_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatPolicyContextPreCheck
+              - tests/unit_tests/tools/test_policy_runtime.py
           nightly:
             status: covered
             notes: >
               Nightly API and adapter jobs exercise chat streaming and database reads; deterministic unit
-              tests cover request-principal parsing and the open-source provider contract without requiring
-              a live private policy provider deployment.
+              tests cover policy-context parsing and the plugin runtime contract without requiring a live deployment.
             nodeids:
               - tests/integration/api/test_api_chat.py
               - tests/integration/adapters/test_starrocks.py

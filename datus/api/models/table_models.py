@@ -57,6 +57,11 @@ class GetTablesColumnsInput(BaseModel):
         ...,
         description="Full table names, e.g. ['db.schema.orders', 'db.schema.users']",
     )
+    # One batch resolves against one datasource: the dotted names carry no
+    # datasource level, so a mixed batch would be unresolvable.
+    datasource: Optional[str] = Field(
+        None, description="Datasource to resolve these tables against; null means the current one"
+    )
 
 
 class TableColumnBrief(BaseModel):

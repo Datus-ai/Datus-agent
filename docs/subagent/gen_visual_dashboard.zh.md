@@ -8,7 +8,7 @@
 
 HTML 仪表盘是一个**活的数据视图**——每次切换日期、地区、产品线等筛选条件，仪表盘都会把 SQL 模板按新参数渲染后真实跑库取数。这跟 `gen_visual_report` 那种把数据**一次性固化**到页面里的长篇报告不一样：报告适合发邮件、做汇报；仪表盘适合需要反复探索、自助筛选的场景。
 
-如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 [`gen_dashboard`](gen_dashboard.zh.md)。
+如果你要的是接 Superset 等外部 BI 平台的仪表盘，请让主 agent 直接使用已安装的 BI plugin。旧 BI dashboard 节点仅作为[兼容说明](gen_dashboard.zh.md)保留。
 
 ## 快速开始
 

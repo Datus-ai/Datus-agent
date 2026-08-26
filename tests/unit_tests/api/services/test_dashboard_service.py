@@ -32,6 +32,7 @@ from datus.api.services.dashboard_service import (
     _validate_params,
 )
 from datus.schemas.gen_visual_dashboard_models import TemplateParamDecl
+from datus.utils.exceptions import ErrorCode
 
 _SAMPLE_SQL_J2 = "SELECT * FROM sales WHERE region = :region;\n"
 _SAMPLE_META = {
@@ -104,7 +105,8 @@ def _patch_executor(monkeypatch, *, captured: dict) -> None:
             captured["datasource"] = datasource
             return _FakeConnector()
 
-        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list"):
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
+            captured["policy_context"] = policy_context
             return connector.execute_query(sql, result_format=result_format)
 
     import datus.tools.func_tool as func_tool_mod
@@ -266,6 +268,25 @@ async def test_run_query_without_published_version_uses_local_template(monkeypat
     # so the connector picks the same datasource binding the LLM saved.
     assert captured["sub_agent_name"] == "gen_visual_dashboard"
     assert captured["datasource"] == "warehouse"
+
+
+@pytest.mark.asyncio
+async def test_run_query_forwards_request_policy_context_to_enforced_read(monkeypatch, tmp_path: Path):
+    _write_dashboard(tmp_path)
+    captured: dict = {}
+    _patch_executor(monkeypatch, captured=captured)
+    policy_context = {"row_filter": {"access_mode": "scoped", "store_ids": [1, 2]}}
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+        policy_context=policy_context,
+    )
+
+    assert result.success is True
+    assert captured["policy_context"] is policy_context
 
 
 @pytest.mark.asyncio
@@ -510,7 +531,7 @@ def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_r
         def _get_connector(self, datasource):
             return _Connector()
 
-        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list"):
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list", policy_context=None):
             return connector.execute_query(sql, result_format=result_format)
 
     import datus.tools.func_tool as func_tool_mod
@@ -648,6 +669,38 @@ async def test_run_query_connector_returns_unsuccessful_envelope(tmp_path: Path,
     assert result.success is False
     assert result.errorCode == "QUERY_EXECUTION_FAILED"
     assert "syntax error" in (result.errorMessage or "")
+
+
+@pytest.mark.asyncio
+async def test_run_query_reports_a_policy_refusal_as_its_own_code(tmp_path: Path, monkeypatch):
+    """A refusal is not a failed query, and the viewer renders it differently.
+
+    Folded into QUERY_EXECUTION_FAILED it arrived as
+    ``query failed: error_code=400002, error_message=<the only useful part>``,
+    which a dashboard then repeated once per panel under a retry button that
+    could not help.
+    """
+    _write_dashboard(tmp_path)
+
+    class _Denied:
+        success = False
+        error = "you have no value for store_id, which this project's row policies filter by."
+        error_code = ErrorCode.POLICY_DENIED.code
+
+    _patch_failing_executor(monkeypatch, exec_result=_Denied())
+
+    result = await DashboardService(agent_config=MagicMock()).run_query(
+        project_files_root=tmp_path,
+        dashboard_slug="demo",
+        query_slug="by_region",
+        params={"region": "APAC"},
+    )
+
+    assert result.success is False
+    assert result.errorCode == "POLICY_DENIED"
+    # Verbatim: no "query failed:" in front of a sentence already written for
+    # whoever is reading it.
+    assert result.errorMessage == _Denied.error
 
 
 @pytest.mark.asyncio

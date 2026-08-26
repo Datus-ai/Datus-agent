@@ -15,15 +15,9 @@ from datus.tools.func_tool.osi_target_tools import (
 
 
 @pytest.fixture(autouse=True)
-def _stub_osi_schema_validation(monkeypatch):
-    monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
-    # CI runs without the optional datus-semantic-dosi package; route the
-    # dosi-adapter document validation through the stubbed core validator.
-    monkeypatch.setattr(
-        semantic_authoring,
-        "validate_osi_authoring_document",
-        lambda document, *, semantic_adapter: semantic_authoring.validate_osi_core_document(document),
-    )
+def _accept_any_authoring_document(monkeypatch):
+    """Target selection is what these exercise; the validator is covered on its own."""
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", lambda document, **kwargs: None)
 
 
 def _config(tmp_path: Path):
@@ -317,8 +311,8 @@ def test_inventory_excludes_core_schema_invalid_yaml(tmp_path, monkeypatch):
     _write_model(target, name="invalid_model")
     monkeypatch.setattr(
         semantic_authoring,
-        "validate_osi_core_document",
-        lambda document: "version does not match the OSI core schema",
+        "validate_osi_authoring_document",
+        lambda document, **kwargs: "version does not match the OSI core schema",
     )
     tools = OsiSemanticModelTargetTools(config)
 
@@ -347,8 +341,8 @@ def test_semantic_plan_can_recover_unique_core_schema_invalid_model(tmp_path, mo
     _write_model(target, name="orders_model")
     monkeypatch.setattr(
         semantic_authoring,
-        "validate_osi_core_document",
-        lambda document: "datasets do not match the OSI core schema",
+        "validate_osi_authoring_document",
+        lambda document, **kwargs: "datasets do not match the OSI core schema",
     )
     inspect_inventory = semantic_authoring.inspect_osi_semantic_model_inventory
     calls = 0
@@ -546,11 +540,11 @@ def test_duplicate_names_span_valid_and_recoverable_models(tmp_path, monkeypatch
     _write_model(model_dir / "one.yml", name="shared", source="analytics.one")
     _write_model(model_dir / "two.yml", name="shared", source="analytics.two")
 
-    def validate(document):
+    def validate(document, **kwargs):
         source = document["semantic_model"][0]["datasets"][0]["source"]
         return "invalid core schema" if source in invalid_sources else None
 
-    monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", validate)
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", validate)
     inventory = semantic_authoring.inspect_osi_semantic_model_inventory(config)
 
     assert inventory["models"] == []

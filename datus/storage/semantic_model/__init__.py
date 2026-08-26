@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from .store import SemanticModelRAG, SemanticModelStorage
+"""Semantic model authoring and bootstrap entry points.
 
-__all__ = ["SemanticModelStorage", "SemanticModelRAG"]
+The projection these produce lives in ``datus.storage.semantic_dataset``.
+"""

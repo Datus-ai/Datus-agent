@@ -43,15 +43,55 @@ class ReviewDecision(str, Enum):
 
 
 class AutoReviewVerdict(BaseModel):
-    """Strict wire result returned by the reviewer model."""
+    """Wire result returned by the reviewer model.
+
+    Validation here is deliberately no stricter than the transport can
+    guarantee. Only schema-capable adapters constrain the model's decoding:
+    ``CodexModel`` passes the schema as the Responses API's
+    ``text.format.json_schema``, and it is enforced. Everything routed through
+    ``OpenAICompatibleModel.generate_with_json_output`` — which includes every
+    Claude model, since ``ClaudeModel`` does not override it — drops the schema
+    kwarg and asks for ``response_format={"type": "json_object"}``, and
+    Anthropic has no such mode at all. On that path the schema reaches the model
+    only as the ``required_response_schema`` text in the request body: a
+    suggestion, not a grammar.
+
+    So a field constraint that the model can violate is a constraint that
+    fails the whole review closed into a manual prompt. Observed in practice:
+    the reviewer returned all five required fields, correctly, alongside one
+    volunteered sixth (``requires_confirmation``, ``user_authorization_reason``,
+    ``confidence_note`` on separate occasions) — a model explaining or
+    qualifying its own answer. ``extra="forbid"`` threw the usable verdict away
+    each time and auto mode silently degraded to ask-everything.
+    """
 
     risk_level: ReviewRiskLevel
     user_authorization: UserAuthorization
     decision: ReviewDecision
     confidence: float = Field(ge=0.0, le=1.0)
-    rationale: str = Field(min_length=1, max_length=1000)
+    # The system prompt asks for ~70 characters so the verdict fits one CLI
+    # line. The bound is deliberately far looser: it is a guard against a
+    # runaway essay, not the style rule. Enforcing the display budget here would
+    # turn a slightly-too-long but perfectly good verdict into a validation
+    # failure — strictly worse than a truncated line. Overruns are truncated at
+    # render time instead. ``description`` rides along in the emitted schema, so
+    # the length request still reaches the model where it can act on it.
+    rationale: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="One clause naming the material effect; about 70 characters, rendered on a single line",
+    )
 
-    model_config = ConfigDict(extra="forbid")
+    # Unknown keys are dropped rather than rejected. They carry no authority —
+    # ``can_auto_allow`` reads only ``decision``, ``risk_level`` and
+    # ``confidence``, and deny rules, the safety ceiling and the high/critical
+    # forced-ask all sit outside this model — so ignoring them cannot widen what
+    # runs. ``json_schema_extra`` keeps ``additionalProperties: false`` in the
+    # emitted schema on purpose: the model should still be told not to add
+    # fields, and the schema-capable adapters need it (OpenAI's strict
+    # json_schema mode rejects a schema without it). Tell the model not to;
+    # don't discard its answer when it does anyway.
+    model_config = ConfigDict(extra="ignore", json_schema_extra={"additionalProperties": False})
 
     def can_auto_allow(self, config: AutoReviewConfig) -> bool:
         return (
@@ -144,7 +184,21 @@ Specific guidance:
 - decision=allow is permitted only for low or medium risk with no explicit security-policy concern.
 - high and critical always use decision=ask. Static hard denies are outside your authority.
 
-Return only JSON matching the supplied schema. Keep rationale to one concise sentence."""
+Return only JSON matching the supplied schema.
+
+The rationale is rendered on a single CLI line beside the verdict, which leaves
+it about 70 characters. Write one clause naming the material effect of THIS
+action. Do not restate the command, and do not state the risk level or decision
+— both are already displayed next to your text. Drop lead-ins ("This command
+performs...") and closing judgements ("...so it is low risk"). Anything longer
+is middle-truncated and the reader loses its middle section.
+
+These illustrate length and shape for OTHER actions; never reuse their wording,
+describe the action you were actually given:
+  rm -rf build          -> deletes build/ in the workspace, artifacts regenerable
+  DELETE FROM orders    -> unbounded delete, no predicate, not recoverable
+  npm ci                -> reinstalls declared deps, no source writes
+  cat app.log | grep ERR -> reads a local log, no mutation or egress"""
 
 
 class LLMAutoReviewer(AutoReviewer):

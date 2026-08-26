@@ -1,14 +1,18 @@
 """Tests for datus.api.services.cli_service — CLI command operations."""
 
 import asyncio
+import contextlib
 import uuid
+from unittest.mock import patch
 
 import pytest
 
 from datus.api.models.cli_models import ExecuteContextInput, ExecuteSQLInput
+from datus.api.models.config_models import ErrorCode as ApiErrorCode
 from datus.api.services.chat_service import ChatService
 from datus.api.services.chat_task_manager import ChatTaskManager
 from datus.api.services.cli_service import CLIService
+from datus.utils.exceptions import DatusException
 
 
 @pytest.fixture
@@ -154,6 +158,247 @@ class TestCLIServiceExecuteSQL:
         result = await cli_svc.execute_sql(request)
         assert result.success is True
         assert result.data.sql_query == "SELECT COUNT(*) FROM schools"
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_with_the_current_datasource_named_explicitly(self, cli_svc, real_agent_config):
+        """Naming the current datasource is the same as omitting it."""
+        request = ExecuteSQLInput(
+            sql_query="SELECT COUNT(*) FROM schools",
+            datasource=real_agent_config.current_datasource,
+        )
+        result = await cli_svc.execute_sql(request)
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_rejects_an_unknown_datasource(self, cli_svc):
+        """A datasource the project has not bound is refused.
+
+        Running it on the project's default instead would answer the editor tab
+        with plausible rows from the wrong warehouse.
+        """
+        request = ExecuteSQLInput(sql_query="SELECT 1", datasource="not_bound")
+        result = await cli_svc.execute_sql(request)
+        assert result.success is False
+        assert "not_bound" in result.errorMessage
+
+    def test_execution_target_defaults_to_current(self, cli_svc, real_agent_config):
+        datasource, connector = cli_svc._execution_target(None)
+        assert datasource == real_agent_config.current_datasource
+        assert connector is cli_svc.current_db_connector
+
+    def test_execution_target_reraises_a_structured_failure_as_is(self, cli_svc, real_agent_config):
+        """A DatusException from the db manager is already the type the boundary
+        maps, so it passes through rather than being re-wrapped and losing its
+        original code."""
+        from unittest.mock import patch
+
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        # `datasource_configs` is a property that copies, so registration has to
+        # go through `services.datasources`.
+        cli_svc.agent_config.services.datasources["broken"] = cli_svc.agent_config.services.datasources[
+            real_agent_config.current_datasource
+        ]
+        with patch.object(
+            cli_svc.db_manager,
+            "first_conn_with_name",
+            side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
+        ):
+            with pytest.raises(DatusException) as raised:
+                cli_svc._execution_target("broken")
+
+        assert raised.value.code is ErrorCode.COMMON_UNSUPPORTED
+        # And nothing unusable was remembered for the next request.
+        assert "broken" not in cli_svc._datasource_connectors
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_on_an_unreachable_datasource_keeps_its_error_code(self, cli_svc, real_agent_config):
+        from unittest.mock import patch
+
+        from datus.api.models.config_models import ErrorCode as ApiErrorCode
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        # `datasource_configs` is a property that copies, so registration has to
+        # go through `services.datasources`.
+        cli_svc.agent_config.services.datasources["broken"] = cli_svc.agent_config.services.datasources[
+            real_agent_config.current_datasource
+        ]
+        with patch.object(
+            cli_svc.db_manager,
+            "first_conn_with_name",
+            side_effect=DatusException(ErrorCode.COMMON_UNSUPPORTED, message_args={}),
+        ):
+            result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1", datasource="broken"))
+
+        assert result.success is False
+        assert result.errorCode == ApiErrorCode.DATABASE_CONNECTION_ERROR
+
+
+class TestCLIServiceConnectorSerialization:
+    """The shared connector's mutable database context must not leak between
+    concurrent requests."""
+
+    @pytest.mark.asyncio
+    async def test_the_connector_lock_is_held_while_the_statement_runs(self, cli_svc, real_agent_config):
+        """The datasource's lock must be held across switch_context + execute.
+
+        The connector is shared per datasource and `switch_context` mutates its
+        database, so a request that ran without the lock held could execute
+        under another request's database — a wrong answer with no error.
+
+        Asserted by observing the lock from inside the guarded section rather
+        than by racing two requests: a timing-based overlap test is
+        non-deterministic in exactly the direction that makes it useless (it
+        passes when the machine is slow enough).
+        """
+        ds = real_agent_config.current_datasource
+        observed = []
+        real = cli_svc._execute_resolved_sql
+
+        def tracked(*args, **kwargs):
+            observed.append(cli_svc._connector_lock(ds).locked())
+            return real(*args, **kwargs)
+
+        with patch.object(cli_svc, "_execute_resolved_sql", side_effect=tracked):
+            result = await cli_svc.execute_sql(
+                ExecuteSQLInput(
+                    sql_query="SELECT COUNT(*) FROM schools",
+                    database_name="california_schools",
+                )
+            )
+
+        assert result.success is True
+        assert observed == [True]
+        # And released once the statement is done, so the next request can run.
+        assert cli_svc._connector_lock(ds).locked() is False
+
+    def test_execution_target_rejects_when_no_datasource_is_configured(self, cli_svc):
+        cli_svc.current_datasource = None
+
+        with pytest.raises(DatusException, match="No database connection available"):
+            cli_svc._execution_target(None)
+
+    def test_execution_target_rejects_a_current_datasource_with_no_connection(self, cli_svc):
+        """Symmetric with the non-current branch, which also refuses rather than
+        handing back a connector the caller would dereference."""
+        cli_svc.current_db_connector = None
+
+        with pytest.raises(DatusException, match="No database connection available"):
+            cli_svc._execution_target(None)
+
+    def test_execution_target_opens_and_remembers_another_datasource(self, cli_svc, real_agent_config):
+        current = real_agent_config.current_datasource
+        cli_svc.agent_config.services.datasources["second"] = cli_svc.agent_config.services.datasources[current]
+        connector = object()
+
+        with patch.object(cli_svc.db_manager, "first_conn_with_name", return_value=("db", connector)) as opened:
+            assert cli_svc._execution_target("second") == ("second", connector)
+            assert cli_svc._execution_target("second") == ("second", connector)
+
+        assert opened.call_count == 1
+
+    def test_execution_target_wraps_an_unstructured_failure(self, cli_svc, real_agent_config):
+        """A plain exception from the db manager still reaches the caller as the
+        structured database error, so the boundary maps one type — and the
+        original message survives inside it."""
+        current = real_agent_config.current_datasource
+        cli_svc.agent_config.services.datasources["second"] = cli_svc.agent_config.services.datasources[current]
+
+        with patch.object(cli_svc.db_manager, "first_conn_with_name", side_effect=ValueError("bad uri")):
+            with pytest.raises(DatusException, match="bad uri"):
+                cli_svc._execution_target("second")
+
+        assert "second" not in cli_svc._datasource_connectors
+
+    def test_execution_target_rejects_a_null_connector(self, cli_svc, real_agent_config):
+        """Caching a None turned the next request's `connector.dialect` into an
+        AttributeError instead of a reported connection failure."""
+        current = real_agent_config.current_datasource
+        cli_svc.agent_config.services.datasources["empty"] = cli_svc.agent_config.services.datasources[current]
+
+        with patch.object(cli_svc.db_manager, "first_conn_with_name", return_value=("db", None)):
+            with pytest.raises(DatusException, match="no usable connection"):
+                cli_svc._execution_target("empty")
+
+        assert "empty" not in cli_svc._datasource_connectors
+
+    @pytest.mark.asyncio
+    async def test_a_busy_datasource_is_refused_rather_than_queued_forever(self, cli_svc, real_agent_config):
+        """Waiting for the connector is bounded.
+
+        This runs on an asyncio.to_thread worker and the default executor has
+        only min(32, cpu + 4); an unbounded queue on one datasource could starve
+        every other to_thread caller in the process. It also bounds a cancelled
+        request, since cancelling the asyncio task cannot interrupt a thread
+        parked in acquire().
+        """
+        cli_svc.agent_config.api_config = {"sql_queue_budget_seconds": 0.05}
+        held = cli_svc._connector_lock(real_agent_config.current_datasource)
+        held.acquire()
+        try:
+            with patch.object(cli_svc, "_execute_resolved_sql") as ran:
+                result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1"))
+        finally:
+            held.release()
+
+        assert result.success is False
+        assert result.errorCode == ApiErrorCode.DATASOURCE_BUSY
+        # The property the contract rests on, not just the message: a refused
+        # write is only safe to retry because nothing ran.
+        ran.assert_not_called()
+        assert "Nothing was executed" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_a_free_datasource_is_not_delayed_by_the_budget(self, cli_svc):
+        cli_svc.agent_config.api_config = {"sql_queue_budget_seconds": 0.05}
+
+        result = await cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_a_statement_cancelled_while_queued_never_executes(self, cli_svc, real_agent_config):
+        """stop_execute_sql must actually stop a queued statement.
+
+        Cancelling the asyncio task cannot interrupt the worker thread it
+        dispatched: a worker parked in `execution_lock.acquire()` keeps waiting,
+        then acquires and runs. For a write that means the statement landing
+        *after* the caller was told it stopped.
+        """
+        cli_svc.agent_config.api_config = {"sql_queue_budget_seconds": 5}
+        held = cli_svc._connector_lock(real_agent_config.current_datasource)
+        held.acquire()
+
+        with patch.object(cli_svc, "_execute_resolved_sql") as ran:
+            task = asyncio.create_task(
+                cli_svc.execute_sql(ExecuteSQLInput(sql_query="DELETE FROM schools", execute_task_id="queued-1"))
+            )
+            # Let the worker reach the lock and park there.
+            while "queued-1" not in cli_svc._sql_tasks:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0.05)
+
+            stop = await cli_svc.stop_execute_sql("queued-1")
+            assert stop.success is True
+
+            held.release()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        # The point of the fix: told it stopped, so it must not have run.
+        ran.assert_not_called()
+
+    def test_lock_is_per_datasource(self, cli_svc, real_agent_config):
+        """Different datasources must not block each other."""
+        cli_svc.agent_config.services.datasources["other"] = cli_svc.agent_config.services.datasources[
+            real_agent_config.current_datasource
+        ]
+
+        first = cli_svc._connector_lock(real_agent_config.current_datasource)
+        second = cli_svc._connector_lock("other")
+
+        assert first is not second
+        assert first is cli_svc._connector_lock(real_agent_config.current_datasource)
 
 
 class TestCLIServiceStopExecuteSQL:
@@ -485,3 +730,121 @@ class TestCLIServiceInitializeConnection:
         # CLI context should have been updated during init with the default DB
         assert cli_svc.current_db_name == "california_schools"
         assert cli_svc.cli_context.current_db_name == "california_schools"
+
+
+@pytest.fixture
+def writable_cli_svc(mutable_real_agent_config):
+    """CLIService over a per-test writable SQLite copy, so a refused write and an
+    allowed write are distinguishable (``real_agent_config`` opens the DB
+    read-only, which would mask the gate under test)."""
+    chat_svc = ChatService(mutable_real_agent_config, ChatTaskManager(), "test-proj")
+    return CLIService(agent_config=mutable_real_agent_config, chat_service=chat_svc)
+
+
+class TestCLIServiceReadOnlyDeployment:
+    """``agent.sql_read_only`` on POST /sql/execute.
+
+    This route reaches the connector directly and never constructs a
+    ``DBFuncTool``, so it needs its own gate — the ``execute_sql`` tool check
+    does not cover it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_select_is_allowed(self, writable_cli_svc, mutable_real_agent_config):
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO schools (CDSCode) VALUES ('x')",
+            "UPDATE schools SET City = 'x'",
+            "DELETE FROM schools",
+            "CREATE TABLE t_new (id INT)",
+            "DROP TABLE schools",
+            "TRUNCATE TABLE schools",
+        ],
+    )
+    async def test_writes_and_ddl_are_refused(self, writable_cli_svc, mutable_real_agent_config, sql):
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query=sql))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+
+    @pytest.mark.asyncio
+    async def test_multi_statement_with_read_prefix_is_refused(self, writable_cli_svc, mutable_real_agent_config):
+        """The regression that classifying by statement type alone would miss:
+        ``parse_sql_type`` only inspects the FIRST statement, so this reads as a
+        harmless SELECT unless multi-statement input is rejected separately.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT 1; DROP TABLE schools"))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+        assert "Multi-statement" in result.errorMessage
+
+        # And the table is still there.
+        survived = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="SELECT COUNT(*) FROM schools"))
+        assert survived.success is True
+
+    @pytest.mark.asyncio
+    async def test_writable_pragma_is_refused(self, writable_cli_svc, mutable_real_agent_config):
+        """``PRAGMA journal_mode=WAL`` classifies as METADATA_SHOW but writes."""
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="PRAGMA journal_mode=WAL"))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sql", ["SET foo = 1", "%%not sql at all%%"])
+    async def test_content_set_and_unparseable_are_refused(self, writable_cli_svc, mutable_real_agent_config, sql):
+        """Fail-closed: anything not positively classified as a read is refused."""
+        from datus.api.models.config_models import ErrorCode
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        result = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query=sql))
+
+        assert result.success is False
+        assert result.errorCode == ErrorCode.SQL_READ_ONLY
+
+    @pytest.mark.asyncio
+    async def test_writes_succeed_when_the_flag_is_off(self, writable_cli_svc):
+        """Default posture is unchanged — the gate is opt-in."""
+        result = await writable_cli_svc.execute_sql(
+            ExecuteSQLInput(sql_query="CREATE TABLE t_default_posture (id INT)")
+        )
+
+        assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_flag_is_read_per_request_not_snapshotted(self, writable_cli_svc, mutable_real_agent_config):
+        """CLIService is built from the shared service-level config, so hardening
+        it at runtime must take effect without rebuilding the service.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        before = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="CREATE TABLE t_before (id INT)"))
+        assert before.success is True
+
+        mutable_real_agent_config.harden_sql_read_only()
+
+        after = await writable_cli_svc.execute_sql(ExecuteSQLInput(sql_query="CREATE TABLE t_after (id INT)"))
+        assert after.success is False
+        assert after.errorCode == ErrorCode.SQL_READ_ONLY

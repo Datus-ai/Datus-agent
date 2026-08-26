@@ -310,14 +310,25 @@ class CodexModel(LLMBaseModel):
 
     @staticmethod
     def _consume_stream_text(stream) -> str:
-        """Consume a streaming response and return the full output text."""
+        """Consume a streaming response and return the full output text.
+
+        The terminal ``response.completed`` event is preferred when it actually
+        carries text, but it is NOT trusted blindly: against a ChatGPT-account
+        Codex endpoint that event arrives with ``output_text == ""`` and
+        ``output == []`` even after the model streamed a complete answer over
+        ``response.output_text.delta``. Returning the empty terminal value there
+        discarded the whole response — callers saw an empty string, and
+        ``generate_with_json_output`` turned that into a ``JSONDecodeError``
+        (surfaced as a bogus "HTTP 400"), so every structured call against such
+        an endpoint failed. Fall back to the accumulated deltas instead.
+        """
         collected = []
         for event in stream:
             event_type = getattr(event, "type", None)
             if event_type == "response.completed":
                 response = getattr(event, "response", None)
-                if response:
-                    return getattr(response, "output_text", "")
+                final_text = getattr(response, "output_text", "") if response else ""
+                return final_text or "".join(collected)
             elif event_type == "response.output_text.delta":
                 collected.append(getattr(event, "delta", ""))
         return "".join(collected)

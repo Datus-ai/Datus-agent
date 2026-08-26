@@ -4,6 +4,8 @@ Dosi adapter 使用原生 Rust engine 直接执行 OSI 语义模型。authoring�
 catalog 加载和执行都由 `datus-semantic-dosi` 提供；它不会加载 Python OSI
 adapter，也不会降低到 MetricFlow。
 
+Dosi 是内置默认语义适配器，同时支持 `semantic_modeling` 创作和完整查询能力。未配置语义适配器时，Datus 会在交互式启动过程中自动安装并选择 Dosi。
+
 ## 安装
 
 本地开发不要求先发布 `dosi-engine`。在标准的同级仓库布局中，从
@@ -28,8 +30,7 @@ agent:
         type: duckdb
         uri: /absolute/path/to/warehouse.db
     semantic_layer:
-      dosi:
-        default: true
+      dosi:  # 可选；该 section 为空时也默认选择 Dosi
         # semantic_model_path: /absolute/path/to/model.yaml
 ```
 

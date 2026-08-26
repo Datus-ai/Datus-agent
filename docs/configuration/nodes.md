@@ -252,12 +252,12 @@ The model names below refer to the `model` field inside each `models.<key>` prov
 
 **For Schema Linking:**
 
-- Use fast, cost-effective models: `gpt-3.5-turbo`, `deepseek-chat`
+- Use fast, cost-effective models: `gpt-3.5-turbo`, `deepseek-v4-flash`
 - For complex schemas: `gpt-4`, `claude-4-sonnet`
 
 **For SQL Generation:**
 
-- Recommended: `deepseek-chat`, `gpt-4-turbo`, `claude-4-sonnet`
+- Recommended: `deepseek-v4-flash`, `gpt-4-turbo`, `claude-4-sonnet`
 - Avoid: Basic models that struggle with complex SQL
 
 **For Reasoning:**

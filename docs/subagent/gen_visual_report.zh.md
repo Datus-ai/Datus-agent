@@ -6,7 +6,7 @@
 
 ![HTML 报告示例——KPI 横幅、关键指标、月度增长趋势图](../assets/gen_visual_report_preview.png)
 
-HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset / Grafana 的 BI 平台仪表盘，请使用 `gen_dashboard`。
+HTML 报告是一份长篇叙事，数据在生成时就固化下来。页面上没有筛选器，也不会再次访问数据库。如果你要的是接 Superset 等外部 BI 平台的仪表盘，请让主 agent 直接使用已安装的 BI plugin。
 
 如果你想要的是纯文本的 **Markdown 报告**（不带 HTML 渲染、不带图表），请改用 `gen_report` agent。
 

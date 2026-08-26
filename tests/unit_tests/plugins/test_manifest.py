@@ -58,6 +58,7 @@ def test_parse_manifest_minimal():
     assert manifest.package_dir == PKG
     assert manifest.cli is None
     assert manifest.tool_transformers == {}
+    assert manifest.policy_runtime is None
     assert manifest.permissions == {}
     assert manifest.system_prompt is None
     assert manifest.skills is None
@@ -109,6 +110,7 @@ def test_parse_manifest_full():
             "db_tools.execute_sql": "pkg.tf:enforce",
             "execute_sql": ["pkg.tf:audit", "pkg.tf:enforce"],
         },
+        "policy_runtime": "pkg.runtime:create_runtime",
         "permissions": {"normal": {"allow": ["greet:*"]}},
         "system_prompt": "prompts/system.md.j2",
         "skills": "skills",
@@ -125,6 +127,7 @@ def test_parse_manifest_full():
         "db_tools.execute_sql": ["pkg.tf:enforce"],
         "execute_sql": ["pkg.tf:audit", "pkg.tf:enforce"],
     }
+    assert manifest.policy_runtime == "pkg.runtime:create_runtime"
     assert manifest.permissions == {"normal": {"allow": ["greet:*"]}}
     assert manifest.system_prompt == "prompts/system.md.j2"
     assert manifest.skills == "skills"

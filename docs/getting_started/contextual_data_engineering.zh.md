@@ -1,8 +1,8 @@
-# 上下文数据工程：理念与手把手教程
+# 构建上下文增强 Agent：California Schools
 
-本文分两部分。<strong>第一部分</strong>讲解上下文数据工程的理念——它是什么、为什么重要、Datus 如何对长期数据上下文建模。<strong>第二部分</strong>是端到端的手把手教程，使用内置的 California Schools 数据集，借助你日常工作中也会用到的 `/bootstrap` REPL 流程把每一个理念落到实处。
+本指南先介绍 Datus 如何对长期数据上下文建模，再通过 California Schools 教程把理念落到实处。你将构建知识库、让子代理使用这些上下文，并与基线 Agent 对比效果。
 
-如果你只有十分钟，可以直接跳到[第二部分——手把手教程](#第二部分手把手教程california-schools)。
+如果你已经了解相关理念，可以直接跳到[第二部分——手把手教程](#california-schools)。
 
 ---
 
@@ -67,7 +67,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 **命令驱动的迭代**
 
-使用 `/semantic_modeling`、`/gen_sql_summary` 等命令创建或更新资产。已退役的 `/gen_semantic_model` 和 `/gen_metrics` 已隐藏，调用时会提示改用 `semantic_modeling`。
+直接描述要创建或更新的资产，主 agent 会自动委派给相应 subagent。单次明确指定可使用 `@Agent semantic_modeling`，连续操作可先使用 `/agent semantic_modeling` 选择当前 agent。
 
 **反馈驱动持续改进**
 
@@ -93,11 +93,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 **Datus CLI**
 
-专为数据工程师打造的[交互式 CLI](../cli/introduction.md)，内置上下文压缩与检索。提供三类“魔法命令”：
-
-- `/`：发起对话与编排
-- `@`：查看与召回上下文
-- `!`：执行节点/工具操作
+专为数据工程师打造的[交互式 CLI](../cli/introduction.md)，内置上下文压缩与检索。直接输入自然语言问题，Datus 会自动派发给合适的 Agent。`/datasource`、`/model` 等斜杠命令用于管理会话；`@Agent <name>` 可将单次提问明确路由到某个子代理，`/agent <name>` 则会为后续对话选择当前子代理。在空输入行按 **Tab**，可以在自然语言、SQL 和 Bash 输入模式之间切换。
 
 **Datus Agent**
 
@@ -126,15 +122,13 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 3. 一份基线 vs. 上下文增强的基准测试结果可对比
 4. 一组多轮评估，直观展示上下文演化如何带来 SQL 准确率提升
 
-阅读时间约 5 分钟；总耗时约 15 分钟（其中由 LLM 驱动的 bootstrap 步骤是主要耗时）。
-
 ### 前置条件
 
 需要：
 
 - 已安装 `datus`（参见[快速开始](Quickstart.zh.md)）
 - 在 `datus` 内通过 `/model` 配置好 LLM provider；选择器会把凭据写入 `~/.datus/conf/agent.yml`
-- 通过 `/services semantic` 配置 MetricFlow 语义层适配器；CLI 会在保存该服务配置时自动安装缺失的 `datus-semantic-metricflow` 包
+- 使用默认的 Dosi 语义层适配器；交互式启动且未配置语义适配器时，Datus 会自动安装，也可以通过 `/services semantic` 显式选择
 
 不需要下载或手动 `cp` 任何文件。首次启动 `datus` 在没有配置时会自动 bootstrap `~/.datus/`：
 
@@ -183,7 +177,7 @@ datus
 > /bootstrap
 
 ──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   Schema   SQL   Template   Semantic Modeling   Knowledge    (Tab or ←/→ to switch)
+   Schema   SQL   Template   Semantic Modeling    (Tab or ←/→ to switch)
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Schema
   Crawl the live database schema into the metadata RAG.
@@ -236,17 +230,7 @@ success_story:     ~/.datus/benchmark/california_schools/success_story.csv
 
 Datus 会把通过校验的 Dosi YAML 写入项目的 `subject/semantic_models/` 目录，并将语义对象和指标完整同步到 Knowledge Base。
 
-### 步骤 4 —— 理解 CLI 兼容 component 的 scope
-
-交互式 bootstrap 只保留一个 **Semantic Modeling** tab，并始终运行完整 Dosi 流程。自动化脚本仍可使用历史 component 名作为兼容别名：
-
-- `--components semantic_model` 只创作 dataset，并保持所有已有 metric 定义不变。
-- `--components metrics` 或 `--components semantic_modeling` 创作完整的 dataset 和 metric。
-- 组合多个 semantic component 时只执行一次；full scope 优先。
-
-更多介绍见[指标文档](../knowledge_base/metrics.md)。
-
-### 步骤 5 —— 初始化 Reference SQL（SQL tab）
+### 步骤 4 —— 初始化 Reference SQL（SQL tab）
 
 切到 **SQL** tab，填写：
 
@@ -284,7 +268,7 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
 
 更多介绍见 [Reference SQL 文档](../knowledge_base/reference_sql.md)。
 
-### 步骤 6 —— 浏览所建内容
+### 步骤 5 —— 浏览所建内容
 
 继续在 REPL：
 
@@ -298,7 +282,7 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
 
 `/catalog` 用于查看表/列元数据。这两个页面是后续你（与 AI）浏览知识库的主要入口。
 
-### 步骤 7 —— 创建两个子代理
+### 步骤 6 —— 创建两个子代理
 
 打开 `~/.datus/conf/agent.yml`，在 `agent:` 节点下追加以下两段：`agentic_nodes`（定义两个子代理）与 `workflow`（定义对应的编排管线）：
 
@@ -309,7 +293,7 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: db_tools, date_parsing_tools
+      tools: db_tools
       mcp: ''
       rules: []
     datus_schools_context:
@@ -317,7 +301,7 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
       prompt_version: '1.0'
       prompt_language: en
       agent_description: ''
-      tools: context_search_tools, db_tools, date_parsing_tools
+      tools: context_search_tools, db_tools
       mcp: ''
       rules: []
   workflow:
@@ -331,14 +315,15 @@ Datus 会解析 `sql_dir` 下的每个 `.sql` 文件，生成自然语言摘要�
     - output
 ```
 
-两个子代理的关键差异是 `context_search_tools` —— 只有 `datus_schools_context` 能召回前面 Step 3–5 构建的指标与 Reference SQL。这正是下一步基准测试要量化的差异。
+两个子代理的关键差异是 `context_search_tools` —— 只有 `datus_schools_context` 能召回前面步骤 2–4 构建的指标与 Reference SQL。这正是下一步基准测试要量化的差异。
 
 #### 调用子代理
 
 `/agent` 不带参数会打开 TUI（Enter 切换当前 agent）；带名字则把默认 agent 切到 `<name>`：
 
 ```text
-/agent datus_schools_context          # 之后在下一行输入你的问题
+/agent datus_schools_context
+What's the average SAT score by school type?
 ```
 
 如果只想就单条提问临时路由到某个 subagent，使用 `@Agent <name>` 提示：
@@ -349,7 +334,7 @@ What's the average SAT score by school type? @Agent datus_schools_context
 
 同样的子代理也可在 [Datus-Chat](../web_chatbot/introduction.md) 中使用。
 
-### 步骤 8 —— 基准测试：基线 vs. 上下文增强
+### 步骤 7 —— 基准测试：基线 vs. 上下文增强
 
 回到 shell，先跑基线：
 
@@ -383,7 +368,7 @@ datus-agent eval \
 
 对比 `schools1.txt` 和 `schools2.txt`。上下文增强子代理生成的 SQL 在语义上更准确、列幻觉更少、联接更合理——因为它能召回前面构建的 Reference SQL 模式与指标定义。
 
-### 步骤 9 —— 多轮基准测试
+### 步骤 8 —— 多轮基准测试
 
 这是上下文数据工程最具说服力的演示——通过多轮迭代让上下文继续演化：
 
@@ -408,7 +393,7 @@ datus-agent multi-round-benchmark \
 | 组件 | 你完成的事情 |
 |---|---|
 | 元数据 bootstrap | 索引了 schema、列描述与采样行 |
-| 语义模型 bootstrap | 基于成功案例生成 MetricFlow YAML |
+| 语义模型 bootstrap | 基于成功案例生成 Dosi 语义模型 |
 | 指标 bootstrap | 抽取业务指标并落入主题树 |
 | Reference SQL bootstrap | 19 个 SQL 文件被摘要、连接、索引 |
 | 子代理 | 两个工具集差异明显的范围化代理 |
@@ -418,6 +403,8 @@ datus-agent multi-round-benchmark \
 同样的流程适用于你自己的领域——把 `/bootstrap` 指向你自己的成功案例和 SQL 目录，一小时内就能拥有一个真正可演化的知识库。
 
 ## 下一步
+
+如果想体验其他场景，请返回[选择上手路径](index.md)。
 
 <div class="grid cards" markdown>
 

@@ -1,9 +1,9 @@
-# Quickstart
+# Install and First Query
 
 Get started with Datus Agent in minutes: install → configure → first query.
 
-!!! tip "Need the full warehouse workflow?"
-    For an end-to-end example covering layered warehouse design, ETL generation, Airflow scheduling, semantic assets, and Superset dashboards, see [Data Engineering Quickstart](./data_engineering_quickstart.md).
+!!! tip "Not sure which tutorial to follow next?"
+    Use [Choose Your Getting Started Path](index.md) to pick the guide that matches your goal.
 
 ## 1. Install
 
@@ -63,7 +63,7 @@ Common providers:
 | Provider | Default model | Env var |
 |---|---|---|
 | `openai` | `gpt-4.1` | `OPENAI_API_KEY` |
-| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `deepseek` | `deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
 | `claude` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `gemini-2.5-pro` | `GEMINI_API_KEY` |
 
@@ -106,8 +106,9 @@ For natural-language turns, Datus streams thinking deltas, tool calls, SQL, and 
 
 ## Next Steps
 
-- **[Data Engineering Quickstart](./data_engineering_quickstart.md)** — layered warehouse + Airflow + Superset, end-to-end
-- **[Contextual Data Engineering](./contextual_data_engineering.md)** — `@` references, knowledge base, context management
+- **[Build a Context-Rich Agent](./contextual_data_engineering.md)** — build a knowledge base and measure how context improves answers
+- **[End-to-End Data Engineering](./data_engineering_quickstart.md)** — build layered tables, ETL, an Airflow DAG, and a Superset dashboard
+- **[Turn a Dashboard into a Copilot](./dashboard_copilot.md)** — turn an existing Superset dashboard into analysis subagents
 - **[Configuration Guide](../configuration/introduction.md)** — connect your own databases and customize settings
 - **[CLI Reference](../cli/introduction.md)** — all commands and options
-- **[Semantic Adapters](../adapters/semantic_adapters.md)** — datus-semantic-metricflow
+- **[Semantic Adapters](../adapters/semantic_adapters.md)** — Dosi by default, with MetricFlow and OSI query compatibility

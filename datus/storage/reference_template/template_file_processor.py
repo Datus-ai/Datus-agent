@@ -28,6 +28,10 @@ def extract_template_parameters(template_content: str) -> List[Dict[str, str]]:
     Returns:
         List of parameter definitions, e.g. [{"name": "start_date"}, {"name": "end_date"}]
     """
+    # Parse-only: ``env.parse`` builds an AST and never evaluates the template,
+    # so a SandboxedEnvironment would be a semantic no-op here. Rendering of
+    # reference templates happens in ``reference_template_tools``, which is
+    # sandboxed.
     env = jinja2.Environment()
     try:
         ast = env.parse(template_content)
@@ -230,6 +234,8 @@ def validate_template(template_content: str) -> Tuple[bool, str]:
     Returns:
         Tuple of (is_valid, error_message)
     """
+    # Parse-only, same as ``extract_template_parameters`` above: no evaluation
+    # happens, so sandboxing would add nothing.
     env = jinja2.Environment()
     try:
         env.parse(template_content)

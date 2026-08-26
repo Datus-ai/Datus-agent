@@ -6,10 +6,12 @@ nav:
   - Home:
     - Overview: index.md
     - Getting Started:
-      - Quickstart: getting_started/Quickstart.md
-      - Data Engineering Quickstart: getting_started/data_engineering_quickstart.md
-      - Contextual Data Engineering: getting_started/contextual_data_engineering.md
-      - Dashboard Copilot: getting_started/dashboard_copilot.md
+      - Choose Your Path: getting_started/index.md
+      - Install and First Query: getting_started/Quickstart.md
+      - Build a Context-Rich Agent: getting_started/contextual_data_engineering.md
+      - Scenario Tutorials:
+        - End-to-End Data Engineering: getting_started/data_engineering_quickstart.md
+        - Turn a Dashboard into a Copilot: getting_started/dashboard_copilot.md
     - CLI:
       - Introduction: cli/introduction.md
       - Chat Command: cli/chat_command.md
@@ -26,10 +28,8 @@ nav:
       - Introduction: subagent/introduction.md
       - Built-in subagents: subagent/builtin_subagents.md
       - Customized subagents: subagent/customized_subagent.md
-      - Generate Dashboard: subagent/gen_dashboard.md
       - Semantic Modeling: subagent/semantic_modeling.md
       - Ask Metrics: subagent/ask_metrics.md
-      - Scheduler: subagent/scheduler.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
       - Data Pipeline (ETL + Migration): subagent/gen_job.md
@@ -40,6 +40,7 @@ nav:
       - Built-in Skills:
         - Init: skills/init.md
         - Build KB: skills/build_kb.md
+        - Dashboard Bootstrap: skills/dashboard_bootstrap.md
         - Storage Classify: skills/storage_classify.md
         - Extract Knowledge: skills/extract_knowledge.md
         - Memory Organization: skills/memory_organization.md
@@ -132,10 +133,12 @@ plugins:
             Home: 首页
             Overview: 概览
             Getting Started: 入门指南
-            Quickstart: 快速开始
-            Data Engineering Quickstart: 数据工程快速开始
-            Contextual Data Engineering: 上下文数据工程
-            Dashboard Copilot: Dashboard Copilot
+            Choose Your Path: 选择上手路径
+            Install and First Query: 安装并完成第一次提问
+            Build a Context-Rich Agent: 构建上下文增强 Agent
+            Scenario Tutorials: 场景教程
+            End-to-End Data Engineering: 端到端数据工程
+            Turn a Dashboard into a Copilot: 将 Dashboard 变成 Copilot
             CLI: 命令行
             Introduction: 介绍
             Chat Command: 聊天命令
@@ -151,11 +154,10 @@ plugins:
             Subagent: Subagent
             Built-in subagents: 内置 subagent
             Customized subagents: 自定义 subagent
-            Generate Dashboard: 生成 Dashboard
+            Semantic Modeling: 语义建模
             Generate Metrics: 生成指标
             Ask Metrics: 指标问答
             Generate Semantic Model: 生成语义模型
-            Scheduler: 调度器
             Chatbot: chatbot
             IM Gateway: IM 网关
             Slack: Slack

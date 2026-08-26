@@ -529,3 +529,23 @@ class TestProfileSqlStatements:
         manager = PermissionManager(global_config=get_profile("auto"))
         manager.global_config.sql_statements.write = PermissionLevel.DENY
         assert AUTO.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+
+
+class TestLoadFileAsTablePermission:
+    """Registering an uploaded file must not prompt.
+
+    It reads a file already inside the project (the path is classified against
+    the filesystem policy first) and defines a view in a private per-project
+    catalog. Falling through to ``default=ASK`` would prompt for "open the file
+    the user just asked about" — and on the API surface, where no interactive
+    broker exists, an ASK is effectively a refusal.
+    """
+
+    @pytest.mark.parametrize("profile", [NORMAL, AUTO, DANGEROUS])
+    def test_allowed_in_every_profile(self, profile):
+        assert _resolve(profile, "db_tools", "load_file_as_table") == PermissionLevel.ALLOW
+
+    def test_does_not_widen_other_db_tools(self):
+        """The rule is tool-specific, not a `db_tools` wildcard."""
+        assert _resolve(NORMAL, "db_tools", "execute_sql") == PermissionLevel.ASK
+        assert _resolve(NORMAL, "db_tools", "transfer_query_result") == PermissionLevel.ASK

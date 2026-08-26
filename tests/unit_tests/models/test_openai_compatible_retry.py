@@ -193,3 +193,52 @@ class TestRetryErrorLoggingIncludesUpstream:
         msg = final_error_records[-1].getMessage()
         assert "text generation" in msg
         assert upstream in msg
+
+
+class TestRetryExceptionCarriesUpstream:
+    """The raised exception — not just the log — must name the real cause.
+
+    Regression: the final ``raise DatusException(error_code)`` dropped the
+    upstream text, so whoever catches it (the CLI's error line, the permission
+    reviewer's fail-closed warning) reported only the generic wrapper
+    description. An Anthropic ``temperature`` rejection and an unparseable
+    response were indistinguishable at the catch site.
+    """
+
+    def test_sync_retry_exception_includes_upstream_message(self, mock_model):
+        upstream = "`temperature` is deprecated for this model."
+
+        def always_fails():
+            raise _make_api_error(upstream)
+
+        with patch("time.sleep"):
+            with pytest.raises(DatusException) as exc_info:
+                mock_model._with_retry(always_fails, operation_name="text generation", max_retries=0)
+
+        assert upstream in str(exc_info.value)
+
+    def test_sync_retry_exception_keeps_the_error_code(self, mock_model):
+        """The classification must survive alongside the appended detail."""
+
+        def always_fails():
+            raise _make_api_error("bad request: something specific")
+
+        with patch("time.sleep"):
+            with pytest.raises(DatusException) as exc_info:
+                mock_model._with_retry(always_fails, operation_name="op", max_retries=0)
+
+        assert exc_info.value.code.code in str(exc_info.value)
+        assert "something specific" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_async_retry_exception_includes_upstream_message(self, mock_model):
+        upstream = "`temperature` is deprecated for this model."
+
+        async def always_fails():
+            raise _make_api_error(upstream)
+
+        with patch("asyncio.sleep", new=AsyncMock()):
+            with pytest.raises(DatusException) as exc_info:
+                await mock_model._with_retry_async(always_fails, operation_name="op", max_retries=0)
+
+        assert upstream in str(exc_info.value)

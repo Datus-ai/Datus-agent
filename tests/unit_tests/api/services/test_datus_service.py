@@ -10,6 +10,7 @@ from datus.api.services.datus_service import DatusService
 from datus.api.services.explorer_service import ExplorerService
 from datus.api.services.kb_service import KbService
 from datus.api.services.mcp_service import MCPService
+from datus.utils.exceptions import DatusException
 
 
 class TestDatusServiceInit:
@@ -44,14 +45,17 @@ class TestDatusServiceInit:
         assert svc.task_manager._default_interactive is True
 
     def test_lazy_slots_are_none_on_init(self, real_agent_config):
-        """All lazy service slots are None after construction."""
+        """All lazy service slots are unpopulated after construction."""
         svc = DatusService(agent_config=real_agent_config, project_id="p1")
         assert svc._chat is None
         assert svc._cli is None
         assert svc._datasource is None
-        assert svc._explorer is None
         assert svc._mcp is None
         assert svc._kb is None
+        # Explorer and tool are keyed by sub-agent name rather than held in a
+        # single slot, so "not yet built" is an empty mapping.
+        assert svc._explorers == {}
+        assert svc._tools == {}
 
 
 class TestDatusServiceLazyProperties:
@@ -213,3 +217,154 @@ class TestFingerprintPluginState:
 
         assert first == second
         assert not first.startswith("id:")
+
+
+class TestSubAgentScopedServices:
+    """Explorer/Tool services keyed by sub-agent.
+
+    These two services carry a knowledge-base scope filter, but
+    ``DatusServiceCache`` keys only on project. A single lazy slot would cache
+    the first request's sub-agent and serve its scope to every later one — not
+    "too wide" like the unscoped default, but *wrong*, and silently so.
+    """
+
+    @staticmethod
+    def _with_sub_agents(agent_config):
+        """Give the config two sub-agents with disjoint scopes.
+
+        ``tables`` rather than ``metrics``: a metrics/sqls scope resolves its
+        paths against the subject tree, so it yields no filter on an empty test
+        KB. ``tables`` goes through ``build_table_filter``, which needs no
+        stored data — the point here is the plumbing, not the resolver.
+        """
+        agent_config.agentic_nodes = {
+            **(agent_config.agentic_nodes or {}),
+            "analyst": {"scoped_context": {"tables": "finance.revenue"}},
+            "auditor": {"scoped_context": {"tables": "finance.audit"}},
+        }
+        return agent_config
+
+    def test_default_explorer_is_unscoped(self, real_agent_config):
+        """The property keeps today's behaviour: no name, no filter."""
+        svc = DatusService(agent_config=real_agent_config, project_id="p1")
+
+        assert svc.explorer.sub_agent_name is None
+        assert svc.explorer.metric_rag.sub_agent_name is None
+
+    def test_default_tool_is_unscoped(self, real_agent_config):
+        svc = DatusService(agent_config=real_agent_config, project_id="p1")
+
+        assert svc.tool._sub_agent_name is None
+
+    def test_property_and_explicit_none_are_the_same_instance(self, real_agent_config):
+        """`.explorer` is exactly `explorer_for(None)`, so the 14 existing call
+        sites keep hitting one cached instance instead of rebuilding per call."""
+        svc = DatusService(agent_config=real_agent_config, project_id="p1")
+
+        assert svc.explorer is svc.explorer_for(None)
+        assert svc.tool is svc.tool_for(None)
+
+    def test_same_sub_agent_is_cached(self, real_agent_config):
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        assert svc.explorer_for("analyst") is svc.explorer_for("analyst")
+        assert svc.tool_for("analyst") is svc.tool_for("analyst")
+
+    def test_different_sub_agents_get_different_instances(self, real_agent_config):
+        """The regression a single slot would cause: one sub-agent's scope
+        answering another sub-agent's request."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        assert svc.explorer_for("analyst") is not svc.explorer_for("auditor")
+        assert svc.tool_for("analyst") is not svc.tool_for("auditor")
+
+    def test_scoped_explorer_is_not_the_unscoped_one(self, real_agent_config):
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        assert svc.explorer_for("analyst") is not svc.explorer
+
+    def test_named_sub_agent_reaches_the_rag_layer(self, real_agent_config):
+        """All three RAGs take `sub_agent_name` as their SECOND POSITIONAL
+        argument. Passing only `datasource_id=` by keyword skipped it, which is
+        why these reads were unscoped no matter what the caller asked.
+
+        `MetricRAG` is the one that keeps the name as an attribute; the other
+        two only use it to build their filter, which the next test covers."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        explorer = svc.explorer_for("analyst")
+
+        assert explorer.sub_agent_name == "analyst"
+        assert explorer.metric_rag.sub_agent_name == "analyst"
+
+    def test_an_unnamed_service_stays_unscoped(self, real_agent_config):
+        """`_build_sub_agent_filter` returns None for a falsy name, so an
+        unnamed service must not carry a sub-agent at all."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        assert svc.explorer.sub_agent_name is None
+        assert svc.explorer.metric_rag.sub_agent_name is None
+
+    def test_two_sub_agents_get_their_own_scope(self, real_agent_config):
+        """Equal names would mean the second service was handed the first
+        one's scope. Filter contents are covered by test_rag_scope, which can
+        bind a `tables` scope to a store; the explorer's RAGs are subject-scoped
+        and build no filter at all."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        analyst = svc.explorer_for("analyst")
+        auditor = svc.explorer_for("auditor")
+
+        assert analyst.sub_agent_name == "analyst"
+        assert auditor.sub_agent_name == "auditor"
+        assert analyst.metric_rag.sub_agent_name == "analyst"
+        assert auditor.metric_rag.sub_agent_name == "auditor"
+
+    def test_an_unknown_name_is_refused(self, real_agent_config):
+        """The failure mode this must never have: `sub_agent_config` is a plain
+        dict lookup, so a name that is not an `agentic_nodes` key — an entry's
+        `id`, a typo, a name left over from a rename — resolves to {} and the
+        filter degrades to None. Building that service would answer 200 with
+        everything, turning an identifier mistake into a scope bypass. Fail
+        closed.
+        """
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        with pytest.raises(DatusException) as excinfo:
+            svc.explorer_for("no_such_sub_agent")
+
+        assert "no_such_sub_agent" in str(excinfo.value)
+
+    def test_an_unknown_name_is_refused_for_tools_too(self, real_agent_config):
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        with pytest.raises(DatusException):
+            svc.tool_for("no_such_sub_agent")
+
+    def test_a_refused_name_is_not_cached(self, real_agent_config):
+        """A rejected name must leave no slot behind — otherwise a later lookup
+        could find a service that was never supposed to exist."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        with pytest.raises(DatusException):
+            svc.explorer_for("no_such_sub_agent")
+
+        assert "no_such_sub_agent" not in svc._explorers
+
+    def test_the_error_does_not_enumerate_other_sub_agents(self, real_agent_config):
+        """On a deployment that publishes one sub-agent to a consumer, naming
+        the others in an error is a disclosure in its own right."""
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        with pytest.raises(DatusException) as excinfo:
+            svc.explorer_for("no_such_sub_agent")
+
+        message = str(excinfo.value)
+        assert "analyst" not in message
+        assert "auditor" not in message
+
+    def test_has_sub_agent_distinguishes_configured_names(self, real_agent_config):
+        svc = DatusService(agent_config=self._with_sub_agents(real_agent_config), project_id="p1")
+
+        assert svc.has_sub_agent("analyst") is True
+        assert svc.has_sub_agent("no_such_sub_agent") is False

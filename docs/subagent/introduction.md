@@ -6,7 +6,7 @@ Subagents are specialized AI assistants in Datus. They share the same project co
 
 A subagent can be:
 
-- A built-in system subagent such as `gen_sql`, `explore`, or `scheduler`
+- A built-in system subagent such as `gen_sql`, `explore`, or `gen_job`
 - A custom subagent defined in `agent.agentic_nodes` in `agent.yml`
 
 ## What a Subagent Includes
@@ -21,19 +21,24 @@ A subagent can have:
 
 ## Built-in Subagents
 
-The current built-in set comes from `SYS_SUB_AGENTS` in code:
+The currently exposed built-in set is:
 
 1. `explore`: read-only schema, knowledge, and file exploration
 2. `gen_sql`: specialized SQL generation
-3. `gen_report`: structured report generation
-4. `semantic_modeling`: unified Dosi semantic-model and metric authoring
-5. `gen_sql_summary`: SQL summary generation
-6. `gen_table`: interactive table creation
-7. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
-8. `gen_skill`: skill creation and optimization
-9. `gen_dashboard`: BI dashboard creation and management
-10. `gen_visual_report`: Self-contained visual report under `reports/<slug>/`
-11. `scheduler`: Airflow job lifecycle management
+3. `ask_metrics`: answer questions using existing semantic metrics
+4. `gen_report`: structured report generation
+5. `semantic_modeling`: unified Dosi semantic-model and metric authoring
+6. `gen_sql_summary`: SQL summary generation
+7. `gen_table`: interactive table creation
+8. `gen_job`: data pipeline jobs (single-database ETL AND cross-database migration)
+9. `gen_skill`: skill creation and optimization
+10. `gen_visual_report`: self-contained visual report under `reports/<slug>/`
+
+Airflow scheduling and external BI operations such as Superset authoring are
+not subagent types. The main agent performs them directly with installed
+plugins and their bundled skills. The legacy `SchedulerAgenticNode` and
+`GenDashboardAgenticNode` implementations remain in the codebase temporarily,
+but they are not discoverable or executable as built-in or custom subagents.
 
 See [Built-in subagents](./builtin_subagents.md) for details.
 
@@ -41,7 +46,7 @@ See [Built-in subagents](./builtin_subagents.md) for details.
 
 Custom subagents are configured under `agent.agentic_nodes`.
 
-The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized node classes such as `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`, edit `agent.yml` manually.
+The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized available node classes such as `explore`, `gen_table`, or `gen_skill`, edit `agent.yml` manually. Custom aliases of the legacy scheduling and external-BI node classes are ignored.
 
 Example:
 
@@ -75,7 +80,7 @@ Notes:
 
 ## How to Use Subagents
 
-### Method 1: CLI Slash Command
+### Method 1: CLI Automatic or Explicit Routing
 
 Start the CLI:
 
@@ -83,12 +88,14 @@ Start the CLI:
 datus --datasource production
 ```
 
-Then launch a subagent with `/[name]`:
+Normally, describe the request directly and let the main agent delegate it. To route one message explicitly, append `@Agent <name>`:
 
 ```text
-/semantic_modeling Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders
-/finance_report Analyze quarter-over-quarter revenue changes
+Generate a revenue metric from this SQL: SELECT SUM(revenue) FROM orders. @Agent semantic_modeling
+Analyze quarter-over-quarter revenue changes. @Agent finance_report
 ```
+
+For several consecutive turns with one subagent, run `/agent <name>` first and then enter normal messages. The legacy `/<name> <message>` form is no longer supported.
 
 ### Method 2: Web Interface
 
@@ -145,7 +152,8 @@ Important behavior:
 | `gen_table` | Create tables interactively |
 | `gen_job` | Build data pipeline jobs (single-database ETL or cross-database migration) |
 | `gen_skill` | Create or optimize skills |
-| `gen_dashboard` | Create or manage BI dashboards |
 | `gen_visual_report` | Produce a self-contained visual report under `reports/<slug>/` |
-| `scheduler` | Submit or operate Airflow jobs |
 | Custom names | Any discoverable custom subagent defined in `agent.yml` |
+
+For Airflow or external BI work, ask the main agent to use the installed
+plugin directly; do not call `task()` or create a custom subagent alias.

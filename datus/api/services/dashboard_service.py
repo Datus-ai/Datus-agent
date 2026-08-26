@@ -44,6 +44,7 @@ from datus.schemas.gen_visual_dashboard_models import (
 from datus.schemas.gen_visual_report_models import QueryColumnMeta
 from datus.tools.func_tool.dashboard_artifact_tools import render_dashboard_template
 from datus.tools.func_tool.report_artifact_tools import _normalize_value
+from datus.utils.exceptions import ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -403,6 +404,7 @@ class DashboardService:
         dashboard_slug: str,
         query_slug: str,
         params: Dict[str, Any],
+        policy_context: Optional[Dict[str, Any]] = None,
         published_version: Optional[int] = None,
         published_template_loader: Optional[PublishedTemplateLoader] = None,
     ) -> Result[SqlQueryResultEnvelope]:
@@ -518,6 +520,7 @@ class DashboardService:
                 connector,
                 datasource=meta.datasource or "",
                 result_format="list",
+                policy_context=policy_context,
             )
         except Exception as exc:
             logger.exception("Query execution crashed for %s/%s: %s", dashboard_slug, query_slug, exc)
@@ -528,10 +531,18 @@ class DashboardService:
             )
 
         if not getattr(exec_result, "success", False):
+            error_text = getattr(exec_result, "error", None) or "unknown error"
+            # A policy refusal is not a failed query: the caller may not see
+            # these rows, which is a different thing to say and a different
+            # thing for a viewer to render. Passed through unwrapped — it is
+            # already a sentence addressed to whoever is reading it, and
+            # "query failed:" in front of it helps nobody.
+            if getattr(exec_result, "error_code", None) == ErrorCode.POLICY_DENIED.code:
+                return Result(success=False, errorCode="POLICY_DENIED", errorMessage=error_text)
             return Result(
                 success=False,
                 errorCode="QUERY_EXECUTION_FAILED",
-                errorMessage=f"query failed: {getattr(exec_result, 'error', 'unknown error')}",
+                errorMessage=f"query failed: {error_text}",
             )
 
         rows_raw = getattr(exec_result, "sql_return", None) or []

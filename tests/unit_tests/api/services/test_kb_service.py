@@ -62,6 +62,66 @@ class TestKbServiceSemanticComponentRouting:
         ]
 
 
+class TestKbServiceComponentSetRejection:
+    """Components run one after another, so a set the request had no right to
+    ask for must be refused before the first component writes anything."""
+
+    @pytest.mark.parametrize("strategy", ["sync-yaml", "refresh-profile"])
+    def test_a_semantic_model_only_strategy_refuses_extra_components(self, strategy):
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy=strategy,
+            success_story="stories.csv",
+        )
+
+        rejection = KbService._reject_unsupported_component_set(request)
+
+        assert rejection == f"strategy={strategy} is only supported with semantic_model, not metrics"
+
+    @pytest.mark.parametrize("strategy", ["sync-yaml", "refresh-profile"])
+    def test_semantic_model_alone_is_accepted(self, strategy):
+        request = BootstrapKbInput(
+            components=["semantic_model"],
+            strategy=strategy,
+            success_story="stories.csv",
+        )
+
+        assert KbService._reject_unsupported_component_set(request) is None
+
+    def test_other_strategies_are_not_restricted(self):
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy="incremental",
+            success_story="stories.csv",
+        )
+
+        assert KbService._reject_unsupported_component_set(request) is None
+
+    @pytest.mark.asyncio
+    async def test_a_refused_request_still_terminates_the_stream(self, real_agent_config):
+        """Consumers read the "all" component as the end of the stream, so a
+        refusal that returned early would leave them waiting forever."""
+        import asyncio
+
+        svc = KbService(agent_config=real_agent_config)
+        request = BootstrapKbInput(
+            components=["semantic_model", "metrics"],
+            strategy="sync-yaml",
+            success_story="stories.csv",
+        )
+
+        events = [
+            event
+            async for event in svc.bootstrap_stream(
+                request, "refused-stream", asyncio.Event(), str(real_agent_config.home)
+            )
+        ]
+
+        assert [event.component for event in events] == ["all"]
+        assert events[-1].stage == BatchStage.TASK_FAILED
+        assert "metrics" in events[-1].error
+
+
 class TestKbServiceBuildArgs:
     """Tests for _build_args — argument namespace creation."""
 
@@ -238,6 +298,53 @@ class TestKbServiceBatchEventToSse:
 class TestKbServiceBootstrapStream:
     """Tests for bootstrap_stream — the main async generator."""
 
+    async def test_an_unbound_datasource_becomes_a_readable_failure_event(self, real_agent_config):
+        """Not a broken stream.
+
+        The datasource setter raises for a name the project has not bound. Left
+        to happen inside the component loop, the exception escapes the async
+        generator after the SSE headers are already out, so the client sees the
+        stream die rather than a failure it can display.
+        """
+        import asyncio
+
+        svc = KbService(agent_config=real_agent_config)
+        request = BootstrapKbInput(components=["metadata"], strategy="check", datasource="not_bound")
+
+        events = []
+        async for event in svc.bootstrap_stream(request, "s", asyncio.Event(), str(real_agent_config.home)):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0].component == "all"
+        assert events[0].stage == BatchStage.TASK_FAILED
+        assert "not_bound" in (events[0].error or "")
+
+    async def test_the_current_datasource_is_not_cloned(self, real_agent_config):
+        """Naming the current datasource (or none) reuses the shared config."""
+        svc = KbService(agent_config=real_agent_config)
+
+        assert svc._config_for(BootstrapKbInput(components=["metadata"])) is real_agent_config
+        assert (
+            svc._config_for(BootstrapKbInput(components=["metadata"], datasource=real_agent_config.current_datasource))
+            is real_agent_config
+        )
+
+    async def test_another_datasource_gets_its_own_config(self, real_agent_config):
+        """A clone, not a mutation: the shared config is read concurrently by
+        every other request, and the KB stores scope their rows by
+        `current_datasource` — so indexing one datasource must not be able to
+        write another's."""
+        svc = KbService(agent_config=real_agent_config)
+        current = real_agent_config.current_datasource
+        real_agent_config.services.datasources["second"] = real_agent_config.services.datasources[current]
+
+        clone = svc._config_for(BootstrapKbInput(components=["metadata"], datasource="second"))
+
+        assert clone is not real_agent_config
+        assert clone.current_datasource == "second"
+        assert real_agent_config.current_datasource == current
+
     async def test_bootstrap_stream_metadata_check(self, real_agent_config):
         """bootstrap_stream with metadata check strategy yields events and completes."""
         import asyncio
@@ -308,9 +415,14 @@ class TestKbServiceBootstrapStream:
             cancel_event,
             project_root,
             *,
+            config=None,
             authoring_scope=None,
         ):
-            calls.append((component, authoring_scope))
+            # Record the forwarded config, not just the component: a double
+            # that drops it would pass even if bootstrap_stream stopped
+            # forwarding the pre-resolved one, which is the datasource-isolation
+            # contract.
+            calls.append((component, authoring_scope, getattr(config, "current_datasource", None)))
             return {"status": "success", "message": "done", "details": {}}
 
         with patch.object(svc, "_run_component", side_effect=fake_run_component):
@@ -324,7 +436,7 @@ class TestKbServiceBootstrapStream:
                 )
             ]
 
-        assert calls == [("semantic_model", "full")]
+        assert calls == [("semantic_model", "full", real_agent_config.current_datasource)]
         summary = events[-1].payload["components"]
         assert set(summary) == {"semantic_model", "metrics"}
         assert summary["metrics"]["details"]["shared_execution"] == "semantic_model"
@@ -430,17 +542,14 @@ class TestKbServiceInitSemanticAndMetrics:
             str(real_agent_config.home),
         )
         with (
-            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_rag,
             patch("datus.api.services.kb_service.init_success_story_semantic_model") as mock_init,
         ):
             mock_rag.return_value.get_size.return_value = 4
-            mock_profile.return_value.get_size.return_value = 2
             result = svc._init_semantic_model(real_agent_config, "check", "", args, emit=None)
 
         assert result["status"] == "success"
-        assert "semantic_object_count=4" in result["message"]
-        assert "table_semantic_profile_count=2" in result["message"]
+        assert "semantic_dataset_count=4" in result["message"]
         mock_init.assert_not_called()
 
     def test_init_semantic_modeling_forwards_unified_options(self, real_agent_config):
@@ -488,8 +597,8 @@ class TestKbServiceInitSemanticAndMetrics:
         )
 
         with (
-            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG"),
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_rag_cls,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG"),
             patch(
                 "datus.api.services.kb_service.init_success_story_semantic_model",
                 return_value=(True, ""),
@@ -514,8 +623,7 @@ class TestKbServiceInitSemanticAndMetrics:
         )
 
         with (
-            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
-            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile_cls,
+            patch("datus.api.services.kb_service.SemanticDatasetRAG") as mock_rag_cls,
             patch(
                 "datus.api.services.kb_service.refresh_success_story_semantic_model_profile",
                 return_value=(True, "", 4),
@@ -523,7 +631,6 @@ class TestKbServiceInitSemanticAndMetrics:
             patch("datus.api.services.kb_service.init_success_story_semantic_model") as mock_generate,
         ):
             mock_rag_cls.return_value.get_size.return_value = 5
-            mock_profile_cls.return_value.get_size.return_value = 2
             result = svc._init_semantic_model(real_agent_config, "refresh-profile", "", args, emit=None)
 
         assert result["status"] == "success"
@@ -693,8 +800,11 @@ async def test_kb_bootstrap_acceptance_orchestrates_components_in_order(real_age
     )
     calls = []
 
-    def fake_run_component(request, component, queue, loop, cancel_event, project_root, *, authoring_scope=None):
+    def fake_run_component(
+        request, component, queue, loop, cancel_event, project_root, *, config=None, authoring_scope=None
+    ):
         assert authoring_scope is None
+        assert config is not None and config.current_datasource == real_agent_config.current_datasource
         calls.append((component, request.subject_tree, project_root))
         return {
             "status": "success",

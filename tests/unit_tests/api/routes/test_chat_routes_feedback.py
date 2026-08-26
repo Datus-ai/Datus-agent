@@ -5,13 +5,12 @@
 """Unit tests for POST /api/v1/chat/feedback endpoint."""
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datus.api.models.cli_models import FeedbackChatInput, StreamChatInput
 from datus.api.routes.chat_routes import stream_chat_feedback
-from datus.tools.sql_policy import SqlPolicyConfig
 
 
 def _build_svc():
@@ -29,7 +28,7 @@ def _build_svc():
 def _build_ctx(user_id="tester"):
     ctx = MagicMock()
     ctx.user_id = user_id
-    ctx.principal = {}
+    ctx.policy_context = {}
     return ctx
 
 
@@ -112,15 +111,8 @@ async def test_feedback_endpoint_appends_optional_reaction_msg():
 
 
 @pytest.mark.asyncio
-async def test_feedback_endpoint_denies_when_sql_policy_enabled_without_principal():
+async def test_feedback_endpoint_denies_when_policy_context_is_rejected():
     svc = _build_svc()
-    svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
-        {
-            "enabled": True,
-            "provider": "x:Y",
-            "policies": [{"condition": {"value_from": "principal.market_code"}}],
-        }
-    )
     svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
     ctx = _build_ctx(user_id=None)
     request = FeedbackChatInput(
@@ -129,7 +121,10 @@ async def test_feedback_endpoint_denies_when_sql_policy_enabled_without_principa
         reference_msg="Here is your SQL result",
     )
 
-    response = await stream_chat_feedback(request, svc, ctx)
+    runtime = MagicMock()
+    runtime.validate_context.return_value = MagicMock(allowed=False, reason="Policy context denies all data reads")
+    with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
+        response = await stream_chat_feedback(request, svc, ctx)
     chunks = []
     async for chunk in response.body_iterator:
         chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
@@ -137,8 +132,6 @@ async def test_feedback_endpoint_denies_when_sql_policy_enabled_without_principa
     assert len(chunks) == 1
     assert "event: error" in chunks[0]
     payload = json.loads(next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :])
-    assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
-    assert "principal.market_code" in payload["error"]
-    assert "provider that populates principal fields" in payload["error"]
-    assert "agent.sql_policy" in payload["error"]
+    assert payload["error_type"] == "POLICY_CONTEXT_REJECTED"
+    assert "denies all data reads" in payload["error"]
     svc.chat.stream_chat.assert_not_called()

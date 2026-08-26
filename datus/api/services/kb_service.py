@@ -1,6 +1,7 @@
 """Service for knowledge base bootstrap with SSE streaming."""
 
 import asyncio
+import copy
 import types
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -20,13 +21,12 @@ from datus.storage.reference_sql import ReferenceSqlRAG
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
 from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.local_init import init_local_schema
+from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
     refresh_success_story_semantic_model_profile,
 )
 from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
-from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -43,6 +43,26 @@ class KbService:
 
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
+
+    def _config_for(self, request: BootstrapKbInput) -> AgentConfig:
+        """The config this bootstrap runs under.
+
+        A project bound to several datasources has separate metadata and
+        separate KB rows per datasource (the stores scope rows by
+        ``current_datasource``), so indexing one must not be able to write
+        another's. Returns a copy with the datasource switched rather than
+        mutating the shared config, which is cached per project and read
+        concurrently by every other request.
+        """
+        requested = (getattr(request, "datasource", None) or "").strip()
+        if not requested or requested == self.agent_config.current_datasource:
+            return self.agent_config
+
+        clone = copy.copy(self.agent_config)
+        # Raises for a datasource the project has not bound — better than
+        # silently indexing the current one under the requested name.
+        clone.current_datasource = requested
+        return clone
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -61,6 +81,39 @@ class KbService:
         loop = asyncio.get_running_loop()
         summary: dict[str, dict] = {}
 
+        # Components run one after another, so a set the request never had the
+        # right to ask for has to be refused before the first one writes. The
+        # refusal is emitted on "all" because consumers treat that component as
+        # the end of the stream, and it belongs to the request rather than to
+        # any single component.
+        if rejection := self._reject_unsupported_component_set(request):
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=rejection,
+                payload={"components": summary},
+            )
+            return
+
+        # Resolved here, before the first component runs, for two reasons: the
+        # datasource setter raises for a name the project has not bound, and by
+        # the time a component is running the SSE headers are out — an exception
+        # from inside this generator breaks the stream instead of reaching the
+        # client as an error it can read. Computed once and reused; cloning the
+        # config per component was pure waste.
+        try:
+            config = self._config_for(request)
+        except Exception as e:  # noqa: BLE001 — surfaced to the client below
+            yield self._make_event(
+                stream_id,
+                "all",
+                BatchStage.TASK_FAILED,
+                error=str(e),
+                payload={"components": summary},
+            )
+            return
+
         for comp_name, aliases, authoring_scope in self._component_execution_specs(request):
             if cancel_event.is_set():
                 yield self._make_event(
@@ -74,7 +127,7 @@ class KbService:
             # Stream BatchEvents from the queue in real-time while the thread runs.
             trace_component = comp_name.value if hasattr(comp_name, "value") else str(comp_name)
             trace_ctx = build_bootstrap_trace_context(
-                datasource=self.agent_config.current_datasource,
+                datasource=config.current_datasource,
                 components=[trace_component],
                 strategy=request.strategy,
                 stream_id=stream_id,
@@ -95,6 +148,7 @@ class KbService:
                         loop,
                         cancel_event,
                         project_root,
+                        config=config,
                         authoring_scope=authoring_scope,
                     )
 
@@ -201,9 +255,12 @@ class KbService:
         cancel_event: asyncio.Event,
         project_root: str,
         *,
+        config: Optional[AgentConfig] = None,
         authoring_scope: Optional[str] = None,
     ) -> dict:
-        config = self.agent_config
+        # Resolved once by the caller, which is also where a bad datasource is
+        # turned into a readable failure event rather than a broken SSE stream.
+        config = config if config is not None else self._config_for(request)
         strategy = request.strategy
         pool_size = 1
         dir_path = config.rag_storage_path()
@@ -217,10 +274,10 @@ class KbService:
 
         subject_tree = request.subject_tree
         try:
-            if strategy == "refresh-profile" and component != KbComponent.SEMANTIC_MODEL:
+            if strategy in {"refresh-profile", "sync-yaml"} and component != KbComponent.SEMANTIC_MODEL:
                 return {
                     "status": "failed",
-                    "message": "strategy=refresh-profile is only supported with semantic_model",
+                    "message": f"strategy={strategy} is only supported with semantic_model",
                 }
 
             if component == KbComponent.METADATA:
@@ -322,19 +379,24 @@ class KbService:
         args: types.SimpleNamespace,
         emit,
     ) -> dict:
-        rag = SemanticModelRAG(config)
+        rag = SemanticDatasetRAG(config)
         if strategy == "check":
-            profile_rag = TableSemanticProfileRAG(config)
             return {
                 "status": "success",
-                "message": (
-                    "semantic_model check completed, "
-                    f"semantic_object_count={rag.get_size()}, "
-                    f"table_semantic_profile_count={profile_rag.get_size()}"
-                ),
+                "message": (f"semantic_model check completed, semantic_dataset_count={rag.get_size()}"),
             }
+        if strategy == "sync-yaml":
+            from datus.storage.semantic_model.semantic_model_init import sync_semantic_yaml_tree
+
+            successful, message, synced = sync_semantic_yaml_tree(config, args.semantic_yaml or "")
+            if successful:
+                return {
+                    "status": "success",
+                    "message": f"{message}, semantic_dataset_count={SemanticDatasetRAG(config).get_size()}",
+                }
+            return {"status": "failed", "message": message, "synced": synced}
+
         if strategy == "refresh-profile":
-            profile_rag = TableSemanticProfileRAG(config)
             successful, error_message, changed = refresh_success_story_semantic_model_profile(
                 config,
                 args.semantic_yaml,
@@ -347,8 +409,7 @@ class KbService:
                     "message": (
                         "semantic_model profile refresh completed, "
                         f"changed_description_count={changed}, "
-                        f"semantic_object_count={rag.get_size()}, "
-                        f"table_semantic_profile_count={profile_rag.get_size()}"
+                        f"semantic_dataset_count={rag.get_size()}"
                     ),
                     "error": error_message,
                 }
@@ -359,7 +420,7 @@ class KbService:
         if successful:
             return {
                 "status": "success",
-                "message": f"semantic_model bootstrap completed, semantic_object_count={rag.get_size()}",
+                "message": f"semantic_model bootstrap completed, semantic_dataset_count={rag.get_size()}",
                 "error": error_message,
             }
         return {"status": "failed", "message": error_message}
@@ -421,7 +482,7 @@ class KbService:
             "status": "success",
             "message": (
                 "semantic_modeling bootstrap completed, "
-                f"semantic_object_count={details.get('semantic_object_count', 0)}, "
+                f"semantic_dataset_count={details.get('semantic_dataset_count', 0)}, "
                 f"metrics_count={details.get('metrics_count', 0)}, "
                 f"sql_entries_covered={details.get('sql_entries_covered', 0)}, "
                 f"authoring_scope={authoring_scope}"
@@ -598,6 +659,19 @@ class KbService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _reject_unsupported_component_set(request: BootstrapKbInput) -> Optional[str]:
+        """Describe why the whole request is invalid, or None when it is fine."""
+        if request.strategy not in {"refresh-profile", "sync-yaml"}:
+            return None
+        components = [
+            component.value if hasattr(component, "value") else str(component) for component in request.components
+        ]
+        unsupported = [component for component in components if component != KbComponent.SEMANTIC_MODEL.value]
+        if not unsupported:
+            return None
+        return f"strategy={request.strategy} is only supported with semantic_model, not {', '.join(unsupported)}"
+
+    @staticmethod
     def _component_execution_specs(request: BootstrapKbInput) -> list[tuple[str, list[str], Optional[str]]]:
         """Collapse semantic authoring aliases into one semantic_modeling execution."""
         components = [
@@ -611,7 +685,11 @@ class KbService:
         requested_semantic = list(
             dict.fromkeys(component for component in components if component in semantic_components)
         )
-        normalize_authoring = bool(requested_semantic) and request.strategy not in {"check", "refresh-profile"}
+        normalize_authoring = bool(requested_semantic) and request.strategy not in {
+            "check",
+            "refresh-profile",
+            "sync-yaml",
+        }
         if not normalize_authoring:
             return [(component, [component], None) for component in components]
 

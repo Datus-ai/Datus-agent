@@ -11,7 +11,7 @@ asyncio.Task so that client disconnects do not cancel the computation.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Annotated, Any, AsyncGenerator, Optional
+from typing import TYPE_CHECKING, Annotated, AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
@@ -46,8 +46,9 @@ from datus.api.models.cli_models import (
 )
 from datus.api.services.background_drain import track_background_task
 from datus.api.utils.stream_errors import humanize_stream_error
-from datus.tools.sql_policy import SqlPolicyConfig
+from datus.tools.policy_runtime import PolicyRuntime
 from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
+from datus.utils.exceptions import DatusException
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
@@ -73,12 +74,11 @@ _EXTRA_BUILTIN_SUBAGENTS = {"feedback"}
 
 
 def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
-    """Return True if *subagent_id* resolves to a builtin or custom sub-agent."""
-    if subagent_id == "semantic_modeling":
-        from datus.agent.node.semantic_authoring import is_semantic_modeling_available
+    """Return True if *subagent_id* resolves to a builtin or custom sub-agent.
 
-        if not is_semantic_modeling_available(svc.agent_config):
-            return False
+    Existence only. Whether an existing agent may run on *this* project is a
+    separate question — see :func:`_query_only_semantic_detail`.
+    """
     if subagent_id in BUILTIN_SUBAGENTS or subagent_id in _EXTRA_BUILTIN_SUBAGENTS:
         return True
     agentic_nodes = getattr(svc.agent_config, "agentic_nodes", None) or {}
@@ -92,66 +92,44 @@ def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
     return False
 
 
-def _sql_policy_principal_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
-    """Fail fast when enabled SQL policies need missing principal fields."""
-    agent_config = getattr(svc, "agent_config", None)
-    sql_policy_config = getattr(agent_config, "sql_policy_config", None)
-    if not isinstance(sql_policy_config, SqlPolicyConfig) or not sql_policy_config.enabled:
-        return None
+def _query_only_semantic_detail(svc, subagent_id: Optional[str]) -> Optional[str]:
+    """Return the query-only message when this project cannot author semantics.
 
-    principal = getattr(ctx, "principal", None) or {}
-    required_paths = _required_principal_paths(sql_policy_config.raw)
-    missing_paths = _missing_principal_paths(principal, required_paths)
-    if not missing_paths:
+    Kept out of ``_is_valid_subagent_id`` on purpose: a Dosi-only gate deserves
+    a 400 naming the migration, not a 404 that reads as "no such agent".
+    """
+    if subagent_id != "semantic_modeling":
         return None
-
-    detail = ""
-    if missing_paths:
-        missing_fields = ", ".join(f"principal.{path}" for path in missing_paths)
-        detail = f" Missing principal field(s): {missing_fields}."
-    return ChatPreCheckOutcome(
-        allow=False,
-        error=(
-            "SQL policy is enabled, but this request is missing principal data required by policy."
-            f"{detail} "
-            "Authenticate the request with a provider that populates principal fields required by "
-            "agent.sql_policy. The agent cannot infer or set request principal from SQL."
-        ),
-        error_type="SQL_POLICY_PRINCIPAL_REQUIRED",
+    from datus.agent.node.semantic_authoring import (
+        QUERY_ONLY_MIGRATION_MESSAGE,
+        is_semantic_modeling_available,
     )
 
-
-def _required_principal_paths(raw: Any) -> list[str]:
-    paths: set[str] = set()
-
-    def visit(value: Any) -> None:
-        if isinstance(value, dict):
-            value_from = value.get("value_from")
-            if isinstance(value_from, str) and value_from.startswith("principal."):
-                path = value_from[len("principal.") :].strip()
-                if path:
-                    paths.add(path)
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(raw)
-    return sorted(paths)
+    if is_semantic_modeling_available(svc.agent_config):
+        return None
+    return QUERY_ONLY_MIGRATION_MESSAGE
 
 
-def _missing_principal_paths(principal: dict[str, Any], required_paths: list[str]) -> list[str]:
-    return [path for path in required_paths if not _principal_path_exists(principal, path)]
-
-
-def _principal_path_exists(principal: dict[str, Any], path: str) -> bool:
-    current: Any = principal
-    for part in path.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return False
-        current = current[part]
-    return current not in (None, "", [])
+def _policy_context_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
+    """Fail fast when an active policy rejects the request context."""
+    agent_config = getattr(svc, "agent_config", None)
+    try:
+        context = getattr(ctx, "policy_context", None)
+        decision = PolicyRuntime(agent_config).validate_context(context if isinstance(context, dict) else {})
+    except DatusException as exc:
+        logger.error("Policy runtime validation failed: %s", exc, exc_info=True)
+        return ChatPreCheckOutcome(
+            allow=False,
+            error="Policy validation failed.",
+            error_type="POLICY_RUNTIME_ERROR",
+        )
+    if decision.allowed:
+        return None
+    return ChatPreCheckOutcome(
+        allow=False,
+        error=decision.reason or "Policy rejected the request context.",
+        error_type="POLICY_CONTEXT_REJECTED",
+    )
 
 
 # ========== Stream Chat ==========
@@ -177,13 +155,16 @@ async def stream_chat(
             status_code=400,
             detail=retired_semantic_agent_message(sub_agent_id, svc.agent_config),
         )
+    query_only_detail = _query_only_semantic_detail(svc, sub_agent_id)
+    if query_only_detail:
+        raise HTTPException(status_code=400, detail=query_only_detail)
     if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
         raise HTTPException(
             status_code=404,
             detail=f"Subagent '{sub_agent_id}' not found",
         )
 
-    sql_policy_denial = _sql_policy_principal_pre_check(svc, ctx)
+    sql_policy_denial = _policy_context_pre_check(svc, ctx)
     if sql_policy_denial:
         return StreamingResponse(
             _emit_pre_check_denial(request, sql_policy_denial),
@@ -204,7 +185,12 @@ async def stream_chat(
 
     async def generate_sse():
         async for chunk in _stream_with_post_hook(
-            svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id, principal=ctx.principal),
+            svc.chat.stream_chat(
+                request,
+                sub_agent_id=sub_agent_id,
+                user_id=ctx.user_id,
+                policy_context=ctx.policy_context,
+            ),
             http_request=http_request,
             request=request,
             user_id=ctx.user_id,
@@ -245,7 +231,7 @@ async def stream_chat_feedback(
         message=rendered_message,
         subagent_id="feedback",
     )
-    sql_policy_denial = _sql_policy_principal_pre_check(svc, ctx)
+    sql_policy_denial = _policy_context_pre_check(svc, ctx)
     if sql_policy_denial:
         return StreamingResponse(
             _emit_pre_check_denial(stream_input, sql_policy_denial),
@@ -255,7 +241,10 @@ async def stream_chat_feedback(
 
     async def generate_sse():
         async for event in svc.chat.stream_chat(
-            stream_input, sub_agent_id="feedback", user_id=ctx.user_id, principal=ctx.principal
+            stream_input,
+            sub_agent_id="feedback",
+            user_id=ctx.user_id,
+            policy_context=ctx.policy_context,
         ):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
@@ -336,8 +325,14 @@ async def compact_chat_session(
     summary="List Chat Sessions",
     description=(
         "List chat sessions. Pass subagent_id to filter by agent "
-        "(use 'chat' for the default chat agent, or any builtin/custom subagent id). "
-        "Omit to return every session for the user."
+        "(use 'chat' for the default chat agent, or any built-in/custom subagent id). "
+        "Omit to return sessions for every agent. Use offset/limit to paginate — "
+        "only the requested page is opened as sqlite, so the dominant per-session "
+        "cost doesn't scale with the user's total session count (the mtime sort "
+        "still stats every session file, far more cheaply). Omitting limit yields "
+        "the server default page size (api.default_session_page_size); larger "
+        "requested limits are clamped to api.max_session_page_size. total_count "
+        "reports the unpaginated total."
     ),
 )
 async def list_sessions(
@@ -347,10 +342,22 @@ async def list_sessions(
         default=None,
         description="Filter by subagent id; 'chat' selects the default chat agent",
     ),
+    offset: int = Query(default=0, ge=0, description="Number of sessions to skip"),
+    limit: Optional[int] = Query(
+        default=None,
+        ge=1,
+        description="Maximum number of sessions to return; omit for the server default page size",
+    ),
 ) -> Result[ChatSessionData]:
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(svc.chat.list_sessions, user_id=ctx.user_id, subagent_id=subagent_id),
+            asyncio.to_thread(
+                svc.chat.list_sessions,
+                user_id=ctx.user_id,
+                subagent_id=subagent_id,
+                offset=offset,
+                limit=limit,
+            ),
             timeout=_FUSE_IO_TIMEOUT,
         )
     except TimeoutError:

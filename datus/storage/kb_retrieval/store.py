@@ -85,6 +85,30 @@ def _normalize_row_text(value: Any) -> str:
     return " ".join(text.split())
 
 
+_SEMANTIC_ROW_TEXT_FIELDS = (
+    "name",
+    "expr",
+    "description",
+    "ai_context_json",
+    "from_dataset",
+    "to_dataset",
+    "from_columns_json",
+    "to_columns_json",
+)
+
+
+def _semantic_rows_text(rows: Any) -> str:
+    """Flatten semantic dataset rows into indexable text."""
+    if not isinstance(rows, list):
+        return ""
+    parts: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        parts.extend(str(row.get(field) or "") for field in _SEMANTIC_ROW_TEXT_FIELDS if row.get(field))
+    return " ".join(parts)
+
+
 def _qualified_name(row: Dict[str, Any]) -> str:
     parts = [
         str(row.get("catalog_name") or "").strip(),
@@ -496,7 +520,7 @@ class MetadataFtsRAG:
                 },
             )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.document_store, "tables")
-        self._table_semantic_profiles = None
+        self._semantic_datasets = None
         self.last_search_info: Dict[str, Any] = self._search_info(index_status=FtsIndexStatus.MISSING)
 
     @staticmethod
@@ -1020,11 +1044,11 @@ class MetadataFtsRAG:
             search_parts.extend(
                 [
                     f"semantic_model {profile.get('semantic_model_name', '')}",
-                    f"dataset {profile.get('dataset_name') or profile.get('data_source_name') or ''}",
+                    f"dataset {profile.get('dataset_name', '')}",
                     f"description {profile.get('description', '')}",
                     f"ai_context {profile.get('ai_context_json', '')}",
-                    f"columns {profile.get('columns_json', '')}",
-                    f"relationships {profile.get('relationships_json', '')}",
+                    f"columns {_semantic_rows_text(profile.get('fields'))}",
+                    f"relationships {_semantic_rows_text(profile.get('relationships'))}",
                 ]
             )
             payload["semantic_profile_applied"] = True
@@ -1052,25 +1076,25 @@ class MetadataFtsRAG:
         return row
 
     def _get_profile_for_fact(self, fact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if self._table_semantic_profiles is None:
+        if self._semantic_datasets is None:
             try:
-                from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+                from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 
-                self._table_semantic_profiles = TableSemanticProfileRAG(self.agent_config)
+                self._semantic_datasets = SemanticDatasetRAG(self.agent_config)
             except Exception as exc:
-                logger.debug("Table semantic profile storage unavailable for metadata docs: %s", exc)
-                self._table_semantic_profiles = False
-        if not self._table_semantic_profiles:
+                logger.debug("Semantic dataset storage unavailable for metadata docs: %s", exc)
+                self._semantic_datasets = False
+        if not self._semantic_datasets:
             return None
         try:
-            return self._table_semantic_profiles.get_profile(
+            return self._semantic_datasets.get_table_projection(
                 catalog_name=str(fact.get("catalog_name") or ""),
                 database_name=str(fact.get("database_name") or ""),
                 schema_name=str(fact.get("schema_name") or ""),
                 table_name=str(fact.get("table_name") or ""),
             )
         except Exception as exc:
-            logger.debug("Failed to load table semantic profile for %s: %s", fact.get("table_name"), exc)
+            logger.debug("Failed to load semantic dataset for %s: %s", fact.get("table_name"), exc)
             return None
 
     @staticmethod

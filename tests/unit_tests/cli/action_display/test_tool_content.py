@@ -67,6 +67,7 @@ from datus.cli.action_display.tool_content import (
     extract_args,
     format_generic_preview,
     format_output_verbose,
+    format_review_line,
     make_base_content,
     parse_output_data,
 )
@@ -2281,3 +2282,137 @@ class TestBuilderPostProcessing:
         )
         tc = builder.build(action, verbose=False)
         assert "bad thing" in tc.compact_result
+
+
+@pytest.mark.ci
+class TestReviewLine:
+    """One-line AI permission-review summary drawn above the result row."""
+
+    @staticmethod
+    def _review(**overrides):
+        payload = {
+            "outcome": "auto_allowed",
+            "decision": "allow",
+            "risk_level": "low",
+            "user_authorization": "medium",
+            "confidence": 0.92,
+            "rationale": "dependency install, scoped to the workspace, reversible",
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_passed_verdict(self):
+        line = format_review_line(self._review())
+        assert line == (
+            "AI review ✓ passed · low risk · conf 0.92 · dependency install, scoped to the workspace, reversible"
+        )
+
+    def test_flagged_verdict_names_the_human_override(self):
+        """An approved-despite-flagged run must not read as a clean pass."""
+        line = format_review_line(self._review(decision="ask", risk_level="high", outcome="user_approved"))
+        assert "✗ flagged" in line
+        assert "high risk" in line
+        assert "user approved" in line
+
+    def test_auto_allowed_does_not_claim_a_human_approved(self):
+        assert "user approved" not in format_review_line(self._review())
+
+    def test_unavailable_verdict_says_so_once(self):
+        line = format_review_line({"outcome": "user_approved", "decision": "unavailable"})
+        assert line == "AI review ? unavailable · user approved"
+
+    def test_long_rationale_truncated_in_compact_but_not_verbose(self):
+        rationale = "x" * 400
+        compact = format_review_line(self._review(rationale=rationale))
+        verbose = format_review_line(self._review(rationale=rationale), verbose=True)
+        assert "..." in compact and len(compact) < 200
+        assert rationale in verbose
+
+    def test_rationale_within_the_prompted_budget_is_not_truncated(self):
+        """The display budget must not be tighter than what the reviewer is
+        asked for, or every compliant verdict would still show "..."."""
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+
+        rationale = "deletes build/ in the workspace, artifacts regenerable"
+        assert len(rationale) <= _REVIEW_RATIONALE_MAX
+        assert rationale in format_review_line(self._review(rationale=rationale))
+
+    def test_common_row_fits_a_120_column_terminal(self):
+        """Budget rationale: the row the user sees most must not wrap.
+
+        The overwhelming majority of rendered reviews are auto-allowed
+        low/medium verdicts, so that shape is the one held to 120 columns
+        (the renderer prepends a 5-column gutter). A flagged/critical verdict,
+        or one carrying "user approved", is longer and may wrap — those are the
+        rare, high-attention rows where wrapping costs little.
+        """
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+
+        common_prefix = format_review_line(
+            {"decision": "allow", "risk_level": "low", "confidence": 0.97, "rationale": ""}
+        )
+        assert 5 + len(common_prefix) + len(" \u00b7 ") + _REVIEW_RATIONALE_MAX <= 120
+
+    def test_display_budget_matches_what_the_prompt_asks_for(self):
+        """Guard against the two drifting apart on a later edit."""
+        from datus.cli.action_display.tool_content import _REVIEW_RATIONALE_MAX
+        from datus.tools.permission.auto_reviewer import _REVIEW_SYSTEM_PROMPT
+
+        assert f"about {_REVIEW_RATIONALE_MAX} characters" in _REVIEW_SYSTEM_PROMPT
+
+    def test_multiline_rationale_collapses_to_one_line(self):
+        line = format_review_line(self._review(rationale="first\nsecond   third"))
+        assert "\n" not in line
+        assert "first second third" in line
+
+    @pytest.mark.parametrize("review", [None, {}, "not a dict", 42])
+    def test_missing_or_malformed_review_yields_empty(self, review):
+        assert format_review_line(review) == ""
+
+    def test_partial_payload_omits_absent_fields(self):
+        """A verdict without risk/confidence still renders a usable line."""
+        line = format_review_line({"outcome": "auto_allowed", "decision": "allow", "rationale": "fine"})
+        assert line == "AI review ✓ passed · fine"
+
+
+@pytest.mark.ci
+class TestBuilderReviewLine:
+    def test_reviewed_action_populates_review_line(self):
+        builder = ToolCallContentBuilder()
+        action = _make(
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={
+                "success": True,
+                "permission_review": {"decision": "allow", "risk_level": "low", "rationale": "safe"},
+            },
+        )
+        assert "AI review ✓ passed" in builder.build(action, verbose=False).review_line
+
+    def test_unreviewed_action_leaves_review_line_empty(self):
+        builder = ToolCallContentBuilder()
+        action = _make(
+            input_data={"function_name": "bash", "arguments": {"command": "npm ci"}},
+            output_data={"success": True},
+        )
+        assert builder.build(action, verbose=False).review_line == ""
+
+    def test_review_line_does_not_disturb_the_result_rows(self):
+        """The review row is a separate field, so bash's line/overflow accounting
+        for its own output is unaffected."""
+        builder = ToolCallContentBuilder()
+        raw = json.dumps({"success": 1, "result": "\n".join(f"line {i}" for i in range(10))})
+        args = {"function_name": "bash", "arguments": {"command": "ls"}}
+        plain = builder.build(_make(input_data=args, output_data={"raw_output": raw}), verbose=False)
+        reviewed = builder.build(
+            _make(
+                input_data=args,
+                output_data={
+                    "raw_output": raw,
+                    "permission_review": {"decision": "allow", "rationale": "safe"},
+                },
+            ),
+            verbose=False,
+        )
+        assert plain.compact_result_overflow == 7
+        assert reviewed.compact_result_lines == plain.compact_result_lines
+        assert reviewed.compact_result_overflow == plain.compact_result_overflow

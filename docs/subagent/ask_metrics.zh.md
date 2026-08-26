@@ -2,7 +2,7 @@
 
 ## 概览
 
-`ask_metrics` 是内置的指标问答 subagent。它基于已有语义指标回答问题，不探索原始表，也不生成 SQL。
+`ask_metrics` 是内置的指标问答 subagent。它基于已有语义指标回答问题，不直接探索原始表，也不让模型临时编写 SQL；实际查询由当前 semantic adapter 编译并执行。
 
 适合使用 AskMetrics 的问题包括：
 
@@ -15,38 +15,47 @@ AskMetrics 的能力边界刻意保持较窄。如果没有现有指标能够回
 
 ## 前置条件
 
-AskMetrics 需要已配置的语义层和已发布的指标。
+AskMetrics 需要当前 datasource 上存在可执行的语义指标。Dosi 是内置的默认 semantic adapter；没有配置其他 adapter 时，无需额外添加 `semantic_layer` 配置。其他 adapter 的配置见[语义层配置](../configuration/semantic_layer.zh.md)。
 
-在 `agent.yml` 中配置语义层。以 MetricFlow 为例：
+指标可以来自已有语义层资产，也可以由仅限 Dosi 的 [`semantic_modeling`](semantic_modeling.md) subagent 生成。`semantic_modeling` 成功返回 `generated` 后，会校验目标 YAML 并将指标同步到 Knowledge Base；保持在同一个 datasource 即可立即使用，无需手工发布、导入或重启 Datus。已有 MetricFlow 和 OSI 项目仍可查询，但在项目使用 Dosi 前不能进行语义创作。
 
-```yaml
-agent:
-  services:
-    semantic_layer:
-      metricflow: {}
-```
+主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。
 
-完整配置见 [语义层配置](../configuration/semantic_layer.zh.md)。
+## 快速开始：查询刚生成的指标
 
-指标可以来自已有语义层资产，也可以由仅限 Dosi 的
-[`semantic_modeling`](semantic_modeling.md) subagent 生成。已有 MetricFlow 和 OSI 项目仍可查询，
-但在项目使用 Dosi 前不能进行语义创作。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。
-
-## 快速开始
-
-使用包含指标的 datasource 启动 Datus：
+沿用[语义建模](semantic_modeling.md)中的 DuckDB 示例，使用同一个 datasource 启动 Datus：
 
 ```bash
-datus --datasource production
+datus --datasource duckdb_demo
 ```
 
-通过内置 subagent 提问：
+完成 `bank_failures` 建模后，在主 chat 中直接提问即可，主 agent 会自动派发给 AskMetrics：
 
-```bash
-/ask_metrics What was total revenue last month by customer segment?
+```text
+按年份查询倒闭银行数量和倒闭银行资产总额。
 ```
 
-主 chat agent 也可以在识别到 metric-first 问题时，通过 `task(type="ask_metrics")` 自动委派给 AskMetrics。Web/API 调用方可以使用 `subagent_id: "ask_metrics"` 直接路由。
+AskMetrics 会根据业务描述从主题树和指标定义中匹配刚生成的 `bank_failure_count` 和 `failed_assets_million`，用户无需在问题中写出指标名。这次查询按 `date` 的年份粒度执行；真实测试返回了 14 个年份分组，例如 2008 年分别为 `26` 和 `768576.8`，2024 年分别为 `2` 和 `6107.8`。
+
+如果之前使用 `/agent semantic_modeling` 将语义建模设为当前 agent，先返回主 chat：
+
+```text
+/agent chat
+```
+
+要为单次问题明确指定 AskMetrics，可以使用 agent reference：
+
+```text
+按年份查询倒闭银行数量和倒闭银行资产总额。@Agent ask_metrics
+```
+
+需要连续询问多个指标问题时，可以先选择 AskMetrics，再正常提问：
+
+```text
+/agent ask_metrics
+```
+
+旧的 `/ask_metrics <问题>` 形式不再支持。Web/API 调用方可以使用 `subagent_id: "ask_metrics"` 直接路由。
 
 AskMetrics 只作用于当前 datasource。如果用户询问其他 datasource，请先切换 datasource 再提问。
 
@@ -106,7 +115,7 @@ AskMetrics 返回简洁的 Markdown 报告，包含：
 
 ## 配置
 
-配置语义适配器后，内置 `ask_metrics` subagent 即可使用。你可以覆盖模型和轮数：
+当前 datasource 存在可执行指标后，内置 `ask_metrics` subagent 即可使用。你可以覆盖模型和轮数：
 
 ```yaml
 agent:
@@ -114,7 +123,6 @@ agent:
     ask_metrics:
       model: claude
       max_turns: 12
-      semantic_adapter: metricflow
       subject_tree_prompt_limit: 100
 ```
 
@@ -149,4 +157,4 @@ agent:
 | 生成或修复原始表 SQL | [gen_sql](builtin_subagents.zh.md#gen_sql) |
 | 探索 schema、样本或参考上下文 | [explore](builtin_subagents.zh.md#explore) |
 | 构建可视化报告 artifact | [gen_visual_report](gen_visual_report.zh.md) |
-| 在 BI 工具中创建 dashboard | [gen_dashboard](gen_dashboard.zh.md) |
+| 在外部 BI 工具中创建 dashboard | 让主 agent 直接使用已安装的 BI plugin |

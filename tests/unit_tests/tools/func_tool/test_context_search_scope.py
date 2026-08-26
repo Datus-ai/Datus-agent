@@ -26,7 +26,7 @@ def _build_tools(sub_agent_config):
 
     with (
         patch("datus.tools.func_tool.context_search.MetricRAG", return_value=metric_rag),
-        patch("datus.tools.func_tool.context_search.SemanticModelRAG", return_value=semantic_rag),
+        patch("datus.tools.func_tool.context_search.SemanticDatasetRAG", return_value=semantic_rag),
         patch("datus.tools.func_tool.context_search.ReferenceSqlRAG", return_value=sql_rag),
         patch("datus.tools.func_tool.context_search.ReferenceTemplateRAG", return_value=reference_template_rag),
     ):

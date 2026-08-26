@@ -8,14 +8,14 @@ agent 会根据用户的 prompt 自动判断路径：源库和目标库相同则
 
 ## 快速开始
 
-启动 Datus CLI 后使用 gen_job subagent：
+启动 Datus CLI 后直接用自然语言描述数据管道，chat agent 可以自动派发；需要明确选择时，在请求末尾加 `@Agent gen_job`：
 
-```bash
+```text
 # 单库 ETL
-/gen_job 从 orders 和 customers 表构建一个汇总表
+从 orders 和 customers 表构建一个汇总表。@Agent gen_job
 
 # 跨库传输
-/gen_job 把 local_duckdb 里的 users 表传输到 greenplum
+把 local_duckdb 里的 users 表传输到 greenplum。@Agent gen_job
 ```
 
 chat agent 检测到 ETL 或迁移任务时也会自动委派给 gen_job。
