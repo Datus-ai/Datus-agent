@@ -103,11 +103,13 @@ uv run datus-agent check-db --config conf/agent.yml --datasource local_duckdb
 uv run datus --config conf/agent.yml --datasource local_duckdb
 ```
 
-REPL 会自动识别 SQL：
+进入 REPL 后，在空输入行按 **Tab** 切换到 `sql>` 模式，再执行 SQL：
 
 ```text
-> show tables;
-> select * from tree;
+                          # 按 Tab 切换到 SQL 模式
+sql> show tables;
+sql> select * from tree;
+                          # 按 Esc 返回对话模式
 > /help
 ```
 

@@ -90,13 +90,13 @@ Open a new shell and run `datus`, then:
 
 Manual install works too: `pip install datus-agent` (Python 3.12+). Configuration has two levels: a global `agent.yml` for the main settings, and a per-project `.datus/config.yml` for overrides such as the active model and default datasource (see the [configuration docs](configuration/introduction.md)).
 
-The [end-to-end tutorial](getting_started/contextual_data_engineering.md#part-2-hands-on-tutorial-california-schools) runs the full loop on the sample data, building context through metric Q&A, in about ten minutes:
+Start with [Install and First Query](getting_started/Quickstart.md), then use [Choose Your Getting Started Path](getting_started/index.md) to pick the scenario that matches your goal:
 
 !!! tip "Go deeper"
-    [:material-rocket-launch: **Quickstart Guide**](getting_started/Quickstart.md){ .md-button .md-button--primary }
-    [:material-school: **End-to-end Tutorial**](getting_started/contextual_data_engineering.md#part-2-hands-on-tutorial-california-schools){ .md-button }
+    [:material-rocket-launch: **Install and First Query**](getting_started/Quickstart.md){ .md-button .md-button--primary }
+    [:material-sign-direction: **Choose a Path**](getting_started/index.md){ .md-button }
 
-Pipeline and migration work can start from the [Data Engineering Quickstart](getting_started/data_engineering_quickstart.md); for BI-centered scenarios, see [Dashboard Copilot](getting_started/dashboard_copilot.md).
+To build reusable context, follow [Build a Context-Rich Agent](getting_started/contextual_data_engineering.md). To create a pipeline and dashboard from source data, follow [End-to-End Data Engineering](getting_started/data_engineering_quickstart.md). To start from an existing dashboard, follow [Turn a Dashboard into a Copilot](getting_started/dashboard_copilot.md).
 
 ## Interfaces
 

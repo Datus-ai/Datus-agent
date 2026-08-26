@@ -1,10 +1,13 @@
-# Data Engineering Quickstart
+# End-to-End Data Engineering
 
-This guide walks through a complete local Datus workflow using the open DAComp
+This scenario tutorial walks through a complete local Datus workflow using the open DAComp
 data-engineering dataset. You will inspect the warehouse design, build layered
 tables interactively in a local DuckDB workbench file, generate ETL jobs,
 produce marts data, submit a daily Airflow job, and publish the result to
 Superset.
+
+!!! info "What this tutorial starts from"
+    This guide starts with source data and creates a new pipeline and dashboard. If you already have a Superset dashboard and want to turn it into analysis agents, follow [Turn a Dashboard into a Copilot](dashboard_copilot.md). If this is your first time using Datus, complete [Install and First Query](Quickstart.md) first.
 
 This guide uses Datus plugins to work with Airflow and Superset. Datus
 datasources handle SQL execution and data movement, while the plugins discover,
@@ -42,7 +45,7 @@ unzip -o datus-de-lever-quickstart-v1.zip
 unzip -o datus-data-engineering-quickstart-stack-v1.zip
 
 export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
-export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
+export DATUS_QUICKSTART_STACK="$(pwd)/data-engineering-quickstart-stack"
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
 
@@ -84,6 +87,8 @@ Expose the endpoint to the host and make the Compose service name resolvable
 before starting Superset:
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/superset"
 
 cat > docker-compose.override.yml <<'YAML'
@@ -102,6 +107,7 @@ grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts 
   echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
 
 docker compose up -d
+)
 ```
 
 The host's port 5432 must be available. This walkthrough uses
@@ -110,8 +116,11 @@ The host's port 5432 must be available. This walkthrough uses
 Start Airflow:
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/airflow"
 docker compose up -d
+)
 ```
 
 Default local endpoints:
@@ -138,23 +147,22 @@ export SUPERSET_PG_PASSWORD=superset
 
 ## Step 3: Install and Configure the Plugins
 
-Install both published plugins into the same environment as Datus. A bare
-package name uses the default pip/PyPI install source; do not add a `pip:`
-prefix. The Superset plugin includes the `superset-dashboard-authoring` skill
-used later in this guide:
+Install both plugins from the Datus Plugins Git repository into the same
+environment as Datus. The Superset plugin includes the
+`superset-dashboard-authoring` skill used later in this guide:
 
 ```bash
-datus plugin install datus-airflow-plugin
-datus plugin install datus-superset-plugin
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-airflow-plugin"
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"
 datus plugin info airflow
 datus plugin info superset
 ```
 
-To replace an existing installation with the latest published package:
+To update both plugins from their recorded Git sources:
 
 ```bash
-datus plugin install datus-airflow-plugin --force
-datus plugin install datus-superset-plugin --force
+datus plugin upgrade airflow
+datus plugin upgrade superset
 ```
 
 Merge the following configuration into the existing `agent:` section in
@@ -409,7 +417,7 @@ Once the marts table exists in `superset_serving`, ask the agent to use the
 plugin's authoring skill.
 
 ```text
-Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store only non-sensitive Database, Dataset, Dashboard, and Chart resource request payloads in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets, and redact sensitive fields before writing any payload. Every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
+Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Keep this quickstart dashboard to exactly three charts: a total requisitions KPI, requisitions by status, and requisitions by team. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the three planned queries on that Datus datasource first. Register the table as a physical Superset Dataset, then create the requisition operations dashboard and its three charts. Reuse matching Dataset, Dashboard, or Chart resources left by an earlier attempt instead of creating duplicates. Store only non-sensitive Dataset, Dashboard, and Chart request bodies in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets. Use the typed CLI commands, and inspect the installed OpenAPI schema only if a typed request is rejected. Every chart must contain matching params and query_context JSON strings. Attach all three charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run the KPI query plus one grouped chart query. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
 ```
 
 Data preparation is a separate ETL / scheduled-workflow step. Dashboard generation
@@ -423,10 +431,27 @@ agent and ask it to inspect the Database, table metadata, Dashboard, Charts,
 and chart data through the Superset plugin. Never copy example IDs from this
 page.
 
-The dashboard should contain 11 charts. A representative total-requisitions
-chart query should return 146, category queries should return more than one
+The dashboard should contain three charts. The total-requisitions chart query
+should return 146, the status and team queries should return more than one
 group, and the Database connection should identify
 `postgres:5432/superset_examples`.
+
+This smaller example should normally finish within the main agent's default 50
+turns. If Datus still reports `Max turns (50) exceeded`, temporarily merge this
+override into `~/.datus/conf/agent.yml` to raise the main `chat` agent limit to
+80:
+
+```yaml
+agent:
+  agentic_nodes:
+    chat:
+      max_turns: 80
+```
+
+Restart Datus after saving the configuration, then run this step again. Remove
+the override after the task succeeds to restore the default. This setting only
+changes the maximum number of tool-assisted reasoning turns in one task; it
+does not resume an interrupted task automatically.
 
 ## Step 9: Verify the End-to-End Result
 
@@ -471,3 +496,10 @@ only; the physical write boundary is the workspace namespace.
 
 When the workspace namespace changes, recreate the demo project and regenerate
 the DAG so it uses the current `lake.ws_<workspace_id>` namespace.
+
+## Next Steps
+
+- [Turn a Dashboard into a Copilot](dashboard_copilot.md) — build analysis subagents from an existing Superset dashboard.
+- [Build a Context-Rich Agent](contextual_data_engineering.md) — build reusable context and compare answer quality.
+- [Plugins](../plugin/introduction.md) — configure Airflow, Superset, and other integrations.
+- [Choose Your Getting Started Path](index.md) — compare all getting-started guides.

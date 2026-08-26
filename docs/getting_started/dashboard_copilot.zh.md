@@ -1,8 +1,11 @@
-# Dashboard Copilot
+# 将 Dashboard 变成 Copilot
 
 将 Superset 仪表盘转换成两个 AI 子代理：一个用于自助取数和生成 SQL 的主子代理，以及一个用于指标对比和根因分析的归因子代理。
 
 本教程使用 Superset plugin、通用 `dashboard-bootstrap` skill 和 Dosi semantic adapter 完成整个流程。Dashboard 发现和 SQL 导出由 plugin 负责；skill 负责用户选择和流程编排，并将导出的 SQL 路由给 Datus 的内置 context 构建 agent。
+
+!!! info "本教程从哪里开始"
+    本教程从已有 Superset Dashboard 开始。如果你希望从源数据构建数据管道并创建新的 Dashboard，请阅读[端到端数据工程](data_engineering_quickstart.zh.md)。第一次使用 Datus 时，建议先完成[安装并完成第一次提问](Quickstart.zh.md)。
 
 ## 为什么选择 Dashboard Copilot？
 
@@ -80,15 +83,14 @@ Superset 就绪后停止跟随日志。本地服务信息如下：
 
 ## 步骤 2：安装 Superset plugin 和 Dosi adapter
 
-从 Datus Plugins 仓库安装 Superset plugin：
+从 Datus Plugins Git 仓库安装 Superset plugin：
 
 ```bash
-git clone --depth 1 https://github.com/Datus-ai/Datus-Plugins.git "$HOME/Datus-Plugins"
-datus plugin install "src:$HOME/Datus-Plugins/datus-superset-plugin"
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"
 datus plugin info superset
 ```
 
-如果该目录已经存在，请先更新代码，再使用 `--force` 安装当前版本。
+如需更新已有的 Git 安装，运行 `datus plugin upgrade superset`。
 
 将 Dosi semantic adapter 安装到 Datus 所在的同一个 Python 环境：
 
@@ -495,6 +497,8 @@ Plugin 会在 `manifest.json` 中记录失败。Chart 可能丢失了 Dataset、
 
 ## 后续步骤
 
+- [端到端数据工程](data_engineering_quickstart.zh.md) —— 从源数据构建数据管道和 Dashboard。
+- [选择上手路径](index.md) —— 对比所有入门指南。
 - [Dashboard Bootstrap](../skills/dashboard_bootstrap.zh.md) — 完整通用 workflow contract。
 - [Plugins](../plugin/introduction.zh.md) — plugin 安装、profiles、启用和权限。
 - [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.zh.md) — Dosi 安装和语义行为。

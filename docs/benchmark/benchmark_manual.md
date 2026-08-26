@@ -304,7 +304,7 @@ Try out benchmarking and evaluation with the pre-packaged California Schools dat
 
 ### Step 1: Initialize the Dataset
 
-Follow the [hands-on tutorial](../getting_started/contextual_data_engineering.md#part-2--hands-on-tutorial-california-schools) to:
+Follow the [hands-on tutorial](../getting_started/contextual_data_engineering.md#part-2-hands-on-tutorial-california-schools) to:
 
 1. Copy the bundled California Schools sample data into `~/.datus/benchmark/california_schools/`
 2. Register the datasource and benchmark configuration in `agent.yml`
