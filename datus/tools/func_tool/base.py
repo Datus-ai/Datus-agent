@@ -188,6 +188,7 @@ def trans_to_function_tool(
     *,
     strict_mode: bool = True,
     excluded_params: Optional[Iterable[str]] = None,
+    required_params: Optional[Iterable[str]] = None,
 ) -> FunctionTool:
     """
     Transfer a bound method to a function tool.
@@ -202,6 +203,12 @@ def trans_to_function_tool(
             a declaration the tool itself validates.
         excluded_params: Optional parameter names to remove from the exposed JSON schema.
             Use this for dialect-specific parameters that the current tool instance does not support.
+        required_params: Optional parameter names to mark required in the exposed JSON
+            schema even though the Python signature gives them defaults. Use this for a
+            non-strict tool whose parameters carry defaults purely so an incomplete call
+            reaches the method's own validation (a structured, retryable error) instead
+            of dying on a raw ``TypeError`` — the schema keeps telling the model the
+            fields are required, and the defaults only make the failure recoverable.
     """
     tool_template = function_tool(bound_method, strict_mode=strict_mode)
     excluded_param_set = set(excluded_params or [])
@@ -213,6 +220,17 @@ def trans_to_function_tool(
             del corrected_schema["properties"][param_name]
         if param_name in corrected_schema.get("required", []):
             corrected_schema["required"].remove(param_name)
+
+    if required_params:
+        # The generator omits (or nulls) ``required`` when every parameter has a
+        # default, so rebuild the list rather than trusting the key's shape.
+        required = list(corrected_schema.get("required") or [])
+        for param_name in required_params:
+            if param_name not in corrected_schema.get("properties", {}):
+                raise ValueError(f"required_params names unknown parameter {param_name!r} for {tool_template.name}")
+            if param_name not in required:
+                required.append(param_name)
+        corrected_schema["required"] = required
 
     # The invoker MUST be an 'async' function.
     # We define a closure to correctly capture the 'bound_method' for each iteration.
