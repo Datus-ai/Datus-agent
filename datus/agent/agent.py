@@ -250,7 +250,32 @@ class Agent:
                 logger.exception("Failed to finalize benchmark failure manifest for task %s", benchmark_task.id)
             raise
 
-        trajectory_path = self._write_benchmark_trajectory(attempt, runner.workflow)
+        try:
+            trajectory_path = write_benchmark_trajectory(
+                attempt,
+                workflow=runner.workflow,
+                agent_config=self.global_config,
+            )
+        except Exception as exc:
+            # A completed native_v1 manifest must reference its trajectory, so a
+            # persistence failure fails the attempt instead of dropping the link.
+            try:
+                finalize_benchmark_attempt(
+                    attempt,
+                    task=benchmark_task,
+                    workflow=runner.workflow,
+                    trajectory_path=None,
+                    agent_config=self.global_config,
+                    exception=exc,
+                    trajectory_profile="native_v1",
+                )
+            except Exception:
+                logger.exception("Failed to finalize benchmark failure manifest for task %s", benchmark_task.id)
+            raise DatusException(
+                ErrorCode.COMMON_UNKNOWN,
+                message=f"benchmark trajectory persistence failed for task {benchmark_task.id}",
+            ) from exc
+
         manifest_path = finalize_benchmark_attempt(
             attempt,
             task=benchmark_task,

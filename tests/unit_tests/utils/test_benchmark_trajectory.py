@@ -279,3 +279,21 @@ def test_manifest_references_native_trajectory(tmp_path: Path) -> None:
         "contract_profile": "native_v1",
         "attempt_id": "attempt-1",
     }
+
+
+def test_yaml_round_trip_preserves_scalar_content_exactly(tmp_path: Path) -> None:
+    """Serialization must not mutate SQL/DDL text, including trailing whitespace."""
+    attempt = _allocate(tmp_path)
+    workflow = _success_workflow()
+    tricky_ddl = "CREATE TABLE t (\n    a INT,  \n    b TEXT\n)"
+    schema = _table_schema()
+    schema["definition"] = tricky_ddl
+    workflow.nodes["schema_linking"].input["table_schemas"] = [schema]
+    workflow.nodes["schema_linking"].result.table_schemas = [schema]
+    workflow.nodes["gen_sql"].input["table_schemas"] = [schema]
+    workflow.context.table_schemas = [schema]
+
+    path = write_benchmark_trajectory(attempt, workflow=workflow, agent_config=_agent_config())
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    assert payload["schemas"]["table:analytics.orders"]["ddl"] == tricky_ddl

@@ -289,11 +289,14 @@ class _TrajectoryDumper(yaml.SafeDumper):
 
 
 def _str_representer(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
-    """Represent multi-line strings as block scalars per the contract."""
+    """Represent multi-line strings as block scalars per the contract.
+
+    The content is passed through unchanged; when a line carries trailing
+    whitespace the emitter falls back to a quoted style rather than mutate
+    the canonical SQL/DDL text.
+    """
     if "\n" in value:
-        # Block scalars cannot carry trailing spaces on lines; normalize them.
-        cleaned = "\n".join(line.rstrip() for line in value.splitlines())
-        return dumper.represent_scalar("tag:yaml.org,2002:str", cleaned, style="|")
+        return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|")
     return dumper.represent_scalar("tag:yaml.org,2002:str", value)
 
 
