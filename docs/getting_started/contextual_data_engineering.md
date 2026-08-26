@@ -123,8 +123,6 @@ This walkthrough takes you through the same five outcomes the concepts above des
 3. A baseline benchmark result and a context-rich one to compare
 4. A multi-round evaluation that demonstrates how context evolution improves SQL accuracy
 
-Reading time ≈ 5 minutes; total runtime ≈ 15 minutes (the LLM-driven bootstrap steps are the slow part).
-
 ### Prerequisites
 
 You need:
