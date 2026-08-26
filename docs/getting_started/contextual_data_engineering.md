@@ -180,7 +180,7 @@ Inside the REPL:
 > /bootstrap
 
 ──── Datus Bootstrap ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   Schema   SQL   Template   Semantic Modeling   Knowledge    (Tab or ←/→ to switch)
+   Schema   SQL   Template   Semantic Modeling    (Tab or ←/→ to switch)
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   Schema
   Crawl the live database schema into the metadata RAG.
