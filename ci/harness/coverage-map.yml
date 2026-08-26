@@ -27,6 +27,8 @@ docs_coverage_policy:
   exclude:
     - path: docs/index.md
       reason: Documentation site landing page, not a user-facing flow.
+    - path: docs/getting_started/index.md
+      reason: Getting Started path chooser and section overview, not a discrete product flow.
     - path: docs/develop/README.md
       reason: Contributor/development guide, not a product flow.
     - path: docs/plugin/development.md

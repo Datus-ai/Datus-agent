@@ -303,7 +303,7 @@ datus-agent eval \
 
 ### 第一步：初始化数据集
 
-参照[手把手教程](../getting_started/contextual_data_engineering.zh.md#第二部分手把手教程california-schools)：
+参照[手把手教程](../getting_started/contextual_data_engineering.zh.md#california-schools)：
 
 1. 把内置的 California Schools 样本数据复制到 `~/.datus/benchmark/california_schools/`
 2. 在 `agent.yml` 中注册数据源与基准测试配置

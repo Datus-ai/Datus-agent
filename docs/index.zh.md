@@ -90,13 +90,13 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
 也可以用 `pip install datus-agent` 手动安装(Python 3.12+)。配置分两级：全局 `agent.yml` 存放主配置，项目下的 `.datus/config.yml` 保存当前模型、默认数据源等项目级覆盖，详见[配置文档](configuration/introduction.zh.md)。
 
-想先在示例数据上完整体验，[端到端教程](getting_started/contextual_data_engineering.zh.md)十分钟走完从构建上下文到指标问答的闭环：
+先完成[安装并完成第一次提问](getting_started/Quickstart.zh.md)，再通过[选择上手路径](getting_started/index.md)找到符合目标的场景教程：
 
 !!! tip "继续深入"
-    [:material-rocket-launch: **快速入门指南**](getting_started/Quickstart.zh.md){ .md-button .md-button--primary }
-    [:material-school: **端到端教程**](getting_started/contextual_data_engineering.zh.md){ .md-button }
+    [:material-rocket-launch: **安装并完成第一次提问**](getting_started/Quickstart.zh.md){ .md-button .md-button--primary }
+    [:material-sign-direction: **选择上手路径**](getting_started/index.md){ .md-button }
 
-数据管道和迁移场景可以从[数据工程快速入门](getting_started/data_engineering_quickstart.zh.md)开始；以 BI 为主的场景见 [Dashboard Copilot](getting_started/dashboard_copilot.zh.md)。
+如果要构建可复用上下文，请阅读[构建上下文增强 Agent](getting_started/contextual_data_engineering.zh.md)；如果要从源数据创建管道和 Dashboard，请阅读[端到端数据工程](getting_started/data_engineering_quickstart.zh.md)；如果已有 Dashboard，请阅读[将 Dashboard 变成 Copilot](getting_started/dashboard_copilot.zh.md)。
 
 ## 接入方式 { #interfaces }
 
