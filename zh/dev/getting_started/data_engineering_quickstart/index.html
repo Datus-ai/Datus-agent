@@ -11,10 +11,10 @@
         <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/getting_started/data_engineering_quickstart/">
       
       
-        <link rel="prev" href="../Quickstart/">
+        <link rel="prev" href="../contextual_data_engineering/">
       
       
-        <link rel="next" href="../contextual_data_engineering/">
+        <link rel="next" href="../dashboard_copilot/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>数据工程快速开始 - Datus Docs</title>
+        <title>端到端数据工程 - Datus Docs</title>
       
     
     
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              数据工程快速开始
+              端到端数据工程
             
           </span>
         </div>
@@ -457,6 +457,8 @@
     
       
         
+          
+        
       
         
       
@@ -478,8 +480,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -493,8 +496,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_1_2" id="__nav_1_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_2">
@@ -506,6 +515,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -521,7 +532,7 @@
   <span class="md-ellipsis">
     
   
-    快速开始
+    安装并完成第一次提问
   
 
     
@@ -534,6 +545,92 @@
   
 
               
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contextual_data_engineering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    构建上下文增强 Agent
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_2_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_1_2_4" id="__nav_1_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    场景教程
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_2_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_1_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    场景教程
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
             
               
                 
@@ -558,7 +655,7 @@
   <span class="md-ellipsis">
     
   
-    数据工程快速开始
+    端到端数据工程
   
 
     
@@ -576,7 +673,7 @@
   <span class="md-ellipsis">
     
   
-    数据工程快速开始
+    端到端数据工程
   
 
     
@@ -722,38 +819,21 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        后续步骤
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../contextual_data_engineering/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    上下文数据工程
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -773,7 +853,7 @@
   <span class="md-ellipsis">
     
   
-    Dashboard Copilot
+    将 Dashboard 变成 Copilot
   
 
     
@@ -782,6 +862,14 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4471,6 +4559,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        后续步骤
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4496,11 +4595,15 @@
   
 
 
-<h1 id="_1">数据工程快速开始<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>本指南使用开源的 DAComp 数据工程数据集，串起一条完整的本地 Datus
+<h1 id="_1">端到端数据工程<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>本场景教程使用开源的 DAComp 数据工程数据集，串起一条完整的本地 Datus
 工作流：理解数仓分层设计、在本地 DuckDB workbench 文件中交互式建表、
 生成 ETL、产出 marts 数据、提交 Airflow 天级任务，并把结果写入 Superset
 创建仪表盘。</p>
+<div class="admonition info">
+<p class="admonition-title">本教程从哪里开始</p>
+<p>本教程从源数据开始，新建数据管道和 Dashboard。如果你已有 Superset Dashboard，希望把它转换成分析 Agent，请阅读<a href="../dashboard_copilot/">将 Dashboard 变成 Copilot</a>。第一次使用 Datus 时，建议先完成<a href="../Quickstart/">安装并完成第一次提问</a>。</p>
+</div>
 <p>本文通过 Datus plugin 使用 Airflow 和 Superset。Datus datasource 负责 SQL
 执行与数据传输，plugin 则通过 Airflow 和 Superset API 发现、创建、运行和
 检查资源。</p>
@@ -4526,7 +4629,7 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>unzip<span class="w"> </span>-o<span class="w"> </span>datus-data-engineering-quickstart-stack-v1.zip
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DACOMP_HOME</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/datus-de-lever-quickstart"</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_QUICKSTART_STACK</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/datus-data-engineering-quickstart-stack"</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DATUS_QUICKSTART_STACK</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">/data-engineering-quickstart-stack"</span>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>cp<span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">/lever_start.duckdb"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">/lever_workbench.duckdb"</span>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DACOMP_HOME</span><span class="s2">"</span>
 </span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
@@ -4581,30 +4684,36 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 这个不包含凭据的连接标识解析对应的 Datus datasource。启动 Superset 前，
 需要把同一个 endpoint 暴露给主机，并确保 Compose service 名称可以在主机
 上解析：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/superset"</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>cat<span class="w"> </span>&gt;<span class="w"> </span>docker-compose.override.yml<span class="w"> </span><span class="s">&lt;&lt;'YAML'</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="s">services:</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="s">  postgres:</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="s">    ports:</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s">      - "5432:5432"</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="s">YAML</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">if</span><span class="w"> </span>grep<span class="w"> </span>-qE<span class="w"> </span><span class="s1">'(^|[[:space:]])postgres([[:space:]]|$)'</span><span class="w"> </span>/etc/hosts<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">   </span>!<span class="w"> </span>grep<span class="w"> </span>-qxE<span class="w"> </span><span class="s1">'[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*'</span><span class="w"> </span>/etc/hosts<span class="p">;</span><span class="w"> </span><span class="k">then</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s1">'Conflicting /etc/hosts entry for postgres; replace it with: 127.0.0.1 postgres'</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">  </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="k">fi</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>grep<span class="w"> </span>-qxE<span class="w"> </span><span class="s1">'[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*'</span><span class="w"> </span>/etc/hosts<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s1">'127.0.0.1 postgres'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>tee<span class="w"> </span>-a<span class="w"> </span>/etc/hosts
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="o">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">set</span><span class="w"> </span>-e
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/superset"</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>cat<span class="w"> </span>&gt;<span class="w"> </span>docker-compose.override.yml<span class="w"> </span><span class="s">&lt;&lt;'YAML'</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="s">services:</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s">  postgres:</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="s">    ports:</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="s">      - "5432:5432"</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="s">YAML</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="k">if</span><span class="w"> </span>grep<span class="w"> </span>-qE<span class="w"> </span><span class="s1">'(^|[[:space:]])postgres([[:space:]]|$)'</span><span class="w"> </span>/etc/hosts<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">   </span>!<span class="w"> </span>grep<span class="w"> </span>-qxE<span class="w"> </span><span class="s1">'[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*'</span><span class="w"> </span>/etc/hosts<span class="p">;</span><span class="w"> </span><span class="k">then</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s1">'Conflicting /etc/hosts entry for postgres; replace it with: 127.0.0.1 postgres'</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">  </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="k">fi</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>grep<span class="w"> </span>-qxE<span class="w"> </span><span class="s1">'[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*'</span><span class="w"> </span>/etc/hosts<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s1">'127.0.0.1 postgres'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>tee<span class="w"> </span>-a<span class="w"> </span>/etc/hosts
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="o">)</span>
 </span></code></pre></div>
 <p>主机的 5432 端口必须可用。这个流程使用 <code>postgres:5432</code>，从而让 Datus
 和 Superset 返回相同的连接标识。</p>
 <p>启动 Airflow：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/airflow"</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="o">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nb">set</span><span class="w"> </span>-e
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nb">cd</span><span class="w"> </span><span class="s2">"</span><span class="nv">$DATUS_QUICKSTART_STACK</span><span class="s2">/airflow"</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="o">)</span>
 </span></code></pre></div>
 <p>本地默认访问方式：</p>
 <ul>
@@ -4624,17 +4733,16 @@ stack，创建可写的 DuckDB workbench，导出 <code>DACOMP_HOME</code> /
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SUPERSET_PG_PASSWORD</span><span class="o">=</span>superset
 </span></code></pre></div>
 <h2 id="3-plugin">步骤 3：安装并配置 plugin<a class="headerlink" href="#3-plugin" title="Permanent link">&para;</a></h2>
-<p>把两个已发布 plugin 安装到 Datus 所在的同一个环境中。裸包名默认使用
-pip/PyPI 安装来源，不要添加 <code>pip:</code> 前缀。Superset plugin 内置了后续步骤
-使用的 <code>superset-dashboard-authoring</code> skill：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-airflow-plugin
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-superset-plugin
+<p>把两个 plugin 都从 Datus Plugins Git 仓库安装到 Datus 所在的同一个环境中。
+Superset plugin 内置了后续步骤使用的 <code>superset-dashboard-authoring</code> skill：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span><span class="s2">"git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-airflow-plugin"</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span><span class="s2">"git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>info<span class="w"> </span>airflow
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>datus<span class="w"> </span>plugin<span class="w"> </span>info<span class="w"> </span>superset
 </span></code></pre></div>
-<p>如需用最新发布版本替换已有安装，请添加 <code>--force</code>：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-airflow-plugin<span class="w"> </span>--force
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-superset-plugin<span class="w"> </span>--force
+<p>如需从已记录的 Git 来源更新两个 plugin：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>upgrade<span class="w"> </span>airflow
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>upgrade<span class="w"> </span>superset
 </span></code></pre></div>
 <p>把下面这段配置合并到 <code>~/.datus/conf/agent.yml</code> 现有的 <code>agent:</code>
 下面。保留已有的 <code>agent.providers</code> 配置；<code>/model</code> 会使用这些凭据。路径会直接使用步骤
@@ -4694,7 +4802,7 @@ pip/PyPI 安装来源，不要添加 <code>pip:</code> 前缀。Superset plugin 
 </span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>lever_duckdb
 </span></code></pre></div>
 <p>不要自行运行具体 plugin 命令，让主 agent 验证两个服务：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Using the enabled local profiles, ask the Airflow plugin for its server version and health, then ask the Superset plugin for health and the available databases. Perform read-only checks only and report any connectivity or authentication error.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>使用已启用的 local profiles，先通过 Airflow plugin 查询服务端版本和健康状态，再通过 Superset plugin 查询健康状态和可用数据库。只执行只读检查，并报告所有连接或身份验证错误。
 </span></code></pre></div>
 <p>始终在启动 Datus 前完成 plugin 配置和启用。plugin skill 和环境上下文会在
 session 启动时准备好；修改 profile 后请重启 session。这里选择的
@@ -4713,24 +4821,24 @@ provider/model 写入 <code>./.datus/config.yml</code>。</p>
 <p>自然语言 agent 任务不要以 <code>CREATE</code>、<code>COPY</code> 这类 SQL 动词开头；CLI 会根据这些
 开头关键字判断是否直接执行 SQL。</p>
 <p>先要求 agent 创建目标 schema：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Please set up the target schemas staging, intermediate, and marts in the current DuckDB database. Keep the existing raw schema unchanged.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>请在当前 DuckDB 数据库中创建目标 schema：staging、intermediate 和 marts。保持已有的 raw schema 不变。
 </span></code></pre></div>
 <p>这条教程只构建一条窄但完整的依赖链：<code>marts.lever__requisition_enhanced</code>。
 字段选择、字段重命名和业务逻辑以 <code>docs/data_contract.yaml</code> 为准。</p>
 <p>先要求 agent 检查物理源表字段，避免把 source-to-target 重命名误判为字段缺失：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Inspect the schemas and sample rows for raw.requisition, raw.user, raw.requisition_posting, and raw.requisition_offer. Before generating SQL, confirm these source-to-target renames from the physical columns: raw.requisition.id to requisition_id, name to requisition_name, creator_id to creator_user_id, owner_id to owner_user_id, and hiring_manager_id to hiring_manager_user_id; raw.user.id to user_id, name to user_name, and external_directory_id to external_directory_user_id. Do not create NULL placeholders for columns that exist in the source tables.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>检查 raw.requisition、raw.user、raw.requisition_posting 和 raw.requisition_offer 的 schema 和样例行。生成 SQL 前，根据物理列确认以下源到目标重命名：raw.requisition 的 id 改为 requisition_id、name 改为 requisition_name、creator_id 改为 creator_user_id、owner_id 改为 owner_user_id、hiring_manager_id 改为 hiring_manager_user_id；raw.user 的 id 改为 user_id、name 改为 user_name、external_directory_id 改为 external_directory_user_id。对于源表中已经存在的列，不要创建 NULL 占位列。
 </span></code></pre></div>
 <p>再要求 agent 根据 <code>lever__requisition_enhanced</code> 和
 <code>intermediate.int_lever__requisition_users</code> 的 <code>source_models</code> 创建必需的
 staging 表。agent 会把任务分发到建表流程：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>Read ./docs/data_contract.yaml and create the staging tables needed for marts.lever__requisition_enhanced: staging.stg_lever__requisition from raw.requisition, staging.stg_lever__user from raw.user, staging.stg_lever__requisition_posting from raw.requisition_posting, and staging.stg_lever__requisition_offer from raw.requisition_offer. Use the field design and source-to-target mapping from the contract.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>读取 ./docs/data_contract.yaml，并创建 marts.lever__requisition_enhanced 所需的 staging 表：基于 raw.requisition 创建 staging.stg_lever__requisition，基于 raw.user 创建 staging.stg_lever__user，基于 raw.requisition_posting 创建 staging.stg_lever__requisition_posting，基于 raw.requisition_offer 创建 staging.stg_lever__requisition_offer。字段设计和源到目标映射以 contract 为准。
 </span></code></pre></div>
 <p>这四张 staging 表就是 requisition enhanced 示例需要的最小 raw-to-staging 输入。</p>
 <h2 id="5-intermediate-marts">步骤 5：生成 intermediate 和 marts 表<a class="headerlink" href="#5-intermediate-marts" title="Permanent link">&para;</a></h2>
 <p>先生成 intermediate 表。它应该按照 <code>docs/data_contract.yaml</code> 中
 <code>int_lever__requisition_users</code> 的定义，把 requisition 字段和 user 字段关联起来。</p>
 <p>创建 intermediate 表：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Read ./docs/data_contract.yaml and create intermediate.int_lever__requisition_users from staging.stg_lever__requisition and staging.stg_lever__user. Use the contract's field design, joins, and source-to-target mapping.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>读取 ./docs/data_contract.yaml，基于 staging.stg_lever__requisition 和 staging.stg_lever__user 创建 intermediate.int_lever__requisition_users。字段设计、关联关系和源到目标映射以 contract 为准。
 </span></code></pre></div>
 <p>再生成面向分析的 marts 表。契约中定义 <code>marts.lever__requisition_enhanced</code>
 是一张按 <code>requisition_id</code> 一行的表，依赖：</p>
@@ -4740,7 +4848,7 @@ staging 表。agent 会把任务分发到建表流程：</p>
 <li><code>staging.stg_lever__requisition_offer</code></li>
 </ul>
 <p>创建 marts 表：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>Read ./docs/data_contract.yaml and create marts.lever__requisition_enhanced from intermediate.int_lever__requisition_users, staging.stg_lever__requisition_posting, and staging.stg_lever__requisition_offer. Use the contract's business logic: keep all base requisition rows, count posting and offer links by requisition_id, fill missing counts with 0, and add has_posting and has_offer flags.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>读取 ./docs/data_contract.yaml，基于 intermediate.int_lever__requisition_users、staging.stg_lever__requisition_posting 和 staging.stg_lever__requisition_offer 创建 marts.lever__requisition_enhanced。业务逻辑以 contract 为准：保留全部基础 requisition 行，按 requisition_id 统计关联的 posting 和 offer 数量，将缺失数量填充为 0，并添加 has_posting 和 has_offer 标记。
 </span></code></pre></div>
 <p>这条链路的基本顺序始终是：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>staging -&gt; intermediate -&gt; marts
@@ -4772,7 +4880,7 @@ staging 表。agent 会把任务分发到建表流程：</p>
 version 1 quickstart 数据包时，marts 表应有 146 行。如果维度意外全部为
 NULL，请返回前面的 schema 检查，修正源字段映射后再继续。</p>
 <p>保存并验证用于刷新同一条契约生成链路的 SQL；每天早上 8 点的调度将在步骤 6 中创建：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>Collect the exact SQL statements that successfully created the staging, intermediate, and marts schemas and built the four staging tables, intermediate.int_lever__requisition_users, and marts.lever__requisition_enhanced. Keep them in dependency order and write them to ./jobs/daily_lever_requisition_enhanced.sql. Do not replace validated statements with newly invented SQL. Execute the saved file once against lever_duckdb and confirm it reproduces the same non-zero validation results.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>汇总已经成功创建 staging、intermediate 和 marts schema，以及四张 staging 表、intermediate.int_lever__requisition_users 和 marts.lever__requisition_enhanced 的准确 SQL 语句。按依赖顺序将它们写入 ./jobs/daily_lever_requisition_enhanced.sql，不要用新生成的 SQL 替换已经验证过的语句。在 lever_duckdb 上执行一次保存后的文件，并确认仍能得到相同的非零校验结果。
 </span></code></pre></div>
 <h2 id="6-airflow-dag">步骤 6：发布并运行天级 Airflow DAG<a class="headerlink" href="#6-airflow-dag" title="Permanent link">&para;</a></h2>
 <p>Airflow plugin 可以查询 DAG、检查源码和导入错误、触发运行，并读取 run
@@ -4780,7 +4888,7 @@ NULL，请返回前面的 schema 检查，修正源字段映射后再继续。</
 完成验证和运行。</p>
 <p>对于本地 stack，发布就是把生成的文件写入 allowlist 中、并挂载到
 <code>/opt/airflow/dags</code> 的主机目录。要求 agent 编写、发布并验证 DAG：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>Use the Airflow plugin with profile local and follow its airflow skill. Create ./dags/daily_lever_requisition_enhanced.py for DAG id daily_lever_requisition_enhanced with schedule 0 8 * * *, catchup disabled, and a fixed timezone-aware start date. At runtime, read /workspace/jobs/daily_lever_requisition_enhanced.sql, resolve the duckdb_dacomp_lever Airflow connection with BaseHook, reconstruct the DuckDB SQLAlchemy URL from the connection schema or host, and execute the validated SQL inside a committed transaction. Keep the project source file, then use the filesystem tools to write identical content to the local profile's configured dags_folder. Confirm the two files are identical. Wait until the Airflow plugin reports the DAG, check import errors and DAG details, then trigger it once and wait for completion. After the wait finishes, read the latest run again and show the final dag_run_id and state. If it fails, inspect task states and logs before reporting the error.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>使用 local profile 的 Airflow plugin，并遵循其 airflow skill。创建 ./dags/daily_lever_requisition_enhanced.py，DAG ID 为 daily_lever_requisition_enhanced，schedule 为 0 8 * * *，关闭 catchup，并使用固定且带时区的开始日期。DAG 运行时读取 /workspace/jobs/daily_lever_requisition_enhanced.sql，通过 BaseHook 获取 duckdb_dacomp_lever Airflow connection，根据 connection 的 schema 或 host 还原 DuckDB SQLAlchemy URL，并在显式提交的事务中执行已经验证的 SQL。保留项目内的源文件，然后使用 filesystem tools 将完全相同的内容写入 local profile 配置的 dags_folder，并确认两个文件一致。等待 Airflow plugin 能查询到该 DAG，检查 import errors 和 DAG 详情，然后触发一次并等待运行完成。等待结束后再次读取最新 run，显示最终的 dag_run_id 和 state。如果运行失败，先检查 task states 和 logs，再报告错误。
 </span></code></pre></div>
 <p>发布和触发操作可能需要确认。同一个 agent prompt 已包含必要的回查；如需重复
 检查，请让主 agent 通过 Airflow plugin 列出匹配 DAG、import errors、DAG 详情
@@ -4798,7 +4906,7 @@ NULL，请返回前面的 schema 检查，修正源字段映射后再继续。</
 <code>superset_serving</code> Postgres datasource。
 这里的 <code>lever_duckdb</code> 和 <code>superset_serving</code> 都是 <code>agent.yml</code> 里的 Datus
 datasource 名称，不是 DuckDB 或 Postgres 内部真实的 database/catalog 名。</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>Please copy the source table marts.lever__requisition_enhanced from the lever_duckdb datasource into the superset_serving datasource as public.lever__requisition_enhanced, replacing the target table if it already exists. Then verify the source and target row counts.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>请将 lever_duckdb datasource 中的源表 marts.lever__requisition_enhanced 复制到 superset_serving datasource，目标表为 public.lever__requisition_enhanced；如果目标表已经存在则替换。然后验证源表和目标表的行数。
 </span></code></pre></div>
 <p>如果 <code>public.lever__requisition_enhanced</code> 还不存在，传输工具会根据源查询结果列
 自动创建目标表。version 1 数据包的源表和目标表都应该返回 146 行。</p>
@@ -4808,7 +4916,7 @@ datasource 名称，不是 DuckDB 或 Postgres 内部真实的 database/catalog 
 <h2 id="8-plugin-superset-dashboard">步骤 8：通过 plugin 创建 Superset Dashboard<a class="headerlink" href="#8-plugin-superset-dashboard" title="Permanent link">&para;</a></h2>
 <p>当表已经存在于 <code>superset_serving</code>，要求 agent 使用 plugin 的 authoring
 skill：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store only non-sensitive Database, Dataset, Dashboard, and Chart resource request payloads in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets, and redact sensitive fields before writing any payload. Every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>使用 local profile 的 Superset plugin，并遵循 superset-dashboard-authoring skill。这个快速上手 Dashboard 只创建三个 Chart：招聘需求总数 KPI、按 status 统计招聘需求、按 team 统计招聘需求。发现 Superset 中名为 examples 的 Database，并将其不含凭据的连接标识唯一解析到 superset_serving Datus datasource。先在该 Datus datasource 上验证 public.lever__requisition_enhanced 和计划使用的三个查询。将这张表注册为物理 Superset Dataset，然后创建 requisition operations Dashboard 及其三个 Chart。如果之前的尝试留下了匹配的 Dataset、Dashboard 或 Chart，请直接复用，不要重复创建。只把不含敏感信息的 Dataset、Dashboard 和 Chart 请求体保存在项目目录内的 JSON 文件中；不要持久化身份验证或登录请求体、token、cookie、密码或其他 secret。优先使用 typed CLI commands，仅在 typed request 被拒绝时才检查当前安装版本的 OpenAPI schema。每个 Chart 的 params 和 query_context JSON 字符串必须匹配。把三个 Chart 全部关联到 Dashboard，并更新完整的 position_json 布局，确保 Dashboard 不是空白页面。回读 Database、Dataset、Dashboard 和 Charts，确认 Database connection 仍标识为 postgres:5432/superset_examples，并执行 KPI 查询和一个分组 Chart 查询。返回 Database、Dataset、Dashboard、Chart IDs 以及 Dashboard URL。
 </span></code></pre></div>
 <p>数据准备是单独的 ETL / 调度步骤。创建仪表盘前，目标表或 SQL dataset
 必须已经存在于 Superset 所识别的数据库中。Superset 的创建、更新和查询
@@ -4816,9 +4924,19 @@ skill：</p>
 <p>同一个 agent prompt 会回读新建资源并执行代表性 chart 查询。如需重复验证，请把
 返回的 ID 交给主 agent，让它通过 Superset plugin 检查 Database、table metadata、
 Dashboard、Charts 和 chart data；不要复制本文中的示例 ID。</p>
-<p>仪表盘应该包含 11 个 chart。代表性的 total requisitions chart 查询应返回
-146，分类查询应返回多个分组，Database connection 应标识为
+<p>仪表盘应该包含 3 个 chart。total requisitions chart 查询应返回 146，按 status
+和 team 分类的查询应返回多个分组，Database connection 应标识为
 <code>postgres:5432/superset_examples</code>。</p>
+<p>这个缩小后的示例通常可以在主 agent 默认的 50 个 turn 内完成。如果仍看到
+<code>Max turns (50) exceeded</code>，可以把下面的覆写合并到
+<code>~/.datus/conf/agent.yml</code>，将主 <code>chat</code> agent 的上限临时提高到 80：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">    </span><span class="nt">chat</span><span class="p">:</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
+</span></code></pre></div>
+<p>保存后重启 Datus，再重新执行本步骤。成功后可以删除这个 <code>max_turns</code> 覆写，恢复
+默认值；它只控制单次任务允许的最大工具推理轮数，不会让失败的任务自动续跑。</p>
 <h2 id="9">步骤 9：验证端到端结果<a class="headerlink" href="#9" title="Permanent link">&para;</a></h2>
 <p>走完整条链路后，你应该能确认：</p>
 <ul>
@@ -4844,16 +4962,23 @@ SaaS。plugin 操作仍负责发现、触发和验证托管资源；下面的 na
 渲染 seed 进去的 <code>docs/data_contract.yaml</code>，所以输出会写到
 <code>lake.ws_&lt;workspace_id&gt;</code>，源数据继续来自 <code>lake.demo_raw</code>。prompt 和 SQL
 应该使用完整限定名，例如：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>lake.demo_raw.requisition
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>lake.ws_&lt;workspace_id&gt;.stg_lever__requisition
-</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>lake.ws_&lt;workspace_id&gt;.int_lever__requisition_users
-</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>lake.ws_&lt;workspace_id&gt;.marts_lever__requisition_enhanced
+<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>lake.demo_raw.requisition
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>lake.ws_&lt;workspace_id&gt;.stg_lever__requisition
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>lake.ws_&lt;workspace_id&gt;.int_lever__requisition_users
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>lake.ws_&lt;workspace_id&gt;.marts_lever__requisition_enhanced
 </span></code></pre></div>
 <p>SaaS tour 中不要使用 <code>raw.*</code>、<code>staging.*</code>、<code>intermediate.*</code>、<code>marts.*</code>
 这类未限定的物理 schema 名。它们只表示逻辑层级；真实可写边界是 workspace
 namespace。</p>
 <p>workspace namespace 发生变化时，需要重建 demo project 并重新生成 DAG，
 确保 DAG 使用当前的 <code>lake.ws_&lt;workspace_id&gt;</code> namespace。</p>
+<h2 id="_2">后续步骤<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../dashboard_copilot/">将 Dashboard 变成 Copilot</a> —— 从已有 Superset Dashboard 构建分析子代理。</li>
+<li><a href="../contextual_data_engineering/">构建上下文增强 Agent</a> —— 构建可复用上下文，并比较回答质量。</li>
+<li><a href="../../plugin/introduction/">Plugin</a> —— 配置 Airflow、Superset 和其他集成。</li>
+<li><a href="../">选择上手路径</a> —— 对比所有入门指南。</li>
+</ul>
 
 
 
@@ -4883,7 +5008,7 @@ namespace。</p>
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../Quickstart/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 快速开始">
+          <a href="../contextual_data_engineering/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 构建上下文增强 Agent">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4893,20 +5018,20 @@ namespace。</p>
                 上一页
               </span>
               <div class="md-ellipsis">
-                快速开始
+                构建上下文增强 Agent
               </div>
             </div>
           </a>
         
         
           
-          <a href="../contextual_data_engineering/" class="md-footer__link md-footer__link--next" aria-label="下一页: 上下文数据工程">
+          <a href="../dashboard_copilot/" class="md-footer__link md-footer__link--next" aria-label="下一页: 将 Dashboard 变成 Copilot">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                上下文数据工程
+                将 Dashboard 变成 Copilot
               </div>
             </div>
             <div class="md-footer__button md-icon">

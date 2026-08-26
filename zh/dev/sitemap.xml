@@ -271,6 +271,12 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/gateway/slack/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/zh/dev/dev/getting_started/</loc>
+        <lastmod>2026-08-26</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/getting_started/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/zh/dev/dev/getting_started/Quickstart/</loc>
         <lastmod>2026-08-26</lastmod>
         <changefreq>daily</changefreq>
