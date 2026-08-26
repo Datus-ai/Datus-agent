@@ -145,22 +145,24 @@ export SUPERSET_PG_PASSWORD=superset
 
 ## 步骤 3：安装并配置 plugin
 
-把两个已发布 plugin 安装到 Datus 所在的同一个环境中。裸包名默认使用
-pip/PyPI 安装来源，不要添加 `pip:` 前缀。Superset plugin 内置了后续步骤
-使用的 `superset-dashboard-authoring` skill：
+把两个 plugin 安装到 Datus 所在的同一个环境中。Airflow plugin 已发布到
+PyPI；Superset plugin 需从 Datus Plugins 源码仓库安装。Superset plugin 内置了
+后续步骤使用的 `superset-dashboard-authoring` skill：
 
 ```bash
 datus plugin install datus-airflow-plugin
-datus plugin install datus-superset-plugin
+git clone --depth 1 https://github.com/Datus-ai/Datus-Plugins.git "$HOME/Datus-Plugins"
+datus plugin install "src:$HOME/Datus-Plugins/datus-superset-plugin"
 datus plugin info airflow
 datus plugin info superset
 ```
 
-如需用最新发布版本替换已有安装，请添加 `--force`：
+如需用最新版本替换已有安装：
 
 ```bash
 datus plugin install datus-airflow-plugin --force
-datus plugin install datus-superset-plugin --force
+git -C "$HOME/Datus-Plugins" pull --ff-only
+datus plugin install "src:$HOME/Datus-Plugins/datus-superset-plugin" --force
 ```
 
 把下面这段配置合并到 `~/.datus/conf/agent.yml` 现有的 `agent:`
