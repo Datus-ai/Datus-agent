@@ -148,7 +148,20 @@ class SubjectTreeStore:
         logger.info("SubjectTreeStore initialized")
 
     def _migrate_null_parents(self):
-        """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1)."""
+        """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1).
+
+        Reads before writing. This runs on *every* construction, so an unconditional
+        UPDATE puts a write on the path of consumers that only ever read — a role
+        holding just SELECT cannot construct the store at all, and everyone else pays
+        for a statement that almost always matches nothing.
+        """
+        legacy_rows = self._table.query(
+            SubjectNodeRecord,
+            where=[("parent_id", WhereOp.IS_NULL, None)],
+            columns=["node_id"],
+        )
+        if not legacy_rows:
+            return
         self._table.update(
             {"parent_id": ROOT_PARENT_ID},
             where=[("parent_id", WhereOp.IS_NULL, None)],
