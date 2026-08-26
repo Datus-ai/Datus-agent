@@ -2138,3 +2138,50 @@ class TestEnsureToolTransformers:
         assert node.tools is captured
         assert captured[0] is not original_tool
         assert captured[0].name == "execute_sql"
+
+
+class TestPostCompactOccupancyReset:
+    """``_major_compact`` must leave the occupancy meter describing the NEW history.
+
+    ``_decide_compact_mode`` reads the ratio from ``running_turn_usage``. Left at
+    its pre-compact value, the next pre-turn check sees the same near-limit
+    figure and compacts again — on every turn.
+    """
+
+    def test_meter_is_reset_to_the_recap_size(self):
+        node = _make_simple_node(context_length=100_000)
+        node.running_turn_usage = SimpleNamespace(session_total_tokens=95_000, input_tokens=95_000)
+        node._restored_context_used = 95_000
+
+        node._reset_context_occupancy(1_200)
+
+        assert node.running_turn_usage.session_total_tokens == 1_200
+        assert node.running_turn_usage.input_tokens == 1_200
+
+    def test_the_ratio_drops_below_the_threshold_after_a_compact(self):
+        """The property that matters: the next check must not re-trigger."""
+        node = _make_simple_node(context_length=100_000)
+        node.running_turn_usage = SimpleNamespace(
+            session_total_tokens=95_000, input_tokens=95_000, context_length=100_000
+        )
+
+        assert node._history_token_ratio_sync() >= 0.8  # would compact
+
+        node._reset_context_occupancy(1_200)
+
+        assert node._history_token_ratio_sync() < 0.8  # no longer compacts
+
+    def test_a_zero_token_recap_still_clears_the_meter(self):
+        node = _make_simple_node(context_length=100_000)
+        node.running_turn_usage = SimpleNamespace(session_total_tokens=95_000, input_tokens=95_000)
+
+        node._reset_context_occupancy(0)
+
+        assert node.running_turn_usage.session_total_tokens == 1
+
+    def test_a_missing_meter_is_not_an_error(self):
+        """The compact has already succeeded; nothing here may fail it."""
+        node = _make_simple_node(context_length=100_000)
+        node.running_turn_usage = None
+
+        node._reset_context_occupancy(1_200)  # must not raise

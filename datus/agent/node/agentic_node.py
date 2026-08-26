@@ -1907,6 +1907,49 @@ class AgenticNode(Node):
             return None
         return path
 
+    def _reset_context_occupancy(self, summary_token: int) -> None:
+        """Point the occupancy meter at the post-compact history size.
+
+        ``_decide_compact_mode`` reads the ratio from
+        ``_history_token_ratio_sync``, which prefers the ``running_turn_usage``
+        snapshot. Compaction rewrites the history but leaves that snapshot at
+        its pre-compact value, so the next pre-turn check sees the same
+        near-limit figure and compacts again — every turn, until the session is
+        gutted.
+
+        The recap is the whole of the new history, so its token count is the new
+        occupancy. Underestimating is safe: the next LLM call refreshes the
+        snapshot with the true figure, and a genuine crossing still triggers.
+
+        Best-effort throughout — the compact has already succeeded by the time
+        this runs, so nothing here may turn it into a reported failure.
+        """
+        post_compact_tokens = int(summary_token or 0) or 1
+        try:
+            context_length = (
+                int(getattr(self, "context_length", 0) or 0)
+                or int(getattr(self, "_restored_context_length", 0) or 0)
+                or 0
+            )
+        except Exception:  # noqa: BLE001 - a model without a known window
+            context_length = 0
+
+        usage = getattr(self, "running_turn_usage", None)
+        if usage is not None:
+            try:
+                usage.session_total_tokens = post_compact_tokens
+                usage.input_tokens = post_compact_tokens
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not reset running_turn_usage after compact: %s", exc)
+
+        try:
+            if context_length:
+                self.persist_context_state(post_compact_tokens, context_length)
+            else:
+                self._restored_context_used = post_compact_tokens
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not persist post-compact context state: %s", exc)
+
     async def _major_compact(self, *, reason: str) -> Dict[str, Any]:
         """LLM-driven full-history compact pass.
 
@@ -1986,6 +2029,7 @@ class AgenticNode(Node):
         # a single assistant continuation message, so the next minor pass
         # starts scanning from the top of the rewritten session.
         self._compacted_until = 0
+        self._reset_context_occupancy(summary_token)
 
         logger.info(
             "Major compact complete: %d chars summary, %d output tokens, history=%s",
