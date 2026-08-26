@@ -525,7 +525,7 @@ wheels = [
 
 [[package]]
 name = "datus-agent"
-version = "0.3.9"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -619,7 +619,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "charset-normalizer", specifier = ">=3.4.2" },
     { name = "datus-bi-core", specifier = ">=0.1.2" },
-    { name = "datus-db-core", specifier = ">=0.1.5" },
+    { name = "datus-db-core", specifier = ">=0.1.6" },
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
     { name = "datus-semantic-core", specifier = ">=0.2.3" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
@@ -711,15 +711,15 @@ wheels = [
 
 [[package]]
 name = "datus-db-core"
-version = "0.1.5"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "sqlglot" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/7e/3d7c569b0ec3b46978ebd3aa846d83874a903203aadc1c0033883c836b04/datus_db_core-0.1.5.tar.gz", hash = "sha256:bfd44618432e88718998e38b5122de470bdab06b27ba919ee51084cb10df2faa", size = 33739, upload-time = "2026-07-30T07:26:31.627Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/e2/34dce76ebc97c04efed7b0e52a3612b4b6d47ade0bc6fe29dbf43624c77a/datus_db_core-0.1.6.tar.gz", hash = "sha256:594458425ea509c468a6e69633af544937fd632f919dd71c2a3dade56204030b", size = 35324, upload-time = "2026-08-17T11:50:22.638Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/6b/94d4c676d99a61deda25aa18f19bac5db722a1ff0849618b552f0c199297/datus_db_core-0.1.5-py3-none-any.whl", hash = "sha256:209ef6d0188bcba722ec040ad42d277a516242c1b7daaa0f787668cae96e01e1", size = 26174, upload-time = "2026-07-30T07:26:30.684Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/cf/82967a705891c33d4ea8cf8cc9d7a98d2703b93f6daf29f10967e798e36a/datus_db_core-0.1.6-py3-none-any.whl", hash = "sha256:92cd4909b9de035d231480beed2d9ee69b64f4578bb595db3b35102fd882b318", size = 27751, upload-time = "2026-08-17T11:50:21.516Z" },
 ]
 
 [[package]]
