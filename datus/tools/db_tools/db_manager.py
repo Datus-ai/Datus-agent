@@ -4,6 +4,7 @@
 
 import dataclasses
 import threading
+from enum import Enum
 from typing import Callable, Dict, Optional, Set, Tuple, Union
 
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
@@ -23,8 +24,37 @@ logger = get_logger(__name__)
 # REPL connection init and the background schema sync) must not spawn duplicate
 # ``pip install`` processes racing on the same environment, and a failed install
 # must not be retried on every connection attempt within the process.
+# Deliberately ONE process-wide lock rather than one per db_type: concurrent
+# pip/uv processes mutate the same environment, so installs of *different*
+# adapters must serialize too.
 _adapter_install_lock = threading.Lock()
 _adapter_install_attempted: Set[str] = set()
+# db_types whose install subprocess is currently running. Read without the
+# lock (the installer holds it for the whole install) — set membership is
+# GIL-atomic and UI staleness of one check is harmless.
+_adapter_install_active: Set[str] = set()
+
+
+class AdapterInstallStatus(str, Enum):
+    """Install state of a missing adapter, for UI layers to message accurately.
+
+    Only meaningful while the connector is unregistered: a successful install
+    registers the connector, after which ``missing_connector_type`` reports no
+    gap and this status is moot.
+    """
+
+    NOT_ATTEMPTED = "not_attempted"  # next connection attempt will auto-install
+    INSTALLING = "installing"  # an install subprocess is running right now
+    FAILED = "failed"  # attempted this process and the connector is still missing
+
+
+def adapter_install_status(db_type: str) -> AdapterInstallStatus:
+    """Return the process-wide auto-install state for *db_type*."""
+    if db_type in _adapter_install_active:
+        return AdapterInstallStatus.INSTALLING
+    if db_type in _adapter_install_attempted:
+        return AdapterInstallStatus.FAILED
+    return AdapterInstallStatus.NOT_ATTEMPTED
 
 
 def _auto_install_adapter(db_type: str) -> None:
@@ -39,7 +69,11 @@ def _auto_install_adapter(db_type: str) -> None:
             logger.debug("Adapter '%s' auto-install already attempted; skipping", db_type)
             return
         _adapter_install_attempted.add(db_type)
-        _run_adapter_install(db_type)
+        _adapter_install_active.add(db_type)
+        try:
+            _run_adapter_install(db_type)
+        finally:
+            _adapter_install_active.discard(db_type)
 
 
 def _run_adapter_install(db_type: str) -> None:
@@ -268,7 +302,9 @@ class DBManager:
 
         A metadata-only probe — never triggers the adapter auto-install — so
         UI layers can announce a pending install before the blocking
-        connection attempt starts.
+        connection attempt starts. Combine with :meth:`adapter_install_status`
+        to phrase the announcement accurately (about to install / installing /
+        already failed).
         """
         cfg = self._db_configs.get(datasource)
         if cfg is None:
@@ -277,6 +313,10 @@ class DBManager:
         if not db_type or connector_registry.is_registered(db_type):
             return None
         return db_type
+
+    def adapter_install_status(self, db_type: str) -> AdapterInstallStatus:
+        """Process-wide auto-install state for ``db_type``."""
+        return adapter_install_status(db_type)
 
     def get_db_uris(self, datasource: str) -> Dict[str, str]:
         cfg = self._db_configs.get(datasource)

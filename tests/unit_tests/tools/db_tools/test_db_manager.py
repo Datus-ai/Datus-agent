@@ -668,11 +668,13 @@ class TestAutoInstallAdapterSingleFlight:
         from datus.tools.db_tools import db_manager as dm
 
         dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
 
     def teardown_method(self):
         from datus.tools.db_tools import db_manager as dm
 
         dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
 
     def test_concurrent_callers_spawn_one_install(self):
         import threading
@@ -681,27 +683,35 @@ class TestAutoInstallAdapterSingleFlight:
 
         entered = threading.Event()
         release = threading.Event()
+        errors = []
 
         def fake_run(*args, **kwargs):
             entered.set()
-            release.wait(timeout=5)
+            release.wait(timeout=1)
             return SimpleNamespace(returncode=1, stderr="simulated failure")
 
+        def _install():
+            try:
+                dm._auto_install_adapter("faketype")
+            except Exception as exc:  # noqa: BLE001 - surfaced via the errors list
+                errors.append(exc)
+
         with patch("subprocess.run", side_effect=fake_run) as mock_run:
-            first = threading.Thread(target=dm._auto_install_adapter, args=("faketype",))
+            first = threading.Thread(target=_install)
             first.start()
-            assert entered.wait(timeout=5)
-            second = threading.Thread(target=dm._auto_install_adapter, args=("faketype",))
+            assert entered.wait(timeout=1)
+            second = threading.Thread(target=_install)
             second.start()
             # Property: the second caller must wait on the first install, not
             # race a duplicate pip process against the same environment.
             second.join(timeout=0.3)
             assert second.is_alive()
             release.set()
-            first.join(timeout=5)
-            second.join(timeout=5)
-            assert not first.is_alive() and not second.is_alive()
+            first.join(timeout=2)
+            second.join(timeout=2)
+            assert not first.is_alive() and not second.is_alive(), "deadlock guard"
 
+        assert not errors
         assert mock_run.call_count == 1
 
     def test_failed_install_not_retried_within_process(self):
@@ -721,6 +731,86 @@ class TestAutoInstallAdapterSingleFlight:
             dm._auto_install_adapter("faketype_b")
 
         assert mock_run.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# adapter_install_status
+# ---------------------------------------------------------------------------
+
+
+class TestAdapterInstallStatus:
+    def setup_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
+
+    def teardown_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
+
+    def test_not_attempted_initially(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.NOT_ATTEMPTED
+
+    def test_failed_after_unsuccessful_install(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")):
+            dm._auto_install_adapter("faketype")
+
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
+
+    def test_installing_while_subprocess_runs_then_failed(self):
+        import threading
+
+        from datus.tools.db_tools import db_manager as dm
+
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+
+        def fake_run(*args, **kwargs):
+            entered.set()
+            release.wait(timeout=1)
+            return SimpleNamespace(returncode=1, stderr="simulated failure")
+
+        def _install():
+            try:
+                dm._auto_install_adapter("faketype")
+            except Exception as exc:  # noqa: BLE001 - surfaced via the errors list
+                errors.append(exc)
+
+        with patch("subprocess.run", side_effect=fake_run):
+            worker = threading.Thread(target=_install)
+            worker.start()
+            assert entered.wait(timeout=1)
+            assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.INSTALLING
+            release.set()
+            worker.join(timeout=2)
+            assert not worker.is_alive(), "deadlock guard"
+
+        assert not errors
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
+
+    def test_active_marker_cleared_when_install_raises(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", side_effect=RuntimeError("boom")):
+            dm._auto_install_adapter("faketype")
+
+        # The finally block must clear the active marker so the state never
+        # sticks at INSTALLING after the subprocess is gone.
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
+
+    def test_dbmanager_method_delegates_to_process_state(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        mgr = DBManager({})
+        assert mgr.adapter_install_status("faketype") is dm.AdapterInstallStatus.NOT_ATTEMPTED
 
 
 # ---------------------------------------------------------------------------

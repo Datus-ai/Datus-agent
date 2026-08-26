@@ -286,6 +286,26 @@ class TestPreLoadStorage:
         assert len(cli.startup_warnings) == 1
         assert cli.startup_warnings[0].count("lance cache unavailable") == 1
 
+    def test_pre_load_storage_mixed_causes_keep_real_error(self, cli):
+        scope_error = (
+            "error_code=410007, error_message=Invalid storage argument: "
+            "datasource is required for datasource-scoped storage"
+        )
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error=scope_error),
+            metric_completer=SimpleNamespace(last_error="lance cache unavailable"),
+            sql_completer=SimpleNamespace(last_error=None),
+        )
+
+        cli._pre_load_storage()
+
+        # Property: one completer's "no datasource selected" state must not
+        # relabel or swallow another completer's real failure.
+        assert len(cli.startup_warnings) == 1
+        assert "lance cache unavailable" in cli.startup_warnings[0]
+        assert "no datasource is selected" not in cli.startup_warnings[0]
+
     def test_pre_load_storage_embedding_error_keeps_embedding_remediation(self, cli):
         cli.at_completer = SimpleNamespace(
             reload_data=MagicMock(),
@@ -1849,7 +1869,8 @@ class TestCallWithTimeout:
 
 
 class TestInitConnectionTimeout:
-    def _wire(self, cli, *, connector=None, first_conn=None, missing=None):
+    def _wire(self, cli, *, connector=None, first_conn=None, missing=None, install_status=None):
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
         from datus.utils.constants import DBType
 
         if connector is None:
@@ -1859,10 +1880,12 @@ class TestInitConnectionTimeout:
                 catalog_name=None,
                 test_connection=MagicMock(return_value=True),
             )
+        status = install_status or AdapterInstallStatus.NOT_ATTEMPTED
         cli.agent_config = SimpleNamespace(current_datasource="ds1")
         cli.db_manager = SimpleNamespace(
             first_conn_with_name=first_conn or (lambda ds: ("demo_db", connector)),
             missing_connector_type=lambda ds: missing,
+            adapter_install_status=lambda db_type: status,
         )
         return connector
 
@@ -1939,3 +1962,61 @@ class TestInitConnectionTimeout:
         cli._init_connection(timeout_seconds=5)
 
         assert "Installing" not in _console_text(cli)
+
+    def test_failed_install_reports_manual_command_not_installing(self, cli):
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
+
+        def _fail(ds):
+            raise RuntimeError("Connector 'oracle' not found")
+
+        self._wire(cli, first_conn=_fail, missing="oracle", install_status=AdapterInstallStatus.FAILED)
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        # Property: once the process-wide memo says the install failed, the
+        # REPL must not claim an install is happening — it must hand the user
+        # the manual command instead.
+        assert "Installing" not in output
+        assert "uv pip install datus-oracle" in output
+
+    def test_in_progress_install_announced_as_waiting(self, cli):
+        from datus.tools.db_tools.db_manager import AdapterInstallStatus
+
+        self._wire(cli, missing="oracle", install_status=AdapterInstallStatus.INSTALLING)
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        assert "still installing" in output
+        assert "Installing database adapter" not in output
+
+    def test_timeout_during_install_blames_install_not_server(self, cli):
+        import time as time_mod
+
+        def _stuck(ds):
+            time_mod.sleep(4)
+            return ("db", MagicMock())
+
+        self._wire(cli, first_conn=_stuck, missing="oracle")
+
+        cli._init_connection(timeout_seconds=0.5)
+
+        output = _console_text(cli)
+        # Property: when an adapter install was just announced, the timeout
+        # must not be misdiagnosed as an unreachable database server.
+        assert "install may still be running" in output
+        assert "running and accessible" not in output
+
+    def test_timeout_without_install_keeps_server_message(self, cli):
+        import time as time_mod
+
+        def _stuck(ds):
+            time_mod.sleep(4)
+            return ("db", MagicMock())
+
+        self._wire(cli, first_conn=_stuck, missing=None)
+
+        cli._init_connection(timeout_seconds=0.5)
+
+        assert "running and accessible" in _console_text(cli)

@@ -83,7 +83,7 @@ from datus.configuration.agent_config_loader import configuration_manager, load_
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.storage.embedding_diagnostics import format_context_unavailable, is_datasource_scope_error
-from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.tools.db_tools.db_manager import AdapterInstallStatus, db_manager_instance
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
@@ -1379,17 +1379,20 @@ class DatusCLI:
         """Surface ``@``-completer preload failures with a cause-matched message.
 
         The three completers (table / metric / SQL) usually fail for the same
-        reason, so identical errors are collapsed before formatting. "No
-        datasource selected" is a normal state, not a failure: the banner
-        already shows it, so it gets a dim hint instead of a startup warning.
+        reason, so identical errors are collapsed first. Classification is
+        per-error, never on a joined blob — one completer's "no datasource
+        selected" must not relabel another completer's real failure. Scope
+        errors are a normal state (the banner already shows it) and only get
+        a dim hint; every other cause becomes a startup warning.
         """
         unique = list(dict.fromkeys(str(error) for error in errors if error))
         if not unique:
             return
-        if all(is_datasource_scope_error(error) for error in unique):
-            self.console.print("[dim]@ table/metric/SQL references will populate once a datasource is selected.[/]")
+        real_errors = [error for error in unique if not is_datasource_scope_error(error)]
+        if not real_errors:
+            print_info(self.console, "@ table/metric/SQL references will populate once a datasource is selected.")
             return
-        warning = format_context_unavailable("; ".join(unique))
+        warning = format_context_unavailable("; ".join(real_errors))
         self.startup_warnings.append(warning)
         logger.warning("REPL context autocomplete preload degraded: %s", warning)
         print_warning(self.console, warning)
@@ -2580,16 +2583,35 @@ class DatusCLI:
                 connector = self.db_manager.get_conn(current_datasource, self.cli_context.current_db_name)
                 return self.cli_context.current_db_name, connector
 
-        # Announce a pending adapter install before the blocking connection
+        # Announce the adapter-install situation before the blocking connection
         # attempt — otherwise the auto-install's pip download runs silently
-        # before the banner and the terminal just looks frozen.
+        # before the banner and the terminal just looks frozen. The wording
+        # follows the process-wide install state so a failed install is never
+        # re-announced as "installing".
         missing_connector = getattr(self.db_manager, "missing_connector_type", lambda _ds: None)(current_datasource)
+        install_status = None
         if missing_connector:
-            print_info(
-                self.console,
-                f"Installing database adapter datus-{missing_connector} for datasource "
-                f"'{current_datasource}' (first use; may take a minute)...",
-            )
+            install_status = self.db_manager.adapter_install_status(missing_connector)
+            if install_status is AdapterInstallStatus.NOT_ATTEMPTED:
+                print_info(
+                    self.console,
+                    f"Installing database adapter datus-{missing_connector} for datasource "
+                    f"'{current_datasource}' (first use; may take a minute)...",
+                )
+            elif install_status is AdapterInstallStatus.INSTALLING:
+                print_info(
+                    self.console,
+                    f"Database adapter datus-{missing_connector} is still installing from an earlier "
+                    "attempt; waiting for it to finish...",
+                )
+            else:
+                print_warning(
+                    self.console,
+                    f"Database adapter datus-{missing_connector} is unavailable — auto-install failed "
+                    f"earlier in this session. Install it manually: uv pip install datus-{missing_connector}",
+                )
+
+        install_may_be_running = missing_connector and install_status is not AdapterInstallStatus.FAILED
 
         try:
             try:
@@ -2597,11 +2619,18 @@ class DatusCLI:
                     _do_init_connection, timeout_seconds, f"connection init ({current_datasource})"
                 )
             except TimeoutError:
-                self.console.print(
-                    f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
-                    f"Please check if the database server for datasource '{current_datasource}' is running "
-                    "and accessible."
-                )
+                if install_may_be_running:
+                    self.console.print(
+                        f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds while "
+                        f"the datus-{missing_connector} adapter install may still be running in the background. "
+                        "Reconnect with /database once it finishes."
+                    )
+                else:
+                    self.console.print(
+                        f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
+                        f"Please check if the database server for datasource '{current_datasource}' is running "
+                        "and accessible."
+                    )
                 logger.error(f"Database connection timeout for datasource: {current_datasource}")
                 self.db_connector = None
                 return
