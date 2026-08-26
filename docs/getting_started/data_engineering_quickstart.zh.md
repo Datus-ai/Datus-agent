@@ -42,7 +42,7 @@ unzip -o datus-de-lever-quickstart-v1.zip
 unzip -o datus-data-engineering-quickstart-stack-v1.zip
 
 export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
-export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
+export DATUS_QUICKSTART_STACK="$(pwd)/data-engineering-quickstart-stack"
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
 
@@ -85,6 +85,8 @@ Superset 中名为 `examples` 的 Database 使用
 上解析：
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/superset"
 
 cat > docker-compose.override.yml <<'YAML'
@@ -103,6 +105,7 @@ grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts 
   echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
 
 docker compose up -d
+)
 ```
 
 主机的 5432 端口必须可用。这个流程使用 `postgres:5432`，从而让 Datus
@@ -111,8 +114,11 @@ docker compose up -d
 启动 Airflow：
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/airflow"
 docker compose up -d
+)
 ```
 
 本地默认访问方式：

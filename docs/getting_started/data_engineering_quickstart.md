@@ -45,7 +45,7 @@ unzip -o datus-de-lever-quickstart-v1.zip
 unzip -o datus-data-engineering-quickstart-stack-v1.zip
 
 export DACOMP_HOME="$(pwd)/datus-de-lever-quickstart"
-export DATUS_QUICKSTART_STACK="$(pwd)/datus-data-engineering-quickstart-stack"
+export DATUS_QUICKSTART_STACK="$(pwd)/data-engineering-quickstart-stack"
 cp "$DACOMP_HOME/lever_start.duckdb" "$DACOMP_HOME/lever_workbench.duckdb"
 cd "$DACOMP_HOME"
 
@@ -87,6 +87,8 @@ Expose the endpoint to the host and make the Compose service name resolvable
 before starting Superset:
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/superset"
 
 cat > docker-compose.override.yml <<'YAML'
@@ -105,6 +107,7 @@ grep -qxE '[[:space:]]*127\.0\.0\.1[[:space:]]+postgres[[:space:]]*' /etc/hosts 
   echo '127.0.0.1 postgres' | sudo tee -a /etc/hosts
 
 docker compose up -d
+)
 ```
 
 The host's port 5432 must be available. This walkthrough uses
@@ -113,8 +116,11 @@ The host's port 5432 must be available. This walkthrough uses
 Start Airflow:
 
 ```bash
+(
+set -e
 cd "$DATUS_QUICKSTART_STACK/airflow"
 docker compose up -d
+)
 ```
 
 Default local endpoints:
