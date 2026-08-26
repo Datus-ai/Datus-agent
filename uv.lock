@@ -584,7 +584,7 @@ dependencies = [
 
 [package.dev-dependencies]
 ci = [
-    { name = "datus-semantic-dosi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "datus-semantic-dosi", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
     { name = "datus-storage-postgresql" },
 ]
 dev = [
@@ -669,7 +669,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 ci = [
-    { name = "datus-semantic-dosi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=0.1.6" },
+    { name = "datus-semantic-dosi", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = "==0.1.7" },
     { name = "datus-storage-postgresql", specifier = ">=0.1.5" },
 ]
 dev = [
@@ -749,7 +749,7 @@ wheels = [
 
 [[package]]
 name = "datus-semantic-dosi"
-version = "0.1.6"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datus-semantic-core" },
@@ -758,9 +758,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b7/60/ae3f1fd838fd84170e3991e0843a18cab7a33752846881f82bec2798abed/datus_semantic_dosi-0.1.6.tar.gz", hash = "sha256:5d35b14232dc5f3b20d8c5695925a684ec534ccb9801cd14e3e6345dd78b9d27", size = 50259, upload-time = "2026-08-24T13:29:42.938Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/d9/8e7257bd65391f0d2deb36860811c73f46bd331f2cf4dc61ff13c50b6c86/datus_semantic_dosi-0.1.7.tar.gz", hash = "sha256:6fdc54fd54dd6b8334205f1a46db9a7fd2f692223f178180e9f0f39cee062dd4", size = 50354, upload-time = "2026-08-26T12:28:17.713Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/14/e473cf29f39449449fc4ee272acc8a0aa1ccaa8aa5f09c97dc60ab84abc6/datus_semantic_dosi-0.1.6-py3-none-any.whl", hash = "sha256:d58387316d03e5c580ddab5b05e606cf8605eed267ffbc69cbce1809e18efce2", size = 40846, upload-time = "2026-08-24T13:29:42.073Z" },
+    { url = "https://files.pythonhosted.org/packages/30/cc/f8cd7b2c156b587e28421355ec97f4657fee49d8ee53cde42e99f70e7efd/datus_semantic_dosi-0.1.7-py3-none-any.whl", hash = "sha256:2f25b214a68f7aa05fe3edaab510ee9d9463b0fe6cc65813782f795b09eeac24", size = 40844, upload-time = "2026-08-26T12:28:16.54Z" },
 ]
 
 [[package]]
@@ -857,10 +857,12 @@ wheels = [
 
 [[package]]
 name = "dosi-engine"
-version = "0.1.6"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/67/0f801d7a0f4bfc7608e856d203444650e84edfbd9ec7e4ffc6505ccd30a6/dosi_engine-0.1.6-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a70baca8287bf97aa20d1c1e4a1af1bd9757de883be57dfd510539dd61a8f1d2", size = 34517496, upload-time = "2026-08-18T11:08:48.49Z" },
+    { url = "https://files.pythonhosted.org/packages/45/fb/6c2cc7336eee5d88ecc0550df88b7975bb9197720d00986e0fbedeedbb1b/dosi_engine-0.1.7-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:1ec355eed88d650b75f9ae99bffd11e96b5797956ddad0a99fc47127645c5edc", size = 51970068, upload-time = "2026-08-24T13:19:15.657Z" },
+    { url = "https://files.pythonhosted.org/packages/57/44/bd34e0e3578a1ed149b437d68b35b37f774fca2901374d495a51c2eda2f0/dosi_engine-0.1.7-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:2533082d2b8151685f773635e0bdb96f7476e0d0cb5d7b426986e2e0b43f1b8c", size = 42656411, upload-time = "2026-08-24T13:19:18.467Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/09/b6f64d5ed6a7e936157ef1672bb2dba9d7690a321b35a26311019d4434f4/dosi_engine-0.1.7-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:371a54bc629411917c8d94bbc803e1f5d4f166cf87b15abd35432c8ea56434d4", size = 44520976, upload-time = "2026-08-24T13:19:21.084Z" },
 ]
 
 [[package]]
