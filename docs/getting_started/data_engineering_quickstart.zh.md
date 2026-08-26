@@ -396,7 +396,7 @@ Please copy the source table marts.lever__requisition_enhanced from the lever_du
 skill：
 
 ```text
-Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store only non-sensitive Database, Dataset, Dashboard, and Chart resource request payloads in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets, and redact sensitive fields before writing any payload. Every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
+Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Keep this quickstart dashboard to exactly three charts: a total requisitions KPI, requisitions by status, and requisitions by team. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the three planned queries on that Datus datasource first. Register the table as a physical Superset Dataset, then create the requisition operations dashboard and its three charts. Reuse matching Dataset, Dashboard, or Chart resources left by an earlier attempt instead of creating duplicates. Store only non-sensitive Dataset, Dashboard, and Chart request bodies in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets. Use the typed CLI commands, and inspect the installed OpenAPI schema only if a typed request is rejected. Every chart must contain matching params and query_context JSON strings. Attach all three charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run the KPI query plus one grouped chart query. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
 ```
 
 数据准备是单独的 ETL / 调度步骤。创建仪表盘前，目标表或 SQL dataset
@@ -407,9 +407,23 @@ Use the Superset plugin with profile local and follow the superset-dashboard-aut
 返回的 ID 交给主 agent，让它通过 Superset plugin 检查 Database、table metadata、
 Dashboard、Charts 和 chart data；不要复制本文中的示例 ID。
 
-仪表盘应该包含 11 个 chart。代表性的 total requisitions chart 查询应返回
-146，分类查询应返回多个分组，Database connection 应标识为
+仪表盘应该包含 3 个 chart。total requisitions chart 查询应返回 146，按 status
+和 team 分类的查询应返回多个分组，Database connection 应标识为
 `postgres:5432/superset_examples`。
+
+这个缩小后的示例通常可以在主 agent 默认的 50 个 turn 内完成。如果仍看到
+`Max turns (50) exceeded`，可以把下面的覆写合并到
+`~/.datus/conf/agent.yml`，将主 `chat` agent 的上限临时提高到 80：
+
+```yaml
+agent:
+  agentic_nodes:
+    chat:
+      max_turns: 80
+```
+
+保存后重启 Datus，再重新执行本步骤。成功后可以删除这个 `max_turns` 覆写，恢复
+默认值；它只控制单次任务允许的最大工具推理轮数，不会让失败的任务自动续跑。
 
 ## 步骤 9：验证端到端结果
 

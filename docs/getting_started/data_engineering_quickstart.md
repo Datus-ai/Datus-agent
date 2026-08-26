@@ -417,7 +417,7 @@ Once the marts table exists in `superset_serving`, ask the agent to use the
 plugin's authoring skill.
 
 ```text
-Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the planned queries on that Datus datasource first. Register it as a physical Superset Dataset, then create a requisition operations dashboard with KPI tiles for total requisitions, open requisitions, requisitions with postings, requisitions with offers, and total requested headcount. Add charts by status, team, location, employment_status, count_postings, and count_offers. Store only non-sensitive Database, Dataset, Dashboard, and Chart resource request payloads in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets, and redact sensitive fields before writing any payload. Every chart must contain matching params and query_context JSON strings. Attach all charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run representative chart data queries. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
+Use the Superset plugin with profile local and follow the superset-dashboard-authoring skill. Keep this quickstart dashboard to exactly three charts: a total requisitions KPI, requisitions by status, and requisitions by team. Discover the Superset Database named examples and resolve its credential-free connection identity uniquely to the superset_serving Datus datasource. Validate public.lever__requisition_enhanced and the three planned queries on that Datus datasource first. Register the table as a physical Superset Dataset, then create the requisition operations dashboard and its three charts. Reuse matching Dataset, Dashboard, or Chart resources left by an earlier attempt instead of creating duplicates. Store only non-sensitive Dataset, Dashboard, and Chart request bodies in project-local JSON files. Never persist authentication or login request bodies, tokens, cookies, passwords, or other secrets. Use the typed CLI commands, and inspect the installed OpenAPI schema only if a typed request is rejected. Every chart must contain matching params and query_context JSON strings. Attach all three charts and update a complete position_json layout so the dashboard is not blank. Read the Database, Dataset, Dashboard, and Charts back, confirm that the Database connection still identifies postgres:5432/superset_examples, and run the KPI query plus one grouped chart query. Return the Database, Dataset, Dashboard, and Chart IDs plus the dashboard URL.
 ```
 
 Data preparation is a separate ETL / scheduled-workflow step. Dashboard generation
@@ -431,10 +431,27 @@ agent and ask it to inspect the Database, table metadata, Dashboard, Charts,
 and chart data through the Superset plugin. Never copy example IDs from this
 page.
 
-The dashboard should contain 11 charts. A representative total-requisitions
-chart query should return 146, category queries should return more than one
+The dashboard should contain three charts. The total-requisitions chart query
+should return 146, the status and team queries should return more than one
 group, and the Database connection should identify
 `postgres:5432/superset_examples`.
+
+This smaller example should normally finish within the main agent's default 50
+turns. If Datus still reports `Max turns (50) exceeded`, temporarily merge this
+override into `~/.datus/conf/agent.yml` to raise the main `chat` agent limit to
+80:
+
+```yaml
+agent:
+  agentic_nodes:
+    chat:
+      max_turns: 80
+```
+
+Restart Datus after saving the configuration, then run this step again. Remove
+the override after the task succeeds to restore the default. This setting only
+changes the maximum number of tool-assisted reasoning turns in one task; it
+does not resume an interrupted task automatically.
 
 ## Step 9: Verify the End-to-End Result
 
