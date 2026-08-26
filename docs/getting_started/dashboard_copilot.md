@@ -198,14 +198,6 @@ Send one natural-language request:
 Use the Superset plugin with profile local and follow the dashboard-bootstrap skill to bootstrap the World Bank's Data dashboard. Select all exportable dashboard queries for reference SQL and metric evidence. Show me the Generation Manifest and wait for confirmation before writing anything.
 ```
 
-You can also start the same workflow with the slash command:
-
-```text
-> /bootstrap-bi use Superset profile local and the World Bank's Data dashboard; select all exportable queries for reference SQL and metrics
-```
-
-Both forms run the same `dashboard-bootstrap` workflow.
-
 ### What the agent does before confirmation
 
 The main agent loads two skills:
