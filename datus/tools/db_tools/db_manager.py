@@ -3,7 +3,8 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import dataclasses
-from typing import Callable, Dict, Optional, Tuple, Union
+import threading
+from typing import Callable, Dict, Optional, Set, Tuple, Union
 
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
 from sqlalchemy.engine.url import URL, make_url
@@ -18,8 +19,30 @@ from datus.utils.path_utils import get_files_from_glob_pattern
 logger = get_logger(__name__)
 
 
+# Single-flight guard for adapter auto-installs: concurrent callers (e.g. the
+# REPL connection init and the background schema sync) must not spawn duplicate
+# ``pip install`` processes racing on the same environment, and a failed install
+# must not be retried on every connection attempt within the process.
+_adapter_install_lock = threading.Lock()
+_adapter_install_attempted: Set[str] = set()
+
+
 def _auto_install_adapter(db_type: str) -> None:
-    """Attempt to pip-install the adapter package for *db_type* and register it."""
+    """Attempt to pip-install the adapter package for *db_type* and register it.
+
+    Serialized process-wide: the first caller runs the install while holding the
+    lock (so concurrent callers wait for its outcome instead of racing), and
+    each *db_type* is attempted at most once per process.
+    """
+    with _adapter_install_lock:
+        if db_type in _adapter_install_attempted:
+            logger.debug("Adapter '%s' auto-install already attempted; skipping", db_type)
+            return
+        _adapter_install_attempted.add(db_type)
+        _run_adapter_install(db_type)
+
+
+def _run_adapter_install(db_type: str) -> None:
     import importlib
     import shutil
     import subprocess
@@ -238,6 +261,22 @@ class DBManager:
         # file path, which ``cfg.database`` doesn't carry); fall back to the config-resolved
         # name. Both are real database names — never the datasource name.
         return (connector.database_name or resolved), connector
+
+    def missing_connector_type(self, datasource: str) -> Optional[str]:
+        """Return ``datasource``'s (normalized) db type when its connector is
+        not registered yet, else ``None``.
+
+        A metadata-only probe — never triggers the adapter auto-install — so
+        UI layers can announce a pending install before the blocking
+        connection attempt starts.
+        """
+        cfg = self._db_configs.get(datasource)
+        if cfg is None:
+            return None
+        db_type = _normalize_dialect_name(cfg.type)
+        if not db_type or connector_registry.is_registered(db_type):
+            return None
+        return db_type
 
     def get_db_uris(self, datasource: str) -> Dict[str, str]:
         cfg = self._db_configs.get(datasource)

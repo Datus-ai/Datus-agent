@@ -82,3 +82,34 @@ def is_embedding_unavailable_error(error: BaseException | str | None) -> bool:
             "embedding model is unavailable",
         )
     )
+
+
+DATASOURCE_SCOPE_MARKER = "datasource is required for datasource-scoped storage"
+
+
+def is_datasource_scope_error(error: BaseException | str | None) -> bool:
+    """Return True for the "no datasource selected" storage-scope failure."""
+    return bool(error) and DATASOURCE_SCOPE_MARKER in str(error)
+
+
+def format_context_unavailable(error: BaseException | str | None = None) -> str:
+    """Build a context-degradation message that matches the actual cause.
+
+    ``format_context_degraded_warning`` hardcodes the embedding-unavailable
+    text; routing every failure through it blames the embedding model (and
+    recommends Hugging Face mirrors) for unrelated causes such as a missing
+    datasource. Classify first, then format.
+    """
+    if is_embedding_unavailable_error(error):
+        return format_context_degraded_warning(error)
+    if is_datasource_scope_error(error):
+        return (
+            "Context search and @ references are inactive because no datasource is selected. "
+            "Database tools and normal chat remain available. "
+            "Select a datasource (/database in the CLI, or --datasource) to enable them."
+        )
+    details = str(error).strip() if error else ""
+    message = "Context search and @ references are disabled. Database tools and normal chat remain available."
+    if details:
+        message = f"{message} Details: {details}"
+    return message

@@ -251,6 +251,55 @@ class TestPreLoadStorage:
         assert len(cli.startup_warnings) == 1
         assert "table cache unavailable" in cli.startup_warnings[0]
 
+    def test_pre_load_storage_no_datasource_is_hint_not_warning(self, cli):
+        # The exact error resolve_datasource_id raises when nothing is selected.
+        scope_error = (
+            "error_code=410007, error_message=Invalid storage argument: "
+            "datasource is required for datasource-scoped storage"
+        )
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error=scope_error),
+            metric_completer=SimpleNamespace(last_error=scope_error),
+            sql_completer=SimpleNamespace(last_error=scope_error),
+        )
+
+        cli._pre_load_storage()
+
+        # Property: "no datasource selected" is a normal state — it must not
+        # become a startup warning and must never blame the embedding model.
+        assert cli.startup_warnings == []
+        output = " ".join(cli.console.file.getvalue().split())
+        assert "datasource is selected" in output
+        assert "embedding" not in output.lower()
+
+    def test_pre_load_storage_dedupes_identical_completer_errors(self, cli):
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error="lance cache unavailable"),
+            metric_completer=SimpleNamespace(last_error="lance cache unavailable"),
+            sql_completer=SimpleNamespace(last_error="lance cache unavailable"),
+        )
+
+        cli._pre_load_storage()
+
+        assert len(cli.startup_warnings) == 1
+        assert cli.startup_warnings[0].count("lance cache unavailable") == 1
+
+    def test_pre_load_storage_embedding_error_keeps_embedding_remediation(self, cli):
+        cli.at_completer = SimpleNamespace(
+            reload_data=MagicMock(),
+            table_completer=SimpleNamespace(last_error="error_code=300019: embedding download failed"),
+            metric_completer=SimpleNamespace(last_error=None),
+            sql_completer=SimpleNamespace(last_error=None),
+        )
+
+        cli._pre_load_storage()
+
+        assert len(cli.startup_warnings) == 1
+        assert "embedding model is unavailable" in cli.startup_warnings[0]
+        assert "Hugging Face" in cli.startup_warnings[0]
+
     def test_background_init_keeps_agent_ready_after_preload_failure(self, cli):
         agent = object()
         cli.args = SimpleNamespace(debug=False)
@@ -1739,3 +1788,154 @@ class TestInterruptAgent:
         cli.tui_app.restore_input_after_dispatch.assert_not_called()
         cli.chat_commands.current_streaming_ctx.request_unanswered_rollback.assert_not_called()
         cli.chat_commands.current_streaming_ctx.request_interrupted_notice.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: _call_with_timeout
+# ---------------------------------------------------------------------------
+
+
+def _console_text(cli) -> str:
+    """Console output with wrapping-induced newlines collapsed."""
+    return " ".join(cli.console.file.getvalue().split())
+
+
+class TestCallWithTimeout:
+    def test_returns_result_within_timeout(self):
+        from datus.cli.repl import _call_with_timeout
+
+        assert _call_with_timeout(lambda: 42, 5, "quick call") == 42
+
+    def test_reraises_worker_exception(self):
+        from datus.cli.repl import _call_with_timeout
+
+        def _boom():
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError, match="boom"):
+            _call_with_timeout(_boom, 5, "failing call")
+
+    def test_expiry_unblocks_caller_without_joining_worker(self):
+        import time as time_mod
+
+        from datus.cli.repl import _call_with_timeout
+
+        start = time_mod.monotonic()
+        with pytest.raises(TimeoutError):
+            _call_with_timeout(lambda: time_mod.sleep(2), 0.2, "stuck call")
+        # Property: expiry must unblock the caller promptly. Joining the
+        # worker (the ThreadPoolExecutor.__exit__ behavior this replaces)
+        # would hold the caller for the worker's full 2s runtime.
+        assert time_mod.monotonic() - start < 1.5
+
+    def test_abandoned_success_is_logged_not_raised(self):
+        import time as time_mod
+
+        from datus.cli.repl import _call_with_timeout
+
+        with patch("datus.cli.repl.logger") as mock_logger:
+            with pytest.raises(TimeoutError):
+                _call_with_timeout(lambda: time_mod.sleep(0.3) or "late", 0.05, "late call")
+            deadline = time_mod.monotonic() + 2
+            while not mock_logger.info.called and time_mod.monotonic() < deadline:
+                time_mod.sleep(0.05)
+        assert mock_logger.info.called
+        assert "late call" in mock_logger.info.call_args.args
+
+
+# ---------------------------------------------------------------------------
+# Tests: _init_connection timeout semantics and adapter-install notice
+# ---------------------------------------------------------------------------
+
+
+class TestInitConnectionTimeout:
+    def _wire(self, cli, *, connector=None, first_conn=None, missing=None):
+        from datus.utils.constants import DBType
+
+        if connector is None:
+            connector = SimpleNamespace(
+                dialect=DBType.SQLITE,
+                database_name="demo_db",
+                catalog_name=None,
+                test_connection=MagicMock(return_value=True),
+            )
+        cli.agent_config = SimpleNamespace(current_datasource="ds1")
+        cli.db_manager = SimpleNamespace(
+            first_conn_with_name=first_conn or (lambda ds: ("demo_db", connector)),
+            missing_connector_type=lambda ds: missing,
+        )
+        return connector
+
+    def test_no_datasource_clears_connector(self, cli):
+        cli.agent_config = SimpleNamespace(current_datasource="")
+
+        cli._init_connection()
+
+        assert cli.db_connector is None
+
+    def test_successful_connection_updates_context(self, cli):
+        connector = self._wire(cli)
+
+        cli._init_connection(timeout_seconds=5)
+
+        assert cli.db_connector is connector
+        assert cli.cli_context.current_db_name == "demo_db"
+        connector.test_connection.assert_called_once_with()
+
+    def test_timeout_unblocks_startup(self, cli):
+        import time as time_mod
+
+        def _stuck(ds):
+            time_mod.sleep(4)
+            return ("db", MagicMock())
+
+        self._wire(cli, first_conn=_stuck)
+
+        start = time_mod.monotonic()
+        cli._init_connection(timeout_seconds=0.5)
+        elapsed = time_mod.monotonic() - start
+
+        # Property: the timeout bounds how long startup blocks. Pre-fix the
+        # executor's __exit__ joined the stuck worker and held startup for
+        # the worker's full runtime despite the expired timeout.
+        assert elapsed < 3.0
+        assert cli.db_connector is None
+        assert "timed out" in _console_text(cli)
+
+    def test_connection_test_timeout_clears_connector(self, cli):
+        import time as time_mod
+
+        connector = SimpleNamespace(
+            dialect=None,
+            database_name="db",
+            catalog_name=None,
+            test_connection=lambda: time_mod.sleep(4) or True,
+        )
+        self._wire(cli, connector=connector)
+
+        start = time_mod.monotonic()
+        cli._init_connection(timeout_seconds=0.5)
+        elapsed = time_mod.monotonic() - start
+
+        assert elapsed < 3.0
+        assert cli.db_connector is None
+        assert "unresponsive" in _console_text(cli)
+
+    def test_missing_adapter_announced_before_connecting(self, cli):
+        def _fail(ds):
+            raise RuntimeError("Connector 'oracle' not found")
+
+        self._wire(cli, first_conn=_fail, missing="oracle")
+
+        cli._init_connection(timeout_seconds=5)
+
+        output = _console_text(cli)
+        assert "datus-oracle" in output
+        assert cli.db_connector is None
+
+    def test_no_install_notice_when_connector_registered(self, cli):
+        self._wire(cli, missing=None)
+
+        cli._init_connection(timeout_seconds=5)
+
+        assert "Installing" not in _console_text(cli)

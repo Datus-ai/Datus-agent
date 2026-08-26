@@ -656,3 +656,107 @@ class TestDbManagerInstanceCaching:
         a = db_manager_instance({"ds_a": _cfg(type="sqlite", database="db")})
         b = db_manager_instance({"ds_b": _cfg(type="sqlite", database="db")})
         assert a is not b
+
+
+# ---------------------------------------------------------------------------
+# _auto_install_adapter single-flight
+# ---------------------------------------------------------------------------
+
+
+class TestAutoInstallAdapterSingleFlight:
+    def setup_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+
+    def teardown_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+
+    def test_concurrent_callers_spawn_one_install(self):
+        import threading
+
+        from datus.tools.db_tools import db_manager as dm
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def fake_run(*args, **kwargs):
+            entered.set()
+            release.wait(timeout=5)
+            return SimpleNamespace(returncode=1, stderr="simulated failure")
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run:
+            first = threading.Thread(target=dm._auto_install_adapter, args=("faketype",))
+            first.start()
+            assert entered.wait(timeout=5)
+            second = threading.Thread(target=dm._auto_install_adapter, args=("faketype",))
+            second.start()
+            # Property: the second caller must wait on the first install, not
+            # race a duplicate pip process against the same environment.
+            second.join(timeout=0.3)
+            assert second.is_alive()
+            release.set()
+            first.join(timeout=5)
+            second.join(timeout=5)
+            assert not first.is_alive() and not second.is_alive()
+
+        assert mock_run.call_count == 1
+
+    def test_failed_install_not_retried_within_process(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")) as mock_run:
+            dm._auto_install_adapter("faketype")
+            dm._auto_install_adapter("faketype")
+
+        assert mock_run.call_count == 1
+
+    def test_distinct_types_install_independently(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")) as mock_run:
+            dm._auto_install_adapter("faketype_a")
+            dm._auto_install_adapter("faketype_b")
+
+        assert mock_run.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# DBManager.missing_connector_type
+# ---------------------------------------------------------------------------
+
+
+class TestMissingConnectorType:
+    def test_registered_type_returns_none(self):
+        mgr = DBManager({"ds": _cfg(type="sqlite", database="db")})
+        assert mgr.missing_connector_type("ds") is None
+
+    def test_unregistered_type_returned(self):
+        mgr = DBManager({"ds": _cfg(type="nonexistent_db_xyz")})
+        assert mgr.missing_connector_type("ds") == "nonexistent_db_xyz"
+
+    def test_unknown_datasource_returns_none(self):
+        mgr = DBManager({})
+        assert mgr.missing_connector_type("nope") is None
+
+    def test_empty_type_returns_none(self):
+        mgr = DBManager({"ds": _cfg(type=None)})
+        assert mgr.missing_connector_type("ds") is None
+
+    def test_alias_normalized_before_registry_lookup(self):
+        mgr = DBManager({"ds": _cfg(type="postgres")})
+        with patch(
+            "datus.tools.db_tools.db_manager.connector_registry.is_registered", return_value=False
+        ) as mock_registered:
+            assert mgr.missing_connector_type("ds") == "postgresql"
+        mock_registered.assert_called_once_with("postgresql")
+
+    def test_probe_never_triggers_auto_install(self):
+        # Contract: the probe is metadata-only. The REPL calls it before the
+        # banner; a pip install here would reintroduce the silent startup hang.
+        mgr = DBManager({"ds": _cfg(type="nonexistent_db_xyz")})
+        with patch("datus.tools.db_tools.db_manager._auto_install_adapter") as mock_install:
+            mgr.missing_connector_type("ds")
+        mock_install.assert_not_called()
