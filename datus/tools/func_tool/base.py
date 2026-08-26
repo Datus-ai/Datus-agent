@@ -6,7 +6,7 @@
 import asyncio
 import inspect
 import json
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Union, get_args, get_origin
 
 import json_repair
 from agents import FunctionTool, function_tool
@@ -15,6 +15,60 @@ from pydantic import BaseModel, Field
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def coerce_llm_arg(value: Any, annotation: Any) -> Any:
+    """Coerce an argument the model sent as a string into the declared type.
+
+    Some models serialize a nested list argument as a JSON *string*, so a
+    parameter declared ``List[str]`` arrives as ``'["a", "b"]'``, and an ``int``
+    arrives as ``"5"``. The JSON itself is well formed, so ``parse_tool_args``
+    has nothing to repair — the value simply has the wrong type, and the tool
+    then filters on a string, compares against a string, or indexes with one.
+
+    Failures from this are quiet: a filter that matches nothing returns an empty
+    result rather than an error, which reads to the caller as "there is no data"
+    instead of "the argument was the wrong type".
+
+    Only ``str`` values are touched, and only when the annotation asks for a list
+    or an int. Anything unparseable is returned unchanged so the tool's own
+    validation still sees what the model actually sent.
+    """
+    if not isinstance(value, str):
+        return value
+
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is Union:  # Optional[X] / X | None
+        inner = [a for a in args if a is not type(None)]
+        if len(inner) != 1:
+            return value
+        annotation = inner[0]
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+
+    if origin in (list, List):
+        text = value.strip()
+        if not text:
+            return value
+        try:
+            parsed = json.loads(text)
+        except (ValueError, TypeError):
+            return value
+        if isinstance(parsed, str):  # double-encoded
+            try:
+                parsed = json.loads(parsed)
+            except (ValueError, TypeError):
+                return value
+        return parsed if isinstance(parsed, list) else value
+
+    if annotation is int and not isinstance(value, bool):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return value
+
+    return value
 
 
 def normalize_null(value):
@@ -256,6 +310,16 @@ def trans_to_function_tool(
                         f"{extra_params}, filtering them out"
                     )
                     args_dict = {k: v for k, v in args_dict.items() if k in valid_params}
+
+            # Coerce arguments the model stringified (a List[str] sent as
+            # '["a"]', an int sent as "5"). The JSON parsed fine, so nothing
+            # above had anything to repair — the value is simply the wrong type,
+            # and passing it through makes the tool filter on a string and
+            # return an empty result with no error.
+            for arg_name, arg_value in list(args_dict.items()):
+                param = sig.parameters.get(arg_name)
+                if param is not None and param.annotation is not inspect.Parameter.empty:
+                    args_dict[arg_name] = coerce_llm_arg(arg_value, param.annotation)
 
             # Reject missing required parameters symmetrically with the extra/
             # excluded-parameter handling above. Without this, an LLM tool call

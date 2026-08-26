@@ -7,7 +7,7 @@ import asyncio
 import json
 import threading
 from types import SimpleNamespace
-from typing import Optional
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -556,3 +556,59 @@ class TestFuncToolListResult:
         assert dumped["items"] == []
         assert dumped["total"] == 0
         assert dumped["has_more"] is False
+
+
+class TestStringifiedArgumentCoercion:
+    """Some models serialize a list argument as a JSON string, and an int as a
+    string. The JSON itself is well formed, so nothing upstream repairs it — the
+    value simply arrives with the wrong type."""
+
+    @staticmethod
+    def _probe():
+        seen = {}
+
+        class Tool:
+            def probe(
+                self,
+                query_text: str,
+                kinds: Optional[List[str]] = None,
+                top_n: int = 5,
+                label: str = "",
+                flag: bool = False,
+            ):
+                """Probe tool."""
+                seen.update(kinds=kinds, top_n=top_n, label=label, flag=flag)
+                return FuncToolResult(success=1, result="ok")
+
+        return trans_to_function_tool(Tool().probe), seen
+
+    def _call(self, **arguments):
+        tool, seen = self._probe()
+        arguments.setdefault("query_text", "q")
+        asyncio.run(tool.on_invoke_tool(None, json.dumps(arguments)))
+        return seen
+
+    def test_stringified_list_becomes_a_list(self):
+        assert self._call(kinds='["dataset"]')["kinds"] == ["dataset"]
+
+    def test_double_encoded_list_becomes_a_list(self):
+        assert self._call(kinds='"[\\"field\\"]"')["kinds"] == ["field"]
+
+    def test_stringified_int_becomes_an_int(self):
+        assert self._call(top_n="7")["top_n"] == 7
+
+    def test_a_real_list_is_untouched(self):
+        assert self._call(kinds=["dataset", "field"])["kinds"] == ["dataset", "field"]
+
+    def test_a_string_parameter_is_never_coerced(self):
+        """A str parameter whose value looks like a list must stay a string."""
+        assert self._call(label="[1, 2]")["label"] == "[1, 2]"
+
+    def test_unparseable_values_reach_the_tool_unchanged(self):
+        """The tool's own validation must still see what the model actually sent."""
+        seen = self._call(kinds="not json", top_n="many")
+        assert seen["kinds"] == "not json"
+        assert seen["top_n"] == "many"
+
+    def test_bool_is_not_treated_as_an_int(self):
+        assert self._call(flag=True)["flag"] is True
