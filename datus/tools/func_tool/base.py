@@ -67,7 +67,7 @@ def coerce_llm_arg(value: Any, annotation: Any) -> Any:
                 return value
         return parsed if isinstance(parsed, list) else value
 
-    if annotation is int and not isinstance(value, bool):
+    if annotation is int:
         try:
             return int(value.strip())
         except ValueError:

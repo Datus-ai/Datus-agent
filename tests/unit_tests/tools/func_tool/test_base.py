@@ -610,8 +610,25 @@ class TestStringifiedArgumentCoercion:
         assert seen["kinds"] == "not json"
         assert seen["top_n"] == "many"
 
-    def test_bool_is_not_treated_as_an_int(self):
-        assert self._call(flag=True)["flag"] is True
+    def test_non_string_values_are_passed_through_untouched(self):
+        """Coercion only ever inspects strings.
+
+        A bool handed to an int-annotated parameter is the case worth pinning:
+        ``int(True)`` would silently become ``1``, so the guard is that a
+        non-string is returned before any conversion is considered.
+        """
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, top_n: int = 5, kinds: Optional[List[str]] = None):
+                """Probe tool."""
+                seen.update(top_n=top_n, kinds=kinds)
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "top_n": True, "kinds": ["a"]})))
+        assert seen["top_n"] is True
+        assert seen["kinds"] == ["a"]
 
     def test_pep604_optional_int_is_coerced(self):
         """``int | None`` reports types.UnionType, not typing.Union."""
@@ -632,6 +649,20 @@ class TestStringifiedArgumentCoercion:
 
         class Tool:
             def probe(self, query_text: str, kinds: list[str] | None = None):
+                """Probe tool."""
+                seen["kinds"] = kinds
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "kinds": '["dataset"]'})))
+        assert seen["kinds"] == ["dataset"]
+
+    def test_bare_list_annotation_without_none_is_coerced(self):
+        """``list`` on its own reports no origin either."""
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, kinds: list = None):
                 """Probe tool."""
                 seen["kinds"] = kinds
                 return FuncToolResult(success=1, result="ok")
