@@ -198,6 +198,14 @@ Provider 配置方式参见 [Model 命令](../cli/other_commands.zh.md#model)。
 使用 local profile 的 Superset plugin，按照 dashboard-bootstrap skill bootstrap World Bank's Data dashboard。选择所有可导出的 dashboard queries 同时用于 reference SQL 和 metric evidence。先展示 Generation Manifest，等待我确认后再写入任何内容。
 ```
 
+也可以使用 slash command 启动相同流程：
+
+```text
+> /bootstrap-bi 使用 Superset local profile 和 World Bank's Data dashboard；选择所有可导出查询用于 reference SQL 和 metrics
+```
+
+两种方式都会执行相同的 `dashboard-bootstrap` workflow。
+
 ### Agent 在确认前执行的操作
 
 主 agent 会加载两个 skills：
