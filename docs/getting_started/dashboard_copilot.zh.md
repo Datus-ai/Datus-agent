@@ -83,15 +83,14 @@ Superset 就绪后停止跟随日志。本地服务信息如下：
 
 ## 步骤 2：安装 Superset plugin 和 Dosi adapter
 
-从 Datus Plugins 仓库安装 Superset plugin：
+从 Datus Plugins Git 仓库安装 Superset plugin：
 
 ```bash
-git clone --depth 1 https://github.com/Datus-ai/Datus-Plugins.git "$HOME/Datus-Plugins"
-datus plugin install "src:$HOME/Datus-Plugins/datus-superset-plugin"
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"
 datus plugin info superset
 ```
 
-如果该目录已经存在，请先更新代码，再使用 `--force` 安装当前版本。
+如需更新已有的 Git 安装，运行 `datus plugin upgrade superset`。
 
 将 Dosi semantic adapter 安装到 Datus 所在的同一个 Python 环境：
 

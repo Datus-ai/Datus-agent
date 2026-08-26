@@ -83,15 +83,14 @@ Open Superset and confirm that the example **World Bank's Data** dashboard is av
 
 ## Step 2: Install the Superset plugin and Dosi adapter
 
-Install the Superset plugin from the Datus Plugins repository:
+Install the Superset plugin from the Datus Plugins Git repository:
 
 ```bash
-git clone --depth 1 https://github.com/Datus-ai/Datus-Plugins.git "$HOME/Datus-Plugins"
-datus plugin install "src:$HOME/Datus-Plugins/datus-superset-plugin"
+datus plugin install "git:https://github.com/Datus-ai/Datus-Plugins.git#subdirectory=datus-superset-plugin"
 datus plugin info superset
 ```
 
-If that checkout already exists, update it and reinstall with `--force` instead of cloning it again.
+To update an existing Git installation, run `datus plugin upgrade superset`.
 
 Install the Dosi semantic adapter into the same Python environment as Datus:
 
