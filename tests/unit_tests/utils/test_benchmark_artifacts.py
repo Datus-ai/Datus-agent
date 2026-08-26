@@ -515,6 +515,7 @@ def test_agent_wrapper_writes_manifest_when_runner_raises_before_output(tmp_path
         run=MagicMock(side_effect=RuntimeError("plan generation failed")),
     )
     agent = SimpleNamespace(global_config=config, create_workflow_runner=MagicMock(return_value=runner))
+    agent._write_benchmark_trajectory = Agent._write_benchmark_trajectory.__get__(agent)
 
     with pytest.raises(RuntimeError, match="plan generation failed"):
         Agent._run_benchmark_task(agent, _task(), run_id="run-1")
@@ -523,6 +524,8 @@ def test_agent_wrapper_writes_manifest_when_runner_raises_before_output(tmp_path
     _validator().validate(payload)
     assert payload["status"] == "failed"
     assert payload["error"]["type"] == "benchmark_execution"
-    assert payload["trajectory"] is None
+    # Even a crash before workflow init yields a native trajectory reference.
+    assert payload["trajectory"]["contract_profile"] == "native_v1"
+    assert (trajectory_root / payload["trajectory"]["path"]).is_file()
     config.save_run_dir.assert_called_once_with("analytics", "run-1")
     config.trajectory_run_dir.assert_called_once_with("analytics", "run-1")

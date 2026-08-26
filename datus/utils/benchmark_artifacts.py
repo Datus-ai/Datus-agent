@@ -432,6 +432,7 @@ def finalize_benchmark_attempt(
     trajectory_path: Optional[Path | str],
     agent_config: Any,
     exception: Optional[BaseException] = None,
+    trajectory_profile: str = "compatibility_v1",
 ) -> Path:
     """Write the authoritative manifest, then refresh legacy flat aliases."""
     completed_at = _utc_now()
@@ -476,7 +477,7 @@ def finalize_benchmark_attempt(
                 "path": _relative_posix(trajectory_file, attempt.trajectory_run_root),
                 "format": "yaml",
                 "schema_version": 1,
-                "contract_profile": "compatibility_v1",
+                "contract_profile": trajectory_profile,
                 "attempt_id": attempt.attempt_id,
             }
 
