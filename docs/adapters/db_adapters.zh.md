@@ -330,7 +330,7 @@ TiDB 使用 MySQL 通信协议，对象按 `database.table` 寻址：与 MySQL �
 可以查看哪些表已有同步完成的副本。唯一无法从副本获益的是聚合类窗口函数——它们会回退到 TiDB 单节点计算，
 结果正确但失去并行，因此在两种写法都可行时应优先使用 `GROUP BY` 聚合。
 
-暂不支持 TLS，因此需要 TLS 的 TiDB Cloud 端点目前无法连接。
+`datus-tidb` 适配器目前不支持 TLS 配置，因此无法连接需要 TLS 的 TiDB Cloud 端点。这是适配器的限制，不是 TiDB 本身的限制。
 
 ### Hologres
 

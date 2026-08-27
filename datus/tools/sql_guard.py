@@ -45,6 +45,7 @@ to "allow".
 from __future__ import annotations
 
 import re
+from math import ceil
 from typing import Any, List, Optional
 
 # Ceiling on the optimizer's per-operator row estimate. See the module docstring
@@ -123,8 +124,10 @@ def _tidb_max_est_rows(explain_rows: List[Any]) -> Optional[int]:
         if raw is None:
             continue
         try:
-            value = int(float(raw))
-        except (TypeError, ValueError):
+            # Round up: truncating 50000000.99 would let a plan that exceeds the
+            # ceiling through. OverflowError covers an infinite estRows.
+            value = ceil(float(raw))
+        except (TypeError, ValueError, OverflowError):
             continue
         largest = value if largest is None else max(largest, value)
     return largest

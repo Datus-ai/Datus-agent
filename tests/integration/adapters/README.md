@@ -76,7 +76,6 @@ Several adapters use default ports that are commonly occupied:
 - trino (8080) — conflicts with Airflow / many web dev servers
 - starrocks (9030) — conflicts with existing StarRocks instances
 - doris (9030) — conflicts with StarRocks and existing Doris instances
-- tidb (4000) — the compose file publishes 24000
 - hive / spark (10000) — both default to the HiveServer2/Spark Thrift port; run one suite at a time or remap one service
 
 For the Trino adapter, the compose file already supports a `TRINO_HOST_PORT`

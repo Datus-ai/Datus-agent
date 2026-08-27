@@ -342,7 +342,7 @@ Aggregate window functions are the one thing that does not gain from a replica: 
 single-node computation on the TiDB layer, correct but not parallel, so prefer `GROUP BY` aggregation
 where a query can be written either way.
 
-TLS is not supported yet, so TiDB Cloud endpoints that require it are out of reach for now.
+The `datus-tidb` adapter does not support TLS configuration yet, so it cannot reach TiDB Cloud endpoints that require TLS. This is an adapter limitation, not a TiDB one.
 
 ### Hologres
 
