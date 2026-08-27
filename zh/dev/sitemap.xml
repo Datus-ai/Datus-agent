@@ -385,10 +385,28 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/plugin/development/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/zh/dev/dev/plugin/eks/</loc>
+        <lastmod>2026-08-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/plugin/eks/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/zh/dev/dev/plugin/flink/</loc>
+        <lastmod>2026-08-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/plugin/flink/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/zh/dev/dev/plugin/introduction/</loc>
         <lastmod>2026-08-27</lastmod>
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/plugin/introduction/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/zh/dev/dev/plugin/k8s/</loc>
+        <lastmod>2026-08-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/zh/dev/dev/plugin/k8s/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/zh/dev/dev/plugin/mwaa/</loc>

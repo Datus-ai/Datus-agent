@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/gateway/slack/">
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/plugin/eks/">
       
       
-        <link rel="prev" href="../introduction/">
+        <link rel="prev" href="../s3/">
       
       
-        <link rel="next" href="../feishu/">
+        <link rel="next" href="../k8s/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Slack - Datus Docs</title>
+        <title>EKS - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#slack" class="md-skip">
+        <a href="#eks" class="md-skip">
           跳转至
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Slack
+              EKS
             
           </span>
         </div>
@@ -1816,8 +1816,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1834,11 +1836,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6" id="__nav_1_6_label" tabindex="0">
@@ -1859,7 +1861,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1877,7 +1879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -1905,7 +1907,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/development/" class="md-nav__link">
+      <a href="../development/" class="md-nav__link">
         
   
   
@@ -1930,8 +1932,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1952,11 +1956,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6_3" id="__nav_1_6_3_label" tabindex="0">
@@ -1977,7 +1981,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1995,7 +1999,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/airflow/" class="md-nav__link">
+      <a href="../airflow/" class="md-nav__link">
         
   
   
@@ -2023,7 +2027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/s3/" class="md-nav__link">
+      <a href="../s3/" class="md-nav__link">
         
   
   
@@ -2048,10 +2052,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../plugin/eks/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EKS
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2067,6 +2098,142 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        安装和启用
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#eks_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        eks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eks-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        eks-setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#eks_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置 EKS 环境
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#eks_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        查看 EKS 环境
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#k8s-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        作为 K8s provider
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        与 Flink 部署配合
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        权限与安全边界
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        相关文档
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2079,7 +2246,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/k8s/" class="md-nav__link">
+      <a href="../k8s/" class="md-nav__link">
         
   
   
@@ -2107,7 +2274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/flink/" class="md-nav__link">
+      <a href="../flink/" class="md-nav__link">
         
   
   
@@ -2176,10 +2343,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -2196,11 +2361,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_8" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_8" >
         
           
           <label class="md-nav__link" for="__nav_1_8" id="__nav_1_8_label" tabindex="0">
@@ -2221,7 +2386,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_8_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_8_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_8">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2239,7 +2404,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../gateway/introduction/" class="md-nav__link">
         
   
   
@@ -2264,37 +2429,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Slack
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../gateway/slack/" class="md-nav__link">
         
   
   
@@ -2310,242 +2448,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="目录">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      目录
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        前置条件
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#1-sdk" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        步骤 1：安装 SDK
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-slack-app-manifest" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        步骤 2：创建 Slack App（使用 Manifest）
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        步骤 3：生成令牌
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="步骤 3：生成令牌">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#app-level-token-socket-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        App-Level Token（用于 Socket Mode）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bot-token" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bot Token（用于发送消息）
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        步骤 4：将机器人添加到频道
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-datus-agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        步骤 5：配置 Datus Agent
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        配置参考
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        验证连接
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        权限与事件清单
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="权限与事件清单">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#bot-token_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        必需的 Bot Token 权限
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bot" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        必需的 Bot 事件
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        故障排查
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="故障排查">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#invalid_auth" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        "invalid_auth" 错误
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        机器人连接成功但收不到消息
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#missing_scope" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        "missing_scope" 错误
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        机器人消息触发循环
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2558,7 +2460,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../feishu/" class="md-nav__link">
+      <a href="../../gateway/feishu/" class="md-nav__link">
         
   
   
@@ -4646,7 +4548,7 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        前置条件
+        安装和启用
       
     </span>
   </a>
@@ -4654,44 +4556,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-sdk" class="md-nav__link">
+  <a href="#skills" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 1：安装 SDK
+        Skills
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-slack-app-manifest" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        步骤 2：创建 Slack App（使用 Manifest）
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        步骤 3：生成令牌
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="步骤 3：生成令牌">
+    <nav class="md-nav" aria-label="Skills">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#app-level-token-socket-mode" class="md-nav__link">
+  <a href="#eks_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        App-Level Token（用于 Socket Mode）
+        eks
       
     </span>
   </a>
@@ -4699,10 +4579,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#bot-token" class="md-nav__link">
+  <a href="#eks-setup" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bot Token（用于发送消息）
+        eks-setup
       
     </span>
   </a>
@@ -4715,10 +4595,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4" class="md-nav__link">
+  <a href="#eks_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 4：将机器人添加到频道
+        配置 EKS 环境
       
     </span>
   </a>
@@ -4726,10 +4606,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-datus-agent" class="md-nav__link">
+  <a href="#eks_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        步骤 5：配置 Datus Agent
+        查看 EKS 环境
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#k8s-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        作为 K8s provider
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        与 Flink 部署配合
       
     </span>
   </a>
@@ -4740,7 +4642,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置参考
+        权限与安全边界
       
     </span>
   </a>
@@ -4751,110 +4653,10 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        验证连接
+        相关文档
       
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        权限与事件清单
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="权限与事件清单">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#bot-token_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        必需的 Bot Token 权限
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bot" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        必需的 Bot 事件
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        故障排查
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="故障排查">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#invalid_auth" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        "invalid_auth" 错误
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        机器人连接成功但收不到消息
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#missing_scope" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        "missing_scope" 错误
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        机器人消息触发循环
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4875,7 +4677,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/gateway/slack.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/plugin/eks.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4883,304 +4685,140 @@
   
 
 
-<h1 id="slack">Slack 适配器<a class="headerlink" href="#slack" title="Permanent link">&para;</a></h1>
-<p>本指南将引导你完成 Slack 机器人的配置，通过 Datus Gateway IM 网关连接到 Datus Agent。Slack 使用 <strong>Socket Mode</strong>，从服务器建立出站 WebSocket 连接 —— 无需公网 URL 或 Webhook 端点。</p>
-<h2 id="_1">前置条件<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<ul>
-<li>你有权限安装应用的 Slack 工作区</li>
-<li>已安装并配置好 Datus Agent</li>
-</ul>
-<h2 id="1-sdk">步骤 1：安装 SDK<a class="headerlink" href="#1-sdk" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"slack-sdk[socket_mode]"</span>
+<h1 id="eks">EKS 插件<a class="headerlink" href="#eks" title="Permanent link">&para;</a></h1>
+<p>EKS 插件（<code>datus-eks-plugin</code>）让你通过自然语言要求 Datus agent 查看 Amazon Elastic
+Kubernetes Service 控制面，并为 <a href="../k8s/">K8s 插件</a>提供短期 Kubernetes 认证。
+它直接使用 AWS SDK，不需要你生成或维护 kubeconfig，也不会把短期 bearer token
+展示给模型。</p>
+<p>首个版本的 EKS 运维能力全部是只读的：Agent 可以查看集群、node group、add-on、
+access entry、Fargate profile、更新和升级 insight，但不能创建、修改或删除这些
+AWS 资源。</p>
+<h2 id="_1">安装和启用<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-eks-plugin
 </span></code></pre></div>
-<h2 id="2-slack-app-manifest">步骤 2：创建 Slack App（使用 Manifest）<a class="headerlink" href="#2-slack-app-manifest" title="Permanent link">&para;</a></h2>
-<p>使用 Manifest 是创建正确配置的 Slack App 最快的方式。它会一步到位地预配置 Socket Mode、Bot 权限和事件订阅。</p>
-<ol>
-<li>前往 <a href="https://api.slack.com/apps/new">api.slack.com/apps/new</a>。</li>
-<li>点击 <strong>Create New App</strong> → <strong>From an app manifest</strong>。</li>
-<li>选择你的工作区，点击 <strong>Next</strong>。</li>
-<li>粘贴以下 Manifest（选择 JSON 标签页）：</li>
-</ol>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"display_information"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Datus Agent"</span><span class="p">,</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">"description"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Datus AI data analysis agent"</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p">},</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">"features"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">"bot_user"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">"display_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Datus Agent"</span><span class="p">,</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">"always_online"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="p">},</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">"app_home"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="nt">"messages_tab_enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="nt">"messages_tab_read_only_enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">  </span><span class="p">},</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">  </span><span class="nt">"oauth_config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="nt">"scopes"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">      </span><span class="nt">"bot"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">        </span><span class="s2">"app_mentions:read"</span><span class="p">,</span>
-</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">        </span><span class="s2">"channels:history"</span><span class="p">,</span>
-</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">        </span><span class="s2">"channels:read"</span><span class="p">,</span>
-</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">        </span><span class="s2">"chat:write"</span><span class="p">,</span>
-</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">        </span><span class="s2">"groups:history"</span><span class="p">,</span>
-</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">        </span><span class="s2">"groups:read"</span><span class="p">,</span>
-</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">        </span><span class="s2">"im:history"</span><span class="p">,</span>
-</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="w">        </span><span class="s2">"im:read"</span><span class="p">,</span>
-</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="w">        </span><span class="s2">"im:write"</span><span class="p">,</span>
-</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a><span class="w">        </span><span class="s2">"mpim:history"</span><span class="p">,</span>
-</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="w">        </span><span class="s2">"mpim:read"</span><span class="p">,</span>
-</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="w">        </span><span class="s2">"mpim:write"</span><span class="p">,</span>
-</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="w">        </span><span class="s2">"reactions:read"</span><span class="p">,</span>
-</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="w">        </span><span class="s2">"reactions:write"</span><span class="p">,</span>
-</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="w">        </span><span class="s2">"users:read"</span>
-</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a><span class="w">      </span><span class="p">]</span>
-</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="w">  </span><span class="p">},</span>
-</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="w">  </span><span class="nt">"settings"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="w">    </span><span class="nt">"socket_mode_enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="w">    </span><span class="nt">"event_subscriptions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="w">      </span><span class="nt">"bot_events"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="w">        </span><span class="s2">"app_mention"</span><span class="p">,</span>
-</span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a><span class="w">        </span><span class="s2">"message.channels"</span><span class="p">,</span>
-</span><span id="__span-1-43"><a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="w">        </span><span class="s2">"message.groups"</span><span class="p">,</span>
-</span><span id="__span-1-44"><a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="w">        </span><span class="s2">"message.im"</span><span class="p">,</span>
-</span><span id="__span-1-45"><a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="w">        </span><span class="s2">"message.mpim"</span><span class="p">,</span>
-</span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="w">        </span><span class="s2">"reaction_added"</span><span class="p">,</span>
-</span><span id="__span-1-47"><a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a><span class="w">        </span><span class="s2">"reaction_removed"</span>
-</span><span id="__span-1-48"><a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="w">      </span><span class="p">]</span>
-</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a><span class="w">    </span><span class="p">}</span>
-</span><span id="__span-1-50"><a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a><span class="w">  </span><span class="p">}</span>
-</span><span id="__span-1-51"><a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a><span class="p">}</span>
+<p>如果还需要操作集群内的 namespace 工作负载，同时安装 K8s plugin：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-k8s-plugin
 </span></code></pre></div>
-<ol>
-<li>检查配置摘要，点击 <strong>Create</strong>。</li>
-</ol>
-<div class="admonition tip">
-<p class="admonition-title">自定义 Manifest</p>
-<p>你可以将 <code>display_information.name</code> 修改为任意名称。如需额外功能，可添加更多权限范围（如 <code>files:write</code>）。</p>
-</div>
-<h2 id="3">步骤 3：生成令牌<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
-<p>应用创建后，你需要两个令牌：</p>
-<h3 id="app-level-token-socket-mode">App-Level Token（用于 Socket Mode）<a class="headerlink" href="#app-level-token-socket-mode" title="Permanent link">&para;</a></h3>
-<ol>
-<li>进入 <strong>Settings → Basic Information</strong>。</li>
-<li>向下滚动到 <strong>App-Level Tokens</strong>，点击 <strong>Generate Token and Scopes</strong>。</li>
-<li>输入名称（如 <code>gateway-socket-token</code>），添加权限范围 <code>connections:write</code>，点击 <strong>Generate</strong>。</li>
-<li>复制生成的令牌（以 <code>xapp-</code> 开头）。这就是你的 <code>SLACK_APP_TOKEN</code>。</li>
-</ol>
-<h3 id="bot-token">Bot Token（用于发送消息）<a class="headerlink" href="#bot-token" title="Permanent link">&para;</a></h3>
-<ol>
-<li>在左侧导航栏，进入 <strong>OAuth &amp; Permissions</strong>。</li>
-<li>点击 <strong>Install to Workspace</strong>，审批权限。</li>
-<li>复制 <strong>Bot User OAuth Token</strong>（以 <code>xoxb-</code> 开头）。这就是你的 <code>SLACK_BOT_TOKEN</code>。</li>
-</ol>
-<div class="admonition tip">
-<p class="admonition-title">令牌格式</p>
-<ul>
-<li>App-Level Token：以 <code>xapp-</code> 开头</li>
-<li>Bot User OAuth Token：以 <code>xoxb-</code> 开头</li>
-</ul>
-<p>如果你的令牌以 <code>xoxp-</code> 开头，说明误复制了 User OAuth Token。</p>
-</div>
-<h2 id="4">步骤 4：将机器人添加到频道<a class="headerlink" href="#4" title="Permanent link">&para;</a></h2>
-<p>在 Slack 中，将应用添加到你希望它响应消息的频道：</p>
-<ol>
-<li>打开目标频道。</li>
-<li>点击顶部的频道名称。</li>
-<li>进入 <strong>Integrations</strong> → <strong>Add apps</strong>。</li>
-<li>选择你的 Datus Agent 应用并点击 <strong>Add</strong>。</li>
-</ol>
-<p>机器人只会接收到已添加该应用的频道中的消息。</p>
-<h2 id="5-datus-agent">步骤 5：配置 Datus Agent<a class="headerlink" href="#5-datus-agent" title="Permanent link">&para;</a></h2>
-<p>在 <code>agent.yml</code> 中添加 Slack 频道配置：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">channels</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">slack-main</span><span class="p">:</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">slack</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">extra</span><span class="p">:</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="nt">app_token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SLACK_APP_TOKEN}</span><span class="w">       </span><span class="c1"># xapp-... (App-Level Token)</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="nt">bot_token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SLACK_BOT_TOKEN}</span><span class="w">       </span><span class="c1"># xoxb-... (Bot User OAuth Token)</span>
-</span></code></pre></div>
-<p>设置环境变量：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SLACK_APP_TOKEN</span><span class="o">=</span><span class="s2">"xapp-1-..."</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SLACK_BOT_TOKEN</span><span class="o">=</span><span class="s2">"xoxb-..."</span>
-</span></code></pre></div>
-<h2 id="_2">配置参考<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>安装完成后，在当前项目启用所需插件。其他安装来源和项目启用方式见
+<a href="../introduction/">插件</a>。</p>
+<h2 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>键</th>
-<th>必填</th>
-<th>说明</th>
+<th>Skill</th>
+<th>作用</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>app_token</code></td>
-<td>是</td>
-<td>Socket Mode 的 App-Level Token（<code>xapp-...</code>）</td>
+<td><code>eks</code></td>
+<td>查看 EKS 集群、计算资源、访问配置、更新和当前 AWS 身份</td>
 </tr>
 <tr>
-<td><code>bot_token</code></td>
-<td>是</td>
-<td>Bot User OAuth Token（<code>xoxb-...</code>）</td>
+<td><code>eks-setup</code></td>
+<td>创建 EKS 环境并安全验证连接</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_3">验证连接<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>启动网关并查看日志：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.gateway.main<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--debug
+<h3 id="eks_1">eks<a class="headerlink" href="#eks_1" title="Permanent link">&para;</a></h3>
+<p>核心 skill 从环境配置取得固定的 cluster name、region 和 AWS 认证。Agent 会先确认
+当前 caller identity 与目标集群，再按问题读取 node group、add-on、access entry、
+Fargate profile、update 或 upgrade insight。它会优先给出紧凑摘要，需要完整字段时
+再展示脱敏后的 AWS 响应。</p>
+<h3 id="eks-setup">eks-setup<a class="headerlink" href="#eks-setup" title="Permanent link">&para;</a></h3>
+<p>设置 skill 会询问环境名、EKS cluster name、region 和认证来源。支持标准 AWS
+credential chain、<code>~/.aws/config</code> 中的命名 profile、环境变量引用的临时密钥，以及
+AssumeRole。Agent 只保存 <code>${ENV_VAR}</code> 引用，不会写入明文 credential 或 ExternalId。</p>
+<h2 id="eks_2">配置 EKS 环境<a class="headerlink" href="#eks_2" title="Permanent link">&para;</a></h2>
+<p>推荐使用标准 AWS 链或 AssumeRole：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>帮我配置 analytics-prod EKS：集群是 analytics-prod-eks（us-east-1），使用
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>engineering AWS profile 和 datus-eks-operator role。
 </span></code></pre></div>
-<p>你应该看到：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Slack adapter 'slack-main' connecting...
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>Slack adapter 'slack-main' started.
+<p>Agent 会先复述将要保存的非敏感字段。缺少 ExternalId 环境变量名、源 profile 或
+region 等必要信息时，它会在写配置前询问。验证结果会明确显示：</p>
+<ul>
+<li>当前 AWS account、principal ARN 和 AssumeRole 后的身份；</li>
+<li>目标 EKS cluster name、region、状态和 Kubernetes 版本；</li>
+<li>endpoint 与 CA 是否可供 K8s provider 使用；</li>
+<li>调用失败时，是凭据、IAM、region、cluster name 还是网络问题。</li>
+</ul>
+<p>仅在标准链或 AssumeRole 无法使用时，才提供临时密钥的环境变量名：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>给 analytics-temp 使用现有的 AWS 临时凭据环境变量。
 </span></code></pre></div>
-<p>在已邀请的频道中发送消息，机器人应回复 Agent 的分析结果。</p>
-<h2 id="_4">权限与事件清单<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>如果你使用了上述 Manifest 创建应用，所有权限和事件已自动配置。以下清单用于验证或手动调整。</p>
-<h3 id="bot-token_1">必需的 Bot Token 权限<a class="headerlink" href="#bot-token_1" title="Permanent link">&para;</a></h3>
+<h2 id="eks_3">查看 EKS 环境<a class="headerlink" href="#eks_3" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>权限范围</th>
-<th>用途</th>
+<th>你的请求</th>
+<th>Agent 的行为</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>chat:write</code></td>
-<td>向频道发送消息</td>
+<td>“analytics-prod 是否健康？”</td>
+<td>确认 caller identity，读取集群状态、Kubernetes 版本、endpoint 和网络摘要</td>
 </tr>
 <tr>
-<td><code>channels:history</code></td>
-<td>读取公共频道消息</td>
+<td>“这个集群有哪些 node group？”</td>
+<td>列出 node group；指定一个后再展示容量、实例类型、版本和健康问题</td>
 </tr>
 <tr>
-<td><code>channels:read</code></td>
-<td>查看公共频道基本信息</td>
+<td>“关键 add-on 是否正常？”</td>
+<td>汇总 add-on 版本与状态，并指出降级或失败信息</td>
 </tr>
 <tr>
-<td><code>groups:history</code></td>
-<td>读取私有频道消息</td>
+<td>“这个 IAM role 能进入集群吗？”</td>
+<td>查看匹配的 access entry 及其访问策略，不尝试创建或修改</td>
 </tr>
 <tr>
-<td><code>groups:read</code></td>
-<td>查看私有频道基本信息</td>
+<td>“升级前有什么风险？”</td>
+<td>查看 upgrade insight 和近期 update，按状态与类别归纳待处理项</td>
 </tr>
 <tr>
-<td><code>im:history</code></td>
-<td>读取私聊消息</td>
-</tr>
-<tr>
-<td><code>im:read</code></td>
-<td>查看私聊基本信息</td>
-</tr>
-<tr>
-<td><code>im:write</code></td>
-<td>主动发起私聊</td>
-</tr>
-<tr>
-<td><code>mpim:history</code></td>
-<td>读取群组私聊消息</td>
-</tr>
-<tr>
-<td><code>mpim:read</code></td>
-<td>查看群组私聊信息</td>
-</tr>
-<tr>
-<td><code>mpim:write</code></td>
-<td>发起群组私聊</td>
-</tr>
-<tr>
-<td><code>reactions:read</code></td>
-<td>接收用户反馈表情事件</td>
-</tr>
-<tr>
-<td><code>reactions:write</code></td>
-<td>添加/移除处理中和完成状态表情</td>
-</tr>
-<tr>
-<td><code>users:read</code></td>
-<td>查看用户信息</td>
-</tr>
-<tr>
-<td><code>app_mentions:read</code></td>
-<td>接收 @提及 事件</td>
+<td>“是否使用了 Fargate？”</td>
+<td>列出 Fargate profile 及 selector、subnet 和状态摘要</td>
 </tr>
 </tbody>
 </table>
-<h3 id="bot">必需的 Bot 事件<a class="headerlink" href="#bot" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>事件</th>
-<th>触发条件</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>message.channels</code></td>
-<td>公共频道中有新消息</td>
-</tr>
-<tr>
-<td><code>message.groups</code></td>
-<td>私有频道中有新消息</td>
-</tr>
-<tr>
-<td><code>message.im</code></td>
-<td>机器人收到私聊消息</td>
-</tr>
-<tr>
-<td><code>message.mpim</code></td>
-<td>群组私聊中有新消息</td>
-</tr>
-<tr>
-<td><code>app_mention</code></td>
-<td>机器人被 @提及</td>
-</tr>
-<tr>
-<td><code>reaction_added</code></td>
-<td>用户对 bot 回复添加反馈表情</td>
-</tr>
-<tr>
-<td><code>reaction_removed</code></td>
-<td>用户移除 bot 回复上的反馈表情</td>
-</tr>
-</tbody>
-</table>
-<details class="info">
-<summary>手动配置（不使用 Manifest）</summary>
-<p>如果你更倾向于手动配置应用：</p>
-<ol>
-<li>前往 <a href="https://api.slack.com/apps">api.slack.com/apps</a> → <strong>Create New App</strong> → <strong>From scratch</strong>。</li>
-<li><strong>启用 Socket Mode</strong>：<strong>Settings → Socket Mode</strong> → 开启 → 生成 App-Level Token（添加 <code>connections:write</code> 权限范围）。</li>
-<li><strong>添加 Bot 权限</strong>：<strong>OAuth &amp; Permissions → Bot Token Scopes</strong> → 逐一添加上表中的权限范围。</li>
-<li><strong>启用事件订阅</strong>：<strong>Event Subscriptions</strong> → 开启 → 在 <strong>Subscribe to bot events</strong> 中添加上表中的事件 → <strong>Save Changes</strong>。</li>
-<li><strong>安装应用</strong>：<strong>OAuth &amp; Permissions</strong> → <strong>Install to Workspace</strong> → 复制 Bot User OAuth Token。</li>
-</ol>
-</details>
-<h2 id="_5">故障排查<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<h3 id="invalid_auth">"invalid_auth" 错误<a class="headerlink" href="#invalid_auth" title="Permanent link">&para;</a></h3>
+<p>当你只要求概览时，Agent 不会倾倒完整 AWS 响应；需要某个资源的全部字段时，可以
+明确提出：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>帮我看下 analytics-prod 的访问配置和网络。
+</span></code></pre></div>
+<p>发现缺少 access entry、add-on 或升级修复时，Agent 会报告对象、状态和管理员需要
+采取的动作，不会直接创建或更新 AWS 资源。</p>
+<h2 id="k8s-provider">作为 K8s provider<a class="headerlink" href="#k8s-provider" title="Permanent link">&para;</a></h2>
+<p>让 Agent 同时配置云端与 namespace 环境：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>让 analytics-prod K8s 使用同名 EKS，默认访问 analytics，也允许
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>analytics-staging。
+</span></code></pre></div>
+<p>Agent 会在内部读取 EKS endpoint 和 CA，并为每次 Kubernetes 连接获取短期凭据。
+EKS 与 K8s 环境同名时自动关联；名称不同时，你可以在请求中明确 provider 环境名。</p>
+<p>EKS access entry 只决定 AWS identity 能否进入 Kubernetes 认证链。是否能读取 Pod、
+部署 <code>FlinkDeployment</code> 或访问某个 namespace，仍由 Kubernetes RBAC 决定。Agent 会
+分别报告 IAM、access entry 和 RBAC 三层结果，避免把其中一层成功误判为完整授权。</p>
+<h2 id="flink">与 Flink 部署配合<a class="headerlink" href="#flink" title="Permanent link">&para;</a></h2>
+<p><a href="../flink/">Flink 插件</a>部署作业前，可以让 Agent 用 EKS plugin 确认控制面，再由
+K8s plugin 检查 namespace 与 Operator 资源：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>帮我确认 analytics-prod 能不能在 flink-jobs 部署 orders-enrichment，先别改资源。
+</span></code></pre></div>
+<p>EKS plugin 不负责 ECR 登录、仓库或镜像，也不安装 Flink Operator、CRD、webhook
+和集群级 RBAC。这些前提缺失时，Agent 会把问题交给相应管理员处理。</p>
+<h2 id="_2">权限与安全边界<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <ul>
-<li>确认 <code>bot_token</code> 以 <code>xoxb-</code> 开头且未过期。</li>
-<li>重新安装应用到工作区以重新生成令牌。</li>
+<li>所有公开 EKS 运维操作都是只读的，不创建、修改或删除 AWS 资源；</li>
+<li>credential 和 ExternalId 只保存环境变量引用；</li>
+<li>短期 Kubernetes token 仅供 K8s provider 内部使用，不写入项目或模型输出；</li>
+<li>Agent 不修改 kubeconfig，也不管理 ECR 镜像；</li>
+<li>AWS IAM、EKS access entry 与 Kubernetes RBAC 是三层独立授权；</li>
+<li>EKS plugin 管控制面查询和认证，namespace 工作负载由 K8s plugin 管理；</li>
+<li>Flink Operator、CRD、webhook 和集群级 RBAC 由管理员安装。</li>
 </ul>
-<h3 id="_6">机器人连接成功但收不到消息<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<h2 id="_3">相关文档<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <ul>
-<li>确保已通过 <strong>频道详情 → Integrations → Add apps</strong> 将 Datus Agent 应用添加到频道。</li>
-<li>确认事件订阅已启用，且已添加 <code>message.*</code> 事件。</li>
-<li>检查 Socket Mode 是否已启用。</li>
-</ul>
-<h3 id="missing_scope">"missing_scope" 错误<a class="headerlink" href="#missing_scope" title="Permanent link">&para;</a></h3>
-<ul>
-<li>前往 <strong>OAuth &amp; Permissions → Bot Token Scopes</strong> 添加缺少的权限范围。</li>
-<li>添加新权限后需要重新安装应用。</li>
-<li>如果缺少的是 <code>reactions:write</code>，在重新安装带该权限的应用前，状态表情会添加/移除失败。</li>
-</ul>
-<h3 id="_7">机器人消息触发循环<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
-<ul>
-<li>适配器会自动忽略带有子类型的消息（编辑、删除、机器人消息）。如果仍出现循环，请检查机器人是否在回复自己的消息。</li>
+<li><a href="../k8s/">K8s 插件</a> —— 使用 EKS provider 操作 namespace 资源</li>
+<li><a href="../flink/">Flink 插件</a> —— 在 EKS 上通过 Operator 部署 Flink 作业</li>
+<li><a href="../introduction/">插件</a> —— 安装来源、环境配置、项目启用与权限</li>
+<li><a href="../../skills/introduction/">Skills</a> —— skills 的发现和加载方式</li>
 </ul>
 
 
@@ -5211,7 +4849,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../introduction/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 介绍">
+          <a href="../s3/" class="md-footer__link md-footer__link--prev" aria-label="上一页: S3">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -5221,20 +4859,20 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                介绍
+                S3
               </div>
             </div>
           </a>
         
         
           
-          <a href="../feishu/" class="md-footer__link md-footer__link--next" aria-label="下一页: 飞书">
+          <a href="../k8s/" class="md-footer__link md-footer__link--next" aria-label="下一页: K8s">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                飞书
+                K8s
               </div>
             </div>
             <div class="md-footer__button md-icon">
