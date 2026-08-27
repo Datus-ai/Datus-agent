@@ -848,6 +848,60 @@ class TestManualCompact:
         assert node._history_token_ratio_sync() < 0.8
 
     @pytest.mark.asyncio
+    async def test_major_compact_measures_the_continuation_when_usage_is_zero(self):
+        """Providers that report no usage give `output_tokens: 0`. The occupancy
+        must then come from the continuation actually persisted, not a sentinel —
+        driven through `_major_compact` so the wiring is what is pinned."""
+        node = _make_node(context_length=100_000)
+        node.session_id = "compact_test"
+        mock_session = _make_async_session_mock()
+        node._session = mock_session
+        node._session_manager = MagicMock()
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 100_000
+        mock_model.generate_with_tools = AsyncMock(
+            return_value={"content": "recap " * 500, "usage": {"output_tokens": 0}}
+        )
+        node.model = mock_model
+        node.running_turn_usage = TokenUsage(session_total_tokens=95_000, input_tokens=95_000, context_length=100_000)
+
+        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = await node._major_compact(reason="hook_major")
+
+        assert result["success"] is True
+        # The occupancy tracks the text that was actually stored.
+        persisted = mock_session.add_items.await_args.args[0][0]["content"][0]["text"]
+        assert node.running_turn_usage.session_total_tokens == len(persisted) // 4
+        assert node._history_token_ratio_sync() < 0.8
+
+    @pytest.mark.asyncio
+    async def test_major_compact_survives_a_provider_reporting_junk_usage(self):
+        """`output_tokens` comes straight from the provider. It runs after the
+        compact has already persisted, so a bad value must not raise."""
+        node = _make_node(context_length=100_000)
+        node.session_id = "compact_test"
+        node._session = _make_async_session_mock()
+        node._session_manager = MagicMock()
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 100_000
+        mock_model.generate_with_tools = AsyncMock(
+            return_value={"content": "recap " * 500, "usage": {"output_tokens": "not a number"}}
+        )
+        node.model = mock_model
+        node.running_turn_usage = TokenUsage(session_total_tokens=95_000, input_tokens=95_000, context_length=100_000)
+
+        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = await node._major_compact(reason="hook_major")
+
+        assert result["success"] is True
+        assert node.running_turn_usage.session_total_tokens > 0
+        assert node._history_token_ratio_sync() < 0.8
+
+    @pytest.mark.asyncio
     async def test_major_compact_leaves_the_turn_cumulative_counter_alone(self):
         """``input_tokens`` is the turn-cumulative counter reported in the API's
         end event. Rewriting it to the recap size would contradict the turn's own

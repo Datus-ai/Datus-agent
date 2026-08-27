@@ -53,6 +53,17 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _coerce_token_count(value: Any) -> int:
+    """A provider-reported token count as a non-negative int, or 0.
+
+    Usage dicts come from the provider, so a count may be missing, a string, or
+    negative. Callers run on paths where raising is not acceptable."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _estimate_tokens(text: str) -> int:
     """Rough token count for text, matching the fallback used elsewhere in the
     codebase (see ``compress_utils.count_tokens``): roughly 4 characters per
@@ -1932,13 +1943,12 @@ class AgenticNode(Node):
         Best-effort throughout — the compact has already succeeded by the time
         this runs, so nothing here may turn it into a reported failure.
         """
-        # ``summary_token`` is the recap's reported output tokens, which is 0 on
-        # any provider that does not report usage. A zero would fall through the
-        # ``tok > 0`` guard in ``_history_token_ratio_sync``, sending it back to
-        # the stale pre-compact fallback — the loop this exists to close. Fall
-        # back to a size estimate of the text actually persisted, so those
-        # providers get a real floor rather than a sentinel.
-        post_compact_tokens = int(summary_token or 0) or _estimate_tokens(continuation) or 1
+        # A zero — any provider that does not report usage — would fall through
+        # the ``tok > 0`` guard in ``_history_token_ratio_sync`` and send it back
+        # to the stale pre-compact fallback, which is the loop this exists to
+        # close. Measure the text actually persisted instead, so those providers
+        # get a real floor rather than a sentinel.
+        post_compact_tokens = _coerce_token_count(summary_token) or _estimate_tokens(continuation) or 1
         try:
             context_length = (
                 int(getattr(self, "context_length", 0) or 0)
@@ -2020,7 +2030,12 @@ class AgenticNode(Node):
             )
             summary = result.get("content", "") if isinstance(result, dict) else getattr(result, "content", "") or ""
             usage = result.get("usage", {}) if isinstance(result, dict) else {}
-            summary_token = usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+            # Straight from the provider, so it may be absent, non-numeric or
+            # negative. Normalize once here: everything downstream — the %d in
+            # the completion log, the occupancy reset, the returned dict —
+            # assumes an int, and all of it runs after the compact has already
+            # persisted, where raising would turn a good compact into a failure.
+            summary_token = _coerce_token_count(usage.get("output_tokens", 0) if isinstance(usage, dict) else 0)
         except Exception as exc:
             logger.error("Failed to generate major-compact summary: %s", exc)
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
