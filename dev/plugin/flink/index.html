@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/dev/cli/execution_command/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/dev/plugin/flink/">
       
       
-        <link rel="prev" href="../context_command/">
+        <link rel="prev" href="../k8s/">
       
       
-        <link rel="next" href="../mcp_extensions/">
+        <link rel="next" href="../../web_chatbot/introduction/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Execution Command - Datus Docs</title>
+        <title>Flink - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#tool-plugin-commands" class="md-skip">
+        <a href="#flink-plugin" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Execution Command
+              Flink
             
           </span>
         </div>
@@ -704,10 +704,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -740,11 +738,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -765,7 +763,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -783,7 +781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
@@ -811,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../chat_command/" class="md-nav__link">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
@@ -839,7 +837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../context_command/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
@@ -864,37 +862,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execution Command
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
@@ -910,87 +881,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-running-a-tool" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Running a tool
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Running a tool">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#autocomplete" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Autocomplete
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-running-a-plugin-cli" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Running a plugin CLI
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1003,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp_extensions/" class="md-nav__link">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
@@ -1031,7 +921,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_execution/" class="md-nav__link">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
@@ -1059,7 +949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_command/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
@@ -1087,7 +977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../package_command/" class="md-nav__link">
+      <a href="../../cli/package_command/" class="md-nav__link">
         
   
   
@@ -1115,7 +1005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/" class="md-nav__link">
+      <a href="../../cli/reference/" class="md-nav__link">
         
   
   
@@ -1143,7 +1033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../plan_mode/" class="md-nav__link">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
         
   
   
@@ -1171,7 +1061,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../other_commands/" class="md-nav__link">
+      <a href="../../cli/other_commands/" class="md-nav__link">
         
   
   
@@ -1926,8 +1816,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1944,11 +1836,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6" id="__nav_1_6_label" tabindex="0">
@@ -1969,7 +1861,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1987,7 +1879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -2015,7 +1907,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/development/" class="md-nav__link">
+      <a href="../development/" class="md-nav__link">
         
   
   
@@ -2040,8 +1932,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2062,11 +1956,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6_3" id="__nav_1_6_3_label" tabindex="0">
@@ -2087,7 +1981,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2105,7 +1999,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/airflow/" class="md-nav__link">
+      <a href="../airflow/" class="md-nav__link">
         
   
   
@@ -2133,7 +2027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/s3/" class="md-nav__link">
+      <a href="../s3/" class="md-nav__link">
         
   
   
@@ -2161,7 +2055,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/eks/" class="md-nav__link">
+      <a href="../eks/" class="md-nav__link">
         
   
   
@@ -2189,7 +2083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/k8s/" class="md-nav__link">
+      <a href="../k8s/" class="md-nav__link">
         
   
   
@@ -2214,10 +2108,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../plugin/flink/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flink
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2233,6 +2154,203 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation-and-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation and Activation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flink-local-dev" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flink-local-dev
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flink-sql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flink-sql
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flink-k8s-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flink-k8s-operator
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploying-a-flink-job-on-eks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploying a Flink Job on EKS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploying a Flink Job on EKS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-check-infrastructure-prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Check infrastructure prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-configure-the-eks-and-k8s-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Configure the EKS and K8s environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-validate-and-publish-the-job-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Validate and publish the job image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-propose-the-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Propose the deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-validate-and-confirm-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Validate and confirm deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-observe-the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Observe the result
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-diagnose-a-failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Diagnose a failure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle Management
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4488,10 +4606,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
+  <a href="#installation-and-activation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Overview
+        Installation and Activation
       
     </span>
   </a>
@@ -4499,22 +4617,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-running-a-tool" class="md-nav__link">
+  <a href="#skills" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Running a tool
+        Skills
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Running a tool">
+    <nav class="md-nav" aria-label="Skills">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#autocomplete" class="md-nav__link">
+  <a href="#flink-local-dev" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Autocomplete
+        flink-local-dev
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flink-sql" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flink-sql
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flink-k8s-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flink-k8s-operator
       
     </span>
   </a>
@@ -4527,10 +4667,104 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-running-a-plugin-cli" class="md-nav__link">
+  <a href="#deploying-a-flink-job-on-eks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Running a plugin CLI
+        Deploying a Flink Job on EKS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploying a Flink Job on EKS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-check-infrastructure-prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Check infrastructure prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-configure-the-eks-and-k8s-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Configure the EKS and K8s environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-validate-and-publish-the-job-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Validate and publish the job image
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-propose-the-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Propose the deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-validate-and-confirm-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Validate and confirm deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-observe-the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Observe the result
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-diagnose-a-failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Diagnose a failure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle Management
       
     </span>
   </a>
@@ -4538,10 +4772,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-notes" class="md-nav__link">
+  <a href="#related-docs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Notes
+        Related Docs
       
     </span>
   </a>
@@ -4565,7 +4799,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/execution_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/plugin/flink.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4573,46 +4807,200 @@
   
 
 
-<h1 id="tool-plugin-commands">Tool / Plugin Commands <code>!</code><a class="headerlink" href="#tool-plugin-commands" title="Permanent link">&para;</a></h1>
-<h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
-<p>The <code>!</code> prefix is a power-user escape hatch that runs, directly from the chat REPL, either one of the agent's own <strong>tools</strong> or an installed <strong>plugin's</strong> CLI — without asking the model to do it for you. It is available in <strong>chat mode</strong> only (in SQL/bash mode a leading <code>!</code> is part of the statement, e.g. shell history expansion).</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>!&lt;tool&gt;<span class="w"> </span><span class="o">[</span>args...<span class="o">]</span><span class="w">        </span><span class="c1"># run an agent tool directly</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>!&lt;plugin&gt;<span class="w"> </span>&lt;args...&gt;<span class="w">      </span><span class="c1"># run an installed plugin's CLI (datus &lt;plugin&gt; ...)</span>
+<h1 id="flink-plugin">Flink Plugin<a class="headerlink" href="#flink-plugin" title="Permanent link">&para;</a></h1>
+<p>The Flink plugin (<code>datus-flink-plugin</code>) lets the Datus agent validate Apache
+Flink jobs locally, package SQL applications, and deploy and operate jobs
+through the Apache Flink Kubernetes Operator. It is a skill-only plugin: you
+describe the outcome, the agent loads the relevant skill, and every Kubernetes
+resource operation is delegated to the <a href="../k8s/">K8s plugin</a>. On Amazon EKS,
+the <a href="../eks/">EKS plugin</a> supplies cluster discovery and short-lived
+authentication.</p>
+<p>This page focuses on deploying a Flink job to an EKS cluster where the Flink
+Kubernetes Operator is already installed. Installing the Operator, CRDs,
+webhook, and cluster-level RBAC remains a Kubernetes administrator task and is
+not performed by these plugins.</p>
+<h2 id="installation-and-activation">Installation and Activation<a class="headerlink" href="#installation-and-activation" title="Permanent link">&para;</a></h2>
+<p>Install the three plugins in dependency order:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-eks-plugin
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-k8s-plugin
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-flink-plugin
 </span></code></pre></div>
-<p><strong>Tools are matched first.</strong> If the first token names a live tool it runs as a tool; otherwise, if it names an installed + activated plugin, it dispatches to that plugin's CLI; otherwise the input is rejected with a usage hint.</p>
-<p>Type <code>!</code> on its own to list the available tools and plugins.</p>
-<h2 id="2-running-a-tool">2. Running a tool<a class="headerlink" href="#2-running-a-tool" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>!list_tables
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>!search_table<span class="w"> </span>user<span class="w"> </span>purchase<span class="w"> </span>--top_n<span class="o">=</span><span class="m">5</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>!describe_table<span class="w"> </span>orders
+<p>Enable them for the current project after installation. See
+<a href="../introduction/">Plugins</a> for other installation sources and project
+activation.</p>
+<h2 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flink-local-dev</code></td>
+<td>Validate Flink SQL in a local MiniCluster without writing to production sinks</td>
+</tr>
+<tr>
+<td><code>flink-sql</code></td>
+<td>Select and verify the version-compatible SQL entry point for Application Mode</td>
+</tr>
+<tr>
+<td><code>flink-k8s-operator</code></td>
+<td>Build, deploy, upgrade, and diagnose Operator-managed Flink jobs</td>
+</tr>
+</tbody>
+</table>
+<h3 id="flink-local-dev">flink-local-dev<a class="headerlink" href="#flink-local-dev" title="Permanent link">&para;</a></h3>
+<p>When you ask for local validation, the agent leaves production SQL unchanged
+and uses a separate local overlay. Sources are restricted to development
+systems and every sink is replaced with <code>print</code>, <code>blackhole</code>, or a local
+filesystem table. It refuses to run when local execution is not pinned, a
+production sink remains unshadowed, or Git could track local credentials.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Validate orders/job.sql locally without writing to production.
 </span></code></pre></div>
-<ul>
-<li>Arguments use a simple grammar: positional values in schema order, plus <code>--key=value</code> named overrides (bare <code>--flag</code> means <code>--flag=true</code>). Lists accept <code>--items=a,b,c</code> or <code>--items=['a','b']</code>.</li>
-<li><code>!&lt;tool&gt; --help</code> prints the tool's parameter schema (name / type / required / description).</li>
-<li>Every call goes through the <strong>same permission pipeline</strong> an LLM-driven tool call would: read-only tools run without a prompt, while writes (<code>execute_sql</code> with INSERT/DDL, <code>bash</code>, file writes, …) require confirmation under the active permission profile. Denied calls never execute (and are not sent to the model).</li>
-<li>The call + result render as an <strong>execution turn</strong> (a styled block, like SQL/bash modes) and are fed to the model: the run <strong>enters the conversation context and triggers a reply</strong>, so you can immediately ask follow-up questions about it.</li>
-</ul>
-<h3 id="autocomplete">Autocomplete<a class="headerlink" href="#autocomplete" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Typing <code>!</code> opens a completion menu listing tools (first) then plugins, each tagged in the description column.</li>
-<li>After a tool name, <code>--</code> completes the tool's parameter flags plus <code>--help</code>.</li>
-<li>Once a tool/plugin name is chosen, a dim <code>&lt;required&gt; [--optional]</code> hint is shown after the input, naming the remaining arguments as you type.</li>
-</ul>
-<h2 id="3-running-a-plugin-cli">3. Running a plugin CLI<a class="headerlink" href="#3-running-a-plugin-cli" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>!hello<span class="w"> </span>sync<span class="w"> </span>orders<span class="w"> </span>--limit<span class="o">=</span><span class="m">100</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>!hello<span class="w"> </span>status
+<h3 id="flink-sql">flink-sql<a class="headerlink" href="#flink-sql" title="Permanent link">&para;</a></h3>
+<p>After validation, ask the agent to settle the production SQL entry point.
+Flink 1.x normally needs a version-matched runner JAR; Flink 2.x can use the
+<code>SqlDriver</code> on the system classpath. The agent verifies SQL, connectors, and
+filesystem dependencies and hands the resulting image and job fields to
+<code>flink-k8s-operator</code> without inventing a JAR merely to fill a field.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Prepare this SQL as a production job for Flink 1.20.
 </span></code></pre></div>
+<h3 id="flink-k8s-operator">flink-k8s-operator<a class="headerlink" href="#flink-k8s-operator" title="Permanent link">&para;</a></h3>
+<p>This skill supports Application Clusters, Session Clusters,
+<code>FlinkSessionJob</code>, and <code>FlinkStateSnapshot</code>. You provide the job and target
+environment; the agent handles the build, deployment preflight, custom-resource
+proposal, deployment, observation, and safe suspend, resume, upgrade, and
+deletion workflows.</p>
+<h2 id="deploying-a-flink-job-on-eks">Deploying a Flink Job on EKS<a class="headerlink" href="#deploying-a-flink-job-on-eks" title="Permanent link">&para;</a></h2>
+<h3 id="1-check-infrastructure-prerequisites">1. Check infrastructure prerequisites<a class="headerlink" href="#1-check-infrastructure-prerequisites" title="Permanent link">&para;</a></h3>
+<p>Start with a read-only request:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Can flink-prod deploy a Flink job in flink-jobs? Check without changing anything.
+</span></code></pre></div>
+<p>The agent verifies:</p>
 <ul>
-<li><code>!&lt;plugin&gt; &lt;args...&gt;</code> runs <code>datus &lt;plugin&gt; &lt;args...&gt;</code> as a subprocess. The command is permission-gated like any bash command, and the plugin's own CLI permissions apply inside the child process. Its output is fed to the model as an execution turn (same as <code>!&lt;tool&gt;</code>), so it enters the conversation and triggers a reply.</li>
-<li>When a plugin provides command metadata, the <code>!&lt;plugin&gt;</code> completer lists its
-  commands and hints their arguments. Completion follows nested command groups,
-  so typing <code>!airflow dags</code> can offer commands such as <code>list</code> and <code>trigger</code>.</li>
+<li>that the EKS cluster is healthy and the effective AWS identity points to the
+  expected account and cluster;</li>
+<li>that the target namespace is inside the K8s profile's allowlist;</li>
+<li>that the cluster serves the required <code>FlinkDeployment</code> API, plus
+  <code>FlinkSessionJob</code> for Session mode and <code>FlinkStateSnapshot</code> for snapshots;</li>
+<li>that the Kubernetes identity used by Datus may read and create the target
+  custom resources;</li>
+<li>that the Flink job service account can manage the Pods, Services, and
+  ConfigMaps needed for TaskManagers and read their Deployment owner
+  references;</li>
+<li>that IRSA is configured when the job needs AWS services such as S3; and</li>
+<li>that EKS worker nodes can reach the job image registry.</li>
 </ul>
-<h2 id="4-notes">4. Notes<a class="headerlink" href="#4-notes" title="Permanent link">&para;</a></h2>
+<p>If the Operator, a CRD, webhook, access entry, or cluster RBAC is missing, the
+agent reports the evidence and administrator action instead of bypassing the
+boundary or installing it itself.</p>
+<h3 id="2-configure-the-eks-and-k8s-environment">2. Configure the EKS and K8s environment<a class="headerlink" href="#2-configure-the-eks-and-k8s-environment" title="Permanent link">&para;</a></h3>
+<p>If no profile exists, provide the cluster and namespace in natural language:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Configure flink-prod for the analytics-prod EKS cluster in us-east-1, using
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>the datus-flink-operator role and the flink-jobs namespace.
+</span></code></pre></div>
+<p>The agent runs <code>eks-setup</code> and <code>k8s-setup</code>, creating linked profiles with the
+same name. It shows a non-secret configuration summary and verifies the target
+without exposing a short-lived Kubernetes token or writing literal secrets.
+When required information is missing, it asks before writing configuration.</p>
+<h3 id="3-validate-and-publish-the-job-image">3. Validate and publish the job image<a class="headerlink" href="#3-validate-and-publish-the-job-image" title="Permanent link">&para;</a></h3>
+<p>SQL jobs pass through <code>flink-local-dev</code> and <code>flink-sql</code>. JVM and PyFlink
+projects use their existing test and build workflows. Give the agent the target
+version and registry and require an immutable image identity:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Build a Flink 1.20 production image for orders-enrichment and publish it to our
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>existing ECR repository. Ask before pushing.
+</span></code></pre></div>
+<p>The EKS plugin does not log in to ECR, create repositories, or push images.
+The agent may use only a registry and authentication that are already
+available, and it asks before making the external push.</p>
+<h3 id="4-propose-the-deployment">4. Propose the deployment<a class="headerlink" href="#4-propose-the-deployment" title="Permanent link">&para;</a></h3>
+<p>Ask for a plan before any cluster write:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Plan the orders-enrichment deployment on flink-prod. Show me the proposal
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>without deploying it.
+</span></code></pre></div>
+<p>The agent writes the proposal under <code>deploy/flink/&lt;name&gt;/</code> and makes these
+decisions visible:</p>
 <ul>
-<li><code>!</code> runs only in chat mode. Use <code>Tab</code> to cycle input modes (chat → sql → bash) for SQL / shell execution instead.</li>
-<li>Tool commands run with the same privileges as the Datus-CLI process; the permission profile (<code>/permission</code>) governs which tool actions prompt or are blocked.</li>
-<li>Plugin execution is gated by <code>agent.plugins_enabled</code> and the project's plugin activation — only installed and active plugins are reachable via <code>!</code>.</li>
+<li>the Flink API version actually served by the cluster;</li>
+<li>image, Flink version, entry class or script, and arguments;</li>
+<li>Application or Session mode, parallelism, and compute resources;</li>
+<li>namespace, service account, and checkpoint/savepoint storage;</li>
+<li><code>stateless</code>, <code>savepoint</code>, or <code>last-state</code> upgrade policy; and</li>
+<li>referenced Secrets, IRSA, and image-pull configuration, without literal
+  credentials.</li>
+</ul>
+<p>Use <code>stateless</code> for a first deployment. Move to <code>savepoint</code> or <code>last-state</code>
+only after the job is stable and durable checkpoints and HA prerequisites have
+been verified.</p>
+<h3 id="5-validate-and-confirm-deployment">5. Validate and confirm deployment<a class="headerlink" href="#5-validate-and-confirm-deployment" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Validate the proposal first, then ask me whether to deploy it.
+</span></code></pre></div>
+<p>The agent asks the K8s plugin for a Server-Side Apply dry-run. Passing it proves
+only that the API schema and current identity accept the request; it does not
+prove the Flink job has started. The agent submits the resource only after you
+confirm.</p>
+<h3 id="6-observe-the-result">6. Observe the result<a class="headerlink" href="#6-observe-the-result" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>After deployment, watch it until it is healthy and tell me if it fails.
+</span></code></pre></div>
+<p>The agent uses bounded status reads rather than waiting indefinitely. It
+distinguishes among:</p>
+<ul>
+<li>the custom resource existing;</li>
+<li>the JobManager being ready;</li>
+<li>the Flink job actually reaching <code>RUNNING</code>, or <code>FINISHED</code> for a bounded batch
+  job; and</li>
+<li><code>status.error</code>, Pod state, or warning events reporting a failure.</li>
+</ul>
+<p>The resource existing or the JobManager reporting <code>READY</code> is not sufficient
+to declare success.</p>
+<h3 id="7-diagnose-a-failure">7. Diagnose a failure<a class="headerlink" href="#7-diagnose-a-failure" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>orders-enrichment did not start. Find out why without changing anything.
+</span></code></pre></div>
+<p>The agent reads the smallest necessary status fields and, when relevant,
+inspects init-container or previous-instance logs. Fixes belong in the image,
+manifest, Secret, or infrastructure configuration rather than as temporary
+changes to a running Pod.</p>
+<h2 id="lifecycle-management">Lifecycle Management<a class="headerlink" href="#lifecycle-management" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Your request</th>
+<th>Agent behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Suspend orders-enrichment but preserve recoverable state."</td>
+<td>Verify upgrade mode and state storage, show the proposed change, then suspend after confirmation</td>
+</tr>
+<tr>
+<td>"Restore the job from its latest state."</td>
+<td>Validate checkpoint/savepoint path, authorization, and version compatibility before restoring</td>
+</tr>
+<tr>
+<td>"Upgrade the job to the new image."</td>
+<td>Update the version-controlled manifest, preserve the confirmed upgrade policy, and show the diff</td>
+</tr>
+<tr>
+<td>"Create a snapshot for the running job."</td>
+<td>Create a uniquely named <code>FlinkStateSnapshot</code>, observe it to completion, and report its durable path</td>
+</tr>
+<tr>
+<td>"Delete this stateful job."</td>
+<td>Ask whether a final savepoint is required and delete Session Jobs before their Session Cluster</td>
+</tr>
+</tbody>
+</table>
+<p>Every step that changes a registry, project file, or cluster state presents its
+target and impact and asks for confirmation first.</p>
+<h2 id="related-docs">Related Docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../k8s/">K8s plugin</a> — namespace resource operations, status, logs, and permissions</li>
+<li><a href="../eks/">EKS plugin</a> — EKS discovery and short-lived Kubernetes authentication</li>
+<li><a href="../introduction/">Plugins</a> — install sources, profiles, activation, and permissions</li>
+<li><a href="../../skills/introduction/">Skills</a> — how skills are discovered and loaded</li>
 </ul>
 
 
@@ -4643,7 +5031,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../context_command/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Context Command">
+          <a href="../k8s/" class="md-footer__link md-footer__link--prev" aria-label="Previous: K8s">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4653,20 +5041,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Context Command
+                K8s
               </div>
             </div>
           </a>
         
         
           
-          <a href="../mcp_extensions/" class="md-footer__link md-footer__link--next" aria-label="Next: MCP Extensions">
+          <a href="../../web_chatbot/introduction/" class="md-footer__link md-footer__link--next" aria-label="Next: Chatbot">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                MCP Extensions
+                Chatbot
               </div>
             </div>
             <div class="md-footer__button md-icon">

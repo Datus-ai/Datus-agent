@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/dev/cli/execution_command/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/dev/plugin/k8s/">
       
       
-        <link rel="prev" href="../context_command/">
+        <link rel="prev" href="../eks/">
       
       
-        <link rel="next" href="../mcp_extensions/">
+        <link rel="next" href="../flink/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Execution Command - Datus Docs</title>
+        <title>K8s - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#tool-plugin-commands" class="md-skip">
+        <a href="#k8s-plugin" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Execution Command
+              K8s
             
           </span>
         </div>
@@ -704,10 +704,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -740,11 +738,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -765,7 +763,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -783,7 +781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
@@ -811,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../chat_command/" class="md-nav__link">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
@@ -839,7 +837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../context_command/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
@@ -864,37 +862,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Execution Command
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
@@ -910,87 +881,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-running-a-tool" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Running a tool
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Running a tool">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#autocomplete" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Autocomplete
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-running-a-plugin-cli" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Running a plugin CLI
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1003,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp_extensions/" class="md-nav__link">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
@@ -1031,7 +921,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_execution/" class="md-nav__link">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
@@ -1059,7 +949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_command/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
@@ -1087,7 +977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../package_command/" class="md-nav__link">
+      <a href="../../cli/package_command/" class="md-nav__link">
         
   
   
@@ -1115,7 +1005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/" class="md-nav__link">
+      <a href="../../cli/reference/" class="md-nav__link">
         
   
   
@@ -1143,7 +1033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../plan_mode/" class="md-nav__link">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
         
   
   
@@ -1171,7 +1061,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../other_commands/" class="md-nav__link">
+      <a href="../../cli/other_commands/" class="md-nav__link">
         
   
   
@@ -1926,8 +1816,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1944,11 +1836,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6" id="__nav_1_6_label" tabindex="0">
@@ -1969,7 +1861,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1987,7 +1879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -2015,7 +1907,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/development/" class="md-nav__link">
+      <a href="../development/" class="md-nav__link">
         
   
   
@@ -2040,8 +1932,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2062,11 +1956,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" checked>
         
           
           <label class="md-nav__link" for="__nav_1_6_3" id="__nav_1_6_3_label" tabindex="0">
@@ -2087,7 +1981,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_6_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2105,7 +1999,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/airflow/" class="md-nav__link">
+      <a href="../airflow/" class="md-nav__link">
         
   
   
@@ -2133,7 +2027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/s3/" class="md-nav__link">
+      <a href="../s3/" class="md-nav__link">
         
   
   
@@ -2161,7 +2055,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/eks/" class="md-nav__link">
+      <a href="../eks/" class="md-nav__link">
         
   
   
@@ -2186,10 +2080,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../plugin/k8s/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    K8s
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2205,6 +2126,164 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation-and-activation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation and Activation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#k8s" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        k8s
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k8s-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        k8s-setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-to-amazon-eks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting to Amazon EKS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-through-kubeconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting through kubeconfig
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspecting-and-diagnosing-workloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting and Diagnosing Workloads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observing-asynchronous-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observing Asynchronous Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#applying-and-changing-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Applying and Changing Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#permissions-and-safety-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Permissions and Safety Boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orchestrating-with-the-flink-plugin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orchestrating with the Flink Plugin
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2217,7 +2296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../plugin/flink/" class="md-nav__link">
+      <a href="../flink/" class="md-nav__link">
         
   
   
@@ -4488,10 +4567,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
+  <a href="#installation-and-activation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Overview
+        Installation and Activation
       
     </span>
   </a>
@@ -4499,22 +4578,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-running-a-tool" class="md-nav__link">
+  <a href="#skills" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Running a tool
+        Skills
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="2. Running a tool">
+    <nav class="md-nav" aria-label="Skills">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#autocomplete" class="md-nav__link">
+  <a href="#k8s" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Autocomplete
+        k8s
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k8s-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        k8s-setup
       
     </span>
   </a>
@@ -4527,10 +4617,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-running-a-plugin-cli" class="md-nav__link">
+  <a href="#connecting-to-amazon-eks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Running a plugin CLI
+        Connecting to Amazon EKS
       
     </span>
   </a>
@@ -4538,10 +4628,76 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-notes" class="md-nav__link">
+  <a href="#connecting-through-kubeconfig" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Notes
+        Connecting through kubeconfig
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspecting-and-diagnosing-workloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting and Diagnosing Workloads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observing-asynchronous-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observing Asynchronous Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#applying-and-changing-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Applying and Changing Resources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#permissions-and-safety-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Permissions and Safety Boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orchestrating-with-the-flink-plugin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Orchestrating with the Flink Plugin
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related Docs
       
     </span>
   </a>
@@ -4565,7 +4721,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/execution_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/plugin/k8s.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4573,46 +4729,171 @@
   
 
 
-<h1 id="tool-plugin-commands">Tool / Plugin Commands <code>!</code><a class="headerlink" href="#tool-plugin-commands" title="Permanent link">&para;</a></h1>
-<h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
-<p>The <code>!</code> prefix is a power-user escape hatch that runs, directly from the chat REPL, either one of the agent's own <strong>tools</strong> or an installed <strong>plugin's</strong> CLI — without asking the model to do it for you. It is available in <strong>chat mode</strong> only (in SQL/bash mode a leading <code>!</code> is part of the statement, e.g. shell history expansion).</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>!&lt;tool&gt;<span class="w"> </span><span class="o">[</span>args...<span class="o">]</span><span class="w">        </span><span class="c1"># run an agent tool directly</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>!&lt;plugin&gt;<span class="w"> </span>&lt;args...&gt;<span class="w">      </span><span class="c1"># run an installed plugin's CLI (datus &lt;plugin&gt; ...)</span>
+<h1 id="k8s-plugin">K8s Plugin<a class="headerlink" href="#k8s-plugin" title="Permanent link">&para;</a></h1>
+<p>The K8s plugin (<code>datus-k8s-plugin</code>) lets you ask the Datus agent in natural
+language to inspect and operate namespace-scoped Kubernetes data workloads.
+The agent can discover resources, read status and logs, analyze events, check
+authorization, and apply or change manifests after confirmation. This includes
+Pods, Deployments, Jobs, and custom resources such as <code>FlinkDeployment</code>.</p>
+<p>The plugin deliberately has no cluster-administrator capability. It cannot
+query every namespace or operate cluster-scoped resources, and every request
+is constrained by the selected environment's namespace allowlist. On Amazon
+EKS it obtains cluster information and short-lived authentication from the
+<a href="../eks/">EKS plugin</a>.</p>
+<h2 id="installation-and-activation">Installation and Activation<a class="headerlink" href="#installation-and-activation" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-k8s-plugin
 </span></code></pre></div>
-<p><strong>Tools are matched first.</strong> If the first token names a live tool it runs as a tool; otherwise, if it names an installed + activated plugin, it dispatches to that plugin's CLI; otherwise the input is rejected with a usage hint.</p>
-<p>Type <code>!</code> on its own to list the available tools and plugins.</p>
-<h2 id="2-running-a-tool">2. Running a tool<a class="headerlink" href="#2-running-a-tool" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>!list_tables
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>!search_table<span class="w"> </span>user<span class="w"> </span>purchase<span class="w"> </span>--top_n<span class="o">=</span><span class="m">5</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>!describe_table<span class="w"> </span>orders
+<p>Also install the EKS plugin when connecting to EKS:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-eks-plugin
 </span></code></pre></div>
-<ul>
-<li>Arguments use a simple grammar: positional values in schema order, plus <code>--key=value</code> named overrides (bare <code>--flag</code> means <code>--flag=true</code>). Lists accept <code>--items=a,b,c</code> or <code>--items=['a','b']</code>.</li>
-<li><code>!&lt;tool&gt; --help</code> prints the tool's parameter schema (name / type / required / description).</li>
-<li>Every call goes through the <strong>same permission pipeline</strong> an LLM-driven tool call would: read-only tools run without a prompt, while writes (<code>execute_sql</code> with INSERT/DDL, <code>bash</code>, file writes, …) require confirmation under the active permission profile. Denied calls never execute (and are not sent to the model).</li>
-<li>The call + result render as an <strong>execution turn</strong> (a styled block, like SQL/bash modes) and are fed to the model: the run <strong>enters the conversation context and triggers a reply</strong>, so you can immediately ask follow-up questions about it.</li>
-</ul>
-<h3 id="autocomplete">Autocomplete<a class="headerlink" href="#autocomplete" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Typing <code>!</code> opens a completion menu listing tools (first) then plugins, each tagged in the description column.</li>
-<li>After a tool name, <code>--</code> completes the tool's parameter flags plus <code>--help</code>.</li>
-<li>Once a tool/plugin name is chosen, a dim <code>&lt;required&gt; [--optional]</code> hint is shown after the input, naming the remaining arguments as you type.</li>
-</ul>
-<h2 id="3-running-a-plugin-cli">3. Running a plugin CLI<a class="headerlink" href="#3-running-a-plugin-cli" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>!hello<span class="w"> </span>sync<span class="w"> </span>orders<span class="w"> </span>--limit<span class="o">=</span><span class="m">100</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>!hello<span class="w"> </span>status
+<p>Enable the required plugins for the current project after installation. See
+<a href="../introduction/">Plugins</a> for other installation sources and project
+activation.</p>
+<h2 id="skills">Skills<a class="headerlink" href="#skills" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Skill</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>k8s</code></td>
+<td>Inspect, diagnose, and change namespace-scoped Kubernetes workloads</td>
+</tr>
+<tr>
+<td><code>k8s-setup</code></td>
+<td>Create a managed-cloud or kubeconfig-backed K8s environment</td>
+</tr>
+</tbody>
+</table>
+<h3 id="k8s">k8s<a class="headerlink" href="#k8s" title="Permanent link">&para;</a></h3>
+<p>The core skill confirms the environment and namespace first, then chooses the
+smallest necessary resource status, events, logs, metrics, or authorization
+checks. For asynchronous resources it sets a maximum duration and check count,
+inspecting the target state and errors together instead of waiting blindly
+after a concrete failure has appeared.</p>
+<h3 id="k8s-setup">k8s-setup<a class="headerlink" href="#k8s-setup" title="Permanent link">&para;</a></h3>
+<p>The setup skill asks for a managed-Kubernetes provider or kubeconfig, a default
+namespace, and the allowed namespaces. Cloud identity and short-lived
+authentication stay in the provider plugin and are not copied into the K8s
+environment configuration.</p>
+<h2 id="connecting-to-amazon-eks">Connecting to Amazon EKS<a class="headerlink" href="#connecting-to-amazon-eks" title="Permanent link">&para;</a></h2>
+<p>Tell the agent the cluster, authentication method, and namespace:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Configure analytics-prod for the analytics-prod-eks cluster in us-east-1, using
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>analytics as the default namespace.
 </span></code></pre></div>
+<p>The agent uses <code>eks-setup</code> for the cloud environment and <code>k8s-setup</code> for the
+same-named K8s environment, linking them automatically. It verifies:</p>
 <ul>
-<li><code>!&lt;plugin&gt; &lt;args...&gt;</code> runs <code>datus &lt;plugin&gt; &lt;args...&gt;</code> as a subprocess. The command is permission-gated like any bash command, and the plugin's own CLI permissions apply inside the child process. Its output is fed to the model as an execution turn (same as <code>!&lt;tool&gt;</code>), so it enters the conversation and triggers a reply.</li>
-<li>When a plugin provides command metadata, the <code>!&lt;plugin&gt;</code> completer lists its
-  commands and hints their arguments. Completion follows nested command groups,
-  so typing <code>!airflow dags</code> can offer commands such as <code>list</code> and <code>trigger</code>.</li>
+<li>the effective AWS caller identity and target EKS cluster;</li>
+<li>that the Kubernetes server matches the selected environment;</li>
+<li>that the default namespace exists and is inside the allowlist; and</li>
+<li>that the current Kubernetes identity has the requested namespace access.</li>
 </ul>
-<h2 id="4-notes">4. Notes<a class="headerlink" href="#4-notes" title="Permanent link">&para;</a></h2>
+<p>The short-lived bearer token is not exposed to the model or persisted to the
+project. Permission to inspect EKS does not automatically grant Kubernetes
+access; configure the EKS access entry and namespace RBAC separately.</p>
+<p>When the EKS and K8s environments need different names, state the relationship
+explicitly:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Make flink-prod use analytics-prod EKS and allow only flink-jobs.
+</span></code></pre></div>
+<h2 id="connecting-through-kubeconfig">Connecting through kubeconfig<a class="headerlink" href="#connecting-through-kubeconfig" title="Permanent link">&para;</a></h2>
+<p>For an existing kubeconfig, give the agent its path and context:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Use the staging context in ./conf/kubeconfig.yaml and allow only
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>analytics-staging.
+</span></code></pre></div>
+<p>The agent resolves relative paths from the current project and rejects a path
+that escapes through <code>..</code> or a symlink. If you omit the context, kubeconfig's
+current context is used, but the agent presents the effective cluster identity
+before its first operation.</p>
+<h2 id="inspecting-and-diagnosing-workloads">Inspecting and Diagnosing Workloads<a class="headerlink" href="#inspecting-and-diagnosing-workloads" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Your request</th>
+<th>Agent behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>"Which Pods in analytics-prod are unhealthy?"</td>
+<td>Summarize readiness, restarts, and actual waiting reasons, then inspect related warning events</td>
+</tr>
+<tr>
+<td>"Why does pipeline-api keep restarting?"</td>
+<td>Confirm Pod and container state, then read the previous instance and any relevant init-container logs</td>
+</tr>
+<tr>
+<td>"What is the current state of the orders FlinkDeployment?"</td>
+<td>Read job state, status.error, and JobManager/TaskManager state separately rather than trusting one field</td>
+</tr>
+<tr>
+<td>"Which Pod uses the most memory?"</td>
+<td>Read namespace Pod metrics, sort by memory, and explain when metrics are unavailable</td>
+</tr>
+<tr>
+<td>"May the current identity create Jobs?"</td>
+<td>Check authorization in the target namespace without probing through a failing write</td>
+</tr>
+</tbody>
+</table>
+<p>Resource summaries distinguish <code>Running</code> from actually Ready and expose
+waiting reasons such as <code>Init:CrashLoopBackOff</code> and <code>ImagePullBackOff</code>. The
+agent prefers the individual status field that answers the question and reads
+the complete object only when it needs the full spec or conditions.</p>
+<h2 id="observing-asynchronous-resources">Observing Asynchronous Resources<a class="headerlink" href="#observing-asynchronous-resources" title="Permanent link">&para;</a></h2>
+<p>Include the success condition and observation limit in your request:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Watch daily-etl in analytics-staging and tell me when it finishes or fails.
+</span></code></pre></div>
+<p>For Kubernetes Deployments, StatefulSets, and DaemonSets, the agent can follow
+their rollout. For custom resources such as Flink, it performs bounded reads of
+the resource's own status and error fields. A created resource, a Running Pod,
+or a ready controller does not necessarily mean the business workload
+succeeded.</p>
+<h2 id="applying-and-changing-resources">Applying and Changing Resources<a class="headerlink" href="#applying-and-changing-resources" title="Permanent link">&para;</a></h2>
+<p>Describe the outcome and ask the agent to present a proposal first:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Check deploy/pipeline.yaml, then ask me whether to deploy it to analytics-prod.
+</span></code></pre></div>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Scale pipeline-api in analytics to four replicas.
+</span></code></pre></div>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Delete the daily-backfill Job from analytics.
+</span></code></pre></div>
+<p>The agent uses Server-Side Apply for local YAML or JSON manifests. Creating,
+applying, deleting, patching, scaling, labeling, annotating, restarting, or
+entering a container for a diagnostic probe requires confirmation. A
+server-side dry-run persists nothing, but the agent still identifies the exact
+environment and namespace being validated.</p>
+<h2 id="permissions-and-safety-boundaries">Permissions and Safety Boundaries<a class="headerlink" href="#permissions-and-safety-boundaries" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>!</code> runs only in chat mode. Use <code>Tab</code> to cycle input modes (chat → sql → bash) for SQL / shell execution instead.</li>
-<li>Tool commands run with the same privileges as the Datus-CLI process; the permission profile (<code>/permission</code>) governs which tool actions prompt or are blocked.</li>
-<li>Plugin execution is gated by <code>agent.plugins_enabled</code> and the project's plugin activation — only installed and active plugins are reachable via <code>!</code>.</li>
+<li>Resource discovery, status, details, logs, events, metrics, and authorization
+  checks are read-only.</li>
+<li>An environment can reach only its allowed namespaces; the default namespace
+  is the only allowed one when no wider allowlist is configured.</li>
+<li>Cross-namespace-all queries, cluster-scoped resources, kubeconfig mutation,
+  and identity impersonation are blocked.</li>
+<li>Interactive shells, attach, file copy, port forwarding, and proxying are
+  unsupported.</li>
+<li>An in-container diagnostic is one non-interactive command and requires
+  confirmation every time.</li>
+<li>The agent never patches files or configuration inside a running container;
+  durable fixes belong in the image or manifest.</li>
+</ul>
+<h2 id="orchestrating-with-the-flink-plugin">Orchestrating with the Flink Plugin<a class="headerlink" href="#orchestrating-with-the-flink-plugin" title="Permanent link">&para;</a></h2>
+<p>The <a href="../flink/">Flink plugin</a> <code>flink-k8s-operator</code> skill understands the job and
+generates resources such as <code>FlinkDeployment</code>. The K8s plugin performs
+discovery, validation, deployment, and diagnosis in the target EKS namespace.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>Deploy orders to analytics-prod and track the result.
+</span></code></pre></div>
+<p>The Operator, CRDs, webhook, and cluster-level RBAC are outside the K8s
+plugin's scope and must be installed by an administrator first.</p>
+<h2 id="related-docs">Related Docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../eks/">EKS plugin</a> — EKS discovery and Kubernetes provider authentication</li>
+<li><a href="../flink/">Flink plugin</a> — deploy and manage Flink jobs through the Operator</li>
+<li><a href="../introduction/">Plugins</a> — install sources, environment configuration, activation, and permissions</li>
+<li><a href="../../skills/introduction/">Skills</a> — how skills are discovered and loaded</li>
 </ul>
 
 
@@ -4643,7 +4924,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../context_command/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Context Command">
+          <a href="../eks/" class="md-footer__link md-footer__link--prev" aria-label="Previous: EKS">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4653,20 +4934,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Context Command
+                EKS
               </div>
             </div>
           </a>
         
         
           
-          <a href="../mcp_extensions/" class="md-footer__link md-footer__link--next" aria-label="Next: MCP Extensions">
+          <a href="../flink/" class="md-footer__link md-footer__link--next" aria-label="Next: Flink">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                MCP Extensions
+                Flink
               </div>
             </div>
             <div class="md-footer__button md-icon">
