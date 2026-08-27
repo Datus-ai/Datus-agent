@@ -48,7 +48,6 @@ nav:
       - Development: plugin/development.md
       - Plugin List:
         - Airflow: plugin/airflow.md
-        - MWAA: plugin/mwaa.md
         - S3: plugin/s3.md
         - EKS: plugin/eks.md
         - K8s: plugin/k8s.md
@@ -211,7 +210,6 @@ plugins:
             Plugin List: 插件列表
             Development: 开发指南
             Airflow: Airflow
-            MWAA: MWAA
             S3: S3
             EKS: EKS
             K8s: K8s
