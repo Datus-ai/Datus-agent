@@ -926,6 +926,9 @@ flow_groups:
           - docs/plugin/airflow.md
           - docs/plugin/mwaa.md
           - docs/plugin/s3.md
+          - docs/plugin/eks.md
+          - docs/plugin/k8s.md
+          - docs/plugin/flink.md
         entrypoints:
           - "CLI: datus <plugin> subcommand dispatch"
           - Plugin profile resolution and project pins
