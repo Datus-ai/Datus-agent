@@ -48,9 +48,12 @@ nav:
     - Plugin:
       - Introduction: plugin/introduction.md
       - Development: plugin/development.md
-      - Airflow: plugin/airflow.md
-      - MWAA: plugin/mwaa.md
-      - S3: plugin/s3.md
+      - Plugin List:
+        - Airflow: plugin/airflow.md
+        - S3: plugin/s3.md
+        - EKS: plugin/eks.md
+        - K8s: plugin/k8s.md
+        - Flink: plugin/flink.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md
@@ -208,10 +211,13 @@ plugins:
             Validation: 校验
             Auto Memory: 自动记忆
             Plugin: 插件
+            Plugin List: 插件列表
             Development: 开发指南
             Airflow: Airflow
-            MWAA: MWAA
             S3: S3
+            EKS: EKS
+            K8s: K8s
+            Flink: Flink
             Develop: 开发
             Observability: 可观测性
             VSCode Extension: VSCode 插件
