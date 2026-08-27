@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import sqlite3
@@ -21,7 +23,7 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, Source
 from datus.storage import embedding_models
 from datus.storage.embedding_models import EmbeddingModel
 from datus.storage.metric.store import MetricRAG
-from datus.storage.registry import clear_storage_registry, configure_storage_defaults
+from datus.storage.registry import clear_storage_registry, configure_storage_defaults, get_storage_defaults
 from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.utils.path_manager import DatusPathManager
 
@@ -76,6 +78,17 @@ def _use_deterministic_embeddings(monkeypatch) -> None:
     )
     configure_storage_defaults()
     clear_storage_registry()
+
+
+@pytest.fixture
+def restore_storage_defaults():
+    """Restore process-wide storage state after deterministic P0 tests."""
+    defaults = get_storage_defaults()
+    try:
+        yield
+    finally:
+        configure_storage_defaults(**defaults)
+        clear_storage_registry()
 
 
 def _deterministic_dosi_config(tmp_path, monkeypatch) -> AgentConfig:
@@ -168,7 +181,11 @@ def _revenue_metric() -> dict:
     }
 
 
-def test_dosi_authoring_validates_reconciles_and_queries_without_llm(tmp_path, monkeypatch):
+def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
+    tmp_path,
+    monkeypatch,
+    restore_storage_defaults,
+):
     """Cover the documented Dosi authoring contract through Agent-owned tools."""
     config = _deterministic_dosi_config(tmp_path, monkeypatch)
     node = SemanticModelingAgenticNode(agent_config=config, execution_mode="workflow")
@@ -206,7 +223,9 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(tmp_path, m
     cached = node.semantic_tools.get_cached_query_metrics_result(live.result["result_id"])
     assert cached is not None
     assert cached["columns"] == ["revenue"]
-    assert "450" in cached["csv"]
+    rows = list(csv.DictReader(io.StringIO(cached["csv"])))
+    assert len(rows) == 1
+    assert float(rows[0]["revenue"]) == 450.0
 
     semantic_rag = SemanticDatasetRAG(config)
     metric_rag = MetricRAG(config)
@@ -253,6 +272,7 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     nightly_agent_config,
     tmp_path,
     monkeypatch,
+    restore_storage_defaults,
 ):
     """Smoke the complete LLM authoring loop after the deterministic contract."""
     assert os.environ.get("DEEPSEEK_API_KEY"), "P0 Dosi smoke requires DEEPSEEK_API_KEY"

@@ -35,6 +35,9 @@ on:
         description: "Optional failure-notification webhook for direct reusable calls."
         required: false
 
+permissions:
+  contents: read
+
 concurrency:
   # Keep nightly runs serialized because the workflow intentionally uses the
   # stable datus-nightly-* compose project names below. Per-suite startup runs

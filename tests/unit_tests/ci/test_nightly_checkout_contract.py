@@ -128,6 +128,7 @@ def test_release_candidate_reuses_p0_nightly_on_the_release_ref():
     prepare = (REPO_ROOT / ".github" / "workflows" / "prepare-release.yml").read_text(encoding="utf-8")
 
     assert "workflow_call:" in nightly
+    assert "\npermissions:\n  contents: read\n" in nightly
     assert "DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}" in nightly
     assert "NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}" in nightly
     assert "uses: ./.github/workflows/run-nightly.yml" in release

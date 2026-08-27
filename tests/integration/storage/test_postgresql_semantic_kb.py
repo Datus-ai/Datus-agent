@@ -17,7 +17,7 @@ from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.storage import embedding_models
 from datus.storage.embedding_models import EmbeddingModel
 from datus.storage.metric.store import MetricRAG
-from datus.storage.registry import clear_storage_registry, configure_storage_defaults
+from datus.storage.registry import clear_storage_registry, configure_storage_defaults, get_storage_defaults
 from datus.storage.semantic_dataset.store import SemanticDatasetRAG
 from datus.tools.func_tool.generation_tools import GenerationTools
 
@@ -105,6 +105,7 @@ def postgresql_agent_config(required_postgresql_storage, tmp_path, monkeypatch) 
     project_name = f"nightly_pg_{uuid.uuid4().hex[:10]}"
     datasource = "warehouse"
     deterministic_model = _embedding_model()
+    storage_defaults = get_storage_defaults()
     monkeypatch.setitem(embedding_models.EMBEDDING_MODELS, "semantic_model", deterministic_model)
     monkeypatch.setitem(embedding_models.EMBEDDING_MODELS, "metric", deterministic_model)
     configure_storage_defaults()
@@ -148,14 +149,18 @@ def postgresql_agent_config(required_postgresql_storage, tmp_path, monkeypatch) 
         yield config
     finally:
         clear_storage_registry()
-        # The testing providers own cleanup semantics.  Drop only this random
-        # project schema, never shared/public data.
-        with _connect(rdb_params) as connection:
-            connection.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(project_name)))
-            connection.commit()
-        with _connect(vector_params) as connection:
-            connection.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(project_name)))
-            connection.commit()
+        try:
+            # The testing providers own cleanup semantics.  Drop only this
+            # random project schema, never shared/public data.
+            with _connect(rdb_params) as connection:
+                connection.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(project_name)))
+                connection.commit()
+            with _connect(vector_params) as connection:
+                connection.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(project_name)))
+                connection.commit()
+        finally:
+            configure_storage_defaults(**storage_defaults)
+            clear_storage_registry()
 
 
 @pytest.mark.nightly
