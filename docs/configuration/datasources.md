@@ -159,6 +159,18 @@ my_doris:
   catalog: internal             # Optional, default is internal
 ```
 
+### TiDB
+
+```yaml
+my_tidb:
+  type: tidb
+  host: ${TIDB_HOST}
+  port: 4000                    # TiDB's own default, not MySQL's 3306
+  username: ${TIDB_USER}
+  password: ${TIDB_PASSWORD}
+  database: ${TIDB_DATABASE}
+```
+
 ### Hologres
 
 ```yaml

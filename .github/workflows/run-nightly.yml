@@ -220,6 +220,7 @@ jobs:
             --reinstall-package datus-semantic-osi \
             --reinstall-package datus-snowflake \
             --reinstall-package datus-doris \
+            --reinstall-package datus-tidb \
             --reinstall-package datus-hologres \
             --reinstall-package datus-oracle \
             --reinstall-package datus-gaussdb \
@@ -240,6 +241,7 @@ jobs:
             ./external/datus-db-adapters/datus-clickhouse \
             ./external/datus-db-adapters/datus-starrocks \
             ./external/datus-db-adapters/datus-doris \
+            ./external/datus-db-adapters/datus-tidb \
             ./external/datus-db-adapters/datus-hologres \
             ./external/datus-db-adapters/datus-oracle \
             ./external/datus-db-adapters/datus-trino \
@@ -412,6 +414,7 @@ jobs:
           echo "ADAPTERS_CH=1" >> $GITHUB_ENV
           echo "ADAPTERS_SR=1" >> $GITHUB_ENV
           echo "ADAPTERS_DORIS=1" >> $GITHUB_ENV
+          echo "ADAPTERS_TIDB=1" >> $GITHUB_ENV
           echo "ADAPTERS_TRINO=1" >> $GITHUB_ENV
           echo "ADAPTERS_GP=1" >> $GITHUB_ENV
           echo "ADAPTERS_HIVE=1" >> $GITHUB_ENV
@@ -437,6 +440,8 @@ jobs:
           echo "STARROCKS_HTTP_HOST_PORT=28030" >> $GITHUB_ENV
           echo "DORIS_QUERY_HOST_PORT=29031" >> $GITHUB_ENV
           echo "DORIS_HTTP_HOST_PORT=28031" >> $GITHUB_ENV
+          echo "TIDB_HOST_PORT=24000" >> $GITHUB_ENV
+          echo "TIDB_STATUS_HOST_PORT=20080" >> $GITHUB_ENV
           echo "TRINO_HOST_PORT=28080" >> $GITHUB_ENV
           echo "GREENPLUM_HOST_PORT=15434" >> $GITHUB_ENV
           echo "HIVE_METASTORE_HOST_PORT=29083" >> $GITHUB_ENV

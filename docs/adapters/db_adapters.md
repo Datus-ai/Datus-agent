@@ -27,6 +27,7 @@ This design keeps the core package lightweight while allowing you to add support
 | ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | Ready |
 | Trino | datus-trino | `pip install datus-trino` | Ready |
 | Apache Doris | datus-doris | `pip install datus-doris` | Ready |
+| TiDB | datus-tidb | `pip install datus-tidb` | Ready |
 | Hologres | datus-hologres | `pip install datus-hologres` | Ready |
 | Oracle | datus-oracle | `pip install datus-oracle` | Ready |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | Ready (Linux and macOS) |
@@ -296,6 +297,54 @@ credentials the catalog type needs) and confirm it is listed by `SHOW CATALOGS`.
 Within a session, `SWITCH <catalog>` changes the catalog and `USE [<catalog>.]<database>` changes the
 database. Switching catalogs clears the current database, because a database of that name usually does
 not exist under the new catalog; issue a `USE` afterwards to select one.
+
+### TiDB
+
+```yaml
+tidb_data:
+  type: tidb
+  host: 127.0.0.1
+  port: 4000
+  username: root
+  password: your_password
+  database: your_database
+  charset: utf8mb4       # optional, default is utf8mb4
+  autocommit: true       # optional, default is true
+  timeout_seconds: 30    # optional, default is 30
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `host` | `127.0.0.1` | TiDB server host |
+| `port` | `4000` | TiDB's own default SQL port — not MySQL's 3306 |
+| `username` | required | TiDB user |
+| `password` | empty | TiDB password |
+| `database` | none | Database the connection starts in |
+| `charset` | `utf8mb4` | Connection character set |
+| `autocommit` | `true` | Autocommit mode |
+| `timeout_seconds` | `30` | Connection timeout |
+
+TiDB speaks the MySQL wire protocol and is addressed as `database.table`: like MySQL it has no schema
+level, so leave both `catalog` and `schema` unset. Set `port` explicitly — TiDB listens on 4000, and
+3306 on the same host is usually a different server entirely.
+
+Being MySQL-compatible does not make TiDB a MySQL superset. It has no `FULL OUTER JOIN`, `JSON_TABLE`,
+`LATERAL`, `CREATE TABLE ... AS SELECT`, `CORR`/`COVAR_*`, materialized views, or updatable views, and
+its default collation is the case-sensitive `utf8mb4_bin`. Two clauses are accepted and then ignored:
+`CHECK` constraints are not enforced unless `tidb_enable_check_constraint` is `ON`, and `FULLTEXT`
+indexes are silently dropped. The adapter ships a SQL skill that keeps generated SQL clear of all of
+these.
+
+**TiFlash.** TiDB's columnar replica engine is per table: `ALTER TABLE t SET TIFLASH REPLICA 1` and the
+optimizer starts choosing between row store and columnar on its own — no query change, and nothing to
+configure in Datus. `information_schema.TIFLASH_REPLICA` reports which tables have a synced replica.
+Aggregate window functions are the one thing that tends not to gain from a replica: on TiDB v8.5 they
+fall back to single-node computation on the TiDB layer — correct, but not parallel — so prefer
+`GROUP BY` aggregation where a query can be written either way. Push-down coverage varies by version
+and by the operators around the call, so confirm with `EXPLAIN` and look for `mpp[tiflash]` on the
+window operator before assuming either behaviour.
+
+The `datus-tidb` adapter does not support TLS configuration yet, so it cannot reach TiDB Cloud endpoints that require TLS. This is an adapter limitation, not a TiDB one.
 
 ### Hologres
 

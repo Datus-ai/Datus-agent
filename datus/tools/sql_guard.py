@@ -45,6 +45,7 @@ to "allow".
 from __future__ import annotations
 
 import re
+from math import ceil
 from typing import Any, List, Optional
 
 # Ceiling on the optimizer's per-operator row estimate. See the module docstring
@@ -107,6 +108,31 @@ def _mysql_rows_product(explain_rows: List[Any]) -> Optional[int]:
     return product
 
 
+def _tidb_max_est_rows(explain_rows: List[Any]) -> Optional[int]:
+    """Take the largest ``estRows`` across a TiDB plan's operators.
+
+    TiDB's EXPLAIN emits one row per operator, each carrying its own ``estRows``
+    estimate as a float (``10000.00``). Max rather than the root's value, for
+    the same reason as PostgreSQL: a join blows up mid-plan while a GROUP BY or
+    LIMIT shrinks the root, and the join is where the memory goes.
+    """
+    largest: Optional[int] = None
+    for row in explain_rows:
+        if not isinstance(row, dict):
+            continue
+        raw = next((v for k, v in row.items() if isinstance(k, str) and k.lower() == "estrows"), None)
+        if raw is None:
+            continue
+        try:
+            # Round up: truncating 50000000.99 would let a plan that exceeds the
+            # ceiling through. OverflowError covers an infinite estRows.
+            value = ceil(float(raw))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        largest = value if largest is None else max(largest, value)
+    return largest
+
+
 def estimate_rows_from_explain(dialect: str, explain_rows: List[Any]) -> Optional[int]:
     """Parse an EXPLAIN result set into a conservative row-count estimate.
 
@@ -115,6 +141,12 @@ def estimate_rows_from_explain(dialect: str, explain_rows: List[Any]) -> Optiona
     """
     if not explain_rows:
         return None
+    # TiDB is checked before normalization on purpose: its parser dialect is
+    # `mysql` (sqlglot has no TiDB dialect), but the two EXPLAIN shapes differ —
+    # TiDB has no `rows` column at all, it reports `estRows` per operator. Going
+    # through the MySQL branch would find nothing and silently disable the guard.
+    if (dialect or "").strip().lower() == "tidb":
+        return _tidb_max_est_rows(explain_rows)
     # Adapter names are not always sqlglot/engine-family names. Resolve the
     # adapter-provided parser dialect so PostgreSQL-compatible engines such as
     # Hologres retain the same pre-execution safety guard as PostgreSQL.

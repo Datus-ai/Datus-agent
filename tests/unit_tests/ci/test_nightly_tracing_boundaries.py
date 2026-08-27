@@ -63,9 +63,10 @@ def test_nightly_pytest_commands_set_explicit_test_layer():
         and any(wrapper in command for wrapper in ("run_logged", "run_compose_suite", "run_with_agent_home"))
     ]
 
-    assert len(pytest_commands) == 25
+    assert len(pytest_commands) == 26
     assert any("tests/integration/adapters/test_doris.py" in command for command in pytest_commands)
     assert any("tests/integration/adapters/test_gaussdb.py" in command for command in pytest_commands)
+    assert any("tests/integration/adapters/test_tidb.py" in command for command in pytest_commands)
     for group in (
         "P0 PostgreSQL Agent Storage Contracts",
         "P0 SQL Policy Plugin Contracts",

@@ -2635,7 +2635,7 @@ class DBFuncTool:
 
     @staticmethod
     def _identifier_quote_char(dialect: str) -> str:
-        backtick_dialects = ("mysql", "starrocks", "doris", "hive", "spark", "bigquery", "clickhouse")
+        backtick_dialects = ("mysql", "tidb", "starrocks", "doris", "hive", "spark", "bigquery", "clickhouse")
         return "`" if dialect in backtick_dialects else '"'
 
     @classmethod

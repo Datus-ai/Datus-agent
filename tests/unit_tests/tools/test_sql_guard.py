@@ -70,6 +70,34 @@ class TestEstimateRowsFromExplain:
     def test_mysql_no_rows_column_returns_none(self):
         assert estimate_rows_from_explain("mysql", [{"id": 1, "table": "a"}]) is None
 
+    def test_tidb_takes_the_largest_est_rows(self, monkeypatch):
+        """TiDB's parser dialect is mysql, but its EXPLAIN has no `rows` column
+        at all — the estimate lives in a per-operator `estRows` float. Routing it
+        through the MySQL branch would find nothing and disable the guard."""
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "mysql" if dialect == "tidb" else None,
+            raising=False,
+        )
+        # Smallest first: a first-match implementation would pass otherwise.
+        rows = [
+            {"id": "TableFullScan_9", "estRows": "100000.00", "task": "cop[tikv]"},
+            {"id": "HashJoin_12", "estRows": "9000000000.00", "task": "root"},
+            {"id": "Projection_3", "estRows": "500.00", "task": "root"},
+        ]
+        assert estimate_rows_from_explain("tidb", rows) == 9_000_000_000
+
+    def test_tidb_rounds_fractional_estimates_up(self):
+        """Truncating biases the guard towards allowing an oversize plan."""
+        assert estimate_rows_from_explain("tidb", [{"estRows": "50000000.99"}]) == 50_000_001
+
+    def test_tidb_est_rows_key_is_case_insensitive(self):
+        assert estimate_rows_from_explain("tidb", [{"ESTROWS": "1500.00"}]) == 1500
+
+    def test_tidb_without_est_rows_returns_none(self):
+        assert estimate_rows_from_explain("tidb", [{"id": "TableReader_5", "task": "root"}]) is None
+
     def test_unknown_dialect_returns_none(self):
         assert estimate_rows_from_explain("sqlite", [{"detail": "SCAN t"}]) is None
         assert estimate_rows_from_explain("snowflake", [{"plan": "cardinality: 5"}]) is None

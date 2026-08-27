@@ -27,6 +27,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | 可用 |
 | Trino | datus-trino | `pip install datus-trino` | 可用 |
 | Apache Doris | datus-doris | `pip install datus-doris` | 可用 |
+| TiDB | datus-tidb | `pip install datus-tidb` | 可用 |
 | Hologres | datus-hologres | `pip install datus-hologres` | 可用 |
 | Oracle | datus-oracle | `pip install datus-oracle` | 可用 |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | 可用（Linux 和 macOS） |
@@ -288,6 +289,49 @@ doris_hive:
 
 在会话内，`SWITCH <catalog>` 用于切换 catalog，`USE [<catalog>.]<database>` 用于切换数据库。切换 catalog
 会清空当前数据库上下文——同名数据库通常并不存在于新的 catalog 中，切换后需要再执行一次 `USE`。
+
+### TiDB
+
+```yaml
+tidb_data:
+  type: tidb
+  host: 127.0.0.1
+  port: 4000
+  username: root
+  password: your_password
+  database: your_database
+  charset: utf8mb4       # 可选，默认 utf8mb4
+  autocommit: true       # 可选，默认 true
+  timeout_seconds: 30    # 可选，默认 30
+```
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `host` | `127.0.0.1` | TiDB 服务器地址 |
+| `port` | `4000` | TiDB 自身的默认 SQL 端口，不是 MySQL 的 3306 |
+| `username` | 必填 | TiDB 用户名 |
+| `password` | 空 | TiDB 密码 |
+| `database` | 无 | 连接初始数据库 |
+| `charset` | `utf8mb4` | 连接字符集 |
+| `autocommit` | `true` | 自动提交模式 |
+| `timeout_seconds` | `30` | 连接超时 |
+
+TiDB 使用 MySQL 通信协议，对象按 `database.table` 寻址：与 MySQL 一样没有 schema 层级，`catalog` 和
+`schema` 都留空即可。请显式设置 `port`——TiDB 监听 4000，同一台机器上的 3306 通常是另一个完全不相干的
+服务。
+
+兼容 MySQL 不等于是 MySQL 的超集。TiDB 不支持 `FULL OUTER JOIN`、`JSON_TABLE`、`LATERAL`、
+`CREATE TABLE ... AS SELECT`、`CORR`/`COVAR_*`、物化视图和可更新视图，默认排序规则是区分大小写的
+`utf8mb4_bin`。另有两个子句会被接受但不生效：未开启 `tidb_enable_check_constraint` 时 `CHECK` 约束不
+强制执行，`FULLTEXT` 索引会被静默丢弃。适配器自带的 SQL skill 会让生成的 SQL 避开这些构造。
+
+**TiFlash。** TiDB 的列存副本引擎按表启用：执行 `ALTER TABLE t SET TIFLASH REPLICA 1` 后，优化器会自动
+在行存与列存之间选择，查询本身无需改动，Datus 侧也无需任何配置。查询 `information_schema.TIFLASH_REPLICA`
+可以查看哪些表已有同步完成的副本。通常无法从副本获益的是聚合类窗口函数——在 TiDB v8.5 上它们会回退到 TiDB 单节点计算，结果正确但失去
+并行，因此在两种写法都可行时应优先使用 `GROUP BY` 聚合。下推范围随版本和调用周围的算子而变，判断前
+请用 `EXPLAIN` 确认窗口算子是否标记为 `mpp[tiflash]`。
+
+`datus-tidb` 适配器目前不支持 TLS 配置，因此无法连接需要 TLS 的 TiDB Cloud 端点。这是适配器的限制，不是 TiDB 本身的限制。
 
 ### Hologres
 

@@ -29,6 +29,7 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-hive": "datus-db-adapters/datus-hive",
     "datus-spark": "datus-db-adapters/datus-spark",
     "datus-gaussdb": "datus-db-adapters/datus-gaussdb",
+    "datus-tidb": "datus-db-adapters/datus-tidb",
     "datus-bi-core": "datus-bi-adapters/datus-bi-core",
     "datus-bi-superset": "datus-bi-adapters/datus-bi-superset",
     "datus-bi-grafana": "datus-bi-adapters/datus-bi-grafana",
@@ -77,6 +78,14 @@ DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
         db_type="gaussdb",
         parser_dialect="postgres",
         required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+    # sqlglot has no TiDB dialect, so TiDB parses as MySQL. The db_type stays
+    # distinct because the semantic engine selects its native TiDB dialect by
+    # datasource type.
+    "datus_tidb": DatabaseAdapterContract(
+        db_type="tidb",
+        parser_dialect="mysql",
+        required_hooks=("get_sql_generation_notes",),
     ),
 }
 
