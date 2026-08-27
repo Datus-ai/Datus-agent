@@ -78,15 +78,39 @@ class ManagedPluginRuntime:
         # otherwise every managed source install re-downloads its wheelhouse.
         env.setdefault("UV_CACHE_DIR", str(Path.home() / ".cache" / "uv"))
         env["HOME"] = str(self.home)
-        return subprocess.run(
-            [str(self.datus_executable), *args],
-            check=check,
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=cwd,
-            timeout=timeout,
-        )
+        command = [str(self.datus_executable), *args]
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=cwd or self.home,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # pytest runs with --showlocals. Do not retain provider credentials
+            # in a traceback frame when a managed command times out.
+            env.clear()
+            raise subprocess.TimeoutExpired(
+                exc.cmd,
+                exc.timeout,
+                output=exc.output,
+                stderr=exc.stderr,
+            ) from None
+
+        if check and completed.returncode != 0:
+            # ``subprocess.run(check=True)`` retains the full environment in
+            # its failing frame, which --showlocals would publish to CI logs.
+            env.clear()
+            raise subprocess.CalledProcessError(
+                completed.returncode,
+                completed.args,
+                output=completed.stdout,
+                stderr=completed.stderr,
+            )
+        return completed
 
     def install(self, source: Path) -> subprocess.CompletedProcess[str]:
         return self.run("plugin", "install", f"src:{source}")

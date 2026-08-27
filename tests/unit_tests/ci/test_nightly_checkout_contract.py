@@ -122,6 +122,14 @@ def test_nightly_runs_p0_contracts_without_reruns_or_skips():
     assert '"P0 Dashboard Bootstrap Skill E2E"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
 
 
+def test_nightly_tracebacks_do_not_publish_local_credentials():
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+
+    pytest_addopts = [line for line in script.splitlines() if 'export PYTEST_ADDOPTS="' in line]
+    assert len(pytest_addopts) == 2
+    assert all("--no-showlocals" in line for line in pytest_addopts)
+
+
 def test_release_candidate_reuses_p0_nightly_on_the_release_ref():
     nightly = WORKFLOW.read_text(encoding="utf-8")
     release = RELEASE_CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
