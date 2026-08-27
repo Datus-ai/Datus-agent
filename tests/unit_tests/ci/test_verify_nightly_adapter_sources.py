@@ -62,6 +62,12 @@ def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_p
     assert verify_sources.verify_local_sources(external_root) == []
 
 
+def test_expected_sources_include_the_tidb_checkout_path():
+    """`test_verify_local_sources_accepts_every_expected_checkout` builds its
+    fixtures from this same mapping, so a typo here would pass it unnoticed."""
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-tidb"] == "datus-db-adapters/datus-tidb"
+
+
 def test_expected_sources_include_storage_packages():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-base"] == ("datus-storage-adapters/datus-storage-base")
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-postgresql"] == (

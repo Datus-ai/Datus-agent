@@ -327,8 +327,9 @@ TiDB 使用 MySQL 通信协议，对象按 `database.table` 寻址：与 MySQL �
 
 **TiFlash。** TiDB 的列存副本引擎按表启用：执行 `ALTER TABLE t SET TIFLASH REPLICA 1` 后，优化器会自动
 在行存与列存之间选择，查询本身无需改动，Datus 侧也无需任何配置。查询 `information_schema.TIFLASH_REPLICA`
-可以查看哪些表已有同步完成的副本。唯一无法从副本获益的是聚合类窗口函数——它们会回退到 TiDB 单节点计算，
-结果正确但失去并行，因此在两种写法都可行时应优先使用 `GROUP BY` 聚合。
+可以查看哪些表已有同步完成的副本。通常无法从副本获益的是聚合类窗口函数——在 TiDB v8.5 上它们会回退到 TiDB 单节点计算，结果正确但失去
+并行，因此在两种写法都可行时应优先使用 `GROUP BY` 聚合。下推范围随版本和调用周围的算子而变，判断前
+请用 `EXPLAIN` 确认窗口算子是否标记为 `mpp[tiflash]`。
 
 `datus-tidb` 适配器目前不支持 TLS 配置，因此无法连接需要 TLS 的 TiDB Cloud 端点。这是适配器的限制，不是 TiDB 本身的限制。
 

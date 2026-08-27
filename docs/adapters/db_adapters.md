@@ -338,9 +338,11 @@ these.
 **TiFlash.** TiDB's columnar replica engine is per table: `ALTER TABLE t SET TIFLASH REPLICA 1` and the
 optimizer starts choosing between row store and columnar on its own — no query change, and nothing to
 configure in Datus. `information_schema.TIFLASH_REPLICA` reports which tables have a synced replica.
-Aggregate window functions are the one thing that does not gain from a replica: they fall back to
-single-node computation on the TiDB layer, correct but not parallel, so prefer `GROUP BY` aggregation
-where a query can be written either way.
+Aggregate window functions are the one thing that tends not to gain from a replica: on TiDB v8.5 they
+fall back to single-node computation on the TiDB layer — correct, but not parallel — so prefer
+`GROUP BY` aggregation where a query can be written either way. Push-down coverage varies by version
+and by the operators around the call, so confirm with `EXPLAIN` and look for `mpp[tiflash]` on the
+window operator before assuming either behaviour.
 
 The `datus-tidb` adapter does not support TLS configuration yet, so it cannot reach TiDB Cloud endpoints that require TLS. This is an adapter limitation, not a TiDB one.
 

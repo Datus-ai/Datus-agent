@@ -1724,6 +1724,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/adapters/test_clickhouse.py
   --deselect tests/integration/adapters/test_starrocks.py
   --deselect tests/integration/adapters/test_doris.py
+  --deselect tests/integration/adapters/test_tidb.py
   --deselect tests/integration/adapters/test_trino.py
   --deselect tests/integration/adapters/test_greenplum.py
   --deselect tests/integration/adapters/test_hive.py
