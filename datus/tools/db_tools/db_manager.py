@@ -3,7 +3,9 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import dataclasses
-from typing import Callable, Dict, Optional, Tuple, Union
+import threading
+from enum import StrEnum
+from typing import Callable, Dict, Optional, Set, Tuple, Union
 
 from datus_db_core import BaseSqlConnector, ConnectionConfig, DatusDbException, connector_registry
 from sqlalchemy.engine.url import URL, make_url
@@ -18,9 +20,103 @@ from datus.utils.path_utils import get_files_from_glob_pattern
 logger = get_logger(__name__)
 
 
+# Single-flight guard for adapter auto-installs: concurrent callers (e.g. the
+# REPL connection init and the background schema sync) must not spawn duplicate
+# ``pip install`` processes racing on the same environment, and a failed install
+# must not be retried on every connection attempt within the process.
+# Deliberately ONE process-wide lock rather than one per db_type: concurrent
+# pip/uv processes mutate the same environment, so installs of *different*
+# adapters must serialize too.
+_adapter_install_lock = threading.Lock()
+_adapter_install_attempted: Set[str] = set()
+# db_types whose install subprocess is currently running. Read without the
+# lock (the installer holds it for the whole install) — set membership is
+# GIL-atomic and UI staleness of one check is harmless.
+_adapter_install_active: Set[str] = set()
+
+
+class AdapterInstallStatus(StrEnum):
+    """Install state of an adapter's connector, for UI layers to message accurately.
+
+    Self-contained: consults the connector registry first, so a concurrently
+    completed install reports ``REGISTERED`` rather than leaking the
+    "attempted" memo as a false failure — callers need no particular read
+    ordering relative to ``missing_connector_type``.
+    """
+
+    REGISTERED = "registered"  # connector available; any earlier attempt is moot
+    NOT_ATTEMPTED = "not_attempted"  # next connection attempt will auto-install
+    INSTALLING = "installing"  # an install subprocess is running right now
+    FAILED = "failed"  # attempted this process and the connector is still missing
+
+
+def adapter_install_status(db_type: str) -> AdapterInstallStatus:
+    """Return the process-wide auto-install state for *db_type*."""
+    if connector_registry.is_registered(db_type):
+        return AdapterInstallStatus.REGISTERED
+    if db_type in _adapter_install_active:
+        return AdapterInstallStatus.INSTALLING
+    if db_type in _adapter_install_attempted:
+        return AdapterInstallStatus.FAILED
+    return AdapterInstallStatus.NOT_ATTEMPTED
+
+
 def _auto_install_adapter(db_type: str) -> None:
-    """Attempt to pip-install the adapter package for *db_type* and register it."""
+    """Attempt to pip-install the adapter package for *db_type* and register it.
+
+    Serialized process-wide: the first caller runs the install while holding the
+    lock (so concurrent callers wait for its outcome instead of racing), and
+    each *db_type* is attempted at most once per process.
+    """
+    with _adapter_install_lock:
+        if db_type in _adapter_install_attempted:
+            # The memo only guards the expensive pip subprocess. Retry the
+            # cheap import + register so a manual ``pip install datus-<type>``
+            # after a failed auto-install takes effect without a restart.
+            if _try_register_adapter_module(db_type):
+                logger.info("Adapter '%s' registered after manual install", db_type)
+            else:
+                logger.debug("Adapter '%s' auto-install already attempted; skipping", db_type)
+            return
+        # Active before attempted: lock-free status readers must never see
+        # "attempted but not active" for an install that is about to run —
+        # that combination means FAILED.
+        _adapter_install_active.add(db_type)
+        _adapter_install_attempted.add(db_type)
+        try:
+            _run_adapter_install(db_type)
+        finally:
+            _adapter_install_active.discard(db_type)
+
+
+def _try_register_adapter_module(db_type: str) -> bool:
+    """Import and register an already-installed ``datus_<type>`` package.
+
+    Cheap (no subprocess): used after a fresh auto-install, and on every
+    retry after a failed one so a manual install becomes usable in the
+    running process.
+    """
     import importlib
+
+    try:
+        importlib.invalidate_caches()
+        module = importlib.import_module(f"datus_{db_type}")
+    except ImportError:
+        return False
+    except Exception as e:  # noqa: BLE001 - a broken adapter must not crash the caller
+        logger.warning("Adapter module datus_%s failed to load: %s", db_type, e)
+        return False
+    register = getattr(module, "register", None)
+    if callable(register):
+        try:
+            register()
+        except Exception as e:  # noqa: BLE001 - a broken adapter must not crash the caller
+            logger.warning("Adapter datus_%s register() failed: %s", db_type, e)
+            return False
+    return True
+
+
+def _run_adapter_install(db_type: str) -> None:
     import shutil
     import subprocess
     import sys
@@ -42,12 +138,10 @@ def _auto_install_adapter(db_type: str) -> None:
             logger.warning("Auto-install of %s failed: %s", package, result.stderr.strip())
             return
 
-        importlib.invalidate_caches()
-        module_name = f"datus_{db_type}"
-        module = importlib.import_module(module_name)
-        if hasattr(module, "register"):
-            module.register()
-        logger.info("Auto-installed and loaded adapter: %s", db_type)
+        if _try_register_adapter_module(db_type):
+            logger.info("Auto-installed and loaded adapter: %s", db_type)
+        else:
+            logger.warning("Auto-install of %s succeeded but the adapter module did not load", package)
     except subprocess.TimeoutExpired:
         logger.warning("Auto-install of %s timed out", package)
     except Exception as e:
@@ -238,6 +332,28 @@ class DBManager:
         # file path, which ``cfg.database`` doesn't carry); fall back to the config-resolved
         # name. Both are real database names — never the datasource name.
         return (connector.database_name or resolved), connector
+
+    def missing_connector_type(self, datasource: str) -> Optional[str]:
+        """Return ``datasource``'s (normalized) db type when its connector is
+        not registered yet, else ``None``.
+
+        A metadata-only probe — never triggers the adapter auto-install — so
+        UI layers can announce a pending install before the blocking
+        connection attempt starts. Combine with :meth:`adapter_install_status`
+        to phrase the announcement accurately (about to install / installing /
+        already failed).
+        """
+        cfg = self._db_configs.get(datasource)
+        if cfg is None:
+            return None
+        db_type = _normalize_dialect_name(cfg.type)
+        if not db_type or connector_registry.is_registered(db_type):
+            return None
+        return db_type
+
+    def adapter_install_status(self, db_type: str) -> AdapterInstallStatus:
+        """Process-wide auto-install state for ``db_type``."""
+        return adapter_install_status(db_type)
 
     def get_db_uris(self, datasource: str) -> Dict[str, str]:
         cfg = self._db_configs.get(datasource)

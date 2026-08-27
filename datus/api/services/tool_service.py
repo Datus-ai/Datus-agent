@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Optional
 from datus.api.models.base_models import Result
 from datus.api.models.config_models import ErrorCode
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.embedding_diagnostics import format_context_degraded_warning
+from datus.storage.embedding_diagnostics import format_context_unavailable
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.utils.loggings import get_logger
@@ -42,7 +42,7 @@ class ToolService:
             self._context_search_tools = ContextSearchTools(agent_config, sub_agent_name=sub_agent_name)
         except Exception as exc:
             self._context_search_tools = None
-            self.context_warning = format_context_degraded_warning(exc)
+            self.context_warning = format_context_unavailable(exc)
             logger.warning("Context search tool registry disabled: %s", self.context_warning)
         self._registry: Dict[str, Callable[..., FuncToolResult]] = self._build_registry()
 

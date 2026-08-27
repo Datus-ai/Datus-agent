@@ -313,9 +313,9 @@ class AgenticNode(Node):
         self.degraded_capabilities[key] = message
 
     def _record_context_search_degraded(self, error: BaseException | str) -> str:
-        from datus.storage.embedding_diagnostics import format_context_degraded_warning
+        from datus.storage.embedding_diagnostics import format_context_unavailable
 
-        message = format_context_degraded_warning(error)
+        message = format_context_unavailable(error)
         self._record_degraded_capability("context_search_tools", message)
         return message
 

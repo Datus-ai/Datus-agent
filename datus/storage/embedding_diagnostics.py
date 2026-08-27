@@ -82,3 +82,60 @@ def is_embedding_unavailable_error(error: BaseException | str | None) -> bool:
             "embedding model is unavailable",
         )
     )
+
+
+DATASOURCE_SCOPE_MARKER = "datasource is required for datasource-scoped storage"
+
+
+def is_datasource_scope_error(error: BaseException | str | None) -> bool:
+    """Return True for the "no datasource selected" storage-scope failure."""
+    return bool(error) and DATASOURCE_SCOPE_MARKER in str(error)
+
+
+def _generic_unavailable_message(details: str = "") -> str:
+    """Neutral degradation message that attributes no specific cause."""
+    message = "Context search and @ references are disabled. Database tools and normal chat remain available."
+    if details:
+        message = f"{message} Details: {details}"
+    return message
+
+
+def format_context_unavailable(error: BaseException | str | None = None) -> str:
+    """Build a context-degradation message that matches the actual cause.
+
+    ``format_context_degraded_warning`` hardcodes the embedding-unavailable
+    text; routing every failure through it blames the embedding model (and
+    recommends Hugging Face mirrors) for unrelated causes such as a missing
+    datasource. Classify first, then format. For a batch of errors use
+    :func:`format_context_unavailable_many` — a joined string passed here
+    would classify the whole batch by whichever member's marker matches
+    first.
+    """
+    if is_embedding_unavailable_error(error):
+        return format_context_degraded_warning(error)
+    if is_datasource_scope_error(error):
+        return (
+            "Context search and @ references are inactive because no datasource is selected. "
+            "Database tools and normal chat remain available. "
+            "Select a datasource (/database in the CLI, or --datasource) to enable them."
+        )
+    return _generic_unavailable_message(str(error).strip() if error else "")
+
+
+def format_context_unavailable_many(errors: "list[BaseException | str]") -> str:
+    """Build one degradation message for a batch of errors, classified per-error.
+
+    A cause-specific headline (embedding remediation, datasource hint) is
+    used only when every error in the batch shares that cause; a mixed batch
+    gets the neutral headline with every cause preserved in the details, so
+    one member's marker never relabels the others' failures.
+    """
+    unique = list(dict.fromkeys(str(error).strip() for error in errors if error and str(error).strip()))
+    if not unique:
+        return _generic_unavailable_message()
+    if len(unique) == 1:
+        return format_context_unavailable(unique[0])
+    for classifier in (is_embedding_unavailable_error, is_datasource_scope_error):
+        if all(classifier(error) for error in unique):
+            return format_context_unavailable("; ".join(unique))
+    return _generic_unavailable_message("; ".join(unique))

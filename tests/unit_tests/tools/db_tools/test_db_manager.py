@@ -656,3 +656,239 @@ class TestDbManagerInstanceCaching:
         a = db_manager_instance({"ds_a": _cfg(type="sqlite", database="db")})
         b = db_manager_instance({"ds_b": _cfg(type="sqlite", database="db")})
         assert a is not b
+
+
+# ---------------------------------------------------------------------------
+# _auto_install_adapter single-flight
+# ---------------------------------------------------------------------------
+
+
+class TestAutoInstallAdapterSingleFlight:
+    def setup_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
+
+    def teardown_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
+
+    def test_concurrent_callers_spawn_one_install(self):
+        import threading
+
+        from datus.tools.db_tools import db_manager as dm
+
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+
+        def fake_run(*args, **kwargs):
+            entered.set()
+            release.wait(timeout=3)
+            return SimpleNamespace(returncode=1, stderr="simulated failure")
+
+        def _install():
+            try:
+                dm._auto_install_adapter("faketype")
+            except Exception as exc:  # noqa: BLE001 - surfaced via the errors list
+                errors.append(exc)
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run:
+            first = threading.Thread(target=_install)
+            first.start()
+            assert entered.wait(timeout=1)
+            second = threading.Thread(target=_install)
+            second.start()
+            # Property: the second caller must wait on the first install, not
+            # race a duplicate pip process against the same environment.
+            second.join(timeout=0.3)
+            assert second.is_alive()
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+            assert not first.is_alive() and not second.is_alive(), "deadlock guard"
+
+        assert not errors
+        assert mock_run.call_count == 1
+
+    def test_failed_install_not_retried_within_process(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")) as mock_run:
+            dm._auto_install_adapter("faketype")
+            dm._auto_install_adapter("faketype")
+
+        assert mock_run.call_count == 1
+
+    def test_manual_install_takes_effect_without_new_subprocess(self):
+        # Property: the once-per-process memo guards only the pip subprocess.
+        # After a failed auto-install, a later attempt must still retry the
+        # cheap import + register so a manual `pip install datus-<type>` in
+        # the running session leaves the adapter genuinely usable — observable
+        # through the connector registry, which is what the REPL and
+        # _build_conn read — without spawning pip again.
+        from datus_db_core import connector_registry
+
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")) as mock_run:
+            dm._auto_install_adapter("faketype")
+        assert mock_run.call_count == 1
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
+
+        # The fake module registers a real (test-scoped) connector, like an
+        # actual datus_<type> package's register() would.
+        fake_module = SimpleNamespace(register=lambda: connector_registry.register("faketype", MagicMock))
+        try:
+            with (
+                patch("subprocess.run") as mock_run_again,
+                patch("importlib.import_module", return_value=fake_module),
+            ):
+                dm._auto_install_adapter("faketype")
+
+            mock_run_again.assert_not_called()
+            assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.REGISTERED
+        finally:
+            for attr in ("_connectors", "_factories", "_metadata", "_capabilities"):
+                getattr(connector_registry, attr, {}).pop("faketype", None)
+
+    def test_distinct_types_install_independently(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")) as mock_run:
+            dm._auto_install_adapter("faketype_a")
+            dm._auto_install_adapter("faketype_b")
+
+        assert mock_run.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# adapter_install_status
+# ---------------------------------------------------------------------------
+
+
+class TestAdapterInstallStatus:
+    def setup_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
+
+    def teardown_method(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.clear()
+        dm._adapter_install_active.clear()
+
+    def test_not_attempted_initially(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.NOT_ATTEMPTED
+
+    def test_failed_after_unsuccessful_install(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")):
+            dm._auto_install_adapter("faketype")
+
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
+
+    def test_installing_while_subprocess_runs_then_failed(self):
+        import threading
+
+        from datus.tools.db_tools import db_manager as dm
+
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+
+        def fake_run(*args, **kwargs):
+            entered.set()
+            release.wait(timeout=3)
+            return SimpleNamespace(returncode=1, stderr="simulated failure")
+
+        def _install():
+            try:
+                dm._auto_install_adapter("faketype")
+            except Exception as exc:  # noqa: BLE001 - surfaced via the errors list
+                errors.append(exc)
+
+        with patch("subprocess.run", side_effect=fake_run):
+            worker = threading.Thread(target=_install)
+            worker.start()
+            assert entered.wait(timeout=1)
+            assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.INSTALLING
+            release.set()
+            worker.join(timeout=2)
+            assert not worker.is_alive(), "deadlock guard"
+
+        assert not errors
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
+
+    def test_active_marker_cleared_when_install_raises(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", side_effect=RuntimeError("boom")):
+            dm._auto_install_adapter("faketype")
+
+        # The finally block must clear the active marker so the state never
+        # sticks at INSTALLING after the subprocess is gone.
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
+
+    def test_dbmanager_method_delegates_to_process_state(self):
+        from datus.tools.db_tools import db_manager as dm
+
+        mgr = DBManager({})
+        assert mgr.adapter_install_status("faketype") is dm.AdapterInstallStatus.NOT_ATTEMPTED
+
+    def test_registered_wins_over_attempted_memo(self):
+        # Property: the status is self-contained — once the connector is
+        # registered (e.g. a concurrent caller's install just succeeded), the
+        # permanent "attempted" memo must not be read as a failure.
+        from datus.tools.db_tools import db_manager as dm
+
+        dm._adapter_install_attempted.add("faketype")
+        with patch("datus.tools.db_tools.db_manager.connector_registry.is_registered", return_value=True):
+            assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.REGISTERED
+
+
+# ---------------------------------------------------------------------------
+# DBManager.missing_connector_type
+# ---------------------------------------------------------------------------
+
+
+class TestMissingConnectorType:
+    def test_registered_type_returns_none(self):
+        mgr = DBManager({"ds": _cfg(type="sqlite", database="db")})
+        assert mgr.missing_connector_type("ds") is None
+
+    def test_unregistered_type_returned(self):
+        mgr = DBManager({"ds": _cfg(type="nonexistent_db_xyz")})
+        assert mgr.missing_connector_type("ds") == "nonexistent_db_xyz"
+
+    def test_unknown_datasource_returns_none(self):
+        mgr = DBManager({})
+        assert mgr.missing_connector_type("nope") is None
+
+    def test_empty_type_returns_none(self):
+        mgr = DBManager({"ds": _cfg(type=None)})
+        assert mgr.missing_connector_type("ds") is None
+
+    def test_alias_normalized_before_registry_lookup(self):
+        mgr = DBManager({"ds": _cfg(type="postgres")})
+        with patch(
+            "datus.tools.db_tools.db_manager.connector_registry.is_registered", return_value=False
+        ) as mock_registered:
+            assert mgr.missing_connector_type("ds") == "postgresql"
+        mock_registered.assert_called_once_with("postgresql")
+
+    def test_probe_never_triggers_auto_install(self):
+        # Contract: the probe is metadata-only. The REPL calls it before the
+        # banner; a pip install here would reintroduce the silent startup hang.
+        mgr = DBManager({"ds": _cfg(type="nonexistent_db_xyz")})
+        with patch("datus.tools.db_tools.db_manager._auto_install_adapter") as mock_install:
+            mgr.missing_connector_type("ds")
+        mock_install.assert_not_called()

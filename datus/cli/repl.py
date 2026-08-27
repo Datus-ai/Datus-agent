@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import queue
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
@@ -83,8 +82,8 @@ from datus.cli.tui.live_display_state import LiveDisplayState
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
-from datus.storage.embedding_diagnostics import format_context_degraded_warning
-from datus.tools.db_tools.db_manager import db_manager_instance
+from datus.storage.embedding_diagnostics import format_context_unavailable_many, is_datasource_scope_error
+from datus.tools.db_tools.db_manager import AdapterInstallStatus, db_manager_instance
 from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS, DBType, SQLType
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import get_logger
@@ -102,6 +101,54 @@ DATUS_BANNER_TEXT = (
     "╚═════╝  ╚═╝  ╚═╝    ╚═╝     ╚═════╝  ╚══════╝"
 )
 _BANNER_MIN_WIDTH = 60
+
+
+def _call_with_timeout(fn, timeout_seconds: float, description: str):
+    """Run ``fn`` on a daemon thread; abandon it after ``timeout_seconds``.
+
+    ``ThreadPoolExecutor`` cannot express "stop waiting": its context-manager
+    exit calls ``shutdown(wait=True)``, which joins the worker even after
+    ``future.result(timeout=...)`` already raised — so a stuck connection
+    attempt blocks startup for as long as the worker runs. A daemon thread is
+    joined by neither the caller nor interpreter shutdown; on expiry the call
+    is abandoned and its eventual outcome only logged.
+
+    Raises :class:`TimeoutError` on expiry; re-raises ``fn``'s exception
+    otherwise.
+    """
+    result_q: queue.Queue = queue.Queue(maxsize=1)
+    state_lock = threading.Lock()
+    abandoned = False
+
+    def _worker():
+        try:
+            outcome = (True, fn())
+        except BaseException as exc:  # noqa: BLE001 - delivered to the caller below
+            outcome = (False, exc)
+        with state_lock:
+            if not abandoned:
+                result_q.put(outcome)
+                return
+        ok, value = outcome
+        if ok:
+            logger.info("%s finished after the CLI stopped waiting; result kept in the pool.", description)
+        else:
+            logger.debug("%s failed after the CLI stopped waiting: %s", description, value)
+
+    threading.Thread(target=_worker, name=f"datus-{description}", daemon=True).start()
+    try:
+        ok, value = result_q.get(timeout=timeout_seconds)
+    except queue.Empty:
+        with state_lock:
+            if result_q.empty():
+                abandoned = True
+        if abandoned:
+            raise TimeoutError(f"{description} timed out after {timeout_seconds} seconds") from None
+        # The worker delivered inside the race window between expiry and flagging.
+        ok, value = result_q.get_nowait()
+    if not ok:
+        raise value
+    return value
 
 
 class CommandType(Enum):
@@ -1324,16 +1371,31 @@ class DatusCLI:
                     )
                     if error
                 ]
-                if errors:
-                    warning = format_context_degraded_warning("; ".join(errors))
-                    self.startup_warnings.append(warning)
-                    logger.warning("REPL context autocomplete preload degraded: %s", warning)
-                    print_warning(self.console, warning)
+                self._report_context_preload_errors(errors)
             except Exception as exc:
-                warning = format_context_degraded_warning(exc)
-                self.startup_warnings.append(warning)
-                logger.warning("REPL context autocomplete preload failed: %s", warning)
-                print_warning(self.console, warning)
+                self._report_context_preload_errors([exc])
+
+    def _report_context_preload_errors(self, errors: List[Any]) -> None:
+        """Surface ``@``-completer preload failures with a cause-matched message.
+
+        The three completers (table / metric / SQL) usually fail for the same
+        reason, so identical errors are collapsed first. Classification is
+        per-error, never on a joined blob — one completer's "no datasource
+        selected" must not relabel another completer's real failure. Scope
+        errors are a normal state (the banner already shows it) and only get
+        a dim hint; every other cause becomes a startup warning.
+        """
+        unique = list(dict.fromkeys(str(error) for error in errors if error))
+        if not unique:
+            return
+        real_errors = [error for error in unique if not is_datasource_scope_error(error)]
+        if not real_errors:
+            print_info(self.console, "@ table/metric/SQL references will populate once a datasource is selected.")
+            return
+        warning = format_context_unavailable_many(real_errors)
+        self.startup_warnings.append(warning)
+        logger.warning("REPL context autocomplete preload degraded: %s", warning)
+        print_warning(self.console, warning)
 
     def _warm_bang_node(self) -> None:
         """Eagerly build the default chat node during background init so ``!``
@@ -2521,24 +2583,69 @@ class DatusCLI:
                 connector = self.db_manager.get_conn(current_datasource, self.cli_context.current_db_name)
                 return self.cli_context.current_db_name, connector
 
+        # Announce the adapter-install situation before the blocking connection
+        # attempt — otherwise the auto-install's pip download runs silently
+        # before the banner and the terminal just looks frozen. The wording
+        # follows the process-wide install state so a failed install is never
+        # re-announced as "installing".
+        missing_connector = getattr(self.db_manager, "missing_connector_type", lambda _ds: None)(current_datasource)
+        install_status = None
+        if missing_connector:
+            install_status = self.db_manager.adapter_install_status(missing_connector)
+            if install_status is AdapterInstallStatus.NOT_ATTEMPTED:
+                print_info(
+                    self.console,
+                    f"Installing database adapter datus-{missing_connector} for datasource "
+                    f"'{current_datasource}' (first use; may take a minute)...",
+                )
+            elif install_status is AdapterInstallStatus.INSTALLING:
+                print_info(
+                    self.console,
+                    f"Database adapter datus-{missing_connector} is still installing from an earlier "
+                    "attempt; waiting for it to finish...",
+                )
+            elif install_status is AdapterInstallStatus.FAILED:
+                print_warning(
+                    self.console,
+                    f"Database adapter datus-{missing_connector} is unavailable — auto-install failed "
+                    f"earlier in this session. Install it manually: pip install datus-{missing_connector}, "
+                    "then reconnect with /database.",
+                )
+            # REGISTERED: the connector became available between the probe and
+            # this status read (e.g. the background sync finished the install);
+            # nothing to announce.
+
+        install_may_be_running = missing_connector and install_status in (
+            AdapterInstallStatus.NOT_ATTEMPTED,
+            AdapterInstallStatus.INSTALLING,
+        )
+
         try:
-            # Use ThreadPoolExecutor with timeout for connection initialization
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_do_init_connection)
-                try:
-                    db_name, self.db_connector = future.result(timeout=timeout_seconds)
-                except FuturesTimeoutError:
-                    self.console.print(
-                        f"[red]Error:[/] Database connection timed out after {timeout_seconds} seconds. "
-                        f"Please check if the database server for datasource '{current_datasource}' is running "
-                        "and accessible."
+            try:
+                db_name, self.db_connector = _call_with_timeout(
+                    _do_init_connection, timeout_seconds, f"connection init ({current_datasource})"
+                )
+            except TimeoutError:
+                if install_may_be_running:
+                    print_error(
+                        self.console,
+                        f"Database connection timed out after {timeout_seconds} seconds while "
+                        f"the datus-{missing_connector} adapter install may still be running in the background. "
+                        "Reconnect with /database once it finishes.",
                     )
-                    logger.error(f"Database connection timeout for datasource: {current_datasource}")
-                    self.db_connector = None
-                    return
+                else:
+                    print_error(
+                        self.console,
+                        f"Database connection timed out after {timeout_seconds} seconds. "
+                        f"Please check if the database server for datasource '{current_datasource}' is running "
+                        "and accessible.",
+                    )
+                logger.error(f"Database connection timeout for datasource: {current_datasource}")
+                self.db_connector = None
+                return
 
             if not self.db_connector:
-                self.console.print("[red]Error:[/] No database connection.")
+                print_error(self.console, "No database connection.")
                 return
 
             # Update context based on dialect
@@ -2551,21 +2658,22 @@ class DatusCLI:
                 )
 
             # Test the connection with timeout
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(self.db_connector.test_connection)
-                try:
-                    connection_result = future.result(timeout=timeout_seconds)
-                    logger.debug(f"Connection test result: {connection_result}")
-                except FuturesTimeoutError:
-                    self.console.print(
-                        f"[red]Error:[/] Connection test timed out after {timeout_seconds} seconds. "
-                        f"The database server for datasource '{current_datasource}' may be unresponsive."
-                    )
-                    logger.error(f"Connection test timeout for datasource: {current_datasource}")
-                    self.db_connector = None
+            try:
+                connection_result = _call_with_timeout(
+                    self.db_connector.test_connection, timeout_seconds, f"connection test ({current_datasource})"
+                )
+                logger.debug(f"Connection test result: {connection_result}")
+            except TimeoutError:
+                print_error(
+                    self.console,
+                    f"Connection test timed out after {timeout_seconds} seconds. "
+                    f"The database server for datasource '{current_datasource}' may be unresponsive.",
+                )
+                logger.error(f"Connection test timeout for datasource: {current_datasource}")
+                self.db_connector = None
 
         except Exception as e:
-            self.console.print(f"[red]Error:[/] Failed to connect to database: {str(e)}")
+            print_error(self.console, f"Failed to connect to database: {str(e)}")
             logger.error(f"Database connection failed for datasource {current_datasource}: {e}")
             self.db_connector = None
 
