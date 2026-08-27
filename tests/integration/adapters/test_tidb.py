@@ -3,7 +3,7 @@ Contract tests: TiDB adapter via DBFuncTool.
 
 Opt-in (all required):
   * install:    `uv pip install datus-tidb`
-  * start:      `cd datus-db-adapters/datus-tidb && docker compose up -d --wait`
+  * start:      `cd datus-db-adapters/datus-tidb && docker compose up -d`
   * env:         ADAPTERS_TIDB=1
 
 Env overrides (defaults match the adapter's docker-compose.yml):
@@ -93,8 +93,8 @@ def tidb_connector(tidb_config: TiDBConfig) -> Generator[TiDBConnector, None, No
     try:
         if not conn.test_connection():
             pytest.fail(
-                "TiDB cluster unreachable despite ADAPTERS_TIDB=1. "
-                "Did you run `docker compose up -d --wait` in datus-db-adapters/datus-tidb?"
+                "TiDB unreachable despite ADAPTERS_TIDB=1. "
+                "Did you run `docker compose up -d` in datus-db-adapters/datus-tidb?"
             )
         yield conn
     finally:

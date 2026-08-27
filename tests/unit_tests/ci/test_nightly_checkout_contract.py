@@ -166,14 +166,11 @@ def test_nightly_runs_tidb_agent_contract_from_checkout():
     assert 'echo "ADAPTERS_TIDB=1" >> $GITHUB_ENV' in workflow
     assert 'echo "TIDB_HOST_PORT=24000" >> $GITHUB_ENV' in workflow
     assert 'TIDB_COMPOSE="${TIDB_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-tidb/docker-compose.yml}"' in script
-    # Four services: TiFlash needs the real storage stack behind it, so waiting
-    # on a single `tidb` service would start pytest before the columnar replica
-    # engine can accept SET TIFLASH REPLICA.
-    assert (
-        'run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "pd0:120" "tikv0:120" "tidb0:120" "tiflash0:120" --'
-    ) in script
-    assert 'uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-tidb/scripts/wait_for_tidb.py"' in script
-    assert 'wait_for_tidb_client_readiness "${TIDB_READY_TIMEOUT:-300}"' in script
+    # One container: the adapter's compose runs TiDB's built-in unistore engine.
+    assert 'run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "tidb:120" --' in script
+    # The status endpoint answers only once bootstrap finished, so it says more
+    # than a bare TCP probe on the SQL port.
+    assert 'wait_for_http_readiness "TiDB"' in script
     assert "tests/integration/adapters/test_tidb.py" in script
     assert '"TiDB Adapter Tests"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
 

@@ -336,11 +336,11 @@ indexes are silently dropped. The adapter ships a SQL skill that keeps generated
 these.
 
 **TiFlash.** TiDB's columnar replica engine is per table: `ALTER TABLE t SET TIFLASH REPLICA 1` and the
-optimizer starts choosing between row store and columnar on its own — no query change needed.
-`information_schema.TIFLASH_REPLICA` reports which tables have a synced replica. Note that most window
-functions do not run in TiFlash MPP (only `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LEAD`, `LAG`,
-`FIRST_VALUE` and `LAST_VALUE` push down); aggregate window functions fall back to single-node
-computation on the TiDB layer, correct but not parallel.
+optimizer starts choosing between row store and columnar on its own — no query change, and nothing to
+configure in Datus. `information_schema.TIFLASH_REPLICA` reports which tables have a synced replica.
+Aggregate window functions are the one thing that does not gain from a replica: they fall back to
+single-node computation on the TiDB layer, correct but not parallel, so prefer `GROUP BY` aggregation
+where a query can be written either way.
 
 TLS is not supported yet, so TiDB Cloud endpoints that require it are out of reach for now.
 

@@ -1457,22 +1457,6 @@ wait_for_doris_client_readiness() {
   return 0
 }
 
-wait_for_tidb_client_readiness() {
-  local timeout_seconds="${1:-300}"
-
-  # Waits for the SQL port *and* a registered TiFlash store: the columnar
-  # fixtures issue ALTER TABLE ... SET TIFLASH REPLICA, which TiDB rejects until
-  # TiFlash has reported itself to PD.
-  uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-tidb/scripts/wait_for_tidb.py" \
-    --timeout "$timeout_seconds" 2>&1 | tee -a "$LOG_FILE"
-  local status=${PIPESTATUS[0]}
-  if [ "$status" -ne 0 ]; then
-    test_exit_code="$status"
-    return "$status"
-  fi
-  return 0
-}
-
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
@@ -1505,7 +1489,7 @@ wait_for_compose_client_readiness() {
       wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"
       ;;
     "TiDB Adapter Tests")
-      wait_for_tidb_client_readiness "${TIDB_READY_TIMEOUT:-300}"
+      wait_for_http_readiness "TiDB" "http://${TIDB_HOST:-127.0.0.1}:${TIDB_STATUS_HOST_PORT:-20080}/status" 300
       ;;
     "Trino Adapter Tests")
       wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
@@ -1768,7 +1752,7 @@ run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with
 run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Doris Adapter Tests" "$DORIS_COMPOSE" "doris:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_doris.py --tb=short --verbose --timeout=300 --timeout-method=thread
-run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "pd0:120" "tikv0:120" "tidb0:120" "tiflash0:120" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_tidb.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "tidb:120" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_tidb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread
