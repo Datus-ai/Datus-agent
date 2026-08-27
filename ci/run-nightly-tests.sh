@@ -71,6 +71,7 @@ MYSQL_COMPOSE="${MYSQL_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-mysql/docker-compose.y
 CLICKHOUSE_COMPOSE="${CLICKHOUSE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-clickhouse/docker-compose.yml}"
 STARROCKS_COMPOSE="${STARROCKS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-starrocks/docker-compose.yml}"
 DORIS_COMPOSE="${DORIS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-doris/docker-compose.yml}"
+TIDB_COMPOSE="${TIDB_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-tidb/docker-compose.yml}"
 TRINO_COMPOSE="${TRINO_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-trino/docker-compose.yml}"
 GREENPLUM_COMPOSE="${GREENPLUM_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-greenplum/docker-compose.yml}"
 HIVE_COMPOSE="${HIVE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-hive/docker-compose.yml}"
@@ -105,6 +106,7 @@ COMPOSE_GROUPS=(
   "ClickHouse Adapter Tests"
   "StarRocks Adapter Tests"
   "Doris Adapter Tests"
+  "TiDB Adapter Tests"
   "Trino Adapter Tests"
   "Greenplum Adapter Tests"
   "Hive Adapter Tests"
@@ -491,6 +493,7 @@ compose_project_slug() {
     "ClickHouse Adapter Tests") echo "clickhouse" ;;
     "StarRocks Adapter Tests") echo "starrocks" ;;
     "Doris Adapter Tests") echo "doris" ;;
+    "TiDB Adapter Tests") echo "tidb" ;;
     "Trino Adapter Tests") echo "trino" ;;
     "Greenplum Adapter Tests") echo "greenplum" ;;
     "Hive Adapter Tests") echo "hive" ;;
@@ -548,6 +551,7 @@ cleanup_all_compose() {
       "ClickHouse Adapter Tests") compose_file="$CLICKHOUSE_COMPOSE" ;;
       "StarRocks Adapter Tests") compose_file="$STARROCKS_COMPOSE" ;;
       "Doris Adapter Tests") compose_file="$DORIS_COMPOSE" ;;
+      "TiDB Adapter Tests") compose_file="$TIDB_COMPOSE" ;;
       "Trino Adapter Tests") compose_file="$TRINO_COMPOSE" ;;
       "Greenplum Adapter Tests") compose_file="$GREENPLUM_COMPOSE" ;;
       "Hive Adapter Tests") compose_file="$HIVE_COMPOSE" ;;
@@ -916,6 +920,14 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export DORIS_CATALOG=internal
   export DORIS_DATABASE=test
 
+  export TIDB_HOST_PORT="${TIDB_HOST_PORT:-24000}"
+  export TIDB_STATUS_HOST_PORT="${TIDB_STATUS_HOST_PORT:-20080}"
+  export TIDB_HOST=127.0.0.1
+  export TIDB_PORT="$TIDB_HOST_PORT"
+  export TIDB_USER=root
+  export TIDB_PASSWORD=
+  export TIDB_DATABASE=test
+
   export TRINO_HOST_PORT="${TRINO_HOST_PORT:-28080}"
   export TRINO_HOST=127.0.0.1
   export TRINO_PORT="$TRINO_HOST_PORT"
@@ -1174,6 +1186,9 @@ compose_host_port_specs() {
       ;;
     "Doris Adapter Tests")
       printf 'Doris query:%s\nDoris HTTP:%s\n' "${DORIS_QUERY_HOST_PORT:-29031}" "${DORIS_HTTP_HOST_PORT:-28031}"
+      ;;
+    "TiDB Adapter Tests")
+      printf 'TiDB query:%s\nTiDB status:%s\n' "${TIDB_HOST_PORT:-24000}" "${TIDB_STATUS_HOST_PORT:-20080}"
       ;;
     "Trino Adapter Tests")
       printf 'Trino HTTP:%s\n' "${TRINO_HOST_PORT:-28080}"
@@ -1442,6 +1457,22 @@ wait_for_doris_client_readiness() {
   return 0
 }
 
+wait_for_tidb_client_readiness() {
+  local timeout_seconds="${1:-300}"
+
+  # Waits for the SQL port *and* a registered TiFlash store: the columnar
+  # fixtures issue ALTER TABLE ... SET TIFLASH REPLICA, which TiDB rejects until
+  # TiFlash has reported itself to PD.
+  uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-tidb/scripts/wait_for_tidb.py" \
+    --timeout "$timeout_seconds" 2>&1 | tee -a "$LOG_FILE"
+  local status=${PIPESTATUS[0]}
+  if [ "$status" -ne 0 ]; then
+    test_exit_code="$status"
+    return "$status"
+  fi
+  return 0
+}
+
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
@@ -1472,6 +1503,9 @@ wait_for_compose_client_readiness() {
       ;;
     "Doris Adapter Tests")
       wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"
+      ;;
+    "TiDB Adapter Tests")
+      wait_for_tidb_client_readiness "${TIDB_READY_TIMEOUT:-300}"
       ;;
     "Trino Adapter Tests")
       wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
@@ -1634,6 +1668,7 @@ log "POSTGRESQL_HOST=${POSTGRESQL_HOST:-} POSTGRESQL_PORT=${POSTGRESQL_PORT:-} P
 log "MYSQL_HOST=${MYSQL_HOST:-} MYSQL_PORT=${MYSQL_PORT:-} MYSQL_HOST_PORT=${MYSQL_HOST_PORT:-}"
 log "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-} CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-} CLICKHOUSE_HTTP_HOST_PORT=${CLICKHOUSE_HTTP_HOST_PORT:-} CLICKHOUSE_NATIVE_HOST_PORT=${CLICKHOUSE_NATIVE_HOST_PORT:-}"
 log "STARROCKS_HOST=${STARROCKS_HOST:-} STARROCKS_PORT=${STARROCKS_PORT:-} STARROCKS_QUERY_HOST_PORT=${STARROCKS_QUERY_HOST_PORT:-} STARROCKS_HTTP_HOST_PORT=${STARROCKS_HTTP_HOST_PORT:-}"
+log "TIDB_HOST=${TIDB_HOST:-} TIDB_PORT=${TIDB_PORT:-} TIDB_STATUS_HOST_PORT=${TIDB_STATUS_HOST_PORT:-}"
 log "DORIS_HOST=${DORIS_HOST:-} DORIS_PORT=${DORIS_PORT:-} DORIS_QUERY_HOST_PORT=${DORIS_QUERY_HOST_PORT:-} DORIS_HTTP_HOST_PORT=${DORIS_HTTP_HOST_PORT:-}"
 log "TRINO_HOST=${TRINO_HOST:-} TRINO_PORT=${TRINO_PORT:-}"
 log "GREENPLUM_HOST=${GREENPLUM_HOST:-} GREENPLUM_PORT=${GREENPLUM_PORT:-} GREENPLUM_HOST_PORT=${GREENPLUM_HOST_PORT:-}"
@@ -1733,6 +1768,7 @@ run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with
 run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Doris Adapter Tests" "$DORIS_COMPOSE" "doris:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_doris.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "pd0:120" "tikv0:120" "tidb0:120" "tiflash0:120" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_tidb.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread

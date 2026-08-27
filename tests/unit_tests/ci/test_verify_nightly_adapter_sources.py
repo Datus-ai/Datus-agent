@@ -16,9 +16,9 @@ MODULE_SPEC.loader.exec_module(verify_sources)
 
 
 # Registration shape a healthy nightly checkout produces, per db_type.
-_PARSER_DIALECTS = {"hologres": "postgres", "gaussdb": "postgres", "oracle": "oracle"}
+_PARSER_DIALECTS = {"hologres": "postgres", "gaussdb": "postgres", "oracle": "oracle", "tidb": "mysql"}
 _IDENTIFIER_PARSER_ADAPTERS = {"hologres", "gaussdb"}
-_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "oracle"}
+_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "oracle", "tidb"}
 
 
 class _FakeDistribution:
@@ -105,6 +105,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -125,6 +126,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -165,6 +167,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -185,6 +188,7 @@ def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch)
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -207,6 +211,7 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 

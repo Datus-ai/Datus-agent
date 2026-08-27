@@ -1441,6 +1441,11 @@ class TestTransferQueryResult:
         )
 
         assert DBFuncTool._identifier_quote_char("doris") == "`"
+        # TiDB is matched on the adapter's own dialect name, not the parser
+        # dialect: falling through to double quotes would emit transfer DDL and
+        # INSERTs that TiDB rejects under its default sql_mode.
+        assert DBFuncTool._identifier_quote_char("tidb") == "`"
+        assert DBFuncTool._quote_column_identifier("order", "tidb") == "`order`"
         assert DBFuncTool._infer_transfer_column_type(pd.Series([1.5]), "hologres") == "DOUBLE PRECISION"
 
     def test_transfer_replace_mode_success(self):

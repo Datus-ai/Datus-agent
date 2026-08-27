@@ -56,6 +56,7 @@ INSTALLABLE_TYPES = (
     "snowflake",
     "spark",
     "starrocks",
+    "tidb",
     "trino",
 )
 

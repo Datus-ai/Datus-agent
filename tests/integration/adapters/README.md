@@ -62,6 +62,7 @@ docker compose down -v
 | clickhouse | `ADAPTERS_CH=1` | `CLICKHOUSE_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:8123 default_user/default_test/default_test` |
 | starrocks | `ADAPTERS_SR=1` | `STARROCKS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//default_catalog/test` |
 | doris | `ADAPTERS_DORIS=1` | `DORIS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//internal/test` |
+| tidb | `ADAPTERS_TIDB=1` | `TIDB_HOST/PORT/USER/PASSWORD/DATABASE` | `127.0.0.1:4000 root//test` |
 | trino | `ADAPTERS_TRINO=1` | `TRINO_HOST/PORT/USER` | `localhost:8080 trino` (uses built-in `tpch.tiny`, no seeding) |
 | greenplum | `ADAPTERS_GP=1` | `GREENPLUM_HOST/PORT/USER/PASSWORD/DATABASE/SCHEMA` | `localhost:15432 gpadmin/pivotal/postgres/public` |
 | gaussdb | `ADAPTERS_GAUSSDB=1` | `GAUSSDB_HOST/PORT/USER/PASSWORD/DATABASE/SCHEMA/DRIVER/SSLMODE/SSLROOTCERT` | `127.0.0.1:25434 datus/Datus@123/postgres/public`; `gaussdb` on Linux, `pg8000` on macOS |
@@ -75,6 +76,7 @@ Several adapters use default ports that are commonly occupied:
 - trino (8080) — conflicts with Airflow / many web dev servers
 - starrocks (9030) — conflicts with existing StarRocks instances
 - doris (9030) — conflicts with StarRocks and existing Doris instances
+- tidb (4000) — the compose file publishes 24000; `docker compose up -d --wait` is required so TiFlash finishes registering
 - hive / spark (10000) — both default to the HiveServer2/Spark Thrift port; run one suite at a time or remap one service
 
 For the Trino adapter, the compose file already supports a `TRINO_HOST_PORT`

@@ -164,6 +164,18 @@ my_doris:
   catalog: internal             # 可选，默认为 internal
 ```
 
+### TiDB
+
+```yaml
+my_tidb:
+  type: tidb
+  host: ${TIDB_HOST}
+  port: 4000                    # TiDB 自身默认端口，不是 MySQL 的 3306
+  username: ${TIDB_USER}
+  password: ${TIDB_PASSWORD}
+  database: ${TIDB_DATABASE}
+```
+
 ### Hologres
 
 ```yaml

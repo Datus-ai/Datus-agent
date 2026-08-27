@@ -89,7 +89,7 @@ def test_nightly_installs_p0_plugins_only_through_managed_store():
 def test_nightly_installs_new_database_adapters_from_latest_checkout():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    for package_name in ("datus-doris", "datus-hologres", "datus-oracle", "datus-gaussdb"):
+    for package_name in ("datus-doris", "datus-hologres", "datus-oracle", "datus-gaussdb", "datus-tidb"):
         assert f"--reinstall-package {package_name}" in workflow
         assert f"./external/datus-db-adapters/{package_name}" in workflow
 
@@ -157,6 +157,25 @@ def test_nightly_runs_doris_agent_contract_from_checkout():
     assert 'wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"' in script
     assert 'wait_for_tcp_readiness "Doris"' not in script
     assert "tests/integration/adapters/test_doris.py" in script
+
+
+def test_nightly_runs_tidb_agent_contract_from_checkout():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'echo "ADAPTERS_TIDB=1" >> $GITHUB_ENV' in workflow
+    assert 'echo "TIDB_HOST_PORT=24000" >> $GITHUB_ENV' in workflow
+    assert 'TIDB_COMPOSE="${TIDB_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-tidb/docker-compose.yml}"' in script
+    # Four services: TiFlash needs the real storage stack behind it, so waiting
+    # on a single `tidb` service would start pytest before the columnar replica
+    # engine can accept SET TIFLASH REPLICA.
+    assert (
+        'run_compose_suite "TiDB Adapter Tests" "$TIDB_COMPOSE" "pd0:120" "tikv0:120" "tidb0:120" "tiflash0:120" --'
+    ) in script
+    assert 'uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-tidb/scripts/wait_for_tidb.py"' in script
+    assert 'wait_for_tidb_client_readiness "${TIDB_READY_TIMEOUT:-300}"' in script
+    assert "tests/integration/adapters/test_tidb.py" in script
+    assert '"TiDB Adapter Tests"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
 
 
 def test_nightly_runs_gaussdb_agent_contract_from_checkout():
