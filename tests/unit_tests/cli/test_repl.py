@@ -1964,7 +1964,10 @@ class TestInitConnectionTimeout:
         assert "unresponsive" in _console_text(cli)
 
     def test_missing_adapter_announced_before_connecting(self, cli):
+        seen_before_connect = []
+
         def _fail(ds):
+            seen_before_connect.append(_console_text(cli))
             raise RuntimeError("Connector 'oracle' not found")
 
         self._wire(cli, first_conn=_fail, missing="oracle")
@@ -1973,6 +1976,9 @@ class TestInitConnectionTimeout:
 
         output = _console_text(cli)
         assert "datus-oracle" in output
+        # Property: the install notice reaches the user before the blocking
+        # connection attempt starts, not after it fails.
+        assert "datus-oracle" in seen_before_connect[0]
         assert cli.db_connector is None
 
     def test_no_install_notice_when_connector_registered(self, cli):
@@ -1999,6 +2005,9 @@ class TestInitConnectionTimeout:
         # project phrases it (plain pip; uv may be absent on this machine).
         assert "Installing" not in output
         assert "Install it manually: pip install datus-oracle" in output
+        # The advice works in-session (the memo path retries import/register),
+        # so it must point at /database, not at a process restart.
+        assert "reconnect with /database" in output
 
     def test_registered_status_announces_nothing(self, cli):
         # The connector became available between the missing-probe and the

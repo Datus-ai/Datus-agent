@@ -70,7 +70,13 @@ def _auto_install_adapter(db_type: str) -> None:
     """
     with _adapter_install_lock:
         if db_type in _adapter_install_attempted:
-            logger.debug("Adapter '%s' auto-install already attempted; skipping", db_type)
+            # The memo only guards the expensive pip subprocess. Retry the
+            # cheap import + register so a manual ``pip install datus-<type>``
+            # after a failed auto-install takes effect without a restart.
+            if _try_register_adapter_module(db_type):
+                logger.info("Adapter '%s' registered after manual install", db_type)
+            else:
+                logger.debug("Adapter '%s' auto-install already attempted; skipping", db_type)
             return
         # Active before attempted: lock-free status readers must never see
         # "attempted but not active" for an install that is about to run —
@@ -83,8 +89,34 @@ def _auto_install_adapter(db_type: str) -> None:
             _adapter_install_active.discard(db_type)
 
 
-def _run_adapter_install(db_type: str) -> None:
+def _try_register_adapter_module(db_type: str) -> bool:
+    """Import and register an already-installed ``datus_<type>`` package.
+
+    Cheap (no subprocess): used after a fresh auto-install, and on every
+    retry after a failed one so a manual install becomes usable in the
+    running process.
+    """
     import importlib
+
+    try:
+        importlib.invalidate_caches()
+        module = importlib.import_module(f"datus_{db_type}")
+    except ImportError:
+        return False
+    except Exception as e:  # noqa: BLE001 - a broken adapter must not crash the caller
+        logger.warning("Adapter module datus_%s failed to load: %s", db_type, e)
+        return False
+    register = getattr(module, "register", None)
+    if callable(register):
+        try:
+            register()
+        except Exception as e:  # noqa: BLE001 - a broken adapter must not crash the caller
+            logger.warning("Adapter datus_%s register() failed: %s", db_type, e)
+            return False
+    return True
+
+
+def _run_adapter_install(db_type: str) -> None:
     import shutil
     import subprocess
     import sys
@@ -106,12 +138,10 @@ def _run_adapter_install(db_type: str) -> None:
             logger.warning("Auto-install of %s failed: %s", package, result.stderr.strip())
             return
 
-        importlib.invalidate_caches()
-        module_name = f"datus_{db_type}"
-        module = importlib.import_module(module_name)
-        if hasattr(module, "register"):
-            module.register()
-        logger.info("Auto-installed and loaded adapter: %s", db_type)
+        if _try_register_adapter_module(db_type):
+            logger.info("Auto-installed and loaded adapter: %s", db_type)
+        else:
+            logger.warning("Auto-install of %s succeeded but the adapter module did not load", package)
     except subprocess.TimeoutExpired:
         logger.warning("Auto-install of %s timed out", package)
     except Exception as e:

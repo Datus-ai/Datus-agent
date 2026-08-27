@@ -2608,7 +2608,8 @@ class DatusCLI:
                 print_warning(
                     self.console,
                     f"Database adapter datus-{missing_connector} is unavailable — auto-install failed "
-                    f"earlier in this session. Install it manually: pip install datus-{missing_connector}",
+                    f"earlier in this session. Install it manually: pip install datus-{missing_connector}, "
+                    "then reconnect with /database.",
                 )
             # REGISTERED: the connector became available between the probe and
             # this status read (e.g. the background sync finished the install);

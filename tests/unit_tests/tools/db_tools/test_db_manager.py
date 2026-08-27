@@ -723,6 +723,27 @@ class TestAutoInstallAdapterSingleFlight:
 
         assert mock_run.call_count == 1
 
+    def test_manual_install_takes_effect_without_new_subprocess(self):
+        # Property: the once-per-process memo guards only the pip subprocess.
+        # After a failed auto-install, a later attempt must still retry the
+        # cheap import + register so a manual `pip install datus-<type>` in
+        # the running session becomes usable — without spawning pip again.
+        from datus.tools.db_tools import db_manager as dm
+
+        with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")) as mock_run:
+            dm._auto_install_adapter("faketype")
+        assert mock_run.call_count == 1
+
+        fake_module = SimpleNamespace(register=MagicMock())
+        with (
+            patch("subprocess.run") as mock_run_again,
+            patch("importlib.import_module", return_value=fake_module),
+        ):
+            dm._auto_install_adapter("faketype")
+
+        mock_run_again.assert_not_called()
+        fake_module.register.assert_called_once_with()
+
     def test_distinct_types_install_independently(self):
         from datus.tools.db_tools import db_manager as dm
 
