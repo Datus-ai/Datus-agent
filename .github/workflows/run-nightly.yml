@@ -673,13 +673,29 @@ jobs:
               }
             };
 
-            const req = https.request(options, (res) => {
-              console.log('Feishu notification sent:', res.statusCode);
-            });
+            await new Promise((resolve) => {
+              const req = https.request(options, (res) => {
+                // Drain the response so the socket can close immediately instead
+                // of keeping the workflow alive until the server's keep-alive timeout.
+                res.resume();
+                res.on('end', () => {
+                  console.log('Feishu notification sent:', res.statusCode);
+                  resolve();
+                });
+                res.on('error', (error) => {
+                  console.error('Error reading Feishu response:', error);
+                  resolve();
+                });
+              });
 
-            req.on('error', (error) => {
-              console.error('Error sending to Feishu:', error);
-            });
+              req.setTimeout(10_000, () => {
+                req.destroy(new Error('Feishu notification timed out after 10 seconds'));
+              });
+              req.on('error', (error) => {
+                console.error('Error sending to Feishu:', error);
+                resolve();
+              });
 
-            req.write(data);
-            req.end();
+              req.write(data);
+              req.end();
+            });

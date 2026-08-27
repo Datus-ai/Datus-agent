@@ -48,12 +48,17 @@ validate_test_home() {
 }
 
 # The CLI exits 0 even when bootstrap reports {'status': 'failed', ...}, so a
-# broken component would only surface later as an empty dataset. Scan the
-# captured output for a failed Final Result and stop at the first bad step.
+# broken component would only surface later as an empty dataset. Match only the
+# top-level Final Result; debug output can contain expected failed tool attempts
+# that are retried before the bootstrap succeeds.
+bootstrap_result_failed() {
+  grep -Fq "Final Result: {'status': 'failed'"
+}
+
 run_bootstrap_kb() {
   local output
   output="$(uv run datus-agent "$@" 2>&1 | tee /dev/stderr)"
-  if printf '%s' "$output" | grep -q "'status': 'failed'"; then
+  if bootstrap_result_failed <<< "$output"; then
     echo "bootstrap-kb reported a failed status: datus-agent $*" >&2
     exit 1
   fi
