@@ -727,22 +727,33 @@ class TestAutoInstallAdapterSingleFlight:
         # Property: the once-per-process memo guards only the pip subprocess.
         # After a failed auto-install, a later attempt must still retry the
         # cheap import + register so a manual `pip install datus-<type>` in
-        # the running session becomes usable — without spawning pip again.
+        # the running session leaves the adapter genuinely usable — observable
+        # through the connector registry, which is what the REPL and
+        # _build_conn read — without spawning pip again.
+        from datus_db_core import connector_registry
+
         from datus.tools.db_tools import db_manager as dm
 
         with patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stderr="no such package")) as mock_run:
             dm._auto_install_adapter("faketype")
         assert mock_run.call_count == 1
+        assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.FAILED
 
-        fake_module = SimpleNamespace(register=MagicMock())
-        with (
-            patch("subprocess.run") as mock_run_again,
-            patch("importlib.import_module", return_value=fake_module),
-        ):
-            dm._auto_install_adapter("faketype")
+        # The fake module registers a real (test-scoped) connector, like an
+        # actual datus_<type> package's register() would.
+        fake_module = SimpleNamespace(register=lambda: connector_registry.register("faketype", MagicMock))
+        try:
+            with (
+                patch("subprocess.run") as mock_run_again,
+                patch("importlib.import_module", return_value=fake_module),
+            ):
+                dm._auto_install_adapter("faketype")
 
-        mock_run_again.assert_not_called()
-        fake_module.register.assert_called_once_with()
+            mock_run_again.assert_not_called()
+            assert dm.adapter_install_status("faketype") is dm.AdapterInstallStatus.REGISTERED
+        finally:
+            for attr in ("_connectors", "_factories", "_metadata", "_capabilities"):
+                getattr(connector_registry, attr, {}).pop("faketype", None)
 
     def test_distinct_types_install_independently(self):
         from datus.tools.db_tools import db_manager as dm
