@@ -25,6 +25,16 @@ def test_nightly_preserves_checkout_packages_after_locked_sync():
     assert "uv run --no-sync playwright install --with-deps chromium" in workflow
 
 
+def test_nightly_feishu_notification_drains_response_and_has_timeout():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    notification = workflow.split("- name: Send Feishu notification", maxsplit=1)[1]
+
+    assert "await new Promise((resolve) =>" in notification
+    assert "res.resume();" in notification
+    assert "res.on('end'" in notification
+    assert "req.setTimeout(10_000" in notification
+
+
 def test_nightly_kb_cache_tracks_all_adapter_checkouts():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
