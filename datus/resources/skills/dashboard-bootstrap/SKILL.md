@@ -19,6 +19,7 @@ Bootstrap dashboard query context through an installed BI plugin. Keep BI access
 - Never assume one datasource for a BI profile or dashboard. Resolve and match source identity independently for every selected query.
 - Do not switch the shared datasource during the workflow. Run metric authoring only for query batches whose uniquely matched Datus datasource is already active.
 - Treat dashboard subagent creation as an optional final persistence step. It may reference only context identifiers confirmed by their owning builtin agents.
+- Before the Generation Manifest is confirmed, discovery is read-only. Never call an export command to inspect, probe, preview, or validate its contract, even when the plugin offers no dry-run mode. This prohibition applies to every shell/tool call whose parameters invoke the export subcommand, including help probes, discarded output, temporary output roots such as `/tmp`, and commands described as a test or `never-run` check.
 
 ## Step 0 — Resolve execution mode and routing
 
@@ -43,6 +44,8 @@ Bootstrap dashboard query context through an installed BI plugin. Keep BI access
 5. Put `--profile <name>` on every plugin call after selection. Never rely on a default that could change between calls.
 
 If no installed plugin satisfies the contract, stop and name the missing capabilities. Do not probe undocumented commands.
+
+Validate the export contract from the loaded plugin skill and read-only CLI help on parent commands. Do not invoke or request help from the export subcommand itself before confirmation; loading the plugin skill is sufficient command-contract evidence. The pre-confirmation manifest describes the expected export mode and selected candidates; it cannot contain exported file paths or checksums that do not exist yet.
 
 ## Step 2 — Select a dashboard
 
@@ -110,7 +113,7 @@ Before any plugin export or builtin generation task, print this manifest:
 | Ambiguities | unresolved business meaning or plugin limitations |
 | Subagents | planned main and attribution names, or `unavailable` when `create-subagent` is not discoverable |
 
-When `auto_run=false`, **STOP after the manifest and end the turn**. Do not call `ask_user` merely to confirm it, do not export files, and do not invoke generation tasks. Tell the user to confirm or correct the manifest in the next message.
+When `auto_run=false`, **STOP after the manifest and end the turn**. Do not call `ask_user` merely to confirm it, do not invoke the export subcommand for any reason (including help, contract validation, preview, probes, temporary output, or discarded output), and do not invoke generation tasks. Tell the user to confirm or correct the manifest in the next message.
 
 When `auto_run=true`, print the same manifest, state that confirmation was skipped by explicit instruction, and continue. This never bypasses system permission prompts.
 

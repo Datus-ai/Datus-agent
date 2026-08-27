@@ -32,6 +32,7 @@ export DATUS_TEST_PROJECT_NAME
 NIGHTLY_REQUIRE_LANGFUSE_TRACING="${NIGHTLY_REQUIRE_LANGFUSE_TRACING:-0}"
 NIGHTLY_STARTED_AT="${NIGHTLY_STARTED_AT:-}"
 NIGHTLY_COMPOSE_PROJECT_PREFIX="${NIGHTLY_COMPOSE_PROJECT_PREFIX:-datus-nightly-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-}"
+UV_CACHE_DIR="${UV_CACHE_DIR:-$(uv cache dir)}"
 
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "${REPO_ROOT}/.." && pwd)}"
 EXTERNAL_REPOS_ROOT="${EXTERNAL_REPOS_ROOT:-${REPO_ROOT}/external}"
@@ -41,7 +42,7 @@ UNIT_TEST_HOME="${NIGHTLY_UNIT_TEST_HOME:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-
 UNIT_TEST_PROJECT_ROOT="${NIGHTLY_UNIT_TEST_PROJECT_ROOT:-${UNIT_TEST_HOME}/workspace}"
 NIGHTLY_PYTEST_BASETEMP="${NIGHTLY_PYTEST_BASETEMP:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/datus-agent-nightly-pytest-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}}"
 AGENT_TEST_CONFIG_BACKUP="${AGENT_TEST_CONFIG_BACKUP:-${TMPDIR:-/tmp}/datus-agent-nightly-config-${GITHUB_RUN_ID:-$$}.bak}"
-export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_TRACE_REFERENCES_FILE NIGHTLY_TRACE_SUMMARY_FILE NIGHTLY_PROCESS_DIAGNOSTICS_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP NIGHTLY_STARTED_AT
+export LOG_FILE NIGHTLY_MANIFEST_FILE NIGHTLY_FAILURE_CLASSIFICATION_FILE PROVIDER_COVERAGE_MANIFEST_FILE NIGHTLY_TRACE_REFERENCES_FILE NIGHTLY_TRACE_SUMMARY_FILE NIGHTLY_PROCESS_DIAGNOSTICS_FILE NIGHTLY_HOME NIGHTLY_PROJECT_ROOT UNIT_TEST_HOME NIGHTLY_PYTEST_BASETEMP NIGHTLY_STARTED_AT EXTERNAL_REPOS_ROOT UV_CACHE_DIR
 
 NIGHTLY_PYTEST_ROOTS=(tests/integration tests/regression)
 
@@ -96,7 +97,7 @@ COMPOSE_FILES=(
 )
 
 COMPOSE_GROUPS=(
-  "Superset Nightly Tests"
+  "P0 Dashboard Bootstrap Skill E2E"
   "Grafana Nightly Tests"
   "Airflow Nightly Tests"
   "PostgreSQL Adapter Tests"
@@ -112,6 +113,7 @@ COMPOSE_GROUPS=(
 )
 
 DOCKER_GROUPS=(
+  "P0 PostgreSQL Agent Storage Contracts"
   "PostgreSQL Storage Adapter Tests"
   "${COMPOSE_GROUPS[@]}"
 )
@@ -481,7 +483,7 @@ compose_project_slug() {
   local group_name="$1"
 
   case "$group_name" in
-    "Superset Nightly Tests") echo "superset" ;;
+    "P0 Dashboard Bootstrap Skill E2E") echo "superset" ;;
     "Grafana Nightly Tests") echo "grafana" ;;
     "Airflow Nightly Tests") echo "airflow" ;;
     "PostgreSQL Adapter Tests") echo "postgresql" ;;
@@ -538,7 +540,7 @@ cleanup_all_compose() {
   local project_name
   for group_name in "${COMPOSE_GROUPS[@]}"; do
     case "$group_name" in
-      "Superset Nightly Tests") compose_file="$SUPERSET_COMPOSE" ;;
+      "P0 Dashboard Bootstrap Skill E2E") compose_file="$SUPERSET_COMPOSE" ;;
       "Grafana Nightly Tests") compose_file="$GRAFANA_COMPOSE" ;;
       "Airflow Nightly Tests") compose_file="$AIRFLOW_COMPOSE" ;;
       "PostgreSQL Adapter Tests") compose_file="$POSTGRES_COMPOSE" ;;
@@ -678,10 +680,11 @@ prepare_nightly_langfuse_tracing() {
 nightly_trace_expected_for_group() {
   case "$1" in
     "Gen Agent Tests" | \
+      "P0 Dosi Semantic Modeling E2E" | \
       "Reference Template Nightly Tests" | \
       "Web UI Nightly Tests" | \
       "Product E2E Nightly Tests" | \
-      "Superset Nightly Tests" | \
+      "P0 Dashboard Bootstrap Skill E2E" | \
       "Grafana Nightly Tests" | \
       "Airflow Nightly Tests" | \
       "Provider Health Tests")
@@ -1148,7 +1151,7 @@ compose_host_port_specs() {
   local group_name="$1"
 
   case "$group_name" in
-    "Superset Nightly Tests")
+    "P0 Dashboard Bootstrap Skill E2E")
       printf 'Superset web:%s\nSuperset PostgreSQL:%s\n' "${SUPERSET_PORT:-18088}" "${SUPERSET_POSTGRES_PORT:-15433}"
       ;;
     "Grafana Nightly Tests")
@@ -1444,7 +1447,7 @@ wait_for_compose_client_readiness() {
   local airflow_base
 
   case "$group_name" in
-    "Superset Nightly Tests")
+    "P0 Dashboard Bootstrap Skill E2E")
       wait_for_http_readiness "Superset" "${SUPERSET_URL%/}/health" 300
       ;;
     "Grafana Nightly Tests")
@@ -1665,7 +1668,19 @@ ensure_nightly_kb_data
 
 run_logged "MCP Server Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_mcp_server.py --tb=short --verbose --timeout=60 --timeout-method=thread
 
-run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_semantic_modeling_agentic.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_logged "Gen Agent Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_semantic_modeling_agentic.py \
+  --deselect tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm \
+  --deselect tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
+  --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+
+run_logged "P0 PostgreSQL Agent Storage Contracts" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/storage/test_postgresql_semantic_kb.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=300 --timeout-method=thread
+
+run_logged "P0 SQL Policy Plugin Contracts" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest tests/integration/plugins/test_sql_policy_plugin.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=300 --timeout-method=thread
+
+run_logged "P0 Dosi Semantic Modeling E2E" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest \
+  tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm \
+  tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm \
+  -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 
 run_logged "Reference Template Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_reference_template.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
@@ -1680,6 +1695,9 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/agent/test_gen_dashboard_agentic.py
   --deselect tests/integration/agent/test_scheduler_agentic.py
   --deselect tests/integration/tools/test_bi_dashboard.py
+  --deselect tests/integration/plugins/test_dashboard_bootstrap_plugin.py
+  --deselect tests/integration/plugins/test_sql_policy_plugin.py
+  --deselect tests/integration/storage/test_postgresql_semantic_kb.py
   --deselect tests/integration/tools/test_bi_grafana.py
   --deselect tests/integration/tools/test_reference_template.py
   --deselect tests/integration/adapters/test_postgresql.py
@@ -1703,7 +1721,7 @@ run_logged "Main Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PR
 
 run_logged "Product E2E Nightly Tests" run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m "nightly and product_e2e and not provider_health" "${NIGHTLY_PYTEST_ROOTS[@]}" "${NIGHTLY_DEDICATED_SUITE_DESELECTS[@]}" --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
-run_compose_suite "Superset Nightly Tests" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
+run_compose_suite "P0 Dashboard Bootstrap Skill E2E" "$SUPERSET_COMPOSE" "postgres:300" "superset:1200" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run python -m pytest -m nightly tests/integration/plugins/test_dashboard_bootstrap_plugin.py tests/integration/agent/test_gen_dashboard_agentic.py tests/integration/tools/test_bi_dashboard.py -p ci.pytest_fail_on_skip_plugin --fail-on-skip --tb=short --verbose --timeout=600 --timeout-method=thread
 
 run_compose_suite "Grafana Nightly Tests" "$GRAFANA_COMPOSE" "postgres:300" "grafana:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/tools/test_bi_grafana.py --tb=short --verbose --timeout=300 --timeout-method=thread --reruns 1 --reruns-delay 5
 

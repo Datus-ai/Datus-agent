@@ -4,6 +4,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "run-nightly.yml"
+RELEASE_CANDIDATE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-candidate.yml"
 NIGHTLY_SCRIPT = REPO_ROOT / "ci" / "run-nightly-tests.sh"
 
 
@@ -53,6 +54,38 @@ def test_nightly_installs_storage_packages_from_latest_checkout():
         assert package_path in workflow
 
 
+def test_nightly_installs_p0_plugins_only_through_managed_store():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    for repository, path in (
+        ("Datus-ai/Datus-Plugins", "external/Datus-Plugins"),
+        ("Datus-ai/datus-sql-policies", "external/datus-sql-policies"),
+    ):
+        assert f"repository: {repository}" in workflow
+        assert f"path: {path}" in workflow
+
+    private_checkout = workflow.split("- name: Checkout datus-sql-policies main", maxsplit=1)[1].split(
+        "- name:", maxsplit=1
+    )[0]
+    assert "token: ${{ secrets.RELEASE_BOT_TOKEN }}" in private_checkout
+    assert "github.token" not in private_checkout
+    assert "- name: Require private repository checkout token" in workflow
+
+    install_block = workflow.split("- name: Install dependencies", maxsplit=1)[1].split(
+        "- name: Ensure Docker runtime", maxsplit=1
+    )[0]
+    for package_name, package_path in (
+        ("datus-superset-plugin", "./external/Datus-Plugins/datus-superset-plugin"),
+        ("datus-sql-policies", "./external/datus-sql-policies"),
+    ):
+        assert f"--reinstall-package {package_name}" not in install_block
+        assert package_path not in install_block
+
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    assert "export LOG_FILE" in script
+    assert "EXTERNAL_REPOS_ROOT" in next(line for line in script.splitlines() if line.startswith("export LOG_FILE"))
+
+
 def test_nightly_installs_new_database_adapters_from_latest_checkout():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
@@ -68,6 +101,43 @@ def test_nightly_runs_postgresql_storage_adapter_tests_from_checkout():
     assert 'run_logged "PostgreSQL Storage Adapter Tests"' in script
     assert 'uv run --no-sync pytest "$STORAGE_ADAPTERS_ROOT/datus-storage-postgresql/tests"' in script
     assert '"PostgreSQL Storage Adapter Tests"' in script.split("DOCKER_GROUPS=(", maxsplit=1)[1]
+
+
+def test_nightly_runs_p0_contracts_without_reruns_or_skips():
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    logical_lines = script.replace("\\\n", " ").splitlines()
+
+    for group in (
+        "P0 PostgreSQL Agent Storage Contracts",
+        "P0 SQL Policy Plugin Contracts",
+        "P0 Dosi Semantic Modeling E2E",
+        "P0 Dashboard Bootstrap Skill E2E",
+    ):
+        command = next(line for line in logical_lines if line.startswith("run_") and f'"{group}"' in line)
+        assert "--fail-on-skip" in command
+        assert "--reruns" not in command
+        assert "uv run python -m pytest" in command
+
+    assert '"P0 PostgreSQL Agent Storage Contracts"' in script.split("DOCKER_GROUPS=(", maxsplit=1)[1]
+    assert '"P0 Dashboard Bootstrap Skill E2E"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
+
+
+def test_release_candidate_reuses_p0_nightly_on_the_release_ref():
+    nightly = WORKFLOW.read_text(encoding="utf-8")
+    release = RELEASE_CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+    prepare = (REPO_ROOT / ".github" / "workflows" / "prepare-release.yml").read_text(encoding="utf-8")
+
+    assert "workflow_call:" in nightly
+    assert "DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}" in nightly
+    assert "NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}" in nightly
+    assert "uses: ./.github/workflows/run-nightly.yml" in release
+    assert "if: ${{ github.event_name != 'pull_request' }}" in release
+    assert "datus_agent_ref: ${{ inputs.ref || github.ref }}" in release
+    assert "nightly_group_filter: '^P0 '" in release
+    assert "secrets: inherit" not in release
+    assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in release
+    assert "uses: ./.github/workflows/release-candidate.yml" in prepare
+    assert "RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}" in prepare
 
 
 def test_nightly_runs_doris_agent_contract_from_checkout():

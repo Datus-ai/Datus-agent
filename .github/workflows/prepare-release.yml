@@ -232,3 +232,5 @@ jobs:
     with:
       expected_version: ${{ needs.prepare-release.outputs.version }}
       ref: ${{ needs.prepare-release.outputs.branch }}
+    secrets:
+      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}

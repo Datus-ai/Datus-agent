@@ -47,6 +47,10 @@ def test_dashboard_bootstrap_skill_has_ordered_selection_and_generation_gate():
     assert offsets == sorted(offsets)
     assert "STOP after the manifest and end the turn" in body
     assert "auto_run=true" in body
+    assert "Never call an export command to inspect, probe, preview, or validate its contract" in body
+    assert "temporary output roots such as `/tmp`" in body
+    assert "Do not invoke or request help from the export subcommand itself before confirmation" in body
+    assert "cannot contain exported file paths or checksums" in body
 
 
 def test_dashboard_bootstrap_skill_routes_to_builtin_owners():

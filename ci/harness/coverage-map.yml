@@ -119,9 +119,15 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
+              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
+              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_real_llm_loads_skill_and_stops_at_manifest
               - tests/integration/agent/test_gen_dashboard_agentic.py
               - tests/integration/tools/test_bi_dashboard.py
               - tests/integration/tools/test_bi_grafana.py
+            notes: >
+              The P0 Superset path installs the managed plugin from source, verifies a real
+              dashboard SQL export manifest and checksums, and uses a real LLM to load the
+              dashboard-bootstrap skill and stop at its explicit confirmation boundary.
           weekly_benchmark:
             status: not_applicable
             notes: >
@@ -397,12 +403,14 @@ flow_groups:
               - tests/unit_tests/tools/test_policy_runtime.py
           nightly:
             status: covered
-            notes: >
-              Nightly API and adapter jobs exercise chat streaming and database reads; deterministic unit
-              tests cover policy-context parsing and the plugin runtime contract without requiring a live deployment.
             nodeids:
+              - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
               - tests/integration/api/test_api_chat.py
               - tests/integration/adapters/test_starrocks.py
+            notes: >
+              The P0 managed-plugin test installs the real policy package and exercises fresh-process
+              CLI discovery, SQL row filtering, semantic argument rewriting, API context validation,
+              deny behavior, and user-permission precedence without an LLM.
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark can run against StarRocks with request-scoped market filters.
@@ -536,7 +544,12 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
+              - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
               - tests/integration/agent/test_semantic_modeling_agentic.py
+            notes: >
+              The P0 PostgreSQL test configures both Agent RDB and vector storage to real
+              PostgreSQL/pgvector and verifies semantic projection, nullable booleans,
+              reconcile idempotency, vectors, subject tree rows, and RAG reads.
           weekly_benchmark:
             status: covered
             notes: Metadata is part of the Baisheng scenario context.
@@ -593,7 +606,13 @@ flow_groups:
             nodeids:
               - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
               - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_validate_semantic_initializes_adapter_with_runtime_database
-              - tests/integration/agent/test_semantic_modeling_agentic.py
+              - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
+              - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
+              - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent
+            notes: >
+              The P0 Dosi group owns a deterministic author-validate-reconcile-query test and one
+              real-LLM authoring smoke. PostgreSQL semantic projection is verified separately at
+              the Agent/storage seam.
           weekly_benchmark:
             status: covered
             notes: Baisheng weekly benchmark exercises retrieval-backed query generation.
@@ -952,14 +971,19 @@ flow_groups:
               - tests/unit_tests/cli/test_plugin_dispatch.py
               - tests/unit_tests/tools/middleware/test_tool_middleware.py
           nightly:
-            status: gap
+            status: covered
+            nodeids:
+              - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
+              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
+              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_real_llm_loads_skill_and_stops_at_manifest
             notes: >
-              No integration test installs a real plugin package end-to-end
-              (entry-point discovery through pip-installed distribution).
+              P0 installs two real source packages only into isolated managed plugin stores (with no
+              globally installed fallback), exercises fresh-process entry-point discovery and CLI
+              dispatch, verifies bundled skill delivery, user permission precedence, a tool transformer,
+              and real Superset API/export behavior.
           weekly_benchmark:
             status: not_applicable
-        gaps:
-          - https://github.com/Datus-ai/Datus-agent/issues/910
+        gaps: []
 
       - id: extension.auto_memory
         title: Auto memory

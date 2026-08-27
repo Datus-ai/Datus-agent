@@ -69,6 +69,11 @@ def test_expected_sources_include_storage_packages():
     )
 
 
+def test_managed_p0_plugins_are_not_required_as_global_packages():
+    assert "datus-sql-policies" not in verify_sources.EXPECTED_LOCAL_PACKAGES
+    assert "datus-superset-plugin" not in verify_sources.EXPECTED_LOCAL_PACKAGES
+
+
 def test_expected_sources_include_new_database_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-doris"] == "datus-db-adapters/datus-doris"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-hologres"] == "datus-db-adapters/datus-hologres"

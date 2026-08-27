@@ -52,7 +52,8 @@ _DASHBOARD_BOOTSTRAP_PROMPT = (
     'Call `load_skill(skill_name="dashboard-bootstrap")` first and execute its steps in order. '
     "Use the selected BI plugin for dashboard discovery and SQL export, and use the builtin "
     "agents named by the skill to build context. Do not use the legacy bootstrap picker, "
-    "legacy BI streams, or create dashboard-specific subagents."
+    "or legacy BI streams. Let the skill decide whether its optional final subagent step is "
+    "available."
     "{user_context}"
 )
 
