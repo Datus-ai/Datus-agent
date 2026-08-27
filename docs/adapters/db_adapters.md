@@ -337,7 +337,7 @@ these.
 
 **TiFlash.** TiDB's columnar replica engine is per table: `ALTER TABLE t SET TIFLASH REPLICA 1` and the
 optimizer starts choosing between row store and columnar on its own — no query change needed.
-`TiDBConnector.get_tiflash_replicas()` reports which tables have a synced replica. Note that most window
+`information_schema.TIFLASH_REPLICA` reports which tables have a synced replica. Note that most window
 functions do not run in TiFlash MPP (only `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LEAD`, `LAG`,
 `FIRST_VALUE` and `LAST_VALUE` push down); aggregate window functions fall back to single-node
 computation on the TiDB layer, correct but not parallel.

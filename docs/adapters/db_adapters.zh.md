@@ -326,7 +326,7 @@ TiDB 使用 MySQL 通信协议，对象按 `database.table` 寻址：与 MySQL �
 强制执行，`FULLTEXT` 索引会被静默丢弃。适配器自带的 SQL skill 会让生成的 SQL 避开这些构造。
 
 **TiFlash。** TiDB 的列存副本引擎按表启用：执行 `ALTER TABLE t SET TIFLASH REPLICA 1` 后，优化器会自动
-在行存与列存之间选择，查询本身无需改动。`TiDBConnector.get_tiflash_replicas()` 可以查看哪些表已有同步
+在行存与列存之间选择，查询本身无需改动。查询 `information_schema.TIFLASH_REPLICA` 可以查看哪些表已有同步
 完成的副本。需要注意大部分窗口函数无法在 TiFlash MPP 中执行（只有 `ROW_NUMBER`、`RANK`、`DENSE_RANK`、
 `LEAD`、`LAG`、`FIRST_VALUE`、`LAST_VALUE` 会下推），聚合类窗口函数会回退到 TiDB 单节点计算，结果正确
 但失去并行。

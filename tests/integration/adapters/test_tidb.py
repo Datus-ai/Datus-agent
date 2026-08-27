@@ -188,17 +188,3 @@ def test_transfer_quotes_identifiers_with_backticks(db_tool: DBFuncTool, seeded_
     )
     assert result.success, f"backtick-quoted identifier rejected: {result.error}"
     assert result.sql_return[0]["r_name"] == "AFRICA"
-
-
-def test_tiflash_replica_state_is_reportable(seeded_connector: TiDBConnector) -> None:
-    """The columnar replica inventory the SQL skill points the model at.
-
-    An empty list is a valid answer (no table has been granted a replica); the
-    contract is that the query works and returns the documented shape.
-    """
-    replicas = seeded_connector.get_tiflash_replicas()
-
-    assert isinstance(replicas, list)
-    for replica in replicas:
-        assert {"database_name", "table_name", "replica_count", "available", "progress"} <= set(replica)
-        assert isinstance(replica["available"], bool)
