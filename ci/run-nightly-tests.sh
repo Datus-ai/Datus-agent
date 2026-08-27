@@ -1652,9 +1652,9 @@ validate_nightly_group_filter || exit 1
 validate_pytest_basetemp "$NIGHTLY_PYTEST_BASETEMP" || exit 1
 rm -rf "$NIGHTLY_PYTEST_BASETEMP"
 if [ -n "${PYTEST_ADDOPTS:-}" ]; then
-  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS} --basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin"
+  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS} --basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin --no-showlocals"
 else
-  export PYTEST_ADDOPTS="--basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin"
+  export PYTEST_ADDOPTS="--basetemp=$NIGHTLY_PYTEST_BASETEMP -p ci.pytest_trace_reference_plugin --no-showlocals"
 fi
 require_docker_runtime || exit "$test_exit_code"
 
