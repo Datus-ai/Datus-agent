@@ -186,5 +186,5 @@ def test_transfer_quotes_identifiers_with_backticks(db_tool: DBFuncTool, seeded_
         {"sql_query": f"SELECT {quoted} FROM `{REGION_TABLE}` ORDER BY `r_regionkey` LIMIT 1"},
         result_format="list",
     )
-    assert result.success, f"backtick-quoted identifier rejected: {result.error}"
+    assert result.success == 1, f"backtick-quoted identifier rejected: {result.error}"
     assert result.sql_return[0]["r_name"] == "AFRICA"
