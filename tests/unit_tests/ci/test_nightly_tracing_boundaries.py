@@ -59,13 +59,20 @@ def test_nightly_pytest_commands_set_explicit_test_layer():
     pytest_commands = [
         command
         for command in _nightly_shell_commands()
-        if " uv run pytest " in command
+        if (" uv run pytest " in command or " uv run python -m pytest " in command)
         and any(wrapper in command for wrapper in ("run_logged", "run_compose_suite", "run_with_agent_home"))
     ]
 
-    assert len(pytest_commands) == 22
+    assert len(pytest_commands) == 25
     assert any("tests/integration/adapters/test_doris.py" in command for command in pytest_commands)
     assert any("tests/integration/adapters/test_gaussdb.py" in command for command in pytest_commands)
+    for group in (
+        "P0 PostgreSQL Agent Storage Contracts",
+        "P0 SQL Policy Plugin Contracts",
+        "P0 Dosi Semantic Modeling E2E",
+        "P0 Dashboard Bootstrap Skill E2E",
+    ):
+        assert any(group in command for command in pytest_commands)
     for command in pytest_commands:
         expected_layer = "unit" if "Full Unit Tests" in command else "nightly"
         assert f"env DATUS_TEST_LAYER={expected_layer}" in command

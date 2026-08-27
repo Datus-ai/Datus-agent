@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that nightly adapter packages came from the checked-out repositories."""
+"""Verify that nightly external packages came from the checked-out repositories."""
 
 from __future__ import annotations
 
@@ -246,7 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--external-repos-root",
         type=Path,
         required=True,
-        help="Directory containing the checked-out adapter repositories.",
+        help="Directory containing the checked-out external repositories.",
     )
     return parser
 
@@ -262,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {error}")
         return 1
 
-    print(f"Verified {len(EXPECTED_LOCAL_PACKAGES)} adapter packages from {args.external_repos_root.resolve()}")
+    print(f"Verified {len(EXPECTED_LOCAL_PACKAGES)} external packages from {args.external_repos_root.resolve()}")
     return 0
 
 

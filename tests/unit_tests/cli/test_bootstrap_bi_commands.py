@@ -113,6 +113,8 @@ def test_cmd_delegates_to_dashboard_bootstrap_skill(agent_config, console) -> No
     message = cli.chat_commands.execute_chat_command.call_args.args[0]
     assert 'load_skill(skill_name="dashboard-bootstrap")' in message
     assert "legacy bootstrap picker" in message
+    assert "Let the skill decide" in message
+    assert "or create dashboard-specific subagents" not in message
 
 
 def test_cmd_forwards_user_context_and_plan_mode(agent_config, console) -> None:

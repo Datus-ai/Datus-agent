@@ -15,6 +15,28 @@ on:
         required: false
         default: ""
         type: string
+  workflow_call:
+    inputs:
+      datus_agent_ref:
+        description: "Datus-agent branch, tag, or SHA to test."
+        required: false
+        default: ""
+        type: string
+      nightly_group_filter:
+        description: "Optional regex for NIGHTLY_GROUP_FILTER."
+        required: false
+        default: ""
+        type: string
+    secrets:
+      RELEASE_BOT_TOKEN:
+        description: "Read token for private repositories required by Nightly."
+        required: true
+      FEISHU_NOTIFY_CI_URL:
+        description: "Optional failure-notification webhook for direct reusable calls."
+        required: false
+
+permissions:
+  contents: read
 
 concurrency:
   # Keep nightly runs serialized because the workflow intentionally uses the
@@ -27,8 +49,8 @@ jobs:
   run-nightly:
     runs-on: self-hosted
     env:
-      DATUS_AGENT_REF: ${{ github.event.inputs.datus_agent_ref || github.ref_name }}
-      NIGHTLY_GROUP_FILTER: ${{ github.event.inputs.nightly_group_filter || '' }}
+      DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
+      NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
       DATUS_TEST_RUN_ID: datus-agent-${{ github.run_id }}-${{ github.run_attempt }}
       # The job deliberately overlays packages from the adapter checkouts after
       # the locked project sync. Do not let later `uv run` commands restore the
@@ -86,6 +108,33 @@ jobs:
           ref: main
           path: external/datus-storage-adapters
           persist-credentials: false
+
+      - name: Checkout Datus-Plugins main
+        uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/Datus-Plugins
+          ref: main
+          path: external/Datus-Plugins
+          persist-credentials: false
+
+      - name: Require private repository checkout token
+        shell: bash
+        env:
+          PRIVATE_REPO_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+        run: |
+          if [[ -z "${PRIVATE_REPO_TOKEN}" ]]; then
+            echo "::error::RELEASE_BOT_TOKEN is required to checkout Datus-ai/datus-sql-policies"
+            exit 1
+          fi
+
+      - name: Checkout datus-sql-policies main
+        uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/datus-sql-policies
+          ref: main
+          path: external/datus-sql-policies
+          persist-credentials: false
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
 
       # Source checkouts of datus-gaussdb carry no vendored libpq (wheels get
       # it at release-build time); without it the gaussdb driver binds the
