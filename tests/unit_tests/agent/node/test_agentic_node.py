@@ -817,6 +817,59 @@ class TestManualCompact:
         assert result["success"] is False
 
     @pytest.mark.asyncio
+    async def test_major_compact_drops_the_ratio_below_the_threshold(self):
+        """The regression this guards: a compact must leave the meter describing
+        the NEW history, or the next pre-turn check re-triggers on the stale
+        figure and compacts again every turn.
+
+        Driven through ``_major_compact`` rather than the helper, so removing the
+        call site fails this test.
+        """
+        node = _make_node(context_length=100_000)
+        node.session_id = "compact_test"
+        node._session = _make_async_session_mock()
+        node._session_manager = MagicMock()
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 100_000
+        mock_model.generate_with_tools = AsyncMock(return_value={"content": "recap", "usage": {"output_tokens": 100}})
+        node.model = mock_model
+        # The real producer's type, not a stand-in: if TokenUsage ever becomes
+        # frozen or validated, the production write degrades to a logged warning
+        # and this test is what notices.
+        node.running_turn_usage = TokenUsage(session_total_tokens=95_000, input_tokens=95_000, context_length=100_000)
+        assert node._history_token_ratio_sync() >= 0.8
+
+        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = await node._major_compact(reason="hook_major")
+
+        assert result["success"] is True
+        assert node._history_token_ratio_sync() < 0.8
+
+    @pytest.mark.asyncio
+    async def test_major_compact_leaves_the_turn_cumulative_counter_alone(self):
+        """``input_tokens`` is the turn-cumulative counter reported in the API's
+        end event. Rewriting it to the recap size would contradict the turn's own
+        output totals, and the ratio never reads it anyway."""
+        node = _make_node(context_length=100_000)
+        node.session_id = "compact_test"
+        node._session = _make_async_session_mock()
+        node._session_manager = MagicMock()
+        mock_model = MagicMock()
+        mock_model.context_length.return_value = 100_000
+        mock_model.generate_with_tools = AsyncMock(return_value={"content": "recap", "usage": {"output_tokens": 100}})
+        node.model = mock_model
+        node.running_turn_usage = TokenUsage(session_total_tokens=95_000, input_tokens=95_000, context_length=100_000)
+
+        with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_ConcreteAgenticNode, "_get_system_prompt", return_value="sys"):
+                    await node._major_compact(reason="hook_major")
+
+        assert node.running_turn_usage.input_tokens == 95_000
+
+    @pytest.mark.asyncio
     async def test_major_compact_success_persists_continuation_message(self):
         node = _make_node()
         node.session_id = "compact_test"
@@ -2150,13 +2203,15 @@ class TestPostCompactOccupancyReset:
 
     def test_meter_is_reset_to_the_recap_size(self):
         node = _make_simple_node(context_length=100_000)
-        node.running_turn_usage = SimpleNamespace(session_total_tokens=95_000, input_tokens=95_000)
+        node.running_turn_usage = TokenUsage(session_total_tokens=95_000, input_tokens=95_000, context_length=100_000)
         node._restored_context_used = 95_000
 
         node._reset_context_occupancy(1_200)
 
         assert node.running_turn_usage.session_total_tokens == 1_200
-        assert node.running_turn_usage.input_tokens == 1_200
+        # input_tokens is the turn-cumulative counter, reported verbatim in the
+        # API's end event. The ratio never reads it here, so it stays truthful.
+        assert node.running_turn_usage.input_tokens == 95_000
 
     def test_the_ratio_drops_below_the_threshold_after_a_compact(self):
         """The property that matters: the next check must not re-trigger."""
@@ -2171,13 +2226,17 @@ class TestPostCompactOccupancyReset:
 
         assert node._history_token_ratio_sync() < 0.8  # no longer compacts
 
-    def test_a_zero_token_recap_still_clears_the_meter(self):
+    def test_a_provider_that_reports_no_usage_still_clears_the_meter(self):
+        """`summary_token` is 0 on any provider that does not report usage. A
+        zero would fall through the `tok > 0` guard in the ratio and send it back
+        to the stale fallback, so the recap text is measured instead."""
         node = _make_simple_node(context_length=100_000)
-        node.running_turn_usage = SimpleNamespace(session_total_tokens=95_000, input_tokens=95_000)
+        node.running_turn_usage = TokenUsage(session_total_tokens=95_000, input_tokens=95_000, context_length=100_000)
 
-        node._reset_context_occupancy(0)
+        node._reset_context_occupancy(0, continuation="a recap of the conversation " * 20)
 
-        assert node.running_turn_usage.session_total_tokens == 1
+        assert node._history_token_ratio_sync() < 0.8
+        assert node.running_turn_usage.session_total_tokens > 1
 
     def test_the_restored_mirror_is_set_when_there_is_no_snapshot(self):
         """A node with no in-memory snapshot still has to end up with a current

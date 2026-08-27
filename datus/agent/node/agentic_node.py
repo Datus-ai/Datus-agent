@@ -53,6 +53,14 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token count for text, matching the fallback used elsewhere in the
+    codebase (see ``compress_utils.count_tokens``): roughly 4 characters per
+    token. Used where an exact count is unavailable and a floor is better than
+    zero."""
+    return len(text) // 4 if text else 0
+
+
 class AgenticNode(Node):
     """
     Base agentic node that provides session-based, streaming interactions
@@ -1907,7 +1915,7 @@ class AgenticNode(Node):
             return None
         return path
 
-    def _reset_context_occupancy(self, summary_token: int) -> None:
+    def _reset_context_occupancy(self, summary_token: int, continuation: str = "") -> None:
         """Point the occupancy meter at the post-compact history size.
 
         ``_decide_compact_mode`` reads the ratio from
@@ -1924,7 +1932,13 @@ class AgenticNode(Node):
         Best-effort throughout — the compact has already succeeded by the time
         this runs, so nothing here may turn it into a reported failure.
         """
-        post_compact_tokens = int(summary_token or 0) or 1
+        # ``summary_token`` is the recap's reported output tokens, which is 0 on
+        # any provider that does not report usage. A zero would fall through the
+        # ``tok > 0`` guard in ``_history_token_ratio_sync``, sending it back to
+        # the stale pre-compact fallback — the loop this exists to close. Fall
+        # back to a size estimate of the text actually persisted, so those
+        # providers get a real floor rather than a sentinel.
+        post_compact_tokens = int(summary_token or 0) or _estimate_tokens(continuation) or 1
         try:
             context_length = (
                 int(getattr(self, "context_length", 0) or 0)
@@ -1937,8 +1951,12 @@ class AgenticNode(Node):
         usage = getattr(self, "running_turn_usage", None)
         if usage is not None:
             try:
+                # Only ``session_total_tokens`` is touched. The ratio reads
+                # ``session_total_tokens or input_tokens``, so this is the field
+                # that matters — and ``input_tokens`` is the turn-cumulative
+                # counter reported verbatim in the API's end event, where a
+                # post-compact value would contradict the turn's own totals.
                 usage.session_total_tokens = post_compact_tokens
-                usage.input_tokens = post_compact_tokens
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not reset running_turn_usage after compact: %s", exc)
 
@@ -2036,7 +2054,7 @@ class AgenticNode(Node):
         # a single assistant continuation message, so the next minor pass
         # starts scanning from the top of the rewritten session.
         self._compacted_until = 0
-        self._reset_context_occupancy(summary_token)
+        self._reset_context_occupancy(summary_token, continuation)
 
         logger.info(
             "Major compact complete: %d chars summary, %d output tokens, history=%s",
