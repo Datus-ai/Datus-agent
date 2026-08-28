@@ -36,6 +36,7 @@ from datus.storage.semantic_model.semantic_model_init import (
 from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_artifacts import allocate_benchmark_attempt, finalize_benchmark_attempt
+from datus.utils.benchmark_trajectory import write_benchmark_trajectory
 from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -191,6 +192,19 @@ class Agent:
         runner = self.create_workflow_runner(check_db=check_db, run_id=run_id)
         return runner.run(sql_task=sql_task, check_storage=check_storage)
 
+    def _write_benchmark_trajectory(self, attempt, workflow, exception=None):
+        """Write the native v1 trajectory; return its path or None on failure."""
+        try:
+            return write_benchmark_trajectory(
+                attempt,
+                workflow=workflow,
+                agent_config=self.global_config,
+                exception=exception,
+            )
+        except Exception:
+            logger.exception("Failed to write benchmark trajectory for task %s", attempt.task_id)
+            return None
+
     def _run_benchmark_task(
         self,
         sql_task: SqlTask,
@@ -221,25 +235,54 @@ class Agent:
         try:
             result = runner.run(sql_task=benchmark_task, check_storage=check_storage)
         except Exception as exc:
+            trajectory_path = self._write_benchmark_trajectory(attempt, runner.workflow, exception=exc)
             try:
                 finalize_benchmark_attempt(
                     attempt,
                     task=benchmark_task,
                     workflow=runner.workflow,
-                    trajectory_path=runner.last_run_metadata.get("save_path"),
+                    trajectory_path=trajectory_path,
                     agent_config=self.global_config,
                     exception=exc,
+                    trajectory_profile="native_v1",
                 )
             except Exception:
                 logger.exception("Failed to finalize benchmark failure manifest for task %s", benchmark_task.id)
             raise
 
+        try:
+            trajectory_path = write_benchmark_trajectory(
+                attempt,
+                workflow=runner.workflow,
+                agent_config=self.global_config,
+            )
+        except Exception as exc:
+            # A completed native_v1 manifest must reference its trajectory, so a
+            # persistence failure fails the attempt instead of dropping the link.
+            try:
+                finalize_benchmark_attempt(
+                    attempt,
+                    task=benchmark_task,
+                    workflow=runner.workflow,
+                    trajectory_path=None,
+                    agent_config=self.global_config,
+                    exception=exc,
+                    trajectory_profile="native_v1",
+                )
+            except Exception:
+                logger.exception("Failed to finalize benchmark failure manifest for task %s", benchmark_task.id)
+            raise DatusException(
+                ErrorCode.COMMON_UNKNOWN,
+                message=f"benchmark trajectory persistence failed for task {benchmark_task.id}",
+            ) from exc
+
         manifest_path = finalize_benchmark_attempt(
             attempt,
             task=benchmark_task,
             workflow=runner.workflow,
-            trajectory_path=runner.last_run_metadata.get("save_path"),
+            trajectory_path=trajectory_path,
             agent_config=self.global_config,
+            trajectory_profile="native_v1",
         )
         logger.info(
             "Benchmark task %s attempt %s manifest saved to %s",

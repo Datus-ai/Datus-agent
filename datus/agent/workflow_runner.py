@@ -134,12 +134,14 @@ class WorkflowRunner:
                 f"span_id={trace_reference.span_id} provider={trace_reference.provider}"
             )
 
-        save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
         if artifact_profile == "benchmark_v1":
-            self.workflow.save(save_path, schema_version=1)
+            # The benchmark attempt finalizer writes the native v1 trajectory;
+            # skip the compatibility envelope to avoid a duplicated payload.
+            save_path = None
         else:
+            save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
             self.workflow.save(save_path)
-        logger.info(f"Workflow saved to {save_path}")
+            logger.info(f"Workflow saved to {save_path}")
         final_result = self.workflow.get_final_result()
         logger.info(f"Workflow execution completed. Steps:{step_count}")
 

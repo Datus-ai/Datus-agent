@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datus.ai/schemas/benchmark-artifacts/v1/trajectory.schema.json",
+  "title": "Datus benchmark trajectory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "run_id",
+    "task_id",
+    "attempt_id",
+    "status",
+    "partial",
+    "created_at",
+    "completed_at",
+    "duration_seconds",
+    "model",
+    "usage",
+    "failure_types",
+    "error",
+    "schemas",
+    "nodes",
+    "trace",
+    "execution_stats",
+    "metadata"
+  ],
+  "properties": {
+    "artifact_type": {"const": "trajectory"},
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "status": {
+      "enum": ["pending", "running", "completed", "failed", "interrupted", "task_timeout"]
+    },
+    "partial": {"type": "boolean"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "completed_at": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "duration_seconds": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ]
+    },
+    "model": {"$ref": "#/$defs/nullableModel"},
+    "usage": {"$ref": "#/$defs/tokenUsage"},
+    "failure_types": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "error": {"$ref": "#/$defs/nullableError"},
+    "schemas": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/schemaEntry"}
+    },
+    "nodes": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/node"}
+    },
+    "trace": {"type": "object", "additionalProperties": true},
+    "execution_stats": {"type": "object", "additionalProperties": true},
+    "metadata": {"type": "object", "additionalProperties": true}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "completed"}}},
+      "then": {
+        "properties": {
+          "partial": {"const": false},
+          "completed_at": {"type": "string", "format": "date-time"},
+          "error": {"type": "null"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nullableModel": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "provider": {"type": ["string", "null"]},
+            "name": {"type": "string", "minLength": 1},
+            "configuration": {"type": "object", "additionalProperties": true}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
+    "tokenUsage": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0},
+      "properties": {
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "cached_input_tokens": {"type": "integer", "minimum": 0},
+        "total_tokens": {"type": "integer", "minimum": 0}
+      }
+    },
+    "nullableError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "message"],
+          "properties": {
+            "type": {"type": "string", "minLength": 1},
+            "message": {"type": "string", "minLength": 1},
+            "code": {"type": ["string", "null"]},
+            "retryable": {"type": ["boolean", "null"]},
+            "details": {"type": "object", "additionalProperties": true}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
+    "schemaEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identifier", "ddl", "metadata"],
+      "properties": {
+        "identifier": {"type": "string", "minLength": 1},
+        "ddl": {"type": "string", "minLength": 1},
+        "metadata": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "status",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "model",
+        "usage",
+        "schema_refs",
+        "actions",
+        "execution_stats",
+        "error",
+        "metadata"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "status": {"enum": ["running", "completed", "failed"]},
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {
+          "oneOf": [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"}
+          ]
+        },
+        "duration_seconds": {
+          "oneOf": [
+            {"type": "number", "minimum": 0},
+            {"type": "null"}
+          ]
+        },
+        "model": {"$ref": "#/$defs/nullableModel"},
+        "usage": {"$ref": "#/$defs/tokenUsage"},
+        "schema_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "actions": {"type": "array", "items": {"type": "object"}},
+        "execution_stats": {"type": "object", "additionalProperties": true},
+        "error": {"$ref": "#/$defs/nullableError"},
+        "metadata": {"type": "object", "additionalProperties": true}
+      }
+    }
+  }
+}

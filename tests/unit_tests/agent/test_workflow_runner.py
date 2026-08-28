@@ -319,8 +319,8 @@ class TestFinalizeWorkflow:
         assert mock_wf.metadata.get("trace_run_id") == "run1"
         assert result["trace_reference"]["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
 
-    def test_benchmark_workflow_uses_compatibility_v1_envelope(self, tmp_path: Path) -> None:
-        """Benchmark-profile runs save trajectories with a schema_version 1 envelope."""
+    def test_benchmark_workflow_defers_trajectory_to_attempt_finalizer(self, tmp_path: Path) -> None:
+        """Benchmark-profile runs skip the compatibility envelope; the finalizer owns the trajectory."""
         runner = _make_runner()
         runner.global_config.current_datasource = "default"
         runner.global_config.trajectory_run_dir.return_value = tmp_path
@@ -336,7 +336,8 @@ class TestFinalizeWorkflow:
         with patch("datus.agent.workflow_runner.get_trace_reference", return_value=None):
             result = runner._finalize_workflow(1)
 
-        mock_wf.save.assert_called_once_with(result["save_path"], schema_version=1)
+        mock_wf.save.assert_not_called()
+        assert result["save_path"] is None
         runner.global_config.trajectory_run_dir.assert_called_once_with("analytics", runner.run_id)
         runner.global_config.get_trajectory_run_dir.assert_not_called()
         assert runner.last_run_metadata == result
