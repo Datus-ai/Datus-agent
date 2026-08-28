@@ -2774,21 +2774,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-reflection" class="md-nav__link">
+  <a href="#2-agentic" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. 反思工作流（Reflection）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-sqlmetric-to-sql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 指标到 SQL（Metric-to-SQL）
+        2. Agentic 工作流
       
     </span>
   </a>
@@ -4561,21 +4550,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-reflection" class="md-nav__link">
+  <a href="#2-agentic" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. 反思工作流（Reflection）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-sqlmetric-to-sql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 指标到 SQL（Metric-to-SQL）
+        2. Agentic 工作流
       
     </span>
   </a>
@@ -4678,29 +4656,21 @@
 <h2 id="_2">内置工作流<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <h3 id="1-fixed">1. 固定工作流（Fixed）<a class="headerlink" href="#1-fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>适用场景</strong>：简单、直给的问题</li>
+<li><strong>适用场景</strong>：通用 SQL 生成与执行</li>
 <li><strong>特性</strong>：性能快、路径可预期</li>
 <li><strong>示例</strong>：</li>
 <li>“列出加州的所有客户”</li>
 <li>“展示 2023 年总销售额”</li>
-<li><strong>用途</strong>：直接取数、简单聚合、基础过滤</li>
+<li><strong>用途</strong>：直接取数、聚合、过滤和多表查询</li>
 </ul>
-<h3 id="2-reflection">2. 反思工作流（Reflection）<a class="headerlink" href="#2-reflection" title="Permanent link">&para;</a></h3>
+<h3 id="2-agentic">2. Agentic 工作流<a class="headerlink" href="#2-agentic" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>适用场景</strong>：复杂业务问题</li>
-<li><strong>特性</strong>：自检自纠、可自动改进并重试</li>
-<li><strong>示例</strong>：</li>
-<li>“按品类展示季度收入趋势，排除退货并考虑季节性调整”</li>
-<li><strong>用途</strong>：多步骤分析、容错纠错、复杂业务逻辑</li>
-</ul>
-<h3 id="3-sqlmetric-to-sql">3. 指标到 SQL（Metric-to-SQL）<a class="headerlink" href="#3-sqlmetric-to-sql" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>适用场景</strong>：标准化的业务报表</li>
-<li><strong>特性</strong>：基于预定义业务指标，保证一致性</li>
+<li><strong>适用场景</strong>：需要迭代调用工具的复杂查询</li>
+<li><strong>特性</strong>：可按需检索预定义业务指标及其他上下文</li>
 <li><strong>示例</strong>：</li>
 <li>“展示上季度 MAU”</li>
 <li>“计算客户流失率”</li>
-<li><strong>用途</strong>：KPI 报表、标准化指标、BI 场景</li>
+<li><strong>用途</strong>：KPI 报表、时间分析、语义层查询和复杂 SQL 生成</li>
 </ul>
 <h2 id="nodes">组成：节点（Nodes）<a class="headerlink" href="#nodes" title="Permanent link">&para;</a></h2>
 <p>工作流由若干专用“<a href="../nodes/">节点</a>”组成，每个节点聚焦一件事：</p>
@@ -4708,7 +4678,6 @@
 <li><strong><a href="../nodes/#schema-linking-node">Schema Linking</a></strong>：为问题找对表</li>
 <li><strong><a href="../nodes/#generate-sql-node">Generate SQL</a></strong>：生成查询</li>
 <li><strong><a href="../nodes/#execute-sql-node">Execute SQL</a></strong>：执行查询</li>
-<li><strong><a href="../nodes/#reflect-node">Reflect</a></strong>：检查结果、决定是否改进</li>
 <li><strong><a href="../nodes/#output-node">Output</a></strong>：友好呈现结果</li>
 </ul>
 <h2 id="_3">快速上手<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
@@ -4717,10 +4686,10 @@
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Show me monthly sales"</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># 指定工作流类型</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Show me complex revenue trends"</span><span class="w"> </span>--workflow<span class="w"> </span>reflection
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Show me complex revenue trends"</span><span class="w"> </span>--workflow<span class="w"> </span>fixed
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># 使用业务指标</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Calculate customer lifetime value"</span><span class="w"> </span>--workflow<span class="w"> </span>metric_to_sql
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Calculate customer lifetime value"</span><span class="w"> </span>--workflow<span class="w"> </span>gen_sql_agentic
 </span></code></pre></div>
 <h3 id="api">通过 API<a class="headerlink" href="#api" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
@@ -4729,7 +4698,7 @@
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">"http://localhost:8000/workflows/run"</span><span class="p">,</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">"Authorization"</span><span class="p">:</span> <span class="s2">"Bearer your_token"</span><span class="p">},</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">json</span><span class="o">=</span><span class="p">{</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="s2">"workflow"</span><span class="p">:</span> <span class="s2">"reflection"</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="s2">"workflow"</span><span class="p">:</span> <span class="s2">"fixed"</span><span class="p">,</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="s2">"datasource"</span><span class="p">:</span> <span class="s2">"your_db"</span><span class="p">,</span>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="s2">"task"</span><span class="p">:</span> <span class="s2">"Show me quarterly revenue trends"</span><span class="p">,</span>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="s2">"mode"</span><span class="p">:</span> <span class="s2">"sync"</span>
