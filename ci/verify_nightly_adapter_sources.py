@@ -23,6 +23,7 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-starrocks": "datus-db-adapters/datus-starrocks",
     "datus-doris": "datus-db-adapters/datus-doris",
     "datus-hologres": "datus-db-adapters/datus-hologres",
+    "datus-maxcompute": "datus-db-adapters/datus-maxcompute",
     "datus-oracle": "datus-db-adapters/datus-oracle",
     "datus-trino": "datus-db-adapters/datus-trino",
     "datus-greenplum": "datus-db-adapters/datus-greenplum",
@@ -60,6 +61,11 @@ DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
     "datus_hologres": DatabaseAdapterContract(
         db_type="hologres",
         parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+    "datus_maxcompute": DatabaseAdapterContract(
+        db_type="maxcompute",
+        parser_dialect="hive",
         required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
     ),
     "datus_oracle": DatabaseAdapterContract(

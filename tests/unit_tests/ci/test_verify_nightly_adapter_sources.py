@@ -16,9 +16,15 @@ MODULE_SPEC.loader.exec_module(verify_sources)
 
 
 # Registration shape a healthy nightly checkout produces, per db_type.
-_PARSER_DIALECTS = {"hologres": "postgres", "gaussdb": "postgres", "oracle": "oracle", "tidb": "mysql"}
-_IDENTIFIER_PARSER_ADAPTERS = {"hologres", "gaussdb"}
-_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "oracle", "tidb"}
+_PARSER_DIALECTS = {
+    "hologres": "postgres",
+    "gaussdb": "postgres",
+    "maxcompute": "hive",
+    "oracle": "oracle",
+    "tidb": "mysql",
+}
+_IDENTIFIER_PARSER_ADAPTERS = {"hologres", "gaussdb", "maxcompute"}
+_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "maxcompute", "oracle", "tidb"}
 
 
 class _FakeDistribution:
@@ -68,6 +74,18 @@ def test_expected_sources_include_the_tidb_checkout_path():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-tidb"] == "datus-db-adapters/datus-tidb"
 
 
+def test_expected_sources_include_the_maxcompute_checkout_path():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
+
+
+def test_maxcompute_contract_requires_dialect_and_sql_guidance_hooks():
+    contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_maxcompute"]
+
+    assert contract.db_type == "maxcompute"
+    assert contract.parser_dialect == "hive"
+    assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
+
+
 def test_expected_sources_include_storage_packages():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-base"] == ("datus-storage-adapters/datus-storage-base")
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-postgresql"] == (
@@ -83,6 +101,7 @@ def test_managed_p0_plugins_are_not_required_as_global_packages():
 def test_expected_sources_include_new_database_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-doris"] == "datus-db-adapters/datus-doris"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-hologres"] == "datus-db-adapters/datus-hologres"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-oracle"] == "datus-db-adapters/datus-oracle"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-gaussdb"] == "datus-db-adapters/datus-gaussdb"
 
@@ -109,6 +128,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -130,6 +150,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -171,6 +192,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -192,6 +214,7 @@ def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch)
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -215,6 +238,7 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),

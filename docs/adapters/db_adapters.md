@@ -29,6 +29,7 @@ This design keeps the core package lightweight while allowing you to add support
 | Apache Doris | datus-doris | `pip install datus-doris` | Ready |
 | TiDB | datus-tidb | `pip install datus-tidb` | Ready |
 | Hologres | datus-hologres | `pip install datus-hologres` | Ready |
+| MaxCompute | datus-maxcompute | `pip install datus-maxcompute` | Ready |
 | Oracle | datus-oracle | `pip install datus-oracle` | Ready |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | Ready (Linux and macOS) |
 
@@ -75,6 +76,9 @@ pip install datus-doris
 
 # Hologres
 pip install datus-hologres
+
+# MaxCompute
+pip install datus-maxcompute
 
 # Oracle
 pip install datus-oracle
@@ -166,6 +170,30 @@ Snowflake supports password authentication and key-pair authentication. Configur
 `password` or `private_key_file` when `private_key` is absent. `private_key` takes precedence over
 `private_key_file` and `password`; set `private_key_file_pwd` only when the private key is encrypted. Snowflake uses
 `database` and `schema`; do not set `catalog` for Snowflake.
+
+### MaxCompute
+
+```yaml
+maxcompute_data:
+  type: maxcompute
+  database: ${MAXCOMPUTE_PROJECT}
+  endpoint: ${MAXCOMPUTE_ENDPOINT}
+  access_key_id: ${MAXCOMPUTE_ACCESS_KEY_ID}
+  access_key_secret: ${MAXCOMPUTE_ACCESS_KEY_SECRET}
+  # schema: default               # optional; schema-enabled projects only
+  namespace_mode: auto            # auto, two_level, or three_level
+  # quota_name: ${MAXCOMPUTE_QUOTA_NAME}
+  # tunnel_endpoint: ${MAXCOMPUTE_TUNNEL_ENDPOINT}
+  # timeout_seconds: 30
+  # query_timeout_seconds: 600
+```
+
+`database` is the MaxCompute project. Each datasource is bound to one project, has no catalog, and does not generate
+cross-project SQL. Leave `schema` unset for a two-level `project.table` project. Schema-enabled projects use
+`project.schema.table`; when `schema` is omitted, the adapter uses `default`. Keep `namespace_mode: auto` unless the
+configured identity cannot probe schema support. `endpoint` is the MaxCompute service endpoint; configure
+`tunnel_endpoint` separately only when Instance Tunnel uses a different endpoint. Advanced execution settings also
+include `timeout_seconds`, `query_timeout_seconds`, and `default_hints`.
 
 ### StarRocks
 

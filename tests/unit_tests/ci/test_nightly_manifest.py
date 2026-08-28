@@ -51,6 +51,7 @@ def test_manifest_records_actual_checkout_and_all_p0_sources(tmp_path, monkeypat
         "datus-sql-policies",
     }
     assert {package["name"] for package in manifest["packages"]} >= {
+        "datus-maxcompute",
         "datus-storage-base",
         "datus-storage-postgresql",
     }

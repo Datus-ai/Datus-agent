@@ -49,6 +49,7 @@ INSTALLABLE_TYPES = (
     "greenplum",
     "hive",
     "hologres",
+    "maxcompute",
     "mysql",
     "oracle",
     "postgresql",

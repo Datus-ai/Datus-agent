@@ -441,9 +441,14 @@ class TestDatasourceAppViews:
             assert app._view == _View.TYPE_SELECT
             assert ("duckdb", "duckdb", True) in app._db_types
             assert ("sqlite", "sqlite", True) in app._db_types
+            assert (
+                "maxcompute",
+                "maxcompute (not installed — will install datus-maxcompute)",
+                False,
+            ) in app._db_types
 
     def test_new_database_adapters_are_installable(self):
-        assert {"doris", "gaussdb", "hologres", "oracle", "tidb"} <= set(INSTALLABLE_TYPES)
+        assert {"doris", "gaussdb", "hologres", "maxcompute", "oracle", "tidb"} <= set(INSTALLABLE_TYPES)
 
     def test_enter_config_form(self):
         cli = _make_cli()

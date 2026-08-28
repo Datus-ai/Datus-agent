@@ -34,6 +34,7 @@ PACKAGE_NAMES = (
     "datus-starrocks",
     "datus-doris",
     "datus-hologres",
+    "datus-maxcompute",
     "datus-oracle",
     "datus-trino",
     "datus-greenplum",
