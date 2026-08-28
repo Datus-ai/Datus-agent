@@ -269,6 +269,13 @@ class TestGenerateWorkflow:
         assert isinstance(wf, Workflow)
         assert wf.name == "SQL Query Workflow (fixed)"
 
+    def test_fallback_to_fixed_without_agent_config(self):
+        task = _sql_task()
+        with _patched_workflow():
+            wf = generate_workflow(task, plan_type=None)
+        assert isinstance(wf, Workflow)
+        assert wf.name == "SQL Query Workflow (fixed)"
+
     def test_workflow_has_nodes(self):
         task = _sql_task()
         cfg = _mock_config(custom_workflows={})

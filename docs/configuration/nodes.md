@@ -160,7 +160,7 @@ agentic_nodes:
     model: deepseek_v3
     system_prompt: gen_sql
     prompt_version: "1.2"
-    tools: db_tools.*, context_search_tools.*, date_parsing_tools.*
+    tools: db_tools.*, context_search_tools.*, date_parsing_tools.*, platform_doc_tools.*
     max_turns: 30
 
   # Interactive chat

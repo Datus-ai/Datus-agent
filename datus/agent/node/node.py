@@ -56,12 +56,6 @@ class Node(ABC):
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
-        if node_type in NodeType.REMOVED_TYPES:
-            raise ValueError(
-                f"The legacy workflow node '{node_type}' has been removed. "
-                "Use an agentic node with the corresponding function tool instead."
-            )
-
         from datus.agent.node import (
             BeginNode,
             ChatAgenticNode,
@@ -471,12 +465,6 @@ class Node(ABC):
     @classmethod
     def from_dict(cls, node_dict: Dict[str, Any], agent_config: Optional[AgentConfig] = None) -> Node:
         """Create a Node instance from dictionary representation."""
-        if node_dict["type"] in NodeType.REMOVED_TYPES:
-            raise ValueError(
-                f"The legacy workflow node '{node_dict['type']}' has been removed. "
-                "Create a new checkpoint with the 'fixed' workflow and the 'gen_sql' node."
-            )
-
         # Convert input data based on a node type
         input_data = node_dict["input"]
         if isinstance(input_data, dict):

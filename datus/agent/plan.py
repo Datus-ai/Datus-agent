@@ -19,31 +19,6 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-REMOVED_WORKFLOW_NAMES = {"reflection", "dynamic", "metric_to_sql"}
-REMOVED_WORKFLOW_STEPS = {
-    "reason_sql",
-    "reasoning_sql",
-    "reason",
-    "reflection",
-    "reflect",
-    "reasoning",
-    "search_metrics",
-    "date_parser",
-    "doc_search",
-}
-
-
-def _removed_workflow_error(value: str) -> ValueError:
-    if value in {"metric_to_sql", "search_metrics", "date_parser", "doc_search"}:
-        return ValueError(
-            f"The legacy workflow or node '{value}' has been removed. "
-            "Use an agentic workflow with the corresponding function tool instead."
-        )
-    return ValueError(
-        f"The legacy workflow or node '{value}' has been removed. "
-        "Use the 'fixed' workflow with the 'gen_sql' node instead."
-    )
-
 
 def load_builtin_workflow_config() -> dict:
     current_dir = Path(__file__).parent
@@ -185,9 +160,6 @@ def _process_workflow_config(
 def _create_single_node(
     node_type: str, node_id: str, sql_task: SqlTask, agent_config: Optional[AgentConfig] = None
 ) -> Node:
-    if node_type in REMOVED_WORKFLOW_STEPS:
-        raise _removed_workflow_error(node_type)
-
     # normalize aliases from config
     normalized_type = node_type
     if node_type == "execute":
@@ -246,9 +218,6 @@ def generate_workflow(
         plan_type = agent_config.workflow_plan
     elif not plan_type:
         plan_type = "fixed"  # fallback to default
-
-    if plan_type in REMOVED_WORKFLOW_NAMES:
-        raise _removed_workflow_error(plan_type)
 
     if agent_config and plan_type in agent_config.custom_workflows:
         logger.info(f"Using custom workflow '{plan_type}' from configuration")

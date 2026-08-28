@@ -26,8 +26,6 @@ from datus.schemas.subworkflow_node_models import SubworkflowInput
 
 
 class NodeType:
-    REMOVED_TYPES = frozenset({"reflect", "reasoning", "doc_search", "search_metrics", "date_parser"})
-
     # Workflow control node types
     TYPE_BEGIN = "start"
     # TYPE_EVALUATE = "evaluate"

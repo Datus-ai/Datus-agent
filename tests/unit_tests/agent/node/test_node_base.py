@@ -193,6 +193,30 @@ class TestNodeRun:
         assert node.status == "completed"
         assert result.success is True
 
+    @pytest.mark.asyncio
+    async def test_run_stream_completes_successful_node(self):
+        node = Node.new_instance(
+            "run_stream_test",
+            "Test",
+            NodeType.TYPE_SCHEMA_LINKING,
+            agent_config=self.agent_config,
+        )
+        result = SchemaLinkingResult(success=True, table_schemas=[], table_values=[], schema_count=0, value_count=0)
+        node._initialize = MagicMock()
+
+        async def execute_stream(_action_history_manager=None):
+            node.result = result
+            if False:
+                yield
+
+        node.execute_stream = execute_stream
+
+        actions = [action async for action in node.run_stream()]
+
+        assert actions == []
+        assert node.status == "completed"
+        assert node.result is result
+
     def test_run_fails_on_exception(self):
         node = Node.new_instance("run_fail", "Test", NodeType.TYPE_SCHEMA_LINKING, agent_config=self.agent_config)
         node._initialize = MagicMock()

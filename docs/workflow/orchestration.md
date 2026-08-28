@@ -74,7 +74,7 @@ Process:
 **Purpose**: Generate SQL with database, semantic-layer, metric-search, and other configured tools.
 
 **Node Sequence:**
-```
+```text
 Generate SQL → Execute SQL → Output
 ```
 
@@ -92,7 +92,7 @@ Generate SQL → Execute SQL → Output
 
 **Real-world Example:**
 
-```
+```text
 User: "Show monthly active users for the last quarter"
 ```
 
@@ -215,7 +215,7 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--workflow` | Workflow type to execute | `fixed` | `fixed`, `chat_agentic`, `gen_sql_agentic`, custom |
+| `--workflow` | Workflow type to execute | `fixed` | `fixed`, `empty`, `chat_agentic`, `gen_sql_agentic`, custom |
 | `--datasource` | Database datasource | Required | Any configured datasource |
 | `--task_db_name` | Target database name for the task | Required | Any configured database name |
 | `--task` | Natural language query | Required | Any string |

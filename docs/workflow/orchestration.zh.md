@@ -62,7 +62,7 @@ Process:
 **目的**：通过数据库、语义层、指标检索及其他配置的工具生成 SQL
 
 **节点序列**：
-```
+```text
 Generate SQL → Execute SQL → Output
 ```
 
@@ -70,7 +70,7 @@ Generate SQL → Execute SQL → Output
 `date_parsing_tools.parse_temporal_expressions` 后解析时间表达式。
 
 **示例**：
-```
+```text
 User: "Show monthly active users for the last quarter"
 Process:
 1. Gen SQL 调用指标检索工具找到 monthly_active_users 定义
@@ -180,7 +180,7 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | 参数 | 描述 | 默认 | 取值 |
 |---|---|---|---|
-| `--workflow` | 执行的工作流类型 | `fixed` | `fixed`、`chat_agentic`、`gen_sql_agentic` 或自定义 |
+| `--workflow` | 执行的工作流类型 | `fixed` | `fixed`、`empty`、`chat_agentic`、`gen_sql_agentic` 或自定义 |
 | `--datasource` | 数据库数据源 | 必填 | 已配置数据源 |
 | `--task_db_name` | 任务使用的目标数据库名 | 必填 | 已配置数据库名 |
 | `--task` | 自然语言任务 | 必填 | 文本 |

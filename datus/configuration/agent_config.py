@@ -771,14 +771,6 @@ class AgentConfig:
                     "agent.sql_policy has been removed; configure policies under agent.plugins.sql-policy instead"
                 ),
             )
-        if "reflection_nodes" in kwargs:
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=(
-                    "agent.reflection_nodes has been removed; use the fixed workflow with the gen_sql node instead"
-                ),
-            )
-
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
         # project_name must be computed before _set_path_manager so shard-aware
@@ -1052,7 +1044,7 @@ class AgentConfig:
 
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
-        date_parsing_config = kwargs.get("date_parsing", {}) or {}
+        date_parsing_config = kwargs.get("date_parsing", {})
         if not isinstance(date_parsing_config, dict):
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
@@ -1079,16 +1071,6 @@ class AgentConfig:
         # Initialize workflow configuration
         workflow_config = kwargs.get("workflow", {})
         self.workflow_plan = workflow_config.get("plan", "fixed")
-        if self.workflow_plan in {"reflection", "dynamic", "metric_to_sql"}:
-            replacement = (
-                "use the gen_sql_agentic workflow and configure the required function tools instead"
-                if self.workflow_plan == "metric_to_sql"
-                else "use the fixed workflow instead"
-            )
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=f"agent.workflow.plan '{self.workflow_plan}' has been removed; {replacement}",
-            )
 
         # Process custom workflows with enhanced config support
         self.custom_workflows = {}
@@ -2345,16 +2327,6 @@ class AgentConfig:
             self.kb_search = KbSearchConfig.from_dict({"mode": kwargs["kb_search_mode"]})
             self.kb_search_mode = self.kb_search.mode
         if kwargs.get("plan", ""):
-            if kwargs["plan"] in {"reflection", "dynamic", "metric_to_sql"}:
-                replacement = (
-                    "use gen_sql_agentic and configure the required function tools instead"
-                    if kwargs["plan"] == "metric_to_sql"
-                    else "use the fixed workflow instead"
-                )
-                raise DatusException(
-                    ErrorCode.COMMON_CONFIG_ERROR,
-                    message=f"Workflow '{kwargs['plan']}' has been removed; {replacement}",
-                )
             self.workflow_plan = kwargs["plan"]
         if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "service", "platform-doc"]:
             db_arg = kwargs.get("datasource", "")

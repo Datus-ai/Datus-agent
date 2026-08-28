@@ -166,7 +166,7 @@ Cache-Control: no-cache
 **Request Body:**
 ```json
 {
-  "workflow": "nl2sql",
+  "workflow": "fixed",
   "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "async",
@@ -180,7 +180,7 @@ Cache-Control: no-cache
 Content-Type: text/event-stream
 
 event: started
-data: {"task_id": "client_20240115143000", "workflow": "nl2sql"}
+data: {"task_id": "client_20240115143000", "workflow": "fixed"}
 
 event: progress
 data: {"message": "Initializing workflow", "progress": 10}

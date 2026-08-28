@@ -11,7 +11,7 @@ from io import StringIO
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import pyarrow as pa
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
 from datus.utils.constants import DBType
@@ -480,7 +480,6 @@ class SQLContext(BaseModel):
     assistant_analysis: Optional[str] = Field(
         "",
         description="Assistant analysis following the SQL tool result",
-        validation_alias=AliasChoices("assistant_analysis", "reflection_explanation"),
     )
 
     def to_dict(self):

@@ -397,10 +397,7 @@ agent:
       - gen_sql
       - output
 
-  # Workflow configuration with parallel execution and selection
-  workflow:
-    plan: bird_para
-
+    # Workflow configuration with parallel execution and selection
     bird_para:
       - schema_linking
       - parallel:
@@ -410,11 +407,8 @@ agent:
       - execute_sql
       - output
 
-  # Sub-workflow example
-  workflow:
-    plan: bird_para
-
-    bird_para:
+    # Sub-workflow example
+    multi_approach:
       - schema_linking
       - parallel:
         - subworkflow1
@@ -433,31 +427,28 @@ agent:
     subworkflow3:
       - gen_sql
 
-  # Sub-workflow with config example
-  workflow:
-    plan: bird_para
-
-    bird_para:
+    # Sub-workflow with config example
+    multi_agent:
       - schema_linking
       - parallel:
-        - subworkflow1
-        - subworkflow2
-        - subworkflow3
+        - subworkflow_cfg1
+        - subworkflow_cfg2
+        - subworkflow_cfg3
       - selection
       - execute_sql
       - output
 
-    subworkflow1:
+    subworkflow_cfg1:
       steps:
       - gen_sql
       config: multi/agent1.yaml
 
-    subworkflow2:
+    subworkflow_cfg2:
       steps:
       - gen_sql
       config: multi/agent2.yaml
 
-    subworkflow3:
+    subworkflow_cfg3:
       steps:
       - gen_sql
       config: multi/agent3.yaml
