@@ -1033,12 +1033,15 @@ class SemanticTools:
                 ),
             )
 
-        # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
+        # Sanitize optional parameters: LLMs may pass string null placeholders
+        # instead of omitting them. In particular, an empty-string limit must not
+        # reach adapters that convert a present limit with ``int(limit)``.
         path = _normalize_optional_path(path)
         time_start = normalize_null(time_start)
         time_end = normalize_null(time_end)
         time_granularity = normalize_null(time_granularity)
         where = normalize_null(where)
+        limit = normalize_null(limit)
         logger.info(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
