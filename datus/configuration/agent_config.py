@@ -9,11 +9,9 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
-from datus.configuration.node_type import NodeType
 from datus.configuration.project_config import PluginActivation
 from datus.observability.config import ObservabilityConfig
 from datus.schemas.base import BaseInput
-from datus.schemas.node_models import StrategyType
 from datus.storage.embedding_models import init_embedding_models
 from datus.storage.storage_cfg import check_storage_config, save_storage_config
 from datus.utils.config_utils import coerce_bool
@@ -670,27 +668,6 @@ class DashboardConfig:
 
 logger = get_logger(__name__)
 
-DEFAULT_REFLECTION_NODES = {
-    StrategyType.SCHEMA_LINKING.lower(): [
-        NodeType.TYPE_SCHEMA_LINKING,
-        NodeType.TYPE_GEN_SQL,
-        NodeType.TYPE_EXECUTE_SQL,
-        NodeType.TYPE_REFLECT,
-    ],
-    StrategyType.DOC_SEARCH.lower(): [
-        NodeType.TYPE_DOC_SEARCH,
-        NodeType.TYPE_GEN_SQL,
-        NodeType.TYPE_EXECUTE_SQL,
-        NodeType.TYPE_REFLECT,
-    ],
-    StrategyType.SIMPLE_REGENERATE.lower(): [NodeType.TYPE_EXECUTE_SQL, NodeType.TYPE_REFLECT],
-    StrategyType.REASONING.lower(): [
-        NodeType.TYPE_REASONING,
-        NodeType.TYPE_EXECUTE_SQL,
-        NodeType.TYPE_REFLECT,
-    ],
-}
-
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
@@ -767,8 +744,7 @@ class AgentConfig:
     nodes: Dict[str, NodeConfig]
     rag_base_path: str
     schema_linking_rate: str
-    search_metrics_rate: str
-    _reflection_nodes: Dict[str, List[str]]
+    date_parsing_language: str
     _save_dir: str
     _current_datasource: str
     _project_name: str
@@ -795,7 +771,6 @@ class AgentConfig:
                     "agent.sql_policy has been removed; configure policies under agent.plugins.sql-policy instead"
                 ),
             )
-
         # Resolve home early so dependent helpers can use a stable path manager.
         self.home = kwargs.get("home", "~/.datus")
         # project_name must be computed before _set_path_manager so shard-aware
@@ -1069,7 +1044,21 @@ class AgentConfig:
 
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
-        self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
+        date_parsing_config = kwargs.get("date_parsing", {})
+        if not isinstance(date_parsing_config, dict):
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message="agent.date_parsing must be a mapping",
+            )
+        date_parsing_language = date_parsing_config.get("language", "en")
+        if date_parsing_language == "cn":
+            date_parsing_language = "zh"
+        if date_parsing_language not in {"en", "zh"}:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message="agent.date_parsing.language must be one of: en, zh",
+            )
+        self.date_parsing_language = date_parsing_language
         # Response language for model outputs (user-facing text). ``None`` (the
         # default) means the model picks its own language per turn; set a code
         # like "en"/"zh" in agent.yml or via ``StreamChatInput.language`` to pin
@@ -1079,12 +1068,9 @@ class AgentConfig:
 
         # Benchmark paths are now fixed at {agent.home}/benchmark/{name}
         # Supported benchmarks: bird_dev, spider2, semantic_layer
-        self._reflection_nodes = DEFAULT_REFLECTION_NODES
-        self._reflection_nodes.update(kwargs.get("reflection_nodes", {}))
-
         # Initialize workflow configuration
         workflow_config = kwargs.get("workflow", {})
-        self.workflow_plan = workflow_config.get("plan", "reflection")
+        self.workflow_plan = workflow_config.get("plan", "fixed")
 
         # Process custom workflows with enhanced config support
         self.custom_workflows = {}
@@ -2251,14 +2237,6 @@ class AgentConfig:
 
         return DatusPathManager.resolve_run_dir(Path(self._trajectory_dir), database, run_id)
 
-    def reflection_nodes(self, strategy: str) -> List[str]:
-        if strategy not in self._reflection_nodes:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "Reflection-Strategy", "your_value": strategy},
-            )
-        return self._reflection_nodes[strategy]
-
     def __getitem__(self, key):
         if key not in self.models:
             raise KeyError(f"Model '{key}' not found.")
@@ -2345,8 +2323,6 @@ class AgentConfig:
 
         if kwargs.get("schema_linking_rate", ""):
             self.schema_linking_rate = kwargs["schema_linking_rate"]
-        if kwargs.get("search_metrics_rate", ""):
-            self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("kb_search_mode", ""):
             self.kb_search = KbSearchConfig.from_dict({"mode": kwargs["kb_search_mode"]})
             self.kb_search_mode = self.kb_search.mode

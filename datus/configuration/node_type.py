@@ -9,8 +9,6 @@ from pydantic import BaseModel, create_model
 from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 from datus.schemas.chat_agentic_node_models import ChatNodeInput
 from datus.schemas.compare_node_models import CompareInput
-from datus.schemas.date_parser_node_models import DateParserInput
-from datus.schemas.doc_search_node_models import DocSearchInput
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput
 from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput
 from datus.schemas.fix_node_models import FixInput
@@ -19,11 +17,9 @@ from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
 from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
-from datus.schemas.node_models import ExecuteSQLInput, OutputInput, ReflectionInput
+from datus.schemas.node_models import ExecuteSQLInput, OutputInput
 from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
-from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
-from datus.schemas.search_metrics_node_models import SearchMetricsInput
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.schemas.subworkflow_node_models import SubworkflowInput
@@ -34,24 +30,19 @@ class NodeType:
     TYPE_BEGIN = "start"
     # TYPE_EVALUATE = "evaluate"
     TYPE_HITL = "hitl"
-    TYPE_REFLECT = "reflect"
     TYPE_PARALLEL = "parallel"
     TYPE_SELECTION = "selection"
     TYPE_SUBWORKFLOW = "subworkflow"
 
     # Control node types list
-    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION, TYPE_SUBWORKFLOW]
+    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_PARALLEL, TYPE_SELECTION, TYPE_SUBWORKFLOW]
 
     # SQL workflow action types
     TYPE_SCHEMA_LINKING = "schema_linking"  # For database schema analysis
     TYPE_EXECUTE_SQL = "execute_sql"  # For SQL query execution
     TYPE_OUTPUT = "output"  # For result presentation
-    TYPE_REASONING = "reasoning"  # For result presentation
-    TYPE_DOC_SEARCH = "doc_search"  # For document search
     TYPE_FIX = "fix"  # For fixing the SQL query
-    TYPE_SEARCH_METRICS = "search_metrics"  # For search metrics
     TYPE_COMPARE = "compare"  # For comparing SQL with expectations
-    TYPE_DATE_PARSER = "date_parser"  # For parsing temporal expressions
 
     # Agentic node types
     TYPE_CHAT = "chat"  # For conversational AI interactions
@@ -74,12 +65,8 @@ class NodeType:
         TYPE_SCHEMA_LINKING,
         TYPE_EXECUTE_SQL,
         TYPE_OUTPUT,
-        TYPE_REASONING,
-        TYPE_DOC_SEARCH,
         TYPE_FIX,
-        TYPE_SEARCH_METRICS,
         TYPE_COMPARE,
-        TYPE_DATE_PARSER,
         TYPE_CHAT,
         TYPE_GEN_SQL,
         TYPE_SEMANTIC,
@@ -101,18 +88,13 @@ class NodeType:
         TYPE_BEGIN: "Beginning of the workflow",
         TYPE_SCHEMA_LINKING: "Understand the query and find related schemas",
         TYPE_EXECUTE_SQL: "Execute SQL query",
-        TYPE_REFLECT: "evaluation and self-reflection",
         TYPE_OUTPUT: "Return the results to the user",
-        TYPE_REASONING: "Reasoning analysis",
-        TYPE_DOC_SEARCH: "Search related documents",
         TYPE_HITL: "Human in the loop",
         TYPE_FIX: "Fix the SQL query",
-        TYPE_SEARCH_METRICS: "Search metrics",
         TYPE_PARALLEL: "Execute child nodes in parallel",
         TYPE_SELECTION: "Select best result from multiple candidates",
         TYPE_SUBWORKFLOW: "Execute a nested workflow",
         TYPE_COMPARE: "Compare SQL with expectations",
-        TYPE_DATE_PARSER: "Parse temporal expressions in queries",
         TYPE_CHAT: "Conversational AI interactions with tool calling",
         TYPE_GEN_SQL: "SQL generation with conversational AI and tool calling",
         TYPE_SEMANTIC: "Semantic model generation with conversational AI",
@@ -146,18 +128,10 @@ class NodeType:
             input_data_cls = SchemaLinkingInput
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
             input_data_cls = ExecuteSQLInput
-        elif node_type == NodeType.TYPE_REFLECT:
-            input_data_cls = ReflectionInput
-        elif node_type == NodeType.TYPE_REASONING:
-            input_data_cls = ReasoningInput
         elif node_type == NodeType.TYPE_OUTPUT:
             input_data_cls = OutputInput
         elif node_type == NodeType.TYPE_FIX:
             input_data_cls = FixInput
-        elif node_type == NodeType.TYPE_DOC_SEARCH:
-            input_data_cls = DocSearchInput
-        elif node_type == NodeType.TYPE_SEARCH_METRICS:
-            input_data_cls = SearchMetricsInput
         elif node_type == NodeType.TYPE_PARALLEL:
             input_data_cls = ParallelInput
         elif node_type == NodeType.TYPE_SELECTION:
@@ -166,8 +140,6 @@ class NodeType:
             input_data_cls = SubworkflowInput
         elif node_type == NodeType.TYPE_COMPARE:
             input_data_cls = CompareInput
-        elif node_type == NodeType.TYPE_DATE_PARSER:
-            input_data_cls = DateParserInput
         elif node_type == NodeType.TYPE_CHAT:
             input_data_cls = ChatNodeInput
         elif node_type == NodeType.TYPE_GEN_SQL:

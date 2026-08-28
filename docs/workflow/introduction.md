@@ -7,26 +7,18 @@ Datus Agent Workflow is an intelligent system that transforms natural language q
 Datus Agent offers different embedded workflows for different needs:
 
 ### 1. Fixed Workflow
-**Best for**: Simple, straightforward questions
+**Best for**: General SQL generation and execution
 
 - **Performance**: Fast and predictable
 - **Perfect for**: "List all customers from California" or "Show me total sales for 2023"
-- **Use cases**: Direct data retrieval, simple aggregations, basic filtering
+- **Use cases**: Direct data retrieval, aggregations, filtering, and multi-table queries
 
-### 2. Reflection Workflow
-**Best for**: Complex business questions
+### 2. Agentic Workflows
+**Best for**: Queries that benefit from iterative tool use
 
-- **Intelligence**: Automatically checks and improves its own work
-- **Reliability**: Can fix errors without human intervention
-- **Perfect for**: "Show me quarterly revenue trends by product category, excluding returns and considering seasonal adjustments"
-- **Use cases**: Multi-step analysis, error correction, complex business logic
-
-### 3. Metric-to-SQL Workflow
-**Best for**: Standardized business reports
-
-- **Consistency**: Uses predefined business metrics
+- **Tool use**: Can search predefined business metrics and other context
 - **Perfect for**: "Show monthly active users for the last quarter" or "Calculate customer churn rate"
-- **Use cases**: KPI reporting, standardized metrics, business intelligence
+- **Use cases**: KPI reporting, temporal analysis, semantic-layer queries, and complex SQL generation
 
 ## Nodes: The Building Blocks
 
@@ -35,7 +27,6 @@ Workflows are made up of specialized components called "[nodes](nodes.md)." Each
 - **[Schema Linking](nodes.md#schema-linking-node)**: Finds the right database tables for your question
 - **[Generate SQL](nodes.md#generate-sql-node)**: Creates the SQL query
 - **[Execute SQL](nodes.md#execute-sql-node)**: Runs the query against your database
-- **[Reflect](nodes.md#reflect-node)**: Checks results and decides if improvements are needed
 - **[Output](nodes.md#output-node)**: Presents the final results to you
 
 ## Getting Started
@@ -47,10 +38,10 @@ Workflows are made up of specialized components called "[nodes](nodes.md)." Each
 datus-agent run --datasource your_db --task_db_name analytics --task "Show me monthly sales"
 
 # Use a specific workflow type
-datus-agent run --datasource your_db --task_db_name analytics --task "Show me complex revenue trends" --workflow reflection
+datus-agent run --datasource your_db --task_db_name analytics --task "Show me complex revenue trends" --workflow fixed
 
 # Use business metrics
-datus-agent run --datasource your_db --task_db_name analytics --task "Calculate customer lifetime value" --workflow metric_to_sql
+datus-agent run --datasource your_db --task_db_name analytics --task "Calculate customer lifetime value" --workflow gen_sql_agentic
 ```
 
 ### Via API
@@ -64,7 +55,7 @@ response = requests.post(
     "http://localhost:8000/workflows/run",
     headers={"Authorization": "Bearer your_token"},
     json={
-        "workflow": "reflection",
+        "workflow": "fixed",
         "datasource": "your_db",
         "task": "Show me quarterly revenue trends",
         "mode": "sync"

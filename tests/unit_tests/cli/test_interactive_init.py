@@ -21,6 +21,12 @@ from datus.cli.interactive_init import (
 class TestInit:
     """N4: Init configuration and connectivity tests."""
 
+    def test_default_config_uses_date_parsing_tool_section(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init = InteractiveInit(user_home=tmpdir)
+
+        assert init.config["agent"]["date_parsing"] == {"language": "en"}
+
     def test_llm_config_probe_success(self):
         """N4-01a: LLM connectivity probe succeeds when the staged probe returns a response."""
         with tempfile.TemporaryDirectory() as tmpdir:

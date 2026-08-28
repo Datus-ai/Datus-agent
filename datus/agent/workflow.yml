@@ -1,12 +1,5 @@
 workflow:
 
-  reflection:
-    - schema_linking
-    - gen_sql
-    - execute_sql
-    - reflect
-    - output
-
   fixed:
     - schema_linking
     - gen_sql
@@ -14,21 +7,6 @@ workflow:
     - output
 
   empty: []
-
-  dynamic:
-    - schema_linking
-    - gen_sql
-    - execute_sql
-    - reflect
-    - output
-
-  metric_to_sql:
-    - schema_linking
-    - search_metrics
-    - date_parser
-    - gen_sql
-    - execute_sql
-    - output
 
   # Agentic workflow using ChatAgenticNode
   chat_agentic:

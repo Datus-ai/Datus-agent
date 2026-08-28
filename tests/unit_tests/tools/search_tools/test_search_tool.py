@@ -6,7 +6,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
+from datus.schemas.document_search_models import DocSearchInput, DocSearchResult
 from datus.tools.search_tools.search_tool import SearchTool, search_by_tavily
 
 

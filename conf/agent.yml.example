@@ -235,14 +235,6 @@ agent:
   nodes:
     schema_linking:
       matching_rate: fast
-    reasoning:
-      prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
-      max_table_schemas_length: 4000
-      max_data_details_length: 2000
-      max_context_length: 8000
-      max_value_length: 500
-    reflect:
-      prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
     output:
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
       check_result: true # Whether to check the results of the previous step, the default value is false
@@ -250,6 +242,10 @@ agent:
       workspace_root: sql2
       max_turns: 25
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
+
+  # Configuration for date_parsing_tools.parse_temporal_expressions.
+  date_parsing:
+    language: en # en/zh
 
   export:
     max_lines: 1000  # Maximum number of exported data rows, default is 1000
@@ -401,50 +397,18 @@ agent:
       - gen_sql
       - output
 
-    planB:
-      - schema_linking
-      - gen_sql
-      - execute_sql
-      - reflect
-      - output
-
-  reflection_nodes:
-    schema_linking:
-      - schema_linking
-      - gen_sql
-      - execute_sql
-      - reflect
-    doc_search:
-      - doc_search
-      - gen_sql
-      - execute_sql
-      - reflect
-    simple_regenerate:
-      - execute_sql
-      - reflect
-    reasoning:
-      - reasoning
-      - execute_sql
-      - reflect
-
-  # Workflow configuration with parallel execution and selection
-  workflow:
-    plan: bird_para
-
+    # Workflow configuration with parallel execution and selection
     bird_para:
       - schema_linking
       - parallel:
         - gen_sql
-        - reasoning
+        - gen_sql
       - selection
       - execute_sql
       - output
 
-  # Sub-workflow example
-  workflow:
-    plan: bird_para
-
-    bird_para:
+    # Sub-workflow example
+    multi_approach:
       - schema_linking
       - parallel:
         - subworkflow1
@@ -455,47 +419,38 @@ agent:
       - output
 
     subworkflow1:
-      - search_metrics
       - gen_sql
 
     subworkflow2:
-      - search_metrics
-      - reasoning
+      - gen_sql
 
     subworkflow3:
-      - reasoning
-      - reflect
+      - gen_sql
 
-  # Sub-workflow with config example
-  workflow:
-    plan: bird_para
-
-    bird_para:
+    # Sub-workflow with config example
+    multi_agent:
       - schema_linking
       - parallel:
-        - subworkflow1
-        - subworkflow2
-        - subworkflow3
+        - subworkflow_cfg1
+        - subworkflow_cfg2
+        - subworkflow_cfg3
       - selection
       - execute_sql
       - output
 
-    subworkflow1:
+    subworkflow_cfg1:
       steps:
-      - search_metrics
       - gen_sql
       config: multi/agent1.yaml
 
-    subworkflow2:
+    subworkflow_cfg2:
       steps:
-      - search_metrics
-      - reasoning
+      - gen_sql
       config: multi/agent2.yaml
 
-    subworkflow3:
+    subworkflow_cfg3:
       steps:
-      - reasoning
-      - reflect
+      - gen_sql
       config: multi/agent3.yaml
 
   skills:
@@ -561,7 +516,7 @@ agent:
     gen_sql:
       model: deepseek_v3
       system_prompt: gen_sql
-      tools: db_tools.*, context_search_tools.*
+      tools: db_tools.*, context_search_tools.*, date_parsing_tools.*
       max_turns: 30
 
     gen_table:

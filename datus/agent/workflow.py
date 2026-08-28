@@ -44,7 +44,6 @@ class Workflow:
         self.node_order = []  # List of node IDs in execution order
         self.current_node_index = 0
         self.status = "pending"  # pending, running, completed, failed, paused
-        self.reflection_round = 0
         self.creation_time = time.time()
         self.completion_time = None
 

@@ -144,7 +144,6 @@ Tool commands are used for AI-powered SQL generation and workflow execution:
 | `!sl`                  | Schema linking: show list of recommended tables and values         |
 | `!run`                 | Run the last generated SQL                                         |
 | `!fix <description>`   | Fix the last SQL query                                             |
-| `!reason`              | Run the full reasoning node to exploring                           |
 | `!save`                | Save the last result to a file                                     |
 | `!set <context_type>`  | Set the context type for the current workflow                      |
 | &nbsp;&nbsp;&nbsp;&nbsp;`context_type: sql, lastsql, schema, schema_values, metrics, task` | |

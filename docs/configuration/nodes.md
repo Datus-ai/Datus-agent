@@ -1,11 +1,11 @@
 ---
 title: 'Nodes'
-description: 'Configure workflow nodes for schema linking, SQL generation, reasoning, and other processing tasks'
+description: 'Configure workflow nodes for schema linking, SQL generation, and other processing tasks'
 ---
 
 ## Overview
 
-Nodes are the building blocks of Datus Agent workflows. Each node performs a specific task in the data processing pipeline, from schema linking and SQL generation to reasoning and output formatting. This guide covers how to configure each node type for optimal performance.
+Nodes are the building blocks of Datus Agent workflows. Each node performs a specific task in the data processing pipeline, from schema linking and SQL generation to output formatting. This guide covers how to configure each node type for optimal performance.
 
 ## Configuration Structure
 
@@ -72,50 +72,7 @@ agentic_nodes:
 - **tools**: Tool patterns available to the SQL generator
 - **max_turns**: Maximum number of tool-assisted reasoning turns
 
-### Reasoning
-
-Iteratively generates, executes, and optimizes SQL queries based on database feedback.
-
-```yaml
-reasoning:
-  model: anthropic                      # LLM for reasoning
-  prompt_version: "1.0"                 # Prompt template version
-  max_table_schemas_length: 4000        # Max length for table metadata
-  max_data_details_length: 2000         # Max length for sample data
-  max_context_length: 8000              # Max context length
-  max_value_length: 500                 # Max length per sample value
-```
-
-**Configuration Parameters:**
-- Reasoning keeps its own fixed-node limits and may fall back to `gen_sql` when regeneration is needed
-
-### Search Metrics
-
-Matches relevant metrics through vector search based on user questions.
-
-```yaml
-search_metrics:
-  model: openai                    # LLM model for metric selection
-  matching_rate: medium            # fast/medium/slow
-  prompt_version: "1.0"            # Prompt version to use
-```
-
-**Configuration Parameters:**
-- Same as `schema_linking` node - specialized for metric discovery
-
 ## Processing Nodes
-
-### Reflect
-
-Evaluates SQL execution results and provides improvement suggestions.
-
-```yaml
-reflect:
-  prompt_version: "1.0"            # Prompt template version
-```
-
-**Configuration Parameters:**
-- **prompt_version**: Version of reflection prompt template to use
 
 ### Output
 
@@ -156,16 +113,6 @@ agentic_nodes:
 
 ## Utility Nodes
 
-### Date Parser
-
-Parses and interprets date-related queries in user questions.
-
-```yaml
-date_parser:
-  # Typically uses default configuration
-  prompt_version: "1.0"
-```
-
 ### Compare
 
 Compares generated SQL with reference SQL for benchmarking purposes.
@@ -196,34 +143,11 @@ nodes:
     matching_rate: fast
     prompt_version: "1.0"
 
-  # Metric discovery
-  search_metrics:
-    model: openai
-    matching_rate: medium
-    prompt_version: "1.0"
-
-  # Advanced reasoning
-  reasoning:
-    model: anthropic
-    prompt_version: "1.0"
-    max_table_schemas_length: 4000
-    max_data_details_length: 2000
-    max_context_length: 8000
-    max_value_length: 500
-
-  # Result reflection and improvement
-  reflect:
-    prompt_version: "1.0"
-
   # Output formatting and validation
   output:
     model: anthropic
     prompt_version: "1.0"
     check_result: true
-
-  # Date parsing
-  date_parser:
-    prompt_version: "1.0"
 
   # SQL fixing
   fix:
@@ -236,7 +160,7 @@ agentic_nodes:
     model: deepseek_v3
     system_prompt: gen_sql
     prompt_version: "1.2"
-    tools: db_tools.*, context_search_tools.*
+    tools: db_tools.*, context_search_tools.*, date_parsing_tools.*, platform_doc_tools.*
     max_turns: 30
 
   # Interactive chat
@@ -244,7 +168,13 @@ agentic_nodes:
     workspace_root: workspace
     model: anthropic
     max_turns: 25
+
+# Date parsing tool configuration (independent of workflow nodes)
+date_parsing:
+  language: en                     # en/zh
 ```
+
+Metric search, date parsing, and platform documentation search are function tools rather than workflow nodes. Enable them on agentic nodes with `context_search_tools.*`, `date_parsing_tools.*`, and `platform_doc_tools.*` respectively.
 
 ## Model Assignment Strategy
 
@@ -260,7 +190,7 @@ The model names below refer to the `model` field inside each `models.<key>` prov
 - Recommended: `deepseek-v4-flash`, `gpt-4-turbo`, `claude-4-sonnet`
 - Avoid: Basic models that struggle with complex SQL
 
-**For Reasoning:**
+**For Agentic Workflows:**
 
 - Best: `claude-4-sonnet`, `gpt-4-turbo`, `claude-4-opus`
 - Good: `gemini-2.5-flash`

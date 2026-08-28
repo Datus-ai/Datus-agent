@@ -31,7 +31,7 @@ Vibe SQL is the Datus philosophy that you don't need to write every SQL line you
 
 ## What Makes Datus-CLI Different
 
-- **Context, not control** - Datus treats the workflow context as short-term memory (task description, executed SQL + results/reflections, selected tables/metrics) and builds long-term memory from user preferences and the surrounding data environment (lineage, metrics, docs)
+- **Context, not control** - Datus treats the workflow context as short-term memory (task description, executed SQL and results, selected tables/metrics) and builds long-term memory from user preferences and the surrounding data environment (lineage, metrics, docs)
 
 - **Explainable, reliable flows** - Workflows can pause, edit, and resume at any node, introducing human-in-the-loop (HITL) when confidence is low—so you get both exploration and control
 

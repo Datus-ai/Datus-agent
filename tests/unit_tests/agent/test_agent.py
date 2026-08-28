@@ -274,7 +274,7 @@ class TestBootstrapPlatformDoc:
 def _make_args(**kwargs):
     defaults = dict(
         max_steps=10,
-        workflow="reflection",
+        workflow="fixed",
         load_cp=None,
         debug=False,
         force=False,
@@ -288,7 +288,7 @@ def _make_agent_config(datasource="test_ns"):
     cfg = MagicMock()
     cfg.current_datasource = datasource
     cfg.datasource_configs = {datasource: {"type": "sqlite", "dbs": []}}
-    cfg.workflow_plan = "reflection"
+    cfg.workflow_plan = "fixed"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
     cfg.output_dir = "/tmp/output"
     return cfg
@@ -539,7 +539,7 @@ class TestAgentRunStream:
 def _make_args_ext(**kwargs):
     defaults = dict(
         max_steps=10,
-        workflow="reflection",
+        workflow="fixed",
         load_cp=None,
         debug=False,
         force=False,
@@ -577,7 +577,7 @@ def _make_agent_config_ext(datasource="test_ns"):
     cfg = MagicMock()
     cfg.current_datasource = datasource
     cfg.datasource_configs = {datasource: {"type": "sqlite", "dbs": []}}
-    cfg.workflow_plan = "reflection"
+    cfg.workflow_plan = "fixed"
     cfg.get_trajectory_run_dir.return_value = "/tmp/traj"
     cfg.output_dir = "/tmp/output"
     cfg.home = "/tmp/home"

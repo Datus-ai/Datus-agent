@@ -2142,6 +2142,23 @@ class TestAgentConfigLanguage:
 
 
 class TestAgentConfigPolicyContext:
+    @staticmethod
+    def _base_kwargs(tmp_path):
+        return {
+            "nodes": {"test": NodeConfig(model="test-model", input=None)},
+            "home": str(tmp_path / "h"),
+            "target": "mock",
+            "models": {
+                "mock": {
+                    "type": "openai",
+                    "api_key": "k",
+                    "model": "m",
+                    "base_url": "http://localhost:0",
+                }
+            },
+            "skip_init_dirs": True,
+        }
+
     def test_legacy_sql_policy_config_is_rejected(self, tmp_path):
         with (
             patch("datus.plugins.store.activate") as activate,
@@ -2164,6 +2181,23 @@ class TestAgentConfigPolicyContext:
             )
         assert exc_info.value.code == ErrorCode.COMMON_CONFIG_ERROR
         activate.assert_not_called()
+
+    def test_default_workflow_is_fixed(self, tmp_path):
+        cfg = AgentConfig(**self._base_kwargs(tmp_path))
+        assert cfg.workflow_plan == "fixed"
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [(None, "en"), ("en", "en"), ("zh", "zh"), ("cn", "zh")],
+    )
+    def test_date_parsing_language_config(self, tmp_path, configured, expected):
+        kwargs = self._base_kwargs(tmp_path)
+        if configured is not None:
+            kwargs["date_parsing"] = {"language": configured}
+
+        config = AgentConfig(**kwargs)
+
+        assert config.date_parsing_language == expected
 
 
 class TestServicesConfigFromDict:

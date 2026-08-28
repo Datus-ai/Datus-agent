@@ -18,10 +18,8 @@ from datus.schemas.node_models import (
     Metric,
     OutputInput,
     ReferenceSql,
-    ReflectionResult,
     SQLContext,
     SqlTask,
-    StrategyType,
     TableSchema,
     TableValue,
 )
@@ -328,6 +326,11 @@ class TestSQLContext:
         assert d["sql_query"] == "SELECT 1"
         assert d["row_count"] == 5
 
+    def test_assistant_analysis(self):
+        ctx = SQLContext(sql_query="SELECT 1", assistant_analysis="analysis")
+        assert ctx.assistant_analysis == "analysis"
+        assert ctx.to_dict()["assistant_analysis"] == "analysis"
+
     def test_to_str_contains_sql(self):
         ctx = SQLContext(sql_query="SELECT * FROM t", sql_return="a,b\n1,2", row_count=1)
         s = ctx.to_str()
@@ -444,14 +447,6 @@ class TestContext:
         ctx.update_metrics([m])
         assert len(ctx.metrics) == 1
 
-    def test_update_document_result(self):
-        from unittest.mock import MagicMock
-
-        ctx = Context()
-        doc_result = MagicMock()
-        ctx.update_document_result(doc_result)
-        assert ctx.document_result is doc_result
-
     def test_update_parallel_results(self):
         ctx = Context()
         ctx.update_parallel_results({"task1": "result1"})
@@ -483,50 +478,6 @@ class TestContext:
         new_ctx = SQLContext(sql_query="new")
         ctx.update_last_sql_context(new_ctx)
         assert ctx.sql_contexts[-1].sql_query == "new"
-
-    def test_update_doc_search_keywords(self):
-        ctx = Context()
-        ctx.update_doc_search_keywords(["revenue", "sales"])
-        assert ctx.doc_search_keywords == ["revenue", "sales"]
-
-
-# ---------------------------------------------------------------------------
-# StrategyType
-# ---------------------------------------------------------------------------
-
-
-class TestStrategyType:
-    def test_all_values_exist(self):
-        assert StrategyType.SUCCESS == "SUCCESS"
-        assert StrategyType.DOC_SEARCH == "DOC_SEARCH"
-        assert StrategyType.SIMPLE_REGENERATE == "SIMPLE_REGENERATE"
-        assert StrategyType.SCHEMA_LINKING == "SCHEMA_LINKING"
-        assert StrategyType.REASONING == "REASONING"
-        assert StrategyType.COLUMN_EXPLORATION == "COLUMN_EXPLORATION"
-        assert StrategyType.UNKNOWN == "UNKNOWN"
-
-
-# ---------------------------------------------------------------------------
-# ReflectionResult
-# ---------------------------------------------------------------------------
-
-
-class TestReflectionResult:
-    def test_basic_creation(self):
-        result = ReflectionResult(success=True, strategy=StrategyType.SUCCESS)
-        assert result.strategy == "SUCCESS"
-
-    def test_details_default_empty(self):
-        result = ReflectionResult(success=True)
-        assert result.details == {}
-
-    def test_details_can_be_nested(self):
-        result = ReflectionResult(
-            success=True,
-            strategy=StrategyType.SCHEMA_LINKING,
-            details={"tables": ["t1", "t2"], "reason": "missing join"},
-        )
-        assert result.details["tables"] == ["t1", "t2"]
 
 
 # ---------------------------------------------------------------------------

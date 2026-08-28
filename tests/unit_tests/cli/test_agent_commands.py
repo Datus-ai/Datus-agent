@@ -28,7 +28,6 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistoryManager
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.node_models import SqlTask
-from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.utils.constants import DBType
 
 # ---------------------------------------------------------------------------
@@ -348,49 +347,6 @@ class TestCmdFix:
 
 
 # ---------------------------------------------------------------------------
-# Tests: cmd_reason
-# ---------------------------------------------------------------------------
-
-
-class TestCmdReason:
-    def test_no_input_returns_early(self, agent_commands):
-        with (
-            patch.object(agent_commands, "create_node_input", return_value=None),
-            patch.object(agent_commands, "run_standalone_node") as mock_run,
-        ):
-            agent_commands.cmd_reason("")
-        mock_run.assert_not_called()
-
-    def test_result_success_with_explanation(self, agent_commands):
-        mock_result = MagicMock()
-        mock_result.success = True
-        mock_result.explanation = "The revenue is calculated by..."
-
-        with patch.object(agent_commands, "create_node_input", return_value=MagicMock()):
-            with patch.object(agent_commands, "run_standalone_node", return_value=mock_result):
-                agent_commands.cmd_reason("why")
-
-        output = agent_commands.console.file.getvalue()
-        assert "The revenue" in output
-
-    def test_result_failure(self, agent_commands):
-        mock_result = MagicMock()
-        mock_result.success = False
-
-        with patch.object(agent_commands, "create_node_input", return_value=MagicMock()):
-            with patch.object(agent_commands, "run_standalone_node", return_value=mock_result):
-                agent_commands.cmd_reason("why")
-
-        output = agent_commands.console.file.getvalue()
-        assert "failed" in output.lower()
-
-    def test_reason_stream_delegates_to_reason(self, agent_commands):
-        with patch.object(agent_commands, "cmd_reason") as mock_reason:
-            agent_commands.cmd_reason_stream("test")
-        mock_reason.assert_called_once_with("test")
-
-
-# ---------------------------------------------------------------------------
 # Tests: cmd_compare
 # ---------------------------------------------------------------------------
 
@@ -515,101 +471,6 @@ class TestRunNode:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _extract_sql_from_streaming_actions
-# ---------------------------------------------------------------------------
-
-
-class TestExtractSqlFromStreamingActions:
-    def test_empty_actions_no_crash(self, agent_commands):
-        workflow = MagicMock()
-        workflow.context.sql_contexts = []
-        node = MagicMock()
-        del node.action_history_manager
-        agent_commands._extract_sql_from_streaming_actions([], workflow, node)
-        assert workflow.context.sql_contexts == []
-
-    def test_extracts_from_execute_sql_action(self, agent_commands):
-        workflow = MagicMock()
-        workflow.context.sql_contexts = []
-
-        action = MagicMock()
-        action.action_type = "execute_sql"
-        action.status = MagicMock()
-        action.status.value = "success"
-        # Real tool actions nest params under ``input["arguments"]``.
-        action.input = {"function_name": "execute_sql", "arguments": {"sql": "SELECT 1"}}
-        # Read-only results carry the compressor payload (compressed_data).
-        action.output = {"result": {"original_rows": 1, "compressed_data": "n\n1"}, "error": ""}
-
-        node = MagicMock(spec=[])  # no action_history_manager
-        agent_commands._extract_sql_from_streaming_actions([action], workflow, node)
-
-        assert len(workflow.context.sql_contexts) == 1
-        # The query is extracted from the nested ``arguments`` payload.
-        assert workflow.context.sql_contexts[0].sql_query == "SELECT 1"
-
-    def test_extracts_from_action_history_manager(self, agent_commands):
-        workflow = MagicMock()
-        workflow.context.sql_contexts = []
-
-        sql_ctx = MagicMock()
-        sql_ctx.sql_error = ""
-        node = MagicMock()
-        node.action_history_manager = MagicMock()
-        node.action_history_manager.sql_contexts = [sql_ctx]
-
-        agent_commands._extract_sql_from_streaming_actions([], workflow, node)
-        assert len(workflow.context.sql_contexts) == 1
-
-    def test_failed_sql_context_not_added(self, agent_commands):
-        workflow = MagicMock()
-        workflow.context.sql_contexts = []
-
-        action = MagicMock()
-        action.action_type = "execute_sql"
-        action.status = MagicMock()
-        action.status.value = "success"
-        action.input = {"function_name": "execute_sql", "arguments": {"sql": "SELECT bad"}}
-        # A failed read returns no compressor payload → not read-shaped → skipped.
-        action.output = {"result": "", "error": "syntax error"}
-
-        node = MagicMock(spec=[])
-        agent_commands._extract_sql_from_streaming_actions([action], workflow, node)
-        # Failed context (no read-shaped result) should not be added
-        assert len(workflow.context.sql_contexts) == 0
-
-    def test_extracts_output_field_from_final_assistant_message(self, agent_commands):
-        workflow = MagicMock()
-        workflow.context.sql_contexts = []
-
-        action = MagicMock()
-        action.action_type = "message"
-        action.role = "assistant"
-        action.output = {"raw_output": '{"sql": "SELECT 1", "output": "compact response"}'}
-
-        node = MagicMock(spec=[])
-        agent_commands._extract_sql_from_streaming_actions([action], workflow, node)
-
-        assert len(workflow.context.sql_contexts) == 1
-        assert workflow.context.sql_contexts[0].sql_query == "SELECT 1"
-        assert workflow.context.sql_contexts[0].explanation == "compact response"
-
-    def test_exception_in_extraction_does_not_raise(self, agent_commands):
-        """Top-level exception in extraction should be caught and logged, not raised."""
-        workflow = MagicMock()
-
-        def raise_injected(_self):
-            raise RuntimeError("injected")
-
-        # Make accessing sql_contexts raise an exception to exercise the outer except block
-        type(workflow.context).sql_contexts = property(raise_injected)
-
-        node = MagicMock(spec=[])
-        agent_commands._extract_sql_from_streaming_actions([], workflow, node)
-        assert isinstance(workflow.context, MagicMock)
-
-
-# ---------------------------------------------------------------------------
 # Tests: create_node_input additional types
 # ---------------------------------------------------------------------------
 
@@ -630,21 +491,3 @@ class TestCreateNodeInputExtended:
         # No sql_context added -> get_last_sql() returns None
         result = agent_commands.create_node_input(NodeType.TYPE_FIX, "fix it")
         assert result is None
-
-    @pytest.mark.xfail(
-        reason="Production bug: create_node_input passes sql_query= to ReasoningInput which forbids extras",
-        strict=True,
-    )
-    def test_reasoning_type_creates_input(self, agent_commands, cli_context, sql_task):
-        """Reasoning type should create a valid ReasoningInput.
-
-        Currently fails with ValidationError because create_node_input passes
-        sql_query= as a keyword argument but ReasoningInput inherits extra='forbid'
-        from its base schema.
-        """
-        cli_context.set_current_sql_task(sql_task)
-        agent_commands.cli_context = cli_context
-        agent_commands.cli.prompt_input = lambda msg, default="", **kw: default or ""
-
-        result = agent_commands.create_node_input(NodeType.TYPE_REASONING, "explain query")
-        assert isinstance(result, ReasoningInput)

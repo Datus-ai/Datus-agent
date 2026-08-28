@@ -63,7 +63,7 @@ def extract_sql_contexts(result: RunResultBase, db_type: str = "snowflake") -> L
 
                     # Find the corresponding output
                     output = None
-                    reflection = None
+                    assistant_analysis = None
                     for j in range(i + 1, len(input_list)):
                         logger.debug(
                             f"Looking for output at position {j}: type={input_list[j].get('type')},"
@@ -77,7 +77,7 @@ def extract_sql_contexts(result: RunResultBase, db_type: str = "snowflake") -> L
                             output = input_list[j].get("output", "")
                             logger.debug(f"Found function call output: {output[:100]}...")  # Log first 100 chars
 
-                            # Check if there's a reflection message after the output
+                            # Check for assistant analysis after the output.
                             if j + 1 < len(input_list):
                                 next_item = input_list[j + 1]
                                 logger.debug(
@@ -87,25 +87,24 @@ def extract_sql_contexts(result: RunResultBase, db_type: str = "snowflake") -> L
 
                                 # if met another fc, it means AI just do function calling without thinking
                                 if next_item.get("type") == "function_call":
-                                    logger.debug("Found another function call, breaking reflection search")
+                                    logger.debug("Found another function call, stopping assistant analysis search")
                                     break
-                                # find the reflection text in the assistant message from the continues message
+                                # Find assistant analysis in the message that follows the tool output.
                                 if (
                                     next_item.get("type") == "message"
                                     and next_item.get("role") == "assistant"
                                     and next_item.get("content")
                                 ):
-                                    logger.debug("Found assistant message, extracting reflection")
-                                    # Extract reflection text from content
+                                    logger.debug("Found assistant message, extracting analysis")
                                     content = next_item.get("content", [])
                                     logger.debug(f"Content type: {type(content)}, content: {content}")
 
                                     if isinstance(content, list):
                                         for content_item in content:
                                             if content_item.get("text"):
-                                                reflection = content_item.get("text")
+                                                assistant_analysis = content_item.get("text")
                                                 logger.debug(
-                                                    f"Extracted reflection: {reflection[:100]}..."
+                                                    f"Extracted assistant analysis: {assistant_analysis[:100]}..."
                                                 )  # Log first 100 chars
                                                 break
                                     break
@@ -113,13 +112,16 @@ def extract_sql_contexts(result: RunResultBase, db_type: str = "snowflake") -> L
 
                     # Create SQLContext and add to list
                     logger.debug(
-                        f"Creating SQLContext with arguments: {arguments}, output: {output}, reflection: {reflection}"
+                        "Creating SQLContext with arguments: %s, output: %s, assistant analysis: %s",
+                        arguments,
+                        output,
+                        assistant_analysis,
                     )
                     sql_context = SQLContext(
                         sql_query=f"{function_call_name}:{arguments}",
                         sql_return=output,
                         row_count=None,
-                        reflection_explanation=reflection,
+                        assistant_analysis=assistant_analysis,
                     )
                     sql_contexts.append(sql_context)
                 except Exception as e:

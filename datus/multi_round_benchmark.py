@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
 def setup_base_parser_args(parser: argparse.ArgumentParser):
     parser.add_argument("--datasource", required=True, help="Datasource to benchmark, e.g. bird_sqlite.")
     parser.add_argument("--benchmark", required=True, help="Benchmark name, e.g. bird_dev.")
-    parser.add_argument("--workflow", default="reflection", help="Workflow plan to execute (default: reflection)")
+    parser.add_argument("--workflow", default="fixed", help="Workflow plan to execute (default: fixed)")
     parser.add_argument(
         "--max_steps", "--max-steps", type=int, default=30, help="Maximum steps per workflow execution (default: 30)"
     )

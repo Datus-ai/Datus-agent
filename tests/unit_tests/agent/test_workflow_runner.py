@@ -29,7 +29,7 @@ from datus.schemas.node_models import SqlTask
 def _make_args(**kwargs):
     defaults = dict(
         max_steps=20,
-        workflow="reflection",
+        workflow="fixed",
         load_cp=None,
         debug=False,
         plan_mode=None,
@@ -40,7 +40,7 @@ def _make_args(**kwargs):
 
 def _make_config():
     cfg = MagicMock()
-    cfg.workflow_plan = "reflection"
+    cfg.workflow_plan = "fixed"
     cfg.get_trajectory_run_dir.return_value = "/tmp/test_traj"
     cfg.check_init_storage_config.return_value = None
     return cfg

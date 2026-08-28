@@ -47,10 +47,6 @@ class TestNodeInstantiation:
         node = Node.new_instance("n3", "desc", NodeType.TYPE_EXECUTE_SQL, agent_config=self.agent_config)
         assert node.type == NodeType.TYPE_EXECUTE_SQL
 
-    def test_new_instance_reasoning(self):
-        node = Node.new_instance("n4", "desc", NodeType.TYPE_REASONING, agent_config=self.agent_config)
-        assert node.type == NodeType.TYPE_REASONING
-
     def test_new_instance_output(self):
         node = Node.new_instance("n5", "desc", NodeType.TYPE_OUTPUT, agent_config=self.agent_config)
         assert node.type == NodeType.TYPE_OUTPUT
@@ -58,10 +54,6 @@ class TestNodeInstantiation:
     def test_new_instance_fix(self):
         node = Node.new_instance("n6", "desc", NodeType.TYPE_FIX, agent_config=self.agent_config)
         assert node.type == NodeType.TYPE_FIX
-
-    def test_new_instance_reflect(self):
-        node = Node.new_instance("n7", "desc", NodeType.TYPE_REFLECT, agent_config=self.agent_config)
-        assert node.type == NodeType.TYPE_REFLECT
 
     def test_new_instance_begin(self):
         node = Node.new_instance("n8", "desc", NodeType.TYPE_BEGIN, agent_config=self.agent_config)
@@ -78,10 +70,6 @@ class TestNodeInstantiation:
     def test_new_instance_subworkflow(self):
         node = Node.new_instance("n11", "desc", NodeType.TYPE_SUBWORKFLOW, agent_config=self.agent_config)
         assert node.type == NodeType.TYPE_SUBWORKFLOW
-
-    def test_new_instance_date_parser(self):
-        node = Node.new_instance("n12", "desc", NodeType.TYPE_DATE_PARSER, agent_config=self.agent_config)
-        assert node.type == NodeType.TYPE_DATE_PARSER
 
     def test_new_instance_hitl(self):
         node = Node.new_instance("n13", "desc", NodeType.TYPE_HITL, agent_config=self.agent_config)
@@ -204,6 +192,30 @@ class TestNodeRun:
         node.execute.assert_called_once()
         assert node.status == "completed"
         assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_run_stream_completes_successful_node(self):
+        node = Node.new_instance(
+            "run_stream_test",
+            "Test",
+            NodeType.TYPE_SCHEMA_LINKING,
+            agent_config=self.agent_config,
+        )
+        result = SchemaLinkingResult(success=True, table_schemas=[], table_values=[], schema_count=0, value_count=0)
+        node._initialize = MagicMock()
+
+        async def execute_stream(_action_history_manager=None):
+            node.result = result
+            if False:
+                yield
+
+        node.execute_stream = execute_stream
+
+        actions = [action async for action in node.run_stream()]
+
+        assert actions == []
+        assert node.status == "completed"
+        assert node.result == result
 
     def test_run_fails_on_exception(self):
         node = Node.new_instance("run_fail", "Test", NodeType.TYPE_SCHEMA_LINKING, agent_config=self.agent_config)

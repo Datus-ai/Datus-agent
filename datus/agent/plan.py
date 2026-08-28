@@ -162,11 +162,7 @@ def _create_single_node(
 ) -> Node:
     # normalize aliases from config
     normalized_type = node_type
-    if node_type in {"reason_sql", "reasoning_sql", "reason"}:
-        normalized_type = NodeType.TYPE_REASONING
-    elif node_type in {"reflection", "reflect"}:
-        normalized_type = NodeType.TYPE_REFLECT
-    elif node_type == "execute":
+    if node_type == "execute":
         normalized_type = NodeType.TYPE_EXECUTE_SQL
     elif node_type == "chat":
         normalized_type = NodeType.TYPE_CHAT
@@ -213,7 +209,7 @@ def _create_single_node(
 
 def generate_workflow(
     task: SqlTask,
-    plan_type: str = "reflection",
+    plan_type: str = "fixed",
     agent_config: Optional[AgentConfig] = None,
 ) -> Workflow:
     logger.info(f"Generating workflow for task based on plan type '{plan_type}': {task}")
@@ -221,7 +217,7 @@ def generate_workflow(
     if not plan_type and agent_config:
         plan_type = agent_config.workflow_plan
     elif not plan_type:
-        plan_type = "reflection"  # fallback to default
+        plan_type = "fixed"  # fallback to default
 
     if agent_config and plan_type in agent_config.custom_workflows:
         logger.info(f"Using custom workflow '{plan_type}' from configuration")

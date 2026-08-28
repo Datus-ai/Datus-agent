@@ -244,34 +244,3 @@ class TestInputResultExecuteSQLResult:
         compact = result.compact_result()
         assert "Alice" in compact
         assert len(compact) > len(result.sql_return)
-
-
-class TestReflectionInput:
-    def test_validation(self):
-        task = SqlTask(task="test")
-        gen_result = GenerateSQLResult(
-            success=True,
-            sql_query="SELECT * FROM test",
-            tables=["test_table"],
-            explanation="test explanation",
-        )
-        exec_result = ExecuteSQLResult(
-            success=True, sql_query="SELECT * FROM test", row_count=1, sql_return="test result"
-        )
-        assert task.task == "test"
-        assert gen_result.sql_query == "SELECT * FROM test"
-        assert exec_result.row_count == 1
-        # input = ReflectionInput(
-        #     task_description=task,
-        #     sql_generation_result=gen_result,
-        #     sql_execution_result=exec_result
-        # )
-
-        # assert input.task_description.task == "test"
-
-        # with pytest.raises(ValueError):
-        #     ReflectionInput(
-        #         task_description=task,
-        #         sql_generation_result=GenerateSQLResult(success=False),
-        #         sql_execution_result=exec_result
-        #     )

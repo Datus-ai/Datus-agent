@@ -81,14 +81,6 @@ agent:
     schema_linking:
       model: deepseek
       matching_rate: fast
-    reasoning:
-      model: deepseek
-      max_table_schemas_length: 10000
-      max_data_details_length: 8000
-      max_context_length: 8000
-      max_value_length: 500
-      max_turns: 20
-    reflect:
     output:
       check_result: true
   # ── Skills configuration ──

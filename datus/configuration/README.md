@@ -114,7 +114,7 @@ Define execution workflows:
       - schema_linking
       - parallel:
           - gen_sql
-          - reasoning
+          - gen_sql
       - selection
       - execute_sql
       - output
@@ -147,9 +147,8 @@ Database connection configuration supporting:
 Flexible workflow orchestration with:
 
 - **Fixed**: Performed according to standard processes
-- **Reflection**: After generating SQL and execute, reflected by LLMs
 - **Metrics**: Use of metrics in workflow
-- **Reasoning**: Generate SQL via MCP, execute it, and return the execution result.
+- **Agentic SQL**: Generate SQL with tool calling, execute it, and return the result
 - **Customizable**: Develop your own nodes and customize your own processes based on requirements
 
 ## Environment Variables

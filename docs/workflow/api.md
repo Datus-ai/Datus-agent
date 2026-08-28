@@ -92,7 +92,7 @@ Execute a workflow to convert natural language to SQL.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `workflow` | string | ✅ | Workflow name (nl2sql, reflection, fixed, metric_to_sql) |
+| `workflow` | string | ✅ | Workflow name (`fixed`, `chat_agentic`, or `gen_sql_agentic`) |
 | `datasource` | string | ✅ | Database datasource |
 | `task` | string | ✅ | Natural language task description |
 | `mode` | string | ✅ | Execution mode (sync or async) |
@@ -116,7 +116,7 @@ Content-Type: application/json
 **Request Body:**
 ```json
 {
-  "workflow": "nl2sql",
+  "workflow": "fixed",
   "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "sync",
@@ -130,7 +130,7 @@ Content-Type: application/json
 {
   "task_id": "client_20240115143000",
   "status": "completed",
-  "workflow": "nl2sql",
+  "workflow": "fixed",
   "sql": "SELECT DATE_TRUNC('month', order_date) as month, product_category, SUM(amount) as revenue FROM orders WHERE order_date >= '2023-01-01' GROUP BY month, product_category ORDER BY month, revenue DESC",
   "result": [
     {
@@ -146,8 +146,7 @@ Content-Type: application/json
   ],
   "metadata": {
     "execution_time": 12.5,
-    "nodes_executed": 5,
-    "reflection_rounds": 0
+    "nodes_executed": 5
   },
   "error": null,
   "execution_time": 12.5
@@ -167,7 +166,7 @@ Cache-Control: no-cache
 **Request Body:**
 ```json
 {
-  "workflow": "nl2sql",
+  "workflow": "fixed",
   "datasource": "your_database_datasource",
   "task": "Show me monthly revenue by product category",
   "mode": "async",
@@ -181,7 +180,7 @@ Cache-Control: no-cache
 Content-Type: text/event-stream
 
 event: started
-data: {"task_id": "client_20240115143000", "workflow": "nl2sql"}
+data: {"task_id": "client_20240115143000", "workflow": "fixed"}
 
 event: progress
 data: {"message": "Initializing workflow", "progress": 10}
@@ -230,14 +229,6 @@ Submit feedback on workflow execution quality.
 
 ## Workflow Types
 
-### reflection
-
-**Intelligent, self-improving SQL generation:**
-
-- Includes reflection for error correction
-- Can adapt and retry queries
-- Best for complex or uncertain queries
-
 ### fixed
 
 **Deterministic SQL generation:**
@@ -245,14 +236,6 @@ Submit feedback on workflow execution quality.
 - Predictable execution path
 - No adaptive behavior
 - Best for well-understood queries
-
-### metric_to_sql
-
-**Generate SQL from business metrics:**
-
-- Leverages predefined business metrics
-- Includes date parsing for temporal queries
-- Best for standardized business intelligence
 
 ## Configuration
 

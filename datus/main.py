@@ -497,21 +497,16 @@ def create_parser() -> argparse.ArgumentParser:
             help="Schema linking node strategy",
         )
 
-        node_group.add_argument(
-            "--search_metrics_rate",
-            type=str,
-            choices=["fast", "medium", "slow"],
-            default="fast",
-            help="Search metrics node query strategy",
-        )
-
     # Workflow configuration group (available for run and benchmark)
     for p in [run_parser, benchmark_parser]:
         workflow_group = p.add_argument_group("Workflow Configuration")
         workflow_group.add_argument(
             "--workflow",
             type=str,
-            help="Workflow planning strategy (can be builtin: fixed, reflection, dynamic, empty or custom plan name)",
+            help=(
+                "Workflow planning strategy (can be builtin: fixed, empty, chat_agentic, "
+                "gen_sql_agentic or custom plan name)"
+            ),
         )
         workflow_group.add_argument("--max_steps", type=int, default=20, help="Maximum workflow steps")
         workflow_group.add_argument("--load_cp", type=str, help="Load workflow from checkpoint file")

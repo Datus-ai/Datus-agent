@@ -10,17 +10,11 @@
 workflow:
   plan: planA
 
-planA:
-  - schema_linking
-  - gen_sql
-  - output
+  planA:
+    - schema_linking
+    - gen_sql
+    - output
 
-planB:
-  - schema_linking
-  - gen_sql
-  - execute_sql
-  - reflect
-  - output
 ```
 
 ## 基础配置
@@ -30,23 +24,22 @@ planB:
 workflow:
   plan: basic_sql
 
-basic_sql:
-  - schema_linking
-  - gen_sql
-  - output
+  basic_sql:
+    - schema_linking
+    - gen_sql
+    - output
 ```
 
-### 含执行与反思
-```yaml title="Workflow with Execution and Reflection"
+### 含执行步骤
+```yaml title="Workflow with Execution"
 workflow:
   plan: with_execution
 
-with_execution:
-  - schema_linking
-  - gen_sql
-  - execute_sql
-  - reflect
-  - output
+  with_execution:
+    - schema_linking
+    - gen_sql
+    - execute_sql
+    - output
 ```
 
 ## 高级特性
@@ -59,14 +52,14 @@ with_execution:
 workflow:
   plan: parallel_generation
 
-parallel_generation:
-  - schema_linking
-  - parallel:
-      - gen_sql
-      - reasoning
-  - selection
-  - execute_sql
-  - output
+  parallel_generation:
+    - schema_linking
+    - parallel:
+        - gen_sql
+        - gen_sql
+    - selection
+    - execute_sql
+    - output
 ```
 
 ### 子工作流
@@ -74,27 +67,24 @@ parallel_generation:
 workflow:
   plan: multi_approach
 
-multi_approach:
-  - schema_linking
-  - parallel:
-      - subworkflow1
-      - subworkflow2
-      - subworkflow3
-  - selection
-  - execute_sql
-  - output
+  multi_approach:
+    - schema_linking
+    - parallel:
+        - subworkflow1
+        - subworkflow2
+        - subworkflow3
+    - selection
+    - execute_sql
+    - output
 
-subworkflow1:
-  - search_metrics
-  - gen_sql
+  subworkflow1:
+    - gen_sql
 
-subworkflow2:
-  - search_metrics
-  - reasoning
+  subworkflow2:
+    - gen_sql
 
-subworkflow3:
-  - reasoning
-  - reflect
+  subworkflow3:
+    - gen_sql
 ```
 
 ### 子工作流独立配置
@@ -102,46 +92,33 @@ subworkflow3:
 workflow:
   plan: multi_agent
 
-multi_agent:
-  - schema_linking
-  - parallel:
-      - subworkflow1
-      - subworkflow2
-      - subworkflow3
-  - selection
-  - execute_sql
-  - output
+  multi_agent:
+    - schema_linking
+    - parallel:
+        - subworkflow1
+        - subworkflow2
+        - subworkflow3
+    - selection
+    - execute_sql
+    - output
 
-subworkflow1:
-  steps:
-    - search_metrics
-    - gen_sql
-  config: multi/agent1.yaml
+  subworkflow1:
+    steps:
+      - gen_sql
+    config: multi/agent1.yaml
 
-subworkflow2:
-  steps:
-    - search_metrics
-    - reasoning
-  config: multi/agent2.yaml
+  subworkflow2:
+    steps:
+      - gen_sql
+    config: multi/agent2.yaml
 
-subworkflow3:
-  steps:
-    - reasoning
-    - reflect
-  config: multi/agent3.yaml
+  subworkflow3:
+    steps:
+      - gen_sql
+    config: multi/agent3.yaml
 ```
 
 ## 内置计划
-
-=== "reflection"
-```yaml
-reflection:
-  - schema_linking
-  - gen_sql
-  - execute_sql
-  - reflect
-  - output
-```
 
 === "fixed"
 ```yaml
@@ -152,39 +129,23 @@ fixed:
   - output
 ```
 
-=== "metric_to_sql"
+=== "chat_agentic"
 ```yaml
-metric_to_sql:
-  - schema_linking
-  - search_metrics
-  - date_parser
-  - gen_sql
+chat_agentic:
+  - chat
   - execute_sql
-  - reflect
   - output
 ```
 
-## 反思触发的备用计划
-```yaml title="Reflection Nodes Configuration"
-reflection_nodes:
-  schema_linking:
-    - schema_linking
-    - gen_sql
-    - execute_sql
-    - reflect
+=== "gen_sql_agentic"
+```yaml
+gen_sql_agentic:
+  - gen_sql
+  - execute_sql
+  - output
+```
 
-  doc_search:
-    - doc_search
-    - gen_sql
-    - execute_sql
-    - reflect
-
-  simple_regenerate:
-    - execute_sql
-    - reflect
-
-  reasoning:
-    - reasoning
-    - execute_sql
-    - reflect
+=== "empty"
+```yaml
+empty: []
 ```

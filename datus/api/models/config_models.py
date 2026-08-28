@@ -124,7 +124,6 @@ class AgentConfigData(BaseModel):
     metrics: Optional[Dict[str, Dict]] = Field(None, description="Metrics configurations")
     storage: Optional[StorageConfig] = Field(None, description="Storage configuration")
     workflow: Optional[Dict] = Field(None, description="Workflow configuration")
-    reflection_nodes: Optional[Dict[str, List]] = Field(None, description="Reflection nodes configuration")
 
 
 class UpdateAgentConfigInput(BaseModel):

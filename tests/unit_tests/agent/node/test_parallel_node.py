@@ -215,7 +215,7 @@ class TestParallelNodeSetupInput:
     """Test setup_input."""
 
     def test_setup_input_valid_action_types(self):
-        node = make_node(ParallelInput(child_nodes=["gen_sql", "reasoning"]))
+        node = make_node(ParallelInput(child_nodes=["gen_sql", "execute_sql"]))
         workflow = MagicMock()
 
         result = node.setup_input(workflow)

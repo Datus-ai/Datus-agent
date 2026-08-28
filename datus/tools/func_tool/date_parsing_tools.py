@@ -41,14 +41,7 @@ class DateParsingTools:
 
     def _get_language_setting(self) -> str:
         """Get the language setting from agent config."""
-        if self.agent_config and hasattr(self.agent_config, "nodes"):
-            nodes_config = self.agent_config.nodes
-            if "date_parser" in nodes_config:
-                date_parser_config = nodes_config["date_parser"]
-                # Check if language is in the input attribute of NodeConfig
-                if hasattr(date_parser_config, "input") and hasattr(date_parser_config.input, "language"):
-                    return date_parser_config.input.language
-        return "en"
+        return getattr(self.agent_config, "date_parsing_language", "en") if self.agent_config else "en"
 
     def available_tools(self) -> List[Tool]:
         """Get all available date parsing function tools."""

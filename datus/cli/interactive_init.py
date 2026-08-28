@@ -69,8 +69,8 @@ class InteractiveInit:
                 },
                 "nodes": {
                     "schema_linking": {"matching_rate": "fast"},
-                    "date_parser": {"language": "en"},
                 },
+                "date_parsing": {"language": "en"},
             }
         }
         # Staged project-level target; written to ``./.datus/config.yml`` at

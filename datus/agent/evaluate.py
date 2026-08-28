@@ -30,7 +30,6 @@ def setup_node_input(node, workflow):
 def update_context_from_node(node: Node, workflow: Workflow) -> Dict:
     if (
         node.type in NodeType.ACTION_TYPES
-        or node.type == NodeType.TYPE_REFLECT
         or node.type == NodeType.TYPE_PARALLEL
         or node.type == NodeType.TYPE_SELECTION
         or node.type == NodeType.TYPE_SUBWORKFLOW
