@@ -16,9 +16,15 @@ MODULE_SPEC.loader.exec_module(verify_sources)
 
 
 # Registration shape a healthy nightly checkout produces, per db_type.
-_PARSER_DIALECTS = {"hologres": "postgres", "gaussdb": "postgres", "oracle": "oracle", "tidb": "mysql"}
-_IDENTIFIER_PARSER_ADAPTERS = {"hologres", "gaussdb"}
-_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "oracle", "tidb"}
+_PARSER_DIALECTS = {
+    "hologres": "postgres",
+    "gaussdb": "postgres",
+    "maxcompute": "hive",
+    "oracle": "oracle",
+    "tidb": "mysql",
+}
+_IDENTIFIER_PARSER_ADAPTERS = {"hologres", "gaussdb", "maxcompute"}
+_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "maxcompute", "oracle", "tidb"}
 
 
 class _FakeDistribution:
@@ -51,6 +57,14 @@ class _FakeDialectOperations:
         return 0
 
 
+def _fake_identifier_parser(_identifier):
+    return {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": "table"}
+
+
+def _identifier_parser_for(db_type):
+    return _fake_identifier_parser if db_type in _IDENTIFIER_PARSER_ADAPTERS else None
+
+
 def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_path):
     external_root = tmp_path / "external"
     distributions = {
@@ -68,6 +82,18 @@ def test_expected_sources_include_the_tidb_checkout_path():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-tidb"] == "datus-db-adapters/datus-tidb"
 
 
+def test_expected_sources_include_the_maxcompute_checkout_path():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
+
+
+def test_maxcompute_contract_requires_dialect_and_sql_guidance_hooks():
+    contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_maxcompute"]
+
+    assert contract.db_type == "maxcompute"
+    assert contract.parser_dialect == "hive"
+    assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
+
+
 def test_expected_sources_include_storage_packages():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-base"] == ("datus-storage-adapters/datus-storage-base")
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-postgresql"] == (
@@ -83,6 +109,7 @@ def test_managed_p0_plugins_are_not_required_as_global_packages():
 def test_expected_sources_include_new_database_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-doris"] == "datus-db-adapters/datus-doris"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-hologres"] == "datus-db-adapters/datus-hologres"
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-oracle"] == "datus-db-adapters/datus-oracle"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-gaussdb"] == "datus-db-adapters/datus-gaussdb"
 
@@ -101,7 +128,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
@@ -109,6 +136,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -122,7 +150,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: None if db_type == "hologres" else _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
@@ -130,6 +158,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -160,7 +189,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
             None
             if db_type not in _IDENTIFIER_PARSER_ADAPTERS
             or (db_type == "hologres" and missing_hook == "get_identifier_parser")
-            else object()
+            else _fake_identifier_parser
         ),
         get_sql_generation_notes=lambda db_type: (
             None if db_type == "hologres" and missing_hook == "get_sql_generation_notes" else "notes"
@@ -171,6 +200,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -180,11 +210,35 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
     assert verify_sources.verify_database_adapter_imports() == [expected_error]
 
 
+def test_verify_database_adapter_imports_rejects_non_callable_maxcompute_identifier_parser(monkeypatch):
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type == "maxcompute" else _identifier_parser_for(db_type),
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == [
+        "datus_maxcompute registered non-callable get_identifier_parser"
+    ]
+
+
 def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda _db_type: None,
     )
@@ -192,6 +246,7 @@ def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch)
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
@@ -207,7 +262,7 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: operations if db_type == "oracle" else None,
     )
@@ -215,6 +270,7 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
         "datus_db_core": SimpleNamespace(connector_registry=registry),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),

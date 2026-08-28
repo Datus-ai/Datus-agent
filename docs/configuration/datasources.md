@@ -98,6 +98,26 @@ when the private key is encrypted. The adapter uses Snowflake JWT authentication
 Snowflake uses a `database` + `schema` namespace. Leave `catalog` unset for Snowflake; catalog filters are for
 catalog-aware engines such as StarRocks.
 
+### MaxCompute
+
+```yaml
+my_maxcompute:
+  type: maxcompute
+  database: ${MAXCOMPUTE_PROJECT}
+  endpoint: ${MAXCOMPUTE_ENDPOINT}
+  access_key_id: ${MAXCOMPUTE_ACCESS_KEY_ID}
+  access_key_secret: ${MAXCOMPUTE_ACCESS_KEY_SECRET}
+  # schema: default               # Optional; schema-enabled projects only
+  namespace_mode: auto            # auto, two_level, or three_level
+  # quota_name: ${MAXCOMPUTE_QUOTA_NAME}
+  # tunnel_endpoint: ${MAXCOMPUTE_TUNNEL_ENDPOINT}
+  # query_timeout_seconds: 600
+```
+
+`database` names the MaxCompute project. Leave `schema` unset for two-level projects; schema-enabled projects default
+to the `default` schema. A datasource has no catalog and stays within its configured project. See
+[Database Adapters](../adapters/db_adapters.md#maxcompute) for namespace and endpoint details.
+
 ### StarRocks
 ```yaml
 my_starrocks:

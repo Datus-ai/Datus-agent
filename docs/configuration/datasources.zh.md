@@ -98,6 +98,26 @@ Snowflake 支持密码认证和 key-pair 认证。托管/SaaS 场景推荐把 PE
 Snowflake 使用 `database` + `schema` 命名空间。Snowflake 不要配置 `catalog`；`catalog` 过滤只适用于
 StarRocks 等支持 catalog 的引擎。
 
+### MaxCompute
+
+```yaml
+my_maxcompute:
+  type: maxcompute
+  database: ${MAXCOMPUTE_PROJECT}
+  endpoint: ${MAXCOMPUTE_ENDPOINT}
+  access_key_id: ${MAXCOMPUTE_ACCESS_KEY_ID}
+  access_key_secret: ${MAXCOMPUTE_ACCESS_KEY_SECRET}
+  # schema: default               # 可选；仅三层模型项目使用
+  namespace_mode: auto            # auto、two_level 或 three_level
+  # quota_name: ${MAXCOMPUTE_QUOTA_NAME}
+  # tunnel_endpoint: ${MAXCOMPUTE_TUNNEL_ENDPOINT}
+  # query_timeout_seconds: 600
+```
+
+`database` 对应 MaxCompute 项目。两层模型不要配置 `schema`；开启 schema 的项目未配置时默认使用
+`default`。datasource 不使用 catalog，且查询范围保持在配置的项目内。命名空间与 endpoint 说明见
+[数据库适配器](../adapters/db_adapters.zh.md#maxcompute)。
+
 ### StarRocks
 
 ```yaml

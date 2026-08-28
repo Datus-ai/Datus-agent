@@ -54,7 +54,7 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 
 ### 开放与治理
 
-- **开放生态**：[15 种数据库适配器](https://docs.datus.ai/zh/latest/adapters/db_adapters/)、10+ LLM 提供商，以及 [MCP](https://docs.datus.ai/zh/latest/integration/mcp/) 服务端与客户端。
+- **开放生态**：[17 种数据库适配器](https://docs.datus.ai/zh/latest/adapters/db_adapters/)、10+ LLM 提供商，以及 [MCP](https://docs.datus.ai/zh/latest/integration/mcp/) 服务端与客户端。
 - **外部生态对接**：[Plugin](https://docs.datus.ai/zh/latest/plugin/introduction/) 框架把第三方平台和公司内部工具接入 Agent，一份 `datus-plugin.yml` 清单即可声明 CLI 命令、Skill 和 prompt 上下文，按项目启用。
 - **[Skill](https://docs.datus.ai/zh/latest/skills/introduction/)**：遵循 agentskills.io 约定的打包工具，支持从 marketplace 安装。
 - **企业级治理**：权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，[trace](https://docs.datus.ai/zh/latest/develop/observability/) 可导出到任意 OTLP 平台。

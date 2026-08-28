@@ -29,6 +29,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | Apache Doris | datus-doris | `pip install datus-doris` | 可用 |
 | TiDB | datus-tidb | `pip install datus-tidb` | 可用 |
 | Hologres | datus-hologres | `pip install datus-hologres` | 可用 |
+| MaxCompute | datus-maxcompute | `pip install datus-maxcompute` | 可用 |
 | Oracle | datus-oracle | `pip install datus-oracle` | 可用 |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | 可用（Linux 和 macOS） |
 
@@ -72,6 +73,9 @@ pip install datus-doris
 
 # Hologres
 pip install datus-hologres
+
+# MaxCompute
+pip install datus-maxcompute
 
 # Oracle
 pip install datus-oracle
@@ -160,6 +164,30 @@ warehouse:
 ```
 
 Snowflake 支持密码认证和 key-pair 认证。可以配置 `private_key`，或在没有 `private_key` 时配置 `password` 和 `private_key_file` 其中一个。`private_key` 会优先于 `private_key_file` 和 `password`；私钥加密时再配置 `private_key_file_pwd`。Snowflake 使用 `database` 和 `schema`，不要为 Snowflake 配置 `catalog`。
+
+### MaxCompute
+
+```yaml
+maxcompute_data:
+  type: maxcompute
+  database: ${MAXCOMPUTE_PROJECT}
+  endpoint: ${MAXCOMPUTE_ENDPOINT}
+  access_key_id: ${MAXCOMPUTE_ACCESS_KEY_ID}
+  access_key_secret: ${MAXCOMPUTE_ACCESS_KEY_SECRET}
+  # schema: default               # 可选；仅三层模型项目使用
+  namespace_mode: auto            # auto、two_level 或 three_level
+  # quota_name: ${MAXCOMPUTE_QUOTA_NAME}
+  # tunnel_endpoint: ${MAXCOMPUTE_TUNNEL_ENDPOINT}
+  # timeout_seconds: 30
+  # query_timeout_seconds: 600
+```
+
+`database` 对应 MaxCompute 项目。每个 datasource 只绑定一个项目，不使用 catalog，也不会生成跨项目 SQL。
+两层模型使用 `project.table`，此时不要配置 `schema`；开启 schema 的三层模型使用
+`project.schema.table`，未配置 `schema` 时默认为 `default`。通常保持 `namespace_mode: auto`，只有当前身份
+无法探测 schema 能力时才显式设置。`endpoint` 是 MaxCompute 服务 endpoint；仅当 Instance Tunnel 使用
+不同地址时再单独配置 `tunnel_endpoint`。其他高级执行配置包括 `timeout_seconds`、
+`query_timeout_seconds` 和 `default_hints`。
 
 ### StarRocks
 

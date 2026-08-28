@@ -222,6 +222,7 @@ jobs:
             --reinstall-package datus-doris \
             --reinstall-package datus-tidb \
             --reinstall-package datus-hologres \
+            --reinstall-package datus-maxcompute \
             --reinstall-package datus-oracle \
             --reinstall-package datus-gaussdb \
             --reinstall-package datus-storage-base \
@@ -243,6 +244,7 @@ jobs:
             ./external/datus-db-adapters/datus-doris \
             ./external/datus-db-adapters/datus-tidb \
             ./external/datus-db-adapters/datus-hologres \
+            ./external/datus-db-adapters/datus-maxcompute \
             ./external/datus-db-adapters/datus-oracle \
             ./external/datus-db-adapters/datus-trino \
             ./external/datus-db-adapters/datus-greenplum \

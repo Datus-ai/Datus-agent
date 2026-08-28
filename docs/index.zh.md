@@ -50,7 +50,7 @@ Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://dosi.dat
 ### Plugin 生态与治理
 
 - [Plugin](plugin/introduction.zh.md) 框架把第三方平台和公司内部工具接入 Agent：一份 `datus-plugin.yml` 清单声明 CLI 命令、Skill 和 prompt 上下文，按项目启用。
-- 适配器覆盖 [15 种数据库](adapters/db_adapters.zh.md)和 10+ LLM 提供商，另有 [MCP](integration/mcp.zh.md) 服务端与客户端；[Skill](skills/introduction.zh.md) 遵循 agentskills.io 约定，支持从 marketplace 安装。
+- 适配器覆盖 [17 种数据库](adapters/db_adapters.zh.md)和 10+ LLM 提供商，另有 [MCP](integration/mcp.zh.md) 服务端与客户端；[Skill](skills/introduction.zh.md) 遵循 agentskills.io 约定，支持从 marketplace 安装。
 - 治理上，权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，[trace](develop/observability.zh.md) 可导出到任意 OTLP 平台。
 
 ![开放生态：安装 plugin，接入现有技术栈](assets/ecosystem_plugins.svg)
