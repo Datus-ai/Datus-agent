@@ -113,7 +113,9 @@ my_bigquery:
 
 `catalog` maps to the Google Cloud project and `database` maps to the BigQuery dataset. Leave `schema` unset. Configure
 only one of `credentials_path`, `credentials_info`, or `credentials_base64`; omit all three to use Application Default
-Credentials. See [Database Adapters](../adapters/db_adapters.md#google-bigquery) for credential and namespace details.
+Credentials. In YAML, `credentials_info` must be a mapping, not a quoted JSON string. See
+[Database Adapters](../adapters/db_adapters.md#google-bigquery) for correct and incorrect examples, the GitHub Secret
+flow, and detailed credential and namespace guidance.
 
 ### MaxCompute
 

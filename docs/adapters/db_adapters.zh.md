@@ -189,6 +189,41 @@ bigquery_data:
 `credentials_info` 中直接粘贴 service-account JSON；YAML 配置则应把该字段写成 mapping，而不是 JSON 字符串。
 三者都不配置时，Google client 会使用 Application Default Credentials。
 
+下面的 `credentials_info` 是 YAML mapping。请保留下载的 service-account JSON 文件中的全部字段；示例值均为
+占位符：
+
+```yaml
+bigquery_data:
+  type: bigquery
+  catalog: your-gcp-project-id
+  database: your_dataset
+  credentials_info:
+    type: service_account
+    project_id: your-gcp-project-id
+    private_key_id: your-private-key-id
+    private_key: |
+      -----BEGIN PRIVATE KEY-----
+      REPLACE_WITH_THE_PRIVATE_KEY_BODY
+      -----END PRIVATE KEY-----
+    client_email: datus-ci@your-gcp-project-id.iam.gserviceaccount.com
+    client_id: "123456789012345678901"
+    auth_uri: https://accounts.google.com/o/oauth2/auth
+    token_uri: https://oauth2.googleapis.com/token
+    auth_provider_x509_cert_url: https://www.googleapis.com/oauth2/v1/certs
+    client_x509_cert_url: https://www.googleapis.com/robot/v1/metadata/x509/...
+```
+
+不要给整个 JSON object 加引号：
+
+```yaml
+# 错误：这是一个 YAML 字符串，不是 mapping。
+credentials_info: '{"type":"service_account","project_id":"your-gcp-project-id"}'
+```
+
+GitHub cloud test 使用另一条环境变量链路：把原始 JSON 文件的完整内容保存到 repository secret
+`BIGQUERY_CREDENTIALS_INFO`。测试 fixture 会先调用 `json.loads()` 把字符串解析成 object，再创建 adapter 配置。
+普通 Agent YAML 如果对接只能保存字符串的 secret store，建议改用 `credentials_base64`。Base64 只是编码，不是加密。
+
 ### MaxCompute
 
 ```yaml

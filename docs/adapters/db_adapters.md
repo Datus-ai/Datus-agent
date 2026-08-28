@@ -196,6 +196,42 @@ stores can provide `credentials_base64`. The datasource form accepts a service-a
 `credentials_info`; in YAML, provide that field as a mapping rather than a JSON string. When none is configured, the
 Google client uses Application Default Credentials.
 
+For example, this is a YAML mapping. Preserve all fields from the downloaded service-account JSON file; the values
+below are placeholders:
+
+```yaml
+bigquery_data:
+  type: bigquery
+  catalog: your-gcp-project-id
+  database: your_dataset
+  credentials_info:
+    type: service_account
+    project_id: your-gcp-project-id
+    private_key_id: your-private-key-id
+    private_key: |
+      -----BEGIN PRIVATE KEY-----
+      REPLACE_WITH_THE_PRIVATE_KEY_BODY
+      -----END PRIVATE KEY-----
+    client_email: datus-ci@your-gcp-project-id.iam.gserviceaccount.com
+    client_id: "123456789012345678901"
+    auth_uri: https://accounts.google.com/o/oauth2/auth
+    token_uri: https://oauth2.googleapis.com/token
+    auth_provider_x509_cert_url: https://www.googleapis.com/oauth2/v1/certs
+    client_x509_cert_url: https://www.googleapis.com/robot/v1/metadata/x509/...
+```
+
+Do not quote the entire JSON object:
+
+```yaml
+# Wrong: this is one YAML string, not a mapping.
+credentials_info: '{"type":"service_account","project_id":"your-gcp-project-id"}'
+```
+
+The GitHub cloud test is a separate environment-variable flow: store the original JSON file contents in the
+`BIGQUERY_CREDENTIALS_INFO` repository secret. The test fixture parses that string with `json.loads()` before creating
+the adapter config. For normal Agent YAML backed by a string-only secret store, prefer `credentials_base64` instead.
+Base64 is an encoding, not encryption.
+
 ### MaxCompute
 
 ```yaml
