@@ -215,7 +215,7 @@ class TestNodeRun:
 
         assert actions == []
         assert node.status == "completed"
-        assert node.result is result
+        assert node.result == result
 
     def test_run_fails_on_exception(self):
         node = Node.new_instance("run_fail", "Test", NodeType.TYPE_SCHEMA_LINKING, agent_config=self.agent_config)
