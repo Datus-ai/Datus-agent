@@ -2187,21 +2187,17 @@ class TestAgentConfigPolicyContext:
         assert cfg.workflow_plan == "fixed"
 
     @pytest.mark.parametrize(
-        "legacy_config",
-        [
-            {"reflection_nodes": {}},
-            {"workflow": {"plan": "reflection"}},
-            {"workflow": {"plan": "dynamic"}},
-        ],
+        ("configured", "expected"),
+        [(None, "en"), ("en", "en"), ("zh", "zh"), ("cn", "zh")],
     )
-    def test_legacy_workflow_config_is_rejected(self, tmp_path, legacy_config):
+    def test_date_parsing_language_config(self, tmp_path, configured, expected):
         kwargs = self._base_kwargs(tmp_path)
-        kwargs.update(legacy_config)
+        if configured is not None:
+            kwargs["date_parsing"] = {"language": configured}
 
-        with pytest.raises(DatusException, match="has been removed") as exc_info:
-            AgentConfig(**kwargs)
+        config = AgentConfig(**kwargs)
 
-        assert exc_info.value.code == ErrorCode.COMMON_CONFIG_ERROR
+        assert config.date_parsing_language == expected
 
 
 class TestServicesConfigFromDict:

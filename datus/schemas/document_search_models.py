@@ -8,10 +8,6 @@ from pydantic import Field, field_validator
 
 from datus.schemas.base import BaseInput, BaseResult
 
-# =============================================================================
-# Document Search Models
-# =============================================================================
-
 
 class DocSearchInput(BaseInput):
     """Input model for document search."""
@@ -38,11 +34,6 @@ class DocSearchResult(BaseResult):
     doc_count: int = Field(0, description="Total number of documents found")
 
 
-# =============================================================================
-# Document Navigation Models
-# =============================================================================
-
-
 class DocNavInput(BaseInput):
     """Input model for listing document navigation structure."""
 
@@ -60,11 +51,6 @@ class DocNavResult(BaseResult):
         description="Navigation tree with titles and hierarchy",
     )
     total_docs: int = Field(0, description="Total number of unique documents")
-
-
-# =============================================================================
-# Get Document Models
-# =============================================================================
 
 
 class GetDocInput(BaseInput):

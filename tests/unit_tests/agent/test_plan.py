@@ -62,11 +62,6 @@ class TestLoadBuiltinWorkflowConfig:
         assert isinstance(config, dict)
         assert "workflow" in config
 
-    def test_removed_workflows_do_not_exist(self):
-        config = load_builtin_workflow_config()
-        assert "reflection" not in config["workflow"]
-        assert "dynamic" not in config["workflow"]
-
     def test_fixed_workflow_exists(self):
         config = load_builtin_workflow_config()
         assert "fixed" in config["workflow"]
@@ -78,15 +73,6 @@ class TestLoadBuiltinWorkflowConfig:
 
 
 class TestCreateSingleNode:
-    @pytest.mark.parametrize(
-        "node_type",
-        ["reason_sql", "reasoning_sql", "reason", "reasoning", "reflection", "reflect"],
-    )
-    def test_removed_node_aliases_raise_migration_error(self, node_type):
-        task = _sql_task()
-        with pytest.raises(ValueError, match="has been removed.*fixed.*gen_sql"):
-            _create_single_node(node_type, "node_x", task)
-
     def test_execute_alias(self):
         task = _sql_task()
         node = _create_single_node("execute", "node_x", task)
@@ -326,12 +312,6 @@ class TestGenerateWorkflow:
         assert isinstance(wf, Workflow)
         assert wf.name == "SQL Query Workflow (fixed)"
 
-    @pytest.mark.parametrize("plan_type", ["reflection", "dynamic"])
-    def test_removed_workflow_names_raise_migration_error(self, plan_type):
-        task = _sql_task()
-        with _patched_workflow(), pytest.raises(ValueError, match="has been removed.*fixed"):
-            generate_workflow(task, plan_type=plan_type)
-
     def test_no_agent_config_raises_for_invalid_plan(self):
         task = _sql_task()
         with _patched_workflow():
@@ -346,5 +326,5 @@ class TestGenerateWorkflow:
                 generate_workflow(task, plan_type="bad_plan", agent_config=cfg)
         assert (
             str(exc_info.value) == "Invalid plan type 'bad_plan'. Available builtin workflows: ['fixed', 'empty', "
-            "'metric_to_sql', 'chat_agentic', 'gen_sql_agentic'], custom workflows: ['c1']"
+            "'chat_agentic', 'gen_sql_agentic'], custom workflows: ['c1']"
         )

@@ -71,10 +71,6 @@ class TestNodeInstantiation:
         node = Node.new_instance("n11", "desc", NodeType.TYPE_SUBWORKFLOW, agent_config=self.agent_config)
         assert node.type == NodeType.TYPE_SUBWORKFLOW
 
-    def test_new_instance_date_parser(self):
-        node = Node.new_instance("n12", "desc", NodeType.TYPE_DATE_PARSER, agent_config=self.agent_config)
-        assert node.type == NodeType.TYPE_DATE_PARSER
-
     def test_new_instance_hitl(self):
         node = Node.new_instance("n13", "desc", NodeType.TYPE_HITL, agent_config=self.agent_config)
         assert node.type == NodeType.TYPE_HITL

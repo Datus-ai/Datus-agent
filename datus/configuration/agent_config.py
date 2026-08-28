@@ -744,7 +744,7 @@ class AgentConfig:
     nodes: Dict[str, NodeConfig]
     rag_base_path: str
     schema_linking_rate: str
-    search_metrics_rate: str
+    date_parsing_language: str
     _save_dir: str
     _current_datasource: str
     _project_name: str
@@ -1052,7 +1052,21 @@ class AgentConfig:
 
         self.benchmark_configs: Dict[str, BenchmarkConfig] = {}
         self.schema_linking_rate = kwargs.get("schema_linking_rate", "fast")
-        self.search_metrics_rate = kwargs.get("search_metrics_rate", "fast")
+        date_parsing_config = kwargs.get("date_parsing", {}) or {}
+        if not isinstance(date_parsing_config, dict):
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message="agent.date_parsing must be a mapping",
+            )
+        date_parsing_language = date_parsing_config.get("language", "en")
+        if date_parsing_language == "cn":
+            date_parsing_language = "zh"
+        if date_parsing_language not in {"en", "zh"}:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message="agent.date_parsing.language must be one of: en, zh",
+            )
+        self.date_parsing_language = date_parsing_language
         # Response language for model outputs (user-facing text). ``None`` (the
         # default) means the model picks its own language per turn; set a code
         # like "en"/"zh" in agent.yml or via ``StreamChatInput.language`` to pin
@@ -1065,12 +1079,15 @@ class AgentConfig:
         # Initialize workflow configuration
         workflow_config = kwargs.get("workflow", {})
         self.workflow_plan = workflow_config.get("plan", "fixed")
-        if self.workflow_plan in {"reflection", "dynamic"}:
+        if self.workflow_plan in {"reflection", "dynamic", "metric_to_sql"}:
+            replacement = (
+                "use the gen_sql_agentic workflow and configure the required function tools instead"
+                if self.workflow_plan == "metric_to_sql"
+                else "use the fixed workflow instead"
+            )
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
-                message=(
-                    f"agent.workflow.plan '{self.workflow_plan}' has been removed; use the fixed workflow instead"
-                ),
+                message=f"agent.workflow.plan '{self.workflow_plan}' has been removed; {replacement}",
             )
 
         # Process custom workflows with enhanced config support
@@ -2324,16 +2341,19 @@ class AgentConfig:
 
         if kwargs.get("schema_linking_rate", ""):
             self.schema_linking_rate = kwargs["schema_linking_rate"]
-        if kwargs.get("search_metrics_rate", ""):
-            self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("kb_search_mode", ""):
             self.kb_search = KbSearchConfig.from_dict({"mode": kwargs["kb_search_mode"]})
             self.kb_search_mode = self.kb_search.mode
         if kwargs.get("plan", ""):
-            if kwargs["plan"] in {"reflection", "dynamic"}:
+            if kwargs["plan"] in {"reflection", "dynamic", "metric_to_sql"}:
+                replacement = (
+                    "use gen_sql_agentic and configure the required function tools instead"
+                    if kwargs["plan"] == "metric_to_sql"
+                    else "use the fixed workflow instead"
+                )
                 raise DatusException(
                     ErrorCode.COMMON_CONFIG_ERROR,
-                    message=f"Workflow '{kwargs['plan']}' has been removed; use the fixed workflow instead",
+                    message=f"Workflow '{kwargs['plan']}' has been removed; {replacement}",
                 )
             self.workflow_plan = kwargs["plan"]
         if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "service", "platform-doc"]:

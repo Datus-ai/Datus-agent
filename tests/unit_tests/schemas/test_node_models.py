@@ -326,11 +326,10 @@ class TestSQLContext:
         assert d["sql_query"] == "SELECT 1"
         assert d["row_count"] == 5
 
-    def test_accepts_legacy_assistant_analysis_alias(self):
-        ctx = SQLContext(sql_query="SELECT 1", reflection_explanation="legacy analysis")
-        assert ctx.assistant_analysis == "legacy analysis"
-        assert ctx.to_dict()["assistant_analysis"] == "legacy analysis"
-        assert "reflection_explanation" not in ctx.to_dict()
+    def test_assistant_analysis(self):
+        ctx = SQLContext(sql_query="SELECT 1", assistant_analysis="analysis")
+        assert ctx.assistant_analysis == "analysis"
+        assert ctx.to_dict()["assistant_analysis"] == "analysis"
 
     def test_to_str_contains_sql(self):
         ctx = SQLContext(sql_query="SELECT * FROM t", sql_return="a,b\n1,2", row_count=1)
@@ -448,14 +447,6 @@ class TestContext:
         ctx.update_metrics([m])
         assert len(ctx.metrics) == 1
 
-    def test_update_document_result(self):
-        from unittest.mock import MagicMock
-
-        ctx = Context()
-        doc_result = MagicMock()
-        ctx.update_document_result(doc_result)
-        assert ctx.document_result is doc_result
-
     def test_update_parallel_results(self):
         ctx = Context()
         ctx.update_parallel_results({"task1": "result1"})
@@ -487,11 +478,6 @@ class TestContext:
         new_ctx = SQLContext(sql_query="new")
         ctx.update_last_sql_context(new_ctx)
         assert ctx.sql_contexts[-1].sql_query == "new"
-
-    def test_update_doc_search_keywords(self):
-        ctx = Context()
-        ctx.update_doc_search_keywords(["revenue", "sales"])
-        assert ctx.doc_search_keywords == ["revenue", "sales"]
 
 
 # ---------------------------------------------------------------------------

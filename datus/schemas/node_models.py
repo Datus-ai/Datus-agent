@@ -14,7 +14,6 @@ import pyarrow as pa
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
-from datus.schemas.doc_search_node_models import DocSearchResult
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
@@ -541,8 +540,6 @@ class Context(BaseModel):
     table_schemas: List[TableSchema] = Field(default_factory=list, description="The table schemas")
     table_values: List[TableValue] = Field(default_factory=list, description="The table values")
     metrics: List[Metric] = Field(default_factory=list, description="The metrics")
-    doc_search_keywords: List[str] = Field(default_factory=list, description="The document search keywords")
-    document_result: Optional[DocSearchResult] = Field(default=None, description="The document result")
     parallel_results: Optional[Dict[str, Any]] = Field(default=None, description="Results from parallel node execution")
     last_selected_result: Optional[Any] = Field(
         default=None, description="The last selected result from selection node"
@@ -564,12 +561,6 @@ class Context(BaseModel):
 
     def update_metrics(self, metrics: List[Metric]):
         self.metrics = metrics
-
-    def update_document_result(self, document_result: DocSearchResult):
-        self.document_result = document_result
-
-    def update_doc_search_keywords(self, doc_search_keywords: List[str]):
-        self.doc_search_keywords = doc_search_keywords
 
     def update_parallel_results(self, parallel_results: Dict[str, Any]):
         self.parallel_results = parallel_results

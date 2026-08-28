@@ -73,24 +73,9 @@
 - **要点**：识别维度与度量、定义表语义、生成可复用模型
 - **输出**：面向 BI 的语义模型定义
 
-#### Search Metrics（搜索指标）
-- **用途**：查找相关业务指标
-- **场景**：复用既有口径，确保一致性
-
 #### Compare（对比）
 - **用途**：将 SQL 结果与预期对比
 - **场景**：测试、验证与质检
-
-#### Date Parser（时间解析）
-- **用途**：解析时间表达
-- **示例**：
-  - “last month” → 具体日期范围
-  - “Q3 2023” → 季度边界
-  - “past 7 days” → 滚动窗口
-
-#### Document Search（文档检索）
-- **用途**：查找相关文档与上下文
-- **场景**：为复杂问题补充领域知识
 
 ### 3. Agentic 类节点
 
@@ -104,6 +89,14 @@
   - 上下文保持
   - 自适应回复
 - **场景**：交互式 SQL 生成与迭代
+
+### 4. 函数工具
+
+指标检索、日期解析和平台文档检索以函数工具形式提供给 agentic 节点，不再是独立工作流节点：
+
+- `context_search_tools.search_metrics`：查找相关业务指标
+- `date_parsing_tools.parse_temporal_expressions`：解析“last month”等时间表达式
+- `platform_doc_tools.search_document`：检索已建立索引的平台文档
 
 ## 实现要点
 
@@ -121,7 +114,6 @@ class Context:
     sql_contexts: List[SQLContext]
     table_schemas: List[TableSchema]
     metrics: List[BusinessMetric]
-    documents: List[Document]
 ```
 
 ### 错误处理

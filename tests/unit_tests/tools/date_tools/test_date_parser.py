@@ -293,7 +293,7 @@ class TestGenerateDateContext:
         assert result == ""
 
     def test_formats_range_date(self):
-        from datus.schemas.date_parser_node_models import ExtractedDate
+        from datus.schemas.date_parser_models import ExtractedDate
 
         tool = _make_tool()
         date = ExtractedDate(
@@ -310,7 +310,7 @@ class TestGenerateDateContext:
         assert "2023-12-31" in result
 
     def test_formats_specific_date(self):
-        from datus.schemas.date_parser_node_models import ExtractedDate
+        from datus.schemas.date_parser_models import ExtractedDate
 
         tool = _make_tool()
         date = ExtractedDate(

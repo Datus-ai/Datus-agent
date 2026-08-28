@@ -92,7 +92,7 @@ Execute a workflow to convert natural language to SQL.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `workflow` | string | ✅ | Workflow name (`fixed`, `metric_to_sql`, `chat_agentic`, or `gen_sql_agentic`) |
+| `workflow` | string | ✅ | Workflow name (`fixed`, `chat_agentic`, or `gen_sql_agentic`) |
 | `datasource` | string | ✅ | Database datasource |
 | `task` | string | ✅ | Natural language task description |
 | `mode` | string | ✅ | Execution mode (sync or async) |
@@ -236,14 +236,6 @@ Submit feedback on workflow execution quality.
 - Predictable execution path
 - No adaptive behavior
 - Best for well-understood queries
-
-### metric_to_sql
-
-**Generate SQL from business metrics:**
-
-- Leverages predefined business metrics
-- Includes date parsing for temporal queries
-- Best for standardized business intelligence
 
 ## Configuration
 

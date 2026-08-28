@@ -445,6 +445,22 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
     nodes = {}
     if "nodes" in agent_raw:
         nodes_raw = agent_raw["nodes"]
+        if isinstance(nodes_raw, dict):
+            nodes_raw = dict(nodes_raw)
+            if "date_parser" in nodes_raw:
+                legacy_date_parser = nodes_raw.pop("date_parser")
+                legacy_language = None
+                if isinstance(legacy_date_parser, dict):
+                    legacy_language = legacy_date_parser.get("language")
+                    legacy_input = legacy_date_parser.get("input")
+                    if legacy_language is None and isinstance(legacy_input, dict):
+                        legacy_language = legacy_input.get("language")
+                if "date_parsing" not in agent_raw and legacy_language:
+                    agent_raw["date_parsing"] = {"language": legacy_language}
+                logger.warning(
+                    "agent.nodes.date_parser is deprecated because the date_parser workflow node was removed; "
+                    "use agent.date_parsing.language for the date parsing tool"
+                )
         if isinstance(nodes_raw, str):
             if nodes_raw in NodeType.REMOVED_TYPES:
                 raise DatusException(

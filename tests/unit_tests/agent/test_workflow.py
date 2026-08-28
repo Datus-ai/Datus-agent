@@ -279,44 +279,6 @@ class TestWorkflow:
         assert payload["workflow"]["name"] == "benchmark_workflow"
         assert "artifact_type" not in payload
 
-    @pytest.mark.parametrize("removed_type", ["reflect", "reasoning"])
-    def test_load_rejects_checkpoint_with_removed_node(self, tmp_path, real_agent_config, removed_type):
-        import yaml
-
-        checkpoint = {
-            "workflow": {
-                "name": "legacy",
-                "description": "legacy checkpoint",
-                "nodes": [
-                    {
-                        "id": "legacy_node",
-                        "description": "legacy",
-                        "type": removed_type,
-                        "input": None,
-                        "status": "pending",
-                        "result": None,
-                        "start_time": None,
-                        "end_time": None,
-                        "dependencies": [],
-                        "metadata": {},
-                    }
-                ],
-                "node_order": ["legacy_node"],
-                "task": None,
-                "current_node_index": 0,
-                "status": "pending",
-                "creation_time": 0,
-                "completion_time": None,
-                "metadata": {},
-                "context": {},
-            }
-        }
-        checkpoint_path = tmp_path / "legacy.yml"
-        checkpoint_path.write_text(yaml.safe_dump(checkpoint), encoding="utf-8")
-
-        with pytest.raises(ValueError, match="has been removed.*fixed.*gen_sql"):
-            Workflow.load(str(checkpoint_path), agent_config=real_agent_config)
-
 
 # ---------------------------------------------------------------------------
 # Helper: create a Workflow with _init_tools patched out

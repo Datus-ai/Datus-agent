@@ -83,7 +83,7 @@ client_id=your_client_id&client_secret=your_client_secret&grant_type=client_cred
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `workflow` | string | ✅ | 工作流名称（`fixed`、`metric_to_sql`、`chat_agentic` 或 `gen_sql_agentic`） |
+| `workflow` | string | ✅ | 工作流名称（`fixed`、`chat_agentic` 或 `gen_sql_agentic`） |
 | `datasource` | string | ✅ | 数据库数据源 |
 | `task` | string | ✅ | 自然语言任务描述 |
 | `mode` | string | ✅ | 执行模式（sync 或 async） |
@@ -187,9 +187,6 @@ event: done
 
 ### fixed
 - 确定性路径；无自适应；适合明确需求
-
-### metric_to_sql
-- 基于业务指标；包含时间解析；适合标准化 BI
 
 ## 配置
 

@@ -15,13 +15,6 @@ workflow:
     - gen_sql
     - output
 
-  metricPlan:
-    - schema_linking
-    - search_metrics
-    - date_parser
-    - gen_sql
-    - execute_sql
-    - output
 ```
 
 ## 基础配置
@@ -85,15 +78,12 @@ multi_approach:
   - output
 
 subworkflow1:
-  - search_metrics
   - gen_sql
 
 subworkflow2:
-  - search_metrics
   - gen_sql
 
 subworkflow3:
-  - date_parser
   - gen_sql
 ```
 
@@ -114,19 +104,16 @@ multi_agent:
 
 subworkflow1:
   steps:
-    - search_metrics
     - gen_sql
   config: multi/agent1.yaml
 
 subworkflow2:
   steps:
-    - search_metrics
     - gen_sql
   config: multi/agent2.yaml
 
 subworkflow3:
   steps:
-    - date_parser
     - gen_sql
   config: multi/agent3.yaml
 ```
@@ -137,17 +124,6 @@ subworkflow3:
 ```yaml
 fixed:
   - schema_linking
-  - gen_sql
-  - execute_sql
-  - output
-```
-
-=== "metric_to_sql"
-```yaml
-metric_to_sql:
-  - schema_linking
-  - search_metrics
-  - date_parser
   - gen_sql
   - execute_sql
   - output

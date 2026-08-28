@@ -16,7 +16,6 @@ from datus.configuration.node_type import NodeType
 from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from datus.schemas.date_parser_node_models import DateParserInput, DateParserResult
 from datus.schemas.explore_agentic_node_models import ExploreNodeInput, ExploreNodeResult
 from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput, FeedbackNodeResult
 from datus.schemas.fix_node_models import FixInput
@@ -57,12 +56,16 @@ class Node(ABC):
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
+        if node_type in NodeType.REMOVED_TYPES:
+            raise ValueError(
+                f"The legacy workflow node '{node_type}' has been removed. "
+                "Use an agentic node with the corresponding function tool instead."
+            )
+
         from datus.agent.node import (
             BeginNode,
             ChatAgenticNode,
             CompareNode,
-            DateParserNode,
-            DocSearchNode,
             ExecuteSQLNode,
             FixNode,
             GenSQLAgenticNode,
@@ -70,7 +73,6 @@ class Node(ABC):
             OutputNode,
             ParallelNode,
             SchemaLinkingNode,
-            SearchMetricsNode,
             SelectionNode,
             SubworkflowNode,
         )
@@ -79,8 +81,6 @@ class Node(ABC):
             return SchemaLinkingNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
             return ExecuteSQLNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_DOC_SEARCH:
-            return DocSearchNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_OUTPUT:
             return OutputNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_FIX:
@@ -89,8 +89,6 @@ class Node(ABC):
             return HitlNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_BEGIN:
             return BeginNode(node_id, description, node_type, input_data, agent_config)
-        elif node_type == NodeType.TYPE_SEARCH_METRICS:
-            return SearchMetricsNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_PARALLEL:
             return ParallelNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_SELECTION:
@@ -99,8 +97,6 @@ class Node(ABC):
             return SubworkflowNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_COMPARE:
             return CompareNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_DATE_PARSER:
-            return DateParserNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_CHAT:
             return ChatAgenticNode(
                 node_id,
@@ -493,8 +489,6 @@ class Node(ABC):
                     input_data = OutputInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_FIX:
                     input_data = FixInput(**input_data)
-                elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
-                    input_data = DateParserInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     input_data = ChatNodeInput(**input_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:
@@ -539,8 +533,6 @@ class Node(ABC):
                     result_data = ExecuteSQLResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_OUTPUT:
                     result_data = OutputResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
-                    result_data = DateParserResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:
                     result_data = ChatNodeResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_GEN_SQL:

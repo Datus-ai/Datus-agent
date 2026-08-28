@@ -16,7 +16,6 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseResult
 from datus.schemas.compare_node_models import CompareInput, CompareResult
-from datus.schemas.doc_search_node_models import DocSearchInput, DocSearchResult
 from datus.schemas.node_models import (
     ExecuteSQLInput,
     ExecuteSQLResult,
@@ -24,7 +23,6 @@ from datus.schemas.node_models import (
     SqlTask,
 )
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
-from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchMetricsResult
 from datus.tools.func_tool import db_function_tools
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -57,22 +55,6 @@ def execute_sql_input() -> List[Dict[str, Any]]:
 def output_input() -> Dict[str, Any]:
     """Load test data from YAML file"""
     yaml_path = TEST_DATA_DIR / "OutputInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-@pytest.fixture
-def doc_search_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = TEST_DATA_DIR / "DocSearchInput.yaml"
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
-
-
-@pytest.fixture
-def search_metrics_input() -> List[Dict[str, Any]]:
-    """Load test data from YAML file"""
-    yaml_path = TEST_DATA_DIR / "SearchMetricsInput.yaml"
     with open(yaml_path, "r") as f:
         return yaml.safe_load(f)
 
@@ -392,53 +374,6 @@ class TestNodeFactory:
 
         except Exception as e:
             logger.error(f"Execution node test failed: {str(e)}")
-            raise
-
-    def test_doc_search_node(self, doc_search_input, agent_config):
-        """Test document node"""
-        try:
-            # Create doc search input from test data
-            for case in doc_search_input:
-                input_data = DocSearchInput(**case["doc_search"])
-                node = Node.new_instance(
-                    node_id="doc_search_test",
-                    description="Doc Search Test",
-                    node_type=NodeType.TYPE_DOC_SEARCH,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                )
-                result = node.run()
-                logger.debug(f"Doc search node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}"
-                assert isinstance(result, DocSearchResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-        except Exception as e:
-            logger.error(f"Doc search node test failed: {str(e)}")
-            raise
-
-    def test_search_metrics_node(self, search_metrics_input, agent_config: AgentConfig):
-        """Test schema linking node"""
-        # Take first test case from the list
-        _current_datasource = agent_config.current_datasource
-        try:
-            for case in search_metrics_input:
-                input_data = SearchMetricsInput(**case["input"])
-                node = Node.new_instance(
-                    node_id="search_metrics",
-                    description="Search Metrics",
-                    node_type=NodeType.TYPE_SEARCH_METRICS,
-                    input_data=input_data,
-                    agent_config=agent_config,
-                )
-                assert node.type == NodeType.TYPE_SEARCH_METRICS
-                assert isinstance(node.input, SearchMetricsInput)
-                result = node.run()
-                logger.debug(f"Search metrics node result: {result}")
-                assert node.status == "completed", f"Node execution failed with status: {node.status}, {node.result}"
-                assert isinstance(result, SearchMetricsResult), "Result type mismatch"
-                assert result.success is True, f"Node execution failed: {result}"
-        except Exception as e:
-            logger.error(f"Search metrics node test failed: {str(e)}")
             raise
 
     def test_compare_node(self, agent_config: AgentConfig, function_tools: List[Tool], mock_llm_create):

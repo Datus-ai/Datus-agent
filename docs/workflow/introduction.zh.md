@@ -12,13 +12,13 @@ Datus Agent 工作流是一个将自然语言问题转换为 SQL 并执行的智
   - “展示 2023 年总销售额”
 - **用途**：直接取数、聚合、过滤和多表查询
 
-### 2. 指标到 SQL（Metric-to-SQL）
-- **适用场景**：标准化的业务报表
-- **特性**：基于预定义业务指标，保证一致性
+### 2. Agentic 工作流
+- **适用场景**：需要迭代调用工具的复杂查询
+- **特性**：可按需检索预定义业务指标及其他上下文
 - **示例**：
   - “展示上季度 MAU”
   - “计算客户流失率”
-- **用途**：KPI 报表、标准化指标、BI 场景
+- **用途**：KPI 报表、时间分析、语义层查询和复杂 SQL 生成
 
 ## 组成：节点（Nodes）
 
@@ -40,7 +40,7 @@ datus-agent run --datasource your_db --task_db_name analytics --task "Show me mo
 datus-agent run --datasource your_db --task_db_name analytics --task "Show me complex revenue trends" --workflow fixed
 
 # 使用业务指标
-datus-agent run --datasource your_db --task_db_name analytics --task "Calculate customer lifetime value" --workflow metric_to_sql
+datus-agent run --datasource your_db --task_db_name analytics --task "Calculate customer lifetime value" --workflow gen_sql_agentic
 ```
 
 ### 通过 API

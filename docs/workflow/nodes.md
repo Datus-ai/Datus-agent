@@ -84,24 +84,9 @@ Action nodes perform specific data processing and SQL-related tasks.
   - Creates reusable data models
 - **Output**: Semantic model definitions for business intelligence
 
-#### Search Metrics Node
-- **Purpose**: Find relevant business metrics
-- **Use Case**: Reusing existing business calculations and ensuring consistency
-
 #### Compare Node
 - **Purpose**: Compare SQL results with expected outcomes
 - **Use Case**: Testing, validation, and quality assurance scenarios
-
-#### Date Parser Node
-- **Purpose**: Parse temporal expressions in user queries
-- **Examples**:
-  - "last month" → specific date range
-  - "Q3 2023" → quarter date boundaries
-  - "past 7 days" → rolling date window
-
-#### Document Search Node
-- **Purpose**: Find relevant documentation and context
-- **Use Case**: Providing additional context for complex queries and domain knowledge
 
 ### 3. Agentic Nodes
 
@@ -115,6 +100,14 @@ Advanced AI-powered nodes with conversational and adaptive capabilities.
   - Context maintenance
   - Adaptive responses
 - **Use Case**: Interactive SQL generation and refinement
+
+### 4. Function Tools
+
+Metric search, date parsing, and platform documentation search are exposed to agentic nodes as function tools rather than standalone workflow nodes:
+
+- `context_search_tools.search_metrics`: Find relevant business metrics
+- `date_parsing_tools.parse_temporal_expressions`: Normalize temporal expressions such as “last month”
+- `platform_doc_tools.search_document`: Search indexed platform documentation
 
 ## Node Implementation Details
 
@@ -138,7 +131,6 @@ class Context:
     sql_contexts: List[SQLContext]      # Generated SQL and results
     table_schemas: List[TableSchema]    # Database schema information
     metrics: List[BusinessMetric]       # Available business metrics
-    documents: List[Document]           # Retrieved documentation
 ```
 
 ### Error Handling

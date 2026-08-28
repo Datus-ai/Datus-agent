@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional
 from datus_storage_base.conditions import And, Condition, WhereExpr, eq, like
 
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.doc_search_node_models import DocNavResult, DocSearchInput, DocSearchResult, GetDocResult
+from datus.schemas.document_search_models import DocNavResult, DocSearchInput, DocSearchResult, GetDocResult
 from datus.storage.document.store import DocumentStore, document_store
 from datus.storage.embedding_diagnostics import is_embedding_unavailable_error
 from datus.tools.base import BaseTool

@@ -24,10 +24,7 @@ workflow:
     - execute_sql
     - output
 
-  metric_to_sql:
-    - schema_linking
-    - search_metrics
-    - date_parser
+  gen_sql_agentic:
     - gen_sql
     - execute_sql
     - output
@@ -72,42 +69,36 @@ Process:
 4. Output: Displays results
 ```
 
-### 2. Metric-to-SQL Workflow
+### 2. Gen SQL Agentic Workflow
 
-**Purpose**: Generate SQL from predefined business metrics
+**Purpose**: Generate SQL with database, semantic-layer, metric-search, and other configured tools.
 
 **Node Sequence:**
 ```
-Schema Linking → Search Metrics → Date Parser → Generate SQL → Execute SQL → Output
+Generate SQL → Execute SQL → Output
 ```
 
 **Key Features:**
 
-- **Metric-driven**: Starts with business metrics rather than raw SQL
-- **Time-aware**: Includes date parsing for temporal queries
-- **Reusable**: Leverages existing metric definitions
-- **Standardized**: Ensures consistent business calculations
+- **Tool-driven**: Uses function tools when metric, date, or documentation context is needed
+- **Configurable**: Tool families can be enabled per agentic node
+- **Interactive**: The model decides which available tools to call
 
 **Best For:**
 
-- Business intelligence and reporting
-- Standardized KPI calculations
-- Time-series analysis
-- Dashboards and regular reports
+- Queries that need semantic metrics or reference SQL
+- Temporal questions when `date_parsing_tools.*` is enabled
+- Complex SQL generation that benefits from iterative tool use
 
 **Real-world Example:**
 
 ```
 User: "Show monthly active users for the last quarter"
-
-Process:
-1. Schema Linking: Finds user_activity table
-2. Search Metrics: Finds "monthly_active_users" metric definition
-3. Date Parser: Determines "last quarter" date range
-4. Generate SQL: Creates query using the metric definition
-5. Execute SQL: Runs the metric calculation
-6. Output: Displays monthly active users by month
 ```
+
+The `gen_sql` agent can search metric definitions through
+`context_search_tools.search_metrics` and parse temporal expressions through
+`date_parsing_tools.parse_temporal_expressions` when those tools are enabled.
 
 ## Workflow Configuration
 
@@ -122,7 +113,6 @@ agent:
 
     custom_analytics:
       - schema_linking
-      - search_metrics
       - gen_sql
       - execute_sql
       - compare
@@ -130,7 +120,6 @@ agent:
 
     data_exploration:
       - schema_linking
-      - doc_search
       - gen_sql
       - execute_sql
       - output
@@ -176,11 +165,9 @@ agent:
       - output
 
     subworkflow1:
-      - search_metrics
       - gen_sql
 
     subworkflow2:
-      - search_metrics
       - gen_sql
 ```
 
@@ -203,13 +190,11 @@ agent:
 
     agent1_workflow:
       steps:
-        - search_metrics
         - gen_sql
       config: multi/agent1.yaml
 
     agent2_workflow:
       steps:
-        - date_parser
         - gen_sql
       config: multi/agent2.yaml
 ```
@@ -230,7 +215,7 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--workflow` | Workflow type to execute | `fixed` | `fixed`, `metric_to_sql`, `chat_agentic`, `gen_sql_agentic`, custom |
+| `--workflow` | Workflow type to execute | `fixed` | `fixed`, `chat_agentic`, `gen_sql_agentic`, custom |
 | `--datasource` | Database datasource | Required | Any configured datasource |
 | `--task_db_name` | Target database name for the task | Required | Any configured database name |
 | `--task` | Natural language query | Required | Any string |
@@ -247,11 +232,11 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 - Well-understood requirements
 - Performance-critical scenarios
 
-**Use Metric-to-SQL for Standardized Reports**
+**Use Gen SQL Agentic for Tool-assisted Queries**
 
-- KPI calculations
-- Regular business reports
-- Time-series analysis
+- Metric and semantic-layer discovery
+- Temporal queries with date parsing enabled
+- Iterative SQL generation
 
 
 ### Debugging and Monitoring

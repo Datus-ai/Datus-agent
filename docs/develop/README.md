@@ -295,7 +295,7 @@ uv run datus-agent benchmark \
   --config conf/agent.yml \
   --datasource duckdb \
   --benchmark semantic_layer \
-  --workflow metric_to_sql
+  --workflow gen_sql_agentic
 ```
 
 ## Observability

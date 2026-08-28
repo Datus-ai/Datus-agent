@@ -22,10 +22,7 @@ workflow:
     - execute_sql
     - output
 
-  metric_to_sql:
-    - schema_linking
-    - search_metrics
-    - date_parser
+  gen_sql_agentic:
     - gen_sql
     - execute_sql
     - output
@@ -61,32 +58,26 @@ Process:
 4. Output：展示
 ```
 
-### 2. Metric-to-SQL（指标到 SQL）
-**目的**：从业务指标生成 SQL
+### 2. Gen SQL Agentic
+**目的**：通过数据库、语义层、指标检索及其他配置的工具生成 SQL
 
 **节点序列**：
 ```
-Schema Linking → Search Metrics → Date Parser → Generate SQL → Execute SQL → Output
+Generate SQL → Execute SQL → Output
 ```
 
-**特性**：
-- 指标驱动：以业务指标为起点
-- 时间感知：包含时间解析
-- 可复用：复用既有指标定义
-- 标准化：保证口径一致
-
-**适用**：BI/报表、标准 KPI、时序分析、看板与例行报告
+`gen_sql` agent 可以通过 `context_search_tools.search_metrics` 检索指标，并在启用
+`date_parsing_tools.parse_temporal_expressions` 后解析时间表达式。
 
 **示例**：
 ```
 User: "Show monthly active users for the last quarter"
 Process:
-1. Schema Linking：定位 user_activity
-2. Search Metrics：找到 monthly_active_users 定义
-3. Date Parser：解析“last quarter”范围
-4. Generate SQL：按指标口径生成查询
-5. Execute SQL：执行
-6. Output：展示分月 MAU
+1. Gen SQL 调用指标检索工具找到 monthly_active_users 定义
+2. Gen SQL 调用日期解析工具确定“last quarter”范围
+3. Gen SQL 按指标口径生成查询
+4. Execute SQL 执行
+5. Output 展示分月 MAU
 ```
 
 ## 工作流配置
@@ -100,7 +91,6 @@ agent:
 
     custom_analytics:
       - schema_linking
-      - search_metrics
       - gen_sql
       - execute_sql
       - compare
@@ -108,7 +98,6 @@ agent:
 
     data_exploration:
       - schema_linking
-      - doc_search
       - gen_sql
       - execute_sql
       - output
@@ -148,11 +137,9 @@ agent:
       - output
 
     subworkflow1:
-      - search_metrics
       - gen_sql
 
     subworkflow2:
-      - search_metrics
       - gen_sql
 ```
 
@@ -172,13 +159,11 @@ agent:
 
     agent1_workflow:
       steps:
-        - search_metrics
         - gen_sql
       config: multi/agent1.yaml
 
     agent2_workflow:
       steps:
-        - date_parser
         - gen_sql
       config: multi/agent2.yaml
 ```
@@ -195,7 +180,7 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | 参数 | 描述 | 默认 | 取值 |
 |---|---|---|---|
-| `--workflow` | 执行的工作流类型 | `fixed` | `fixed`、`metric_to_sql`、`chat_agentic`、`gen_sql_agentic` 或自定义 |
+| `--workflow` | 执行的工作流类型 | `fixed` | `fixed`、`chat_agentic`、`gen_sql_agentic` 或自定义 |
 | `--datasource` | 数据库数据源 | 必填 | 已配置数据源 |
 | `--task_db_name` | 任务使用的目标数据库名 | 必填 | 已配置数据库名 |
 | `--task` | 自然语言任务 | 必填 | 文本 |
