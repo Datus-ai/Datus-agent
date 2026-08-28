@@ -57,6 +57,14 @@ class _FakeDialectOperations:
         return 0
 
 
+def _fake_identifier_parser(_identifier):
+    return {"catalog_name": "", "database_name": "", "schema_name": "", "table_name": "table"}
+
+
+def _identifier_parser_for(db_type):
+    return _fake_identifier_parser if db_type in _IDENTIFIER_PARSER_ADAPTERS else None
+
+
 def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_path):
     external_root = tmp_path / "external"
     distributions = {
@@ -120,7 +128,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
@@ -142,7 +150,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: None if db_type == "hologres" else _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
     )
@@ -181,7 +189,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
             None
             if db_type not in _IDENTIFIER_PARSER_ADAPTERS
             or (db_type == "hologres" and missing_hook == "get_identifier_parser")
-            else object()
+            else _fake_identifier_parser
         ),
         get_sql_generation_notes=lambda db_type: (
             None if db_type == "hologres" and missing_hook == "get_sql_generation_notes" else "notes"
@@ -202,11 +210,35 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
     assert verify_sources.verify_database_adapter_imports() == [expected_error]
 
 
+def test_verify_database_adapter_imports_rejects_non_callable_maxcompute_identifier_parser(monkeypatch):
+    registry = SimpleNamespace(
+        get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
+        get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
+        get_identifier_parser=lambda db_type: object() if db_type == "maxcompute" else _identifier_parser_for(db_type),
+        get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
+        get_dialect_operations=lambda db_type: _FakeDialectOperations() if db_type == "oracle" else None,
+    )
+    modules = {
+        "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_doris": SimpleNamespace(register=lambda: None),
+        "datus_hologres": SimpleNamespace(register=lambda: None),
+        "datus_maxcompute": SimpleNamespace(register=lambda: None),
+        "datus_gaussdb": SimpleNamespace(register=lambda: None),
+        "datus_oracle": SimpleNamespace(register=lambda: None),
+        "datus_tidb": SimpleNamespace(register=lambda: None),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_database_adapter_imports() == [
+        "datus_maxcompute registered non-callable get_identifier_parser"
+    ]
+
+
 def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda _db_type: None,
     )
@@ -230,7 +262,7 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: _PARSER_DIALECTS.get(db_type),
-        get_identifier_parser=lambda db_type: object() if db_type in _IDENTIFIER_PARSER_ADAPTERS else None,
+        get_identifier_parser=_identifier_parser_for,
         get_sql_generation_notes=lambda db_type: "notes" if db_type in _SQL_NOTES_ADAPTERS else None,
         get_dialect_operations=lambda db_type: operations if db_type == "oracle" else None,
     )

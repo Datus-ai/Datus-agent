@@ -95,6 +95,8 @@ DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
     ),
 }
 
+CALLABLE_DATABASE_HOOKS = frozenset({"get_identifier_parser"})
+
 
 def distribution_source_path(package_name: str) -> tuple[Path | None, str | None]:
     try:
@@ -198,6 +200,8 @@ def verify_database_adapter_imports() -> list[str]:
             hook = getter(db_type) if callable(getter) else None
             if not hook:
                 errors.append(f"{module_name} did not register {hook_name}")
+            elif hook_name in CALLABLE_DATABASE_HOOKS and not callable(hook):
+                errors.append(f"{module_name} registered non-callable {hook_name}")
             else:
                 registered_hooks[hook_name] = hook
 
