@@ -407,7 +407,7 @@ Execute repeated benchmark + evaluation cycles (as described in [Step 4](#step-4
 |-------------------------|----------|-----------------------------------------------|----------------------------------------------------------------------|
 | `--datasource`           | Yes      | —                                             | Datasource to benchmark, e.g. `bird_sqlite`                           |
 | `--benchmark`           | Yes      | —                                             | Benchmark name, e.g. `bird_dev`                                      |
-| `--workflow`            | No       | `reflection`                                  | Workflow plan to execute                                             |
+| `--workflow`            | No       | `fixed`                                       | Workflow plan to execute                                             |
 | `--round`               | No       | `4`                                           | Number of benchmark iterations to run                                |
 | `--max_steps`           | No       | `30`                                          | Maximum steps per workflow execution                                 |
 | `--workers`             | No       | `1`                                           | Number of parallel workers for task execution                        |

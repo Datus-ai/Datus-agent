@@ -446,24 +446,38 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
     if "nodes" in agent_raw:
         nodes_raw = agent_raw["nodes"]
         if isinstance(nodes_raw, str):
+            if nodes_raw in NodeType.REMOVED_TYPES:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=(
+                        f"Node type '{nodes_raw}' has been removed; "
+                        "use the fixed workflow with the gen_sql node instead"
+                    ),
+                )
             if nodes_raw not in NodeType.ACTION_TYPES:
                 raise DatusException(
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES),
                         "your_value": nodes_raw,
                     },
                 )
         for node_type, cfg in nodes_raw.items():
-            if node_type == NodeType.TYPE_REFLECT:
-                pass
-            elif node_type not in NodeType.ACTION_TYPES:
+            if node_type in NodeType.REMOVED_TYPES:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=(
+                        f"Node type '{node_type}' has been removed; "
+                        "use the fixed workflow with the gen_sql node instead"
+                    ),
+                )
+            if node_type not in NodeType.ACTION_TYPES:
                 raise DatusException(
                     ErrorCode.COMMON_FIELD_INVALID,
                     message_args={
                         "field_name": "Node Type",
-                        "except_values": set(NodeType.ACTION_TYPES) | {NodeType.TYPE_REFLECT},
+                        "except_values": set(NodeType.ACTION_TYPES),
                         "your_value": node_type,
                     },
                 )

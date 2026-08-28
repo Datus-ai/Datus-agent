@@ -106,15 +106,6 @@ class TestWorkflowNode:
         )
         assert hitl_node.type == NodeType.TYPE_HITL
 
-        # Test reflect node type
-        reflect_node = Node.new_instance(
-            node_id="reflect_node",
-            description="Reflect node",
-            node_type=NodeType.TYPE_REFLECT,
-            input_data=None,
-        )
-        assert reflect_node.type == NodeType.TYPE_REFLECT
-
         # Test subworkflow node type
         subworkflow_node = Node.new_instance(
             node_id="subworkflow_node",
@@ -172,7 +163,7 @@ class TestWorkflow:
 
         # Create workflow using plan.py's method
         task = SqlTask(task=task_text)
-        workflow = generate_workflow(task, "reflection", agent_config=real_agent_config)
+        workflow = generate_workflow(task, "fixed", agent_config=real_agent_config)
 
         # Verify core nodes exist
         expected_nodes = [
@@ -180,8 +171,7 @@ class TestWorkflow:
             ("node_1", "Understand the query and find related schemas", NodeType.TYPE_SCHEMA_LINKING),
             ("node_2", "SQL generation with conversational AI and tool calling", NodeType.TYPE_GEN_SQL),
             ("node_3", "Execute SQL query", NodeType.TYPE_EXECUTE_SQL),
-            ("node_4", "evaluation and self-reflection", NodeType.TYPE_REFLECT),
-            ("node_5", "Return the results to the user", NodeType.TYPE_OUTPUT),
+            ("node_4", "Return the results to the user", NodeType.TYPE_OUTPUT),
         ]
 
         # Check node properties
@@ -194,7 +184,7 @@ class TestWorkflow:
         # Verify workflow metadata
         assert workflow.status == "pending"
         assert workflow.current_node_index == 0
-        assert len(workflow.nodes) == 6
+        assert len(workflow.nodes) == 5
 
         # workflow.save(self.WORKFLOW_SAVE_PATH)
 
@@ -289,6 +279,44 @@ class TestWorkflow:
         assert payload["workflow"]["name"] == "benchmark_workflow"
         assert "artifact_type" not in payload
 
+    @pytest.mark.parametrize("removed_type", ["reflect", "reasoning"])
+    def test_load_rejects_checkpoint_with_removed_node(self, tmp_path, real_agent_config, removed_type):
+        import yaml
+
+        checkpoint = {
+            "workflow": {
+                "name": "legacy",
+                "description": "legacy checkpoint",
+                "nodes": [
+                    {
+                        "id": "legacy_node",
+                        "description": "legacy",
+                        "type": removed_type,
+                        "input": None,
+                        "status": "pending",
+                        "result": None,
+                        "start_time": None,
+                        "end_time": None,
+                        "dependencies": [],
+                        "metadata": {},
+                    }
+                ],
+                "node_order": ["legacy_node"],
+                "task": None,
+                "current_node_index": 0,
+                "status": "pending",
+                "creation_time": 0,
+                "completion_time": None,
+                "metadata": {},
+                "context": {},
+            }
+        }
+        checkpoint_path = tmp_path / "legacy.yml"
+        checkpoint_path.write_text(yaml.safe_dump(checkpoint), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="has been removed.*fixed.*gen_sql"):
+            Workflow.load(str(checkpoint_path), agent_config=real_agent_config)
+
 
 # ---------------------------------------------------------------------------
 # Helper: create a Workflow with _init_tools patched out
@@ -324,7 +352,6 @@ class TestWorkflowInit:
         assert wf.current_node_index == 0
         assert wf.nodes == {}
         assert wf.node_order == []
-        assert wf.reflection_round == 0
         assert wf.completion_time is None
         assert wf.metadata == {}
 

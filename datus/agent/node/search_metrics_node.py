@@ -37,16 +37,9 @@ class SearchMetricsNode(Node):
     def setup_input(self, workflow: Workflow) -> Dict:
         logger.info("Setup search metrics input")
 
-        # irrelevant to current node: it should be Start or Reflection node now
-        matching_rate = self.agent_config.search_metrics_rate
-        matching_rates = ["fast", "medium", "slow"]
-        start = matching_rates.index(matching_rate)
-        final_matching_rate = matching_rates[min(start + workflow.reflection_round, len(matching_rates) - 1)]
-        logger.debug(f"Final matching rate: {final_matching_rate}")
-
         next_input = SearchMetricsInput(
             input_text=workflow.task.task,
-            matching_rate=final_matching_rate,
+            matching_rate=self.agent_config.search_metrics_rate,
             sql_task=workflow.task,
             database_type=workflow.task.database_type,
             sql_contexts=workflow.context.sql_contexts,

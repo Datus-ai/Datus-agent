@@ -5,21 +5,14 @@ Datus Agent 工作流是一个将自然语言问题转换为 SQL 并执行的智
 ## 内置工作流
 
 ### 1. 固定工作流（Fixed）
-- **适用场景**：简单、直给的问题
+- **适用场景**：通用 SQL 生成与执行
 - **特性**：性能快、路径可预期
 - **示例**：
   - “列出加州的所有客户”
   - “展示 2023 年总销售额”
-- **用途**：直接取数、简单聚合、基础过滤
+- **用途**：直接取数、聚合、过滤和多表查询
 
-### 2. 反思工作流（Reflection）
-- **适用场景**：复杂业务问题
-- **特性**：自检自纠、可自动改进并重试
-- **示例**：
-  - “按品类展示季度收入趋势，排除退货并考虑季节性调整”
-- **用途**：多步骤分析、容错纠错、复杂业务逻辑
-
-### 3. 指标到 SQL（Metric-to-SQL）
+### 2. 指标到 SQL（Metric-to-SQL）
 - **适用场景**：标准化的业务报表
 - **特性**：基于预定义业务指标，保证一致性
 - **示例**：
@@ -34,7 +27,6 @@ Datus Agent 工作流是一个将自然语言问题转换为 SQL 并执行的智
 - **[Schema Linking](nodes.md#schema-linking-node)**：为问题找对表
 - **[Generate SQL](nodes.md#generate-sql-node)**：生成查询
 - **[Execute SQL](nodes.md#execute-sql-node)**：执行查询
-- **[Reflect](nodes.md#reflect-node)**：检查结果、决定是否改进
 - **[Output](nodes.md#output-node)**：友好呈现结果
 
 ## 快速上手
@@ -45,7 +37,7 @@ Datus Agent 工作流是一个将自然语言问题转换为 SQL 并执行的智
 datus-agent run --datasource your_db --task_db_name analytics --task "Show me monthly sales"
 
 # 指定工作流类型
-datus-agent run --datasource your_db --task_db_name analytics --task "Show me complex revenue trends" --workflow reflection
+datus-agent run --datasource your_db --task_db_name analytics --task "Show me complex revenue trends" --workflow fixed
 
 # 使用业务指标
 datus-agent run --datasource your_db --task_db_name analytics --task "Calculate customer lifetime value" --workflow metric_to_sql
@@ -59,7 +51,7 @@ response = requests.post(
     "http://localhost:8000/workflows/run",
     headers={"Authorization": "Bearer your_token"},
     json={
-        "workflow": "reflection",
+        "workflow": "fixed",
         "datasource": "your_db",
         "task": "Show me quarterly revenue trends",
         "mode": "sync"

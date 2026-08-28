@@ -11,7 +11,6 @@ A workflow is a sequence of nodes that:
 - **Has a clear purpose**: Each workflow solves specific types of problems
 - **Follows a logical order**: Nodes execute in a predefined sequence
 - **Shares data**: Information flows between nodes through a shared context
-- **Can be adaptive**: Some workflows can modify themselves during execution
 
 ### 2. Workflow Configuration
 
@@ -19,13 +18,6 @@ Datus provides several built-in workflow templates optimized for different use c
 
 ```yaml
 workflow:
-  reflection:
-    - schema_linking
-    - gen_sql
-    - execute_sql
-    - reflect
-    - output
-
   fixed:
     - schema_linking
     - gen_sql
@@ -45,43 +37,7 @@ workflow:
 
 ## Built-in Workflow Types
 
-### 1. Reflection Workflow
-
-**Purpose**: Intelligent, self-improving SQL generation with adaptive behavior
-
-**Node Sequence:**
-```
-Schema Linking → Generate SQL → Execute SQL → Reflect → Output
-```
-
-**Key Features:**
-
-- **Self-assessment**: Reflect node evaluates results and decides next steps
-- **Adaptive**: Can add new nodes dynamically based on execution results
-- **Robust**: Handles complex queries that may require multiple attempts
-
-**Best For:**
-
-- Complex business queries
-- Situations where perfect SQL isn't generated on first try
-- Queries requiring domain knowledge
-
-**Real-world Example:**
-
-```
-User: "Show me quarterly revenue trends by product category,
-       excluding returns and considering seasonal adjustments"
-
-Process:
-1. Schema Linking: Finds orders, products, categories tables
-2. Generate SQL: Creates initial quarterly revenue query
-3. Execute SQL: Runs the query
-4. Reflect: Notices missing seasonal adjustment logic
-5. Add Fix Node: Corrects the query with seasonal calculations
-6. Output: Final results with proper seasonal adjustments
-```
-
-### 2. Fixed Workflow
+### 1. Fixed Workflow
 
 **Purpose**: Deterministic SQL generation with predictable execution path
 
@@ -93,7 +49,7 @@ Schema Linking → Generate SQL → Execute SQL → Output
 **Key Features:**
 
 - **Predictable**: Always follows the same execution path
-- **Fast**: No reflection overhead
+- **Fast**: Uses a direct generation and execution path
 - **Simple**: Easy to understand and debug
 - **Reliable**: Consistent behavior for well-understood problems
 
@@ -116,7 +72,7 @@ Process:
 4. Output: Displays results
 ```
 
-### 3. Metric-to-SQL Workflow
+### 2. Metric-to-SQL Workflow
 
 **Purpose**: Generate SQL from predefined business metrics
 
@@ -177,7 +133,6 @@ agent:
       - doc_search
       - gen_sql
       - execute_sql
-      - reflect
       - output
 ```
 
@@ -196,7 +151,7 @@ agent:
       - schema_linking
       - parallel:
         - gen_sql
-        - reasoning
+        - gen_sql
       - selection
       - execute_sql
       - output
@@ -226,7 +181,7 @@ agent:
 
     subworkflow2:
       - search_metrics
-      - reasoning
+      - gen_sql
 ```
 
 #### Sub-workflows with Custom Configuration
@@ -254,8 +209,8 @@ agent:
 
     agent2_workflow:
       steps:
-        - reasoning
-        - reflect
+        - date_parser
+        - gen_sql
       config: multi/agent2.yaml
 ```
 
@@ -265,7 +220,7 @@ Workflows can be configured with parameters:
 
 ```bash
 # Use specific workflow
-datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow reflection
+datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow fixed
 
 # Use custom workflow
 datus-agent run --datasource <your_datasource> --task "your query" --task_db_name <database> --workflow custom_analytics
@@ -275,7 +230,7 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `--workflow` | Workflow type to execute | `reflection` | `reflection`, `fixed`, `metric_to_sql`, custom |
+| `--workflow` | Workflow type to execute | `fixed` | `fixed`, `metric_to_sql`, `chat_agentic`, `gen_sql_agentic`, custom |
 | `--datasource` | Database datasource | Required | Any configured datasource |
 | `--task_db_name` | Target database name for the task | Required | Any configured database name |
 | `--task` | Natural language query | Required | Any string |
@@ -291,12 +246,6 @@ datus-agent run --datasource <your_datasource> --task "your query" --task_db_nam
 - Direct data retrieval
 - Well-understood requirements
 - Performance-critical scenarios
-
-**Use Reflection for Complex Analysis**
-
-- Multi-table joins
-- Business logic implementation
-- Uncertain or exploratory queries
 
 **Use Metric-to-SQL for Standardized Reports**
 

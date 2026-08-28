@@ -72,23 +72,6 @@ agentic_nodes:
 - **tools**: Tool patterns available to the SQL generator
 - **max_turns**: Maximum number of tool-assisted reasoning turns
 
-### Reasoning
-
-Iteratively generates, executes, and optimizes SQL queries based on database feedback.
-
-```yaml
-reasoning:
-  model: anthropic                      # LLM for reasoning
-  prompt_version: "1.0"                 # Prompt template version
-  max_table_schemas_length: 4000        # Max length for table metadata
-  max_data_details_length: 2000         # Max length for sample data
-  max_context_length: 8000              # Max context length
-  max_value_length: 500                 # Max length per sample value
-```
-
-**Configuration Parameters:**
-- Reasoning keeps its own fixed-node limits and may fall back to `gen_sql` when regeneration is needed
-
 ### Search Metrics
 
 Matches relevant metrics through vector search based on user questions.
@@ -104,18 +87,6 @@ search_metrics:
 - Same as `schema_linking` node - specialized for metric discovery
 
 ## Processing Nodes
-
-### Reflect
-
-Evaluates SQL execution results and provides improvement suggestions.
-
-```yaml
-reflect:
-  prompt_version: "1.0"            # Prompt template version
-```
-
-**Configuration Parameters:**
-- **prompt_version**: Version of reflection prompt template to use
 
 ### Output
 
@@ -200,19 +171,6 @@ nodes:
   search_metrics:
     model: openai
     matching_rate: medium
-    prompt_version: "1.0"
-
-  # Advanced reasoning
-  reasoning:
-    model: anthropic
-    prompt_version: "1.0"
-    max_table_schemas_length: 4000
-    max_data_details_length: 2000
-    max_context_length: 8000
-    max_value_length: 500
-
-  # Result reflection and improvement
-  reflect:
     prompt_version: "1.0"
 
   # Output formatting and validation

@@ -18,7 +18,7 @@ class TestPlanning:
         config = MagicMock(spec=AgentConfig)
         config.datasource_configs = {"test_db": {"type": "duckdb", "database": ":memory:"}}
         config.custom_workflows = {}
-        config.workflow_plan = "reflection"
+        config.workflow_plan = "fixed"
         config.schema_linking_rate = "fast"
         return config
 
@@ -43,13 +43,13 @@ class TestPlanning:
             # Call generate_workflow with the default plan_type
             workflow = generate_workflow(
                 task=sql_task,
-                plan_type="reflection",
+                plan_type="fixed",
                 agent_config=mock_agent_config,
             )
 
             # Check that the workflow was created
             assert isinstance(workflow, Workflow)
-            assert workflow.name == "SQL Query Workflow (reflection)"
+            assert workflow.name == "SQL Query Workflow (fixed)"
             assert workflow.task == sql_task
 
     def test_generate_workflow_with_plan(self, mock_agent_config):
@@ -72,14 +72,14 @@ class TestPlanning:
             # Call generate_workflow with a valid builtin plan type
             workflow = generate_workflow(
                 task=sql_task,
-                plan_type="reflection",
+                plan_type="fixed",
                 agent_config=mock_agent_config,
             )
 
             # Check that the workflow was created with the correct structure
             assert isinstance(workflow, Workflow)
-            assert workflow.name == "SQL Query Workflow (reflection)"
-            # Reflection workflow should have multiple nodes
+            assert workflow.name == "SQL Query Workflow (fixed)"
+            # Fixed workflow should have multiple nodes
             assert len(workflow.nodes) >= 3
 
     def test_generate_workflow_without_plan(self, mock_agent_config):

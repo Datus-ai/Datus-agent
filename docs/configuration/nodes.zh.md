@@ -51,18 +51,6 @@ agentic_nodes:
 ```
 **参数**：`gen_sql` 是 agentic 节点，`system_prompt` 统一使用 `gen_sql`，对应 `gen_sql_system` prompt，可通过 `tools` 和 `max_turns` 控制工具范围和推理轮数。
 
-### Reasoning
-```yaml
-reasoning:
-  model: anthropic
-  prompt_version: "1.0"
-  max_table_schemas_length: 4000
-  max_data_details_length: 2000
-  max_context_length: 8000
-  max_value_length: 500
-```
-**参数**：保留 reasoning 自身的固定节点参数；需要重新生成 SQL 时会回退到 `gen_sql`。
-
 ### Search Metrics
 ```yaml
 search_metrics:
@@ -73,13 +61,6 @@ search_metrics:
 **参数**：同 `schema_linking`，针对指标检索。
 
 ## 处理节点
-
-### Reflect
-```yaml
-reflect:
-  prompt_version: "1.0"
-```
-**参数**：`prompt_version`
 
 ### Output
 ```yaml
@@ -134,17 +115,6 @@ nodes:
   search_metrics:
     model: openai
     matching_rate: medium
-    prompt_version: "1.0"
-
-  reasoning:
-    model: anthropic
-    prompt_version: "1.0"
-    max_table_schemas_length: 4000
-    max_data_details_length: 2000
-    max_context_length: 8000
-    max_value_length: 500
-
-  reflect:
     prompt_version: "1.0"
 
   output:

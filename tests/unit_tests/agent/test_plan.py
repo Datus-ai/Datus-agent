@@ -33,7 +33,7 @@ from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 # ---------------------------------------------------------------------------
 
 
-def _mock_config(custom_workflows=None, workflow_plan="reflection", schema_linking_rate="fast", agentic_nodes=None):
+def _mock_config(custom_workflows=None, workflow_plan="fixed", schema_linking_rate="fast", agentic_nodes=None):
     cfg = MagicMock()
     cfg.custom_workflows = custom_workflows or {}
     cfg.workflow_plan = workflow_plan
@@ -62,9 +62,10 @@ class TestLoadBuiltinWorkflowConfig:
         assert isinstance(config, dict)
         assert "workflow" in config
 
-    def test_reflection_workflow_exists(self):
+    def test_removed_workflows_do_not_exist(self):
         config = load_builtin_workflow_config()
-        assert "reflection" in config["workflow"]
+        assert "reflection" not in config["workflow"]
+        assert "dynamic" not in config["workflow"]
 
     def test_fixed_workflow_exists(self):
         config = load_builtin_workflow_config()
@@ -77,30 +78,14 @@ class TestLoadBuiltinWorkflowConfig:
 
 
 class TestCreateSingleNode:
-    def test_reason_sql_alias_maps_to_reasoning(self):
+    @pytest.mark.parametrize(
+        "node_type",
+        ["reason_sql", "reasoning_sql", "reason", "reasoning", "reflection", "reflect"],
+    )
+    def test_removed_node_aliases_raise_migration_error(self, node_type):
         task = _sql_task()
-        node = _create_single_node("reason_sql", "node_x", task)
-        assert node.type == NodeType.TYPE_REASONING
-
-    def test_reasoning_sql_alias(self):
-        task = _sql_task()
-        node = _create_single_node("reasoning_sql", "node_x", task)
-        assert node.type == NodeType.TYPE_REASONING
-
-    def test_reason_alias(self):
-        task = _sql_task()
-        node = _create_single_node("reason", "node_x", task)
-        assert node.type == NodeType.TYPE_REASONING
-
-    def test_reflection_alias(self):
-        task = _sql_task()
-        node = _create_single_node("reflection", "node_x", task)
-        assert node.type == NodeType.TYPE_REFLECT
-
-    def test_reflect_alias(self):
-        task = _sql_task()
-        node = _create_single_node("reflect", "node_x", task)
-        assert node.type == NodeType.TYPE_REFLECT
+        with pytest.raises(ValueError, match="has been removed.*fixed.*gen_sql"):
+            _create_single_node(node_type, "node_x", task)
 
     def test_execute_alias(self):
         task = _sql_task()
@@ -189,7 +174,7 @@ class TestCreateSingleNode:
 
     def test_node_id_is_set(self):
         task = _sql_task()
-        node = _create_single_node("reflect", "my_node_id", task)
+        node = _create_single_node("execute", "my_node_id", task)
         assert node.id == "my_node_id"
 
 
@@ -201,15 +186,15 @@ class TestCreateSingleNode:
 class TestProcessWorkflowConfig:
     def test_simple_string_items(self):
         task = _sql_task()
-        config = ["reflect", "execute"]
+        config = ["schema_linking", "execute"]
         nodes = _process_workflow_config(config, task)
         assert len(nodes) == 2
-        assert nodes[0].type == NodeType.TYPE_REFLECT
+        assert nodes[0].type == NodeType.TYPE_SCHEMA_LINKING
         assert nodes[1].type == NodeType.TYPE_EXECUTE_SQL
 
     def test_parallel_dict_creates_parallel_node(self):
         task = _sql_task()
-        config = [{"parallel": ["reflect", "execute"]}]
+        config = [{"parallel": ["gen_sql", "execute"]}]
         nodes = _process_workflow_config(config, task)
         assert len(nodes) == 1
         assert nodes[0].type == NodeType.TYPE_PARALLEL
@@ -230,7 +215,7 @@ class TestProcessWorkflowConfig:
 
     def test_node_ids_use_prefix(self):
         task = _sql_task()
-        config = ["reflect"]
+        config = ["execute"]
         nodes = _process_workflow_config(config, task, start_index=5, node_id_prefix="step")
         assert nodes[0].id == "step_5"
 
@@ -249,13 +234,13 @@ class TestProcessWorkflowConfig:
 class TestCreateNodesFromConfig:
     def test_begin_node_always_first(self):
         task = _sql_task()
-        nodes = create_nodes_from_config(["reflect"], task)
+        nodes = create_nodes_from_config(["execute"], task)
         assert nodes[0].type == NodeType.TYPE_BEGIN
         assert nodes[0].id == "node_0"
 
     def test_total_node_count(self):
         task = _sql_task()
-        config_items = ["reflect", "execute"]
+        config_items = ["schema_linking", "execute"]
         nodes = create_nodes_from_config(config_items, task)
         # 1 begin + 2 processed
         assert len(nodes) == 3
@@ -276,7 +261,7 @@ class TestGenerateWorkflow:
 
     def test_custom_workflow_used_when_available(self):
         task = _sql_task()
-        cfg = _mock_config(custom_workflows={"my_flow": ["reflect"]})
+        cfg = _mock_config(custom_workflows={"my_flow": ["execute"]})
         with _patched_workflow():
             wf = generate_workflow(task, plan_type="my_flow", agent_config=cfg)
         assert isinstance(wf, Workflow)
@@ -284,31 +269,30 @@ class TestGenerateWorkflow:
 
     def test_custom_workflow_with_steps_dict(self):
         task = _sql_task()
-        cfg = _mock_config(custom_workflows={"my_flow": {"steps": ["reflect"], "config": {"key": "val"}}})
+        cfg = _mock_config(custom_workflows={"my_flow": {"steps": ["execute"], "config": {"key": "val"}}})
         with _patched_workflow():
             wf = generate_workflow(task, plan_type="my_flow", agent_config=cfg)
         assert isinstance(wf, Workflow)
         assert wf.workflow_config == {"key": "val"}
 
-    def test_fallback_to_reflection_when_no_plan_type(self):
+    def test_fallback_to_fixed_when_no_plan_type(self):
         task = _sql_task()
-        cfg = _mock_config(workflow_plan="reflection", custom_workflows={})
+        cfg = _mock_config(workflow_plan="fixed", custom_workflows={})
         with _patched_workflow():
             wf = generate_workflow(task, plan_type=None, agent_config=cfg)
         assert isinstance(wf, Workflow)
-        assert wf.name == "SQL Query Workflow (reflection)"
+        assert wf.name == "SQL Query Workflow (fixed)"
 
     def test_workflow_has_nodes(self):
         task = _sql_task()
         cfg = _mock_config(custom_workflows={})
         with _patched_workflow():
-            wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
+            wf = generate_workflow(task, plan_type="fixed", agent_config=cfg)
         assert [wf.nodes[node_id].type for node_id in wf.node_order] == [
             NodeType.TYPE_BEGIN,
             NodeType.TYPE_SCHEMA_LINKING,
             NodeType.TYPE_GEN_SQL,
             NodeType.TYPE_EXECUTE_SQL,
-            NodeType.TYPE_REFLECT,
             NodeType.TYPE_OUTPUT,
         ]
 
@@ -322,7 +306,7 @@ class TestGenerateWorkflow:
 
         with _patched_workflow():
             with patch("datus.storage.schema_metadata.create_metadata_rag", return_value=mock_rag):
-                wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
+                wf = generate_workflow(task, plan_type="fixed", agent_config=cfg)
 
         assert isinstance(wf, Workflow)
         mock_rag.search_tables.assert_called_once_with(["users"], "", "db", "", dialect="")
@@ -337,10 +321,16 @@ class TestGenerateWorkflow:
 
         with _patched_workflow():
             with patch("datus.storage.schema_metadata.create_metadata_rag", mock_rag_cls):
-                wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
+                wf = generate_workflow(task, plan_type="fixed", agent_config=cfg)
 
         assert isinstance(wf, Workflow)
-        assert wf.name == "SQL Query Workflow (reflection)"
+        assert wf.name == "SQL Query Workflow (fixed)"
+
+    @pytest.mark.parametrize("plan_type", ["reflection", "dynamic"])
+    def test_removed_workflow_names_raise_migration_error(self, plan_type):
+        task = _sql_task()
+        with _patched_workflow(), pytest.raises(ValueError, match="has been removed.*fixed"):
+            generate_workflow(task, plan_type=plan_type)
 
     def test_no_agent_config_raises_for_invalid_plan(self):
         task = _sql_task()
@@ -350,11 +340,11 @@ class TestGenerateWorkflow:
 
     def test_error_message_includes_available_workflows(self):
         task = _sql_task()
-        cfg = _mock_config(custom_workflows={"c1": ["reflect"]})
+        cfg = _mock_config(custom_workflows={"c1": ["execute"]})
         with _patched_workflow():
             with pytest.raises(ValueError) as exc_info:
                 generate_workflow(task, plan_type="bad_plan", agent_config=cfg)
         assert (
-            str(exc_info.value) == "Invalid plan type 'bad_plan'. Available builtin workflows: ['reflection', 'fixed', "
-            "'empty', 'dynamic', 'metric_to_sql', 'chat_agentic', 'gen_sql_agentic'], custom workflows: ['c1']"
+            str(exc_info.value) == "Invalid plan type 'bad_plan'. Available builtin workflows: ['fixed', 'empty', "
+            "'metric_to_sql', 'chat_agentic', 'gen_sql_agentic'], custom workflows: ['c1']"
         )

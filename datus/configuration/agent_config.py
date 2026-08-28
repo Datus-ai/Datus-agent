@@ -9,11 +9,9 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
-from datus.configuration.node_type import NodeType
 from datus.configuration.project_config import PluginActivation
 from datus.observability.config import ObservabilityConfig
 from datus.schemas.base import BaseInput
-from datus.schemas.node_models import StrategyType
 from datus.storage.embedding_models import init_embedding_models
 from datus.storage.storage_cfg import check_storage_config, save_storage_config
 from datus.utils.config_utils import coerce_bool
@@ -670,27 +668,6 @@ class DashboardConfig:
 
 logger = get_logger(__name__)
 
-DEFAULT_REFLECTION_NODES = {
-    StrategyType.SCHEMA_LINKING.lower(): [
-        NodeType.TYPE_SCHEMA_LINKING,
-        NodeType.TYPE_GEN_SQL,
-        NodeType.TYPE_EXECUTE_SQL,
-        NodeType.TYPE_REFLECT,
-    ],
-    StrategyType.DOC_SEARCH.lower(): [
-        NodeType.TYPE_DOC_SEARCH,
-        NodeType.TYPE_GEN_SQL,
-        NodeType.TYPE_EXECUTE_SQL,
-        NodeType.TYPE_REFLECT,
-    ],
-    StrategyType.SIMPLE_REGENERATE.lower(): [NodeType.TYPE_EXECUTE_SQL, NodeType.TYPE_REFLECT],
-    StrategyType.REASONING.lower(): [
-        NodeType.TYPE_REASONING,
-        NodeType.TYPE_EXECUTE_SQL,
-        NodeType.TYPE_REFLECT,
-    ],
-}
-
 
 def _parse_single_file_db(db_config: Dict[str, Any], dialect: str) -> DbConfig:
     uri = resolve_env(str(db_config["uri"]))
@@ -768,7 +745,6 @@ class AgentConfig:
     rag_base_path: str
     schema_linking_rate: str
     search_metrics_rate: str
-    _reflection_nodes: Dict[str, List[str]]
     _save_dir: str
     _current_datasource: str
     _project_name: str
@@ -793,6 +769,13 @@ class AgentConfig:
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
                     "agent.sql_policy has been removed; configure policies under agent.plugins.sql-policy instead"
+                ),
+            )
+        if "reflection_nodes" in kwargs:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "agent.reflection_nodes has been removed; use the fixed workflow with the gen_sql node instead"
                 ),
             )
 
@@ -1079,12 +1062,16 @@ class AgentConfig:
 
         # Benchmark paths are now fixed at {agent.home}/benchmark/{name}
         # Supported benchmarks: bird_dev, spider2, semantic_layer
-        self._reflection_nodes = DEFAULT_REFLECTION_NODES
-        self._reflection_nodes.update(kwargs.get("reflection_nodes", {}))
-
         # Initialize workflow configuration
         workflow_config = kwargs.get("workflow", {})
-        self.workflow_plan = workflow_config.get("plan", "reflection")
+        self.workflow_plan = workflow_config.get("plan", "fixed")
+        if self.workflow_plan in {"reflection", "dynamic"}:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    f"agent.workflow.plan '{self.workflow_plan}' has been removed; use the fixed workflow instead"
+                ),
+            )
 
         # Process custom workflows with enhanced config support
         self.custom_workflows = {}
@@ -2251,14 +2238,6 @@ class AgentConfig:
 
         return DatusPathManager.resolve_run_dir(Path(self._trajectory_dir), database, run_id)
 
-    def reflection_nodes(self, strategy: str) -> List[str]:
-        if strategy not in self._reflection_nodes:
-            raise DatusException(
-                code=ErrorCode.COMMON_UNSUPPORTED,
-                message_args={"field_name": "Reflection-Strategy", "your_value": strategy},
-            )
-        return self._reflection_nodes[strategy]
-
     def __getitem__(self, key):
         if key not in self.models:
             raise KeyError(f"Model '{key}' not found.")
@@ -2351,6 +2330,11 @@ class AgentConfig:
             self.kb_search = KbSearchConfig.from_dict({"mode": kwargs["kb_search_mode"]})
             self.kb_search_mode = self.kb_search.mode
         if kwargs.get("plan", ""):
+            if kwargs["plan"] in {"reflection", "dynamic"}:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=f"Workflow '{kwargs['plan']}' has been removed; use the fixed workflow instead",
+                )
             self.workflow_plan = kwargs["plan"]
         if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "service", "platform-doc"]:
             db_arg = kwargs.get("datasource", "")

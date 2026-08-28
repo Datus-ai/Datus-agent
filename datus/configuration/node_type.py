@@ -19,9 +19,8 @@ from datus.schemas.gen_skill_agentic_node_models import SkillCreatorNodeInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.gen_visual_dashboard_models import GenVisualDashboardNodeInput
 from datus.schemas.gen_visual_report_models import GenVisualReportNodeInput
-from datus.schemas.node_models import ExecuteSQLInput, OutputInput, ReflectionInput
+from datus.schemas.node_models import ExecuteSQLInput, OutputInput
 from datus.schemas.parallel_node_models import ParallelInput, SelectionInput
-from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.schemas.search_metrics_node_models import SearchMetricsInput
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
@@ -30,23 +29,23 @@ from datus.schemas.subworkflow_node_models import SubworkflowInput
 
 
 class NodeType:
+    REMOVED_TYPES = frozenset({"reflect", "reasoning"})
+
     # Workflow control node types
     TYPE_BEGIN = "start"
     # TYPE_EVALUATE = "evaluate"
     TYPE_HITL = "hitl"
-    TYPE_REFLECT = "reflect"
     TYPE_PARALLEL = "parallel"
     TYPE_SELECTION = "selection"
     TYPE_SUBWORKFLOW = "subworkflow"
 
     # Control node types list
-    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_REFLECT, TYPE_PARALLEL, TYPE_SELECTION, TYPE_SUBWORKFLOW]
+    CONTROL_TYPES = [TYPE_BEGIN, TYPE_HITL, TYPE_PARALLEL, TYPE_SELECTION, TYPE_SUBWORKFLOW]
 
     # SQL workflow action types
     TYPE_SCHEMA_LINKING = "schema_linking"  # For database schema analysis
     TYPE_EXECUTE_SQL = "execute_sql"  # For SQL query execution
     TYPE_OUTPUT = "output"  # For result presentation
-    TYPE_REASONING = "reasoning"  # For result presentation
     TYPE_DOC_SEARCH = "doc_search"  # For document search
     TYPE_FIX = "fix"  # For fixing the SQL query
     TYPE_SEARCH_METRICS = "search_metrics"  # For search metrics
@@ -74,7 +73,6 @@ class NodeType:
         TYPE_SCHEMA_LINKING,
         TYPE_EXECUTE_SQL,
         TYPE_OUTPUT,
-        TYPE_REASONING,
         TYPE_DOC_SEARCH,
         TYPE_FIX,
         TYPE_SEARCH_METRICS,
@@ -101,9 +99,7 @@ class NodeType:
         TYPE_BEGIN: "Beginning of the workflow",
         TYPE_SCHEMA_LINKING: "Understand the query and find related schemas",
         TYPE_EXECUTE_SQL: "Execute SQL query",
-        TYPE_REFLECT: "evaluation and self-reflection",
         TYPE_OUTPUT: "Return the results to the user",
-        TYPE_REASONING: "Reasoning analysis",
         TYPE_DOC_SEARCH: "Search related documents",
         TYPE_HITL: "Human in the loop",
         TYPE_FIX: "Fix the SQL query",
@@ -146,10 +142,6 @@ class NodeType:
             input_data_cls = SchemaLinkingInput
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
             input_data_cls = ExecuteSQLInput
-        elif node_type == NodeType.TYPE_REFLECT:
-            input_data_cls = ReflectionInput
-        elif node_type == NodeType.TYPE_REASONING:
-            input_data_cls = ReasoningInput
         elif node_type == NodeType.TYPE_OUTPUT:
             input_data_cls = OutputInput
         elif node_type == NodeType.TYPE_FIX:

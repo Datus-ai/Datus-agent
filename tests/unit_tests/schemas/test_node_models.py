@@ -18,10 +18,8 @@ from datus.schemas.node_models import (
     Metric,
     OutputInput,
     ReferenceSql,
-    ReflectionResult,
     SQLContext,
     SqlTask,
-    StrategyType,
     TableSchema,
     TableValue,
 )
@@ -328,6 +326,12 @@ class TestSQLContext:
         assert d["sql_query"] == "SELECT 1"
         assert d["row_count"] == 5
 
+    def test_accepts_legacy_assistant_analysis_alias(self):
+        ctx = SQLContext(sql_query="SELECT 1", reflection_explanation="legacy analysis")
+        assert ctx.assistant_analysis == "legacy analysis"
+        assert ctx.to_dict()["assistant_analysis"] == "legacy analysis"
+        assert "reflection_explanation" not in ctx.to_dict()
+
     def test_to_str_contains_sql(self):
         ctx = SQLContext(sql_query="SELECT * FROM t", sql_return="a,b\n1,2", row_count=1)
         s = ctx.to_str()
@@ -488,45 +492,6 @@ class TestContext:
         ctx = Context()
         ctx.update_doc_search_keywords(["revenue", "sales"])
         assert ctx.doc_search_keywords == ["revenue", "sales"]
-
-
-# ---------------------------------------------------------------------------
-# StrategyType
-# ---------------------------------------------------------------------------
-
-
-class TestStrategyType:
-    def test_all_values_exist(self):
-        assert StrategyType.SUCCESS == "SUCCESS"
-        assert StrategyType.DOC_SEARCH == "DOC_SEARCH"
-        assert StrategyType.SIMPLE_REGENERATE == "SIMPLE_REGENERATE"
-        assert StrategyType.SCHEMA_LINKING == "SCHEMA_LINKING"
-        assert StrategyType.REASONING == "REASONING"
-        assert StrategyType.COLUMN_EXPLORATION == "COLUMN_EXPLORATION"
-        assert StrategyType.UNKNOWN == "UNKNOWN"
-
-
-# ---------------------------------------------------------------------------
-# ReflectionResult
-# ---------------------------------------------------------------------------
-
-
-class TestReflectionResult:
-    def test_basic_creation(self):
-        result = ReflectionResult(success=True, strategy=StrategyType.SUCCESS)
-        assert result.strategy == "SUCCESS"
-
-    def test_details_default_empty(self):
-        result = ReflectionResult(success=True)
-        assert result.details == {}
-
-    def test_details_can_be_nested(self):
-        result = ReflectionResult(
-            success=True,
-            strategy=StrategyType.SCHEMA_LINKING,
-            details={"tables": ["t1", "t2"], "reason": "missing join"},
-        )
-        assert result.details["tables"] == ["t1", "t2"]
 
 
 # ---------------------------------------------------------------------------

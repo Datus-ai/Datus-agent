@@ -28,7 +28,6 @@ from datus.schemas.base import BaseInput
 from datus.schemas.compare_node_models import CompareInput
 from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.node_models import ExecuteSQLInput, OutputInput, SqlTask
-from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
 from datus.tools.output_tools import OutputTool
 from datus.utils.constants import DBType
@@ -116,17 +115,6 @@ class AgentCommands:
             fix_description = self.cli.prompt_input("Describe the issue to fix", default="")
             return ExecuteSQLInput(
                 sql_query=last_sql, sql_task=sql_task, database_type=sql_task.database_type, expectation=fix_description
-            )
-
-        elif node_type == NodeType.TYPE_REASONING:
-            sql_query = self.cli.prompt_input(
-                "Enter SQL query to reason about", default=self.cli_context.get_last_sql() or ""
-            )
-            return ReasoningInput(
-                sql_query=sql_query,
-                sql_task=sql_task,
-                database_type=sql_task.database_type,
-                table_schemas=self.cli_context.get_recent_tables(),
             )
 
         elif node_type == NodeType.TYPE_COMPARE:
@@ -416,8 +404,6 @@ class AgentCommands:
             input.database_name = database_name.strip()
         elif isinstance(input, ExecuteSQLInput):
             pass
-        elif isinstance(input, ReasoningInput):
-            pass
         elif isinstance(input, OutputInput):
             workflow = self.cli.workflow_runner.workflow
             if workflow and workflow.context and workflow.context.sql_contexts:
@@ -491,29 +477,6 @@ class AgentCommands:
                 print_success(self.console, "SQL fix completed")
         else:
             print_error(self.console, "SQL fix failed", prefix=False)
-
-    def cmd_reason(self, args: str):
-        """Run the full reasoning node."""
-        # Create input for reasoning node
-        input_data = self.create_node_input(NodeType.TYPE_REASONING, args)
-        if not input_data:
-            return
-
-        # Run standalone node
-        result = self.run_standalone_node(NodeType.TYPE_REASONING, input_data)
-
-        if result and result.success:
-            print_success(self.console, "SQL reasoning completed")
-            # Display reasoning if available
-            if hasattr(result, "explanation") and result.explanation:
-                self.console.print(f"[blue]Explanation:[/] {result.explanation}")
-        else:
-            print_error(self.console, "SQL reasoning failed", prefix=False)
-
-    def cmd_reason_stream(self, args: str):
-        """Run SQL reasoning with streaming output and action history."""
-        # For now, redirect to normal reason - streaming can be added later
-        self.cmd_reason(args)
 
     def cmd_daend(self, args: str):
         """End the current agent session."""
@@ -698,114 +661,3 @@ class AgentCommands:
         """Compare SQL with streaming output and action history."""
         # For now, redirect to normal compare - streaming can be added later
         self.cmd_compare(args)
-
-    def _extract_sql_from_streaming_actions(self, actions, workflow, node):
-        """
-        Extract SQL from streaming actions and add to workflow context.
-        This method handles the _reason_sql_stream case where we need to update
-        the workflow context with the SQL from the final action.
-        """
-        try:
-            from datus.schemas.node_models import SQLContext
-            from datus.utils.json_utils import llm_result2json
-
-            logger.debug(f"Starting SQL extraction from streaming actions. Total actions: {len(actions)}")
-            logger.debug(f"Workflow context before extraction: {len(workflow.context.sql_contexts)} SQL contexts")
-
-            # Look for actions that contain SQL execution results or final message
-            sql_contexts = []
-
-            # First, check if the node has an action_history_manager with sql_contexts
-            if hasattr(node, "action_history_manager") and node.action_history_manager:
-                if hasattr(node.action_history_manager, "sql_contexts"):
-                    sql_contexts.extend(node.action_history_manager.sql_contexts)
-                    logger.info(f"Found {len(sql_contexts)} SQL contexts from action history manager")
-
-            # If no SQL contexts found, try to extract from actions
-            if not sql_contexts:
-                # Look for SQL execution results in actions
-                from datus.utils.sql_utils import is_read_query_result
-
-                for action in actions:
-                    # Handle both string and enum status
-                    status_value = action.status.value if hasattr(action.status, "value") else action.status
-
-                    sql_output = action.output or {}
-                    if (
-                        action.action_type == "execute_sql"
-                        and status_value == "success"
-                        and is_read_query_result(sql_output.get("result"))
-                    ):
-                        # Read-only query result → SQLContext. Write/DDL executions
-                        # return a metadata payload and are skipped.
-                        # Tool actions store params under ``input["arguments"]``;
-                        # fall back to the top-level shape for older payloads.
-                        raw_input = action.input or {}
-                        sql_input = raw_input.get("arguments", raw_input) if isinstance(raw_input, dict) else {}
-
-                        sql_query = sql_input.get("sql") or sql_input.get("query", "")
-                        sql_result = sql_output.get("result", "")
-                        sql_error = sql_output.get("error", "")
-
-                        sql_context = SQLContext(
-                            sql_query=sql_query,
-                            explanation="",
-                            sql_return=sql_result,
-                            sql_error=sql_error,
-                            row_count=0,
-                        )
-                        sql_contexts.append(sql_context)
-                        logger.info(f"Added SQL context from execute_sql action: {sql_query[:100]}...")
-
-                # Look for final message with SQL result
-                for action in reversed(actions):  # Start from the last action
-                    # Handle both string and enum role
-                    role_value = action.role.value if hasattr(action.role, "value") else action.role
-                    if action.action_type == "message" and role_value == "assistant":
-                        # This could be the final reasoning result
-                        if action.output and action.output.get("raw_output"):
-                            raw_output = action.output.get("raw_output", "")
-
-                            try:
-                                # Parse the final result to extract SQL
-                                content_dict = llm_result2json(raw_output)
-                                sql_query = content_dict.get("sql", "")
-                                explanation = content_dict.get("output") or content_dict.get("explanation", "")
-
-                                if sql_query:
-                                    # Create SQLContext with the final result SQL
-                                    final_sql_context = SQLContext(
-                                        sql_query=sql_query,
-                                        explanation=explanation,
-                                        sql_return="",  # Will be filled by execution
-                                        sql_error="",
-                                        row_count=0,
-                                    )
-                                    sql_contexts.append(final_sql_context)
-                                    logger.info(f"Added final result SQL to SQLContext: {sql_query[:100]}...")
-                                    break  # Only take the first (last) valid final result
-
-                            except Exception as e:
-                                logger.debug(f"Could not parse final message as JSON: {e}")
-
-            # Add successful SQL contexts to workflow context
-            added_count = 0
-            for sql_ctx in sql_contexts:
-                if sql_ctx.sql_error == "":  # only add the successful sql context
-                    workflow.context.sql_contexts.append(sql_ctx)
-                    added_count += 1
-                    logger.info(f"✓ Added SQL context to workflow: {sql_ctx.sql_query[:100]}...")
-                else:
-                    logger.warning(
-                        f"✗ Skipping failed SQL context: {sql_ctx.sql_query[:100]}..., error: {sql_ctx.sql_error}"
-                    )
-
-            if added_count == 0:
-                logger.warning("No successful SQL contexts found in streaming execution")
-
-        except Exception as e:
-            logger.error(f"Failed to extract SQL from streaming actions: {str(e)}")
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Don't fail the entire process, just log the error

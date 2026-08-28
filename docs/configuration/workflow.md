@@ -19,11 +19,12 @@ workflow:
     - gen_sql
     - output
 
-  planB:
+  metricPlan:
     - schema_linking
+    - search_metrics
+    - date_parser
     - gen_sql
     - execute_sql
-    - reflect
     - output
 ```
 
@@ -41,9 +42,9 @@ workflow:
     - output                          # Format results
 ```
 
-### Workflow with Execution and Reflection
+### Workflow with Execution
 
-```yaml title="Workflow with Execution and Reflection"
+```yaml title="Workflow with Execution"
 workflow:
   plan: with_execution
 
@@ -51,7 +52,6 @@ workflow:
     - schema_linking                   # Find relevant tables
     - gen_sql                     # Create SQL query
     - execute_sql                     # Run the query
-    - reflect                         # Analyze results
     - output                          # Format final output
 ```
 
@@ -72,7 +72,7 @@ workflow:
     - schema_linking
     - parallel:                       # Execute in parallel
         - gen_sql
-        - reasoning
+        - gen_sql
     - selection                       # Choose best result
     - execute_sql
     - output
@@ -103,11 +103,11 @@ workflow:
 
   subworkflow2:
     - search_metrics
-    - reasoning
+    - gen_sql
 
   subworkflow3:
-    - reasoning
-    - reflect
+    - date_parser
+    - gen_sql
 ```
 
 ### Sub-workflows with Custom Configuration
@@ -137,34 +137,22 @@ workflow:
   subworkflow2:
     steps:
       - search_metrics
-      - reasoning
+      - gen_sql
     config: multi/agent2.yaml
 
   subworkflow3:
     steps:
-      - reasoning
-      - reflect
+      - date_parser
+      - gen_sql
     config: multi/agent3.yaml
 ```
 
 ## Built-in Workflow Plans
 
-Datus Agent provides three built-in workflow plans if you don't configure custom ones:
+Datus Agent provides these built-in workflow plans if you don't configure custom ones:
 
 !!! info "Default Workflows"
     These workflows are automatically available and can be referenced without additional configuration.
-
-=== "Reflection Workflow"
-
-    ```yaml
-    # Built-in: reflection
-    reflection:
-      - schema_linking
-      - gen_sql
-      - execute_sql
-      - reflect
-      - output
-    ```
 
 === "Fixed Workflow"
 
@@ -190,34 +178,26 @@ Datus Agent provides three built-in workflow plans if you don't configure custom
       - output
     ```
 
-## Reflection Nodes Configuration
+=== "Chat Agentic Workflow"
 
-Configure alternative workflows that can be triggered during reflection:
+    ```yaml
+    chat_agentic:
+      - chat
+      - execute_sql
+      - output
+    ```
 
-```yaml title="Reflection Nodes Configuration"
-reflection_nodes:
-  # When schema linking needs improvement
-  schema_linking:
-    - schema_linking
-    - gen_sql
-    - execute_sql
-    - reflect
+=== "Gen SQL Agentic Workflow"
 
-  # When document search is needed
-  doc_search:
-    - doc_search
-    - gen_sql
-    - execute_sql
-    - reflect
+    ```yaml
+    gen_sql_agentic:
+      - gen_sql
+      - execute_sql
+      - output
+    ```
 
-  # Simple regeneration
-  simple_regenerate:
-    - execute_sql
-    - reflect
+=== "Empty Workflow"
 
-  # Enhanced reasoning
-  reasoning:
-    - reasoning
-    - execute_sql
-    - reflect
-```
+    ```yaml
+    empty: []
+    ```

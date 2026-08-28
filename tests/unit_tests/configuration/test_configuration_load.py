@@ -37,6 +37,15 @@ def test_config_exception(tmp_path):
         agent_config.override_by_args(datasource="abc")
 
 
+@pytest.mark.parametrize("removed_type", ["reflect", "reasoning"])
+def test_removed_node_config_has_migration_error(tmp_path, removed_type):
+    config_path = tmp_path / "agent.yml"
+    config_path.write_text(f"agent:\n  nodes:\n    {removed_type}: {{}}\n", encoding="utf-8")
+
+    with pytest.raises(DatusException, match=f"Node type '{removed_type}' has been removed"):
+        load_agent_config(config=str(config_path), home=str(tmp_path), reload=True)
+
+
 def test_service_config_structure(agent_config: AgentConfig):
     """Verify service config sections load into AgentConfig."""
     assert set(agent_config.services.datasources) >= {"bird_school", "snowflake", "local_duckdb"}

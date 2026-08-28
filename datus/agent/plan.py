@@ -19,6 +19,16 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+REMOVED_WORKFLOW_NAMES = {"reflection", "dynamic"}
+REMOVED_WORKFLOW_STEPS = {"reason_sql", "reasoning_sql", "reason", "reflection", "reflect", "reasoning"}
+
+
+def _removed_workflow_error(value: str) -> ValueError:
+    return ValueError(
+        f"The legacy workflow or node '{value}' has been removed. "
+        "Use the 'fixed' workflow with the 'gen_sql' node instead."
+    )
+
 
 def load_builtin_workflow_config() -> dict:
     current_dir = Path(__file__).parent
@@ -160,13 +170,12 @@ def _process_workflow_config(
 def _create_single_node(
     node_type: str, node_id: str, sql_task: SqlTask, agent_config: Optional[AgentConfig] = None
 ) -> Node:
+    if node_type in REMOVED_WORKFLOW_STEPS:
+        raise _removed_workflow_error(node_type)
+
     # normalize aliases from config
     normalized_type = node_type
-    if node_type in {"reason_sql", "reasoning_sql", "reason"}:
-        normalized_type = NodeType.TYPE_REASONING
-    elif node_type in {"reflection", "reflect"}:
-        normalized_type = NodeType.TYPE_REFLECT
-    elif node_type == "execute":
+    if node_type == "execute":
         normalized_type = NodeType.TYPE_EXECUTE_SQL
     elif node_type == "chat":
         normalized_type = NodeType.TYPE_CHAT
@@ -213,7 +222,7 @@ def _create_single_node(
 
 def generate_workflow(
     task: SqlTask,
-    plan_type: str = "reflection",
+    plan_type: str = "fixed",
     agent_config: Optional[AgentConfig] = None,
 ) -> Workflow:
     logger.info(f"Generating workflow for task based on plan type '{plan_type}': {task}")
@@ -221,7 +230,10 @@ def generate_workflow(
     if not plan_type and agent_config:
         plan_type = agent_config.workflow_plan
     elif not plan_type:
-        plan_type = "reflection"  # fallback to default
+        plan_type = "fixed"  # fallback to default
+
+    if plan_type in REMOVED_WORKFLOW_NAMES:
+        raise _removed_workflow_error(plan_type)
 
     if agent_config and plan_type in agent_config.custom_workflows:
         logger.info(f"Using custom workflow '{plan_type}' from configuration")

@@ -28,9 +28,7 @@ from datus.schemas.node_models import (
     ExecuteSQLResult,
     OutputInput,
     OutputResult,
-    ReflectionResult,
 )
-from datus.schemas.reason_sql_node_models import ReasoningResult
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.loggings import get_logger
@@ -71,8 +69,6 @@ class Node(ABC):
             HitlNode,
             OutputNode,
             ParallelNode,
-            ReasonSQLNode,
-            ReflectNode,
             SchemaLinkingNode,
             SearchMetricsNode,
             SelectionNode,
@@ -83,16 +79,12 @@ class Node(ABC):
             return SchemaLinkingNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_EXECUTE_SQL:
             return ExecuteSQLNode(node_id, description, node_type, input_data, agent_config, tools)
-        elif node_type == NodeType.TYPE_REASONING:
-            return ReasonSQLNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_DOC_SEARCH:
             return DocSearchNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_OUTPUT:
             return OutputNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_FIX:
             return FixNode(node_id, description, node_type, input_data, agent_config)
-        elif node_type == NodeType.TYPE_REFLECT:
-            return ReflectNode(node_id, description, node_type, input_data, agent_config, tools)
         elif node_type == NodeType.TYPE_HITL:
             return HitlNode(node_id, description, node_type, input_data, agent_config)
         elif node_type == NodeType.TYPE_BEGIN:
@@ -398,13 +390,12 @@ class Node(ABC):
             if self.type in NodeType.ACTION_TYPES or self.type in NodeType.CONTROL_TYPES:
                 self.execute()
 
-                # REFLECT type always completes successfully, others check result
                 logger.debug(
                     f"Node.run checking result: type={self.type}, result_type={type(self.result)}, "
                     f"result_is_not_None={self.result is not None}, "
                     f"result_success={getattr(self.result, 'success', 'N/A')}"
                 )
-                if self.type == NodeType.TYPE_REFLECT or (self.result is not None and self.result.success):
+                if self.result is not None and self.result.success:
                     logger.info(f"Node.run calling complete for {self.type}")
                     self.complete(self.result)
                 else:
@@ -432,8 +423,7 @@ class Node(ABC):
                 async for action in self.execute_stream(action_history_manager):
                     yield action
 
-                # REFLECT type always completes successfully, others check result
-                if self.type == NodeType.TYPE_REFLECT or (self.result is not None and self.result.success):
+                if self.result is not None and self.result.success:
                     self.complete(self.result)
                 else:
                     logger.error(f"{self.type} node execution failed: {self.result}")
@@ -485,6 +475,12 @@ class Node(ABC):
     @classmethod
     def from_dict(cls, node_dict: Dict[str, Any], agent_config: Optional[AgentConfig] = None) -> Node:
         """Create a Node instance from dictionary representation."""
+        if node_dict["type"] in NodeType.REMOVED_TYPES:
+            raise ValueError(
+                f"The legacy workflow node '{node_dict['type']}' has been removed. "
+                "Create a new checkpoint with the 'fixed' workflow and the 'gen_sql' node."
+            )
+
         # Convert input data based on a node type
         input_data = node_dict["input"]
         if isinstance(input_data, dict):
@@ -543,10 +539,6 @@ class Node(ABC):
                     result_data = ExecuteSQLResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_OUTPUT:
                     result_data = OutputResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_REFLECT:
-                    result_data = ReflectionResult(**result_data)
-                elif node_dict["type"] == NodeType.TYPE_REASONING:
-                    result_data = ReasoningResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_DATE_PARSER:
                     result_data = DateParserResult(**result_data)
                 elif node_dict["type"] == NodeType.TYPE_CHAT:

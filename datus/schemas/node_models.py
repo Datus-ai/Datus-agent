@@ -7,12 +7,11 @@ from __future__ import annotations
 import csv
 import os
 import re
-from enum import Enum
 from io import StringIO
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import pyarrow as pa
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from datus.schemas.base import TABLE_TYPE, BaseInput, BaseResult
 from datus.schemas.doc_search_node_models import DocSearchResult
@@ -479,8 +478,11 @@ class SQLContext(BaseModel):
     sql_return: Any = Field(default="", description="The result of SQL execution")
     sql_error: Optional[str] = Field("", description="The error of SQL execution")
     row_count: Optional[int] = Field(0, description="The number of rows returned")
-    reflection_strategy: Optional[str] = Field("", description="The reflection strategy")
-    reflection_explanation: Optional[str] = Field("", description="The reflection explanation")
+    assistant_analysis: Optional[str] = Field(
+        "",
+        description="Assistant analysis following the SQL tool result",
+        validation_alias=AliasChoices("assistant_analysis", "reflection_explanation"),
+    )
 
     def to_dict(self):
         return self.model_dump()
@@ -504,8 +506,7 @@ class SQLContext(BaseModel):
             f"SQL: {self.sql_query}\n"
             f"Explanation: {self.explanation}\n"
             f"Result: {sql_return_str}\n"
-            f"Reflection Strategy: {self.reflection_strategy}\n"
-            f"Reflection Explanation: {self.reflection_explanation}"
+            f"Assistant Analysis: {self.assistant_analysis}"
         )
 
     def to_sample_str(self):
@@ -523,8 +524,7 @@ class SQLContext(BaseModel):
             f"SQL: {self.sql_query}\n"
             f"Explanation: {self.explanation}\n"
             f"Result: {sql_return_str}\n"
-            f"Reflection Strategy: {self.reflection_strategy}\n"
-            f"Reflection Explanation: {self.reflection_explanation}"
+            f"Assistant Analysis: {self.assistant_analysis}"
         )
 
     def compact_result(self) -> str:
@@ -590,7 +590,7 @@ class Context(BaseModel):
         table_values_names = [value.table_name for value in self.table_values]
         sql_contexts = [
             f"sql: {context.sql_query} explain:{context.explanation}"
-            f"return:{context.row_count} reflection:{context.reflection_explanation}"
+            f"return:{context.row_count} analysis:{context.assistant_analysis}"
             for context in self.sql_contexts
         ]
         parallel_info = f"Parallel results: {len(self.parallel_results) if self.parallel_results else 0}"
@@ -646,49 +646,3 @@ class OutputResult(BaseResult):
     sql_result: str = Field(default="", description="The final result of SQL execution")
     sql_query_final: str = Field(default="", description="The final SQL")
     sql_result_final: str = Field(default="", description="The final result of SQL execution")
-
-
-class ReflectionInput(BaseInput):
-    """
-    Input model for reflection node.
-    Validates input for execution analysis.
-    """
-
-    task_description: SqlTask = Field(..., description="Task description containing task details")
-    sql_context: List[SQLContext] = Field(..., description="Result and explanation of last execution step")
-    prompt_version: Optional[str] = Field(default=None, description="Version for prompt")
-    sql_return_sample_line: int = Field(
-        default=10,
-        description="In SQL, the number of rows in the sample data returned, where -1 means return all rows.",
-    )
-    # sql_return: str = Field(..., description="The SQL execution result to analyze")
-    # row_count: int = Field(..., description="Number of rows returned")
-    # error: Optional[str] = Field("", description="Error returned")
-
-
-class StrategyType(str, Enum):
-    SUCCESS = "SUCCESS"
-    DOC_SEARCH = "DOC_SEARCH"
-    SIMPLE_REGENERATE = "SIMPLE_REGENERATE"
-    SCHEMA_LINKING = "SCHEMA_LINKING"
-    REASONING = "REASONING"
-    COLUMN_EXPLORATION = "COLUMN_EXPLORATION"
-    UNKNOWN = "UNKNOWN"
-
-
-STRATEGY_LIST = [strategy.value for strategy in StrategyType]
-
-
-class ReflectionResult(BaseResult):
-    """
-    Result model for reflection node.
-    Contains analysis results and optimization strategy.
-    """
-
-    model_config = ConfigDict(use_enum_values=True)
-
-    strategy: Optional[StrategyType] = Field(None, description="Suggested strategy for workflow changes")
-    details: Dict[str, Union[str, List[str], Dict[str, Any]]] = Field(
-        default_factory=dict,
-        description="Detailed analysis information, can contain strings, lists or nested dictionaries",
-    )

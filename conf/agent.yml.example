@@ -235,14 +235,6 @@ agent:
   nodes:
     schema_linking:
       matching_rate: fast
-    reasoning:
-      prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
-      max_table_schemas_length: 4000
-      max_data_details_length: 2000
-      max_context_length: 8000
-      max_value_length: 500
-    reflect:
-      prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
     output:
       prompt_version: "1.0" # It can be unconfigured, and the latest version is used by default
       check_result: true # Whether to check the results of the previous step, the default value is false
@@ -401,31 +393,13 @@ agent:
       - gen_sql
       - output
 
-    planB:
+    metricPlan:
       - schema_linking
+      - search_metrics
+      - date_parser
       - gen_sql
       - execute_sql
-      - reflect
       - output
-
-  reflection_nodes:
-    schema_linking:
-      - schema_linking
-      - gen_sql
-      - execute_sql
-      - reflect
-    doc_search:
-      - doc_search
-      - gen_sql
-      - execute_sql
-      - reflect
-    simple_regenerate:
-      - execute_sql
-      - reflect
-    reasoning:
-      - reasoning
-      - execute_sql
-      - reflect
 
   # Workflow configuration with parallel execution and selection
   workflow:
@@ -435,7 +409,7 @@ agent:
       - schema_linking
       - parallel:
         - gen_sql
-        - reasoning
+        - gen_sql
       - selection
       - execute_sql
       - output
@@ -460,11 +434,11 @@ agent:
 
     subworkflow2:
       - search_metrics
-      - reasoning
+      - gen_sql
 
     subworkflow3:
-      - reasoning
-      - reflect
+      - date_parser
+      - gen_sql
 
   # Sub-workflow with config example
   workflow:
@@ -489,13 +463,13 @@ agent:
     subworkflow2:
       steps:
       - search_metrics
-      - reasoning
+      - gen_sql
       config: multi/agent2.yaml
 
     subworkflow3:
       steps:
-      - reasoning
-      - reflect
+      - date_parser
+      - gen_sql
       config: multi/agent3.yaml
 
   skills:

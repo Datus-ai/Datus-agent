@@ -10,17 +10,18 @@
 workflow:
   plan: planA
 
-planA:
-  - schema_linking
-  - gen_sql
-  - output
+  planA:
+    - schema_linking
+    - gen_sql
+    - output
 
-planB:
-  - schema_linking
-  - gen_sql
-  - execute_sql
-  - reflect
-  - output
+  metricPlan:
+    - schema_linking
+    - search_metrics
+    - date_parser
+    - gen_sql
+    - execute_sql
+    - output
 ```
 
 ## 基础配置
@@ -36,8 +37,8 @@ basic_sql:
   - output
 ```
 
-### 含执行与反思
-```yaml title="Workflow with Execution and Reflection"
+### 含执行步骤
+```yaml title="Workflow with Execution"
 workflow:
   plan: with_execution
 
@@ -45,7 +46,6 @@ with_execution:
   - schema_linking
   - gen_sql
   - execute_sql
-  - reflect
   - output
 ```
 
@@ -63,7 +63,7 @@ parallel_generation:
   - schema_linking
   - parallel:
       - gen_sql
-      - reasoning
+      - gen_sql
   - selection
   - execute_sql
   - output
@@ -90,11 +90,11 @@ subworkflow1:
 
 subworkflow2:
   - search_metrics
-  - reasoning
+  - gen_sql
 
 subworkflow3:
-  - reasoning
-  - reflect
+  - date_parser
+  - gen_sql
 ```
 
 ### 子工作流独立配置
@@ -121,27 +121,17 @@ subworkflow1:
 subworkflow2:
   steps:
     - search_metrics
-    - reasoning
+    - gen_sql
   config: multi/agent2.yaml
 
 subworkflow3:
   steps:
-    - reasoning
-    - reflect
+    - date_parser
+    - gen_sql
   config: multi/agent3.yaml
 ```
 
 ## 内置计划
-
-=== "reflection"
-```yaml
-reflection:
-  - schema_linking
-  - gen_sql
-  - execute_sql
-  - reflect
-  - output
-```
 
 === "fixed"
 ```yaml
@@ -160,31 +150,26 @@ metric_to_sql:
   - date_parser
   - gen_sql
   - execute_sql
-  - reflect
   - output
 ```
 
-## 反思触发的备用计划
-```yaml title="Reflection Nodes Configuration"
-reflection_nodes:
-  schema_linking:
-    - schema_linking
-    - gen_sql
-    - execute_sql
-    - reflect
+=== "chat_agentic"
+```yaml
+chat_agentic:
+  - chat
+  - execute_sql
+  - output
+```
 
-  doc_search:
-    - doc_search
-    - gen_sql
-    - execute_sql
-    - reflect
+=== "gen_sql_agentic"
+```yaml
+gen_sql_agentic:
+  - gen_sql
+  - execute_sql
+  - output
+```
 
-  simple_regenerate:
-    - execute_sql
-    - reflect
-
-  reasoning:
-    - reasoning
-    - execute_sql
-    - reflect
+=== "empty"
+```yaml
+empty: []
 ```

@@ -63,12 +63,11 @@ def _make_node(agent_config=None):
     return node
 
 
-def _make_workflow(metrics=None, reflection_round=0):
+def _make_workflow(metrics=None):
     wf = MagicMock()
     wf.task = _make_sql_task()
     wf.context.metrics = metrics or []
     wf.context.sql_contexts = []
-    wf.reflection_round = reflection_round
     return wf
 
 
@@ -134,25 +133,15 @@ class TestSetupInputSearchMetrics:
         assert isinstance(node.input, SearchMetricsInput)
         assert node.input.input_text == "Find total revenue"
 
-    def test_setup_input_escalates_rate_with_reflection(self):
-        """reflection_round escalates matching_rate."""
+    @pytest.mark.parametrize("matching_rate", ["fast", "medium", "slow"])
+    def test_setup_input_uses_configured_rate(self, matching_rate):
         cfg = _make_agent_config()
-        cfg.search_metrics_rate = "fast"
+        cfg.search_metrics_rate = matching_rate
         node = _make_node(agent_config=cfg)
-        wf = _make_workflow(reflection_round=1)  # fast -> medium
+        wf = _make_workflow()
         node.setup_input(wf)
 
-        assert node.input.matching_rate == "medium"
-
-    def test_setup_input_reflection_caps_at_slow(self):
-        """reflection_round beyond bounds caps at 'slow'."""
-        cfg = _make_agent_config()
-        cfg.search_metrics_rate = "slow"
-        node = _make_node(agent_config=cfg)
-        wf = _make_workflow(reflection_round=5)
-        node.setup_input(wf)
-
-        assert node.input.matching_rate == "slow"
+        assert node.input.matching_rate == matching_rate
 
     def test_setup_input_passes_sql_contexts(self):
         node = _make_node()

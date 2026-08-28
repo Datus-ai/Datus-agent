@@ -73,7 +73,7 @@ class TestExtractSqlContexts:
         assert "read_query" in result[0].sql_query
         assert result[0].sql_return == "col1\n1\n"
 
-    def test_extracts_with_reflection(self):
+    def test_extracts_assistant_analysis(self):
         items = [
             {
                 "type": "function_call",
@@ -94,7 +94,7 @@ class TestExtractSqlContexts:
         ]
         result = extract_sql_contexts(self._make_result(items), db_type="snowflake")
         assert len(result) == 1
-        assert result[0].reflection_explanation == "This query returned 1 row."
+        assert result[0].assistant_analysis == "This query returned 1 row."
 
     def test_skips_non_matching_function_calls(self):
         items = [
@@ -168,8 +168,8 @@ class TestExtractSqlContexts:
         assert len(result) == 1
         assert result[0].sql_return == "duck_result"
 
-    def test_reflection_stops_at_next_function_call(self):
-        """When another function call follows immediately, no reflection is captured."""
+    def test_assistant_analysis_stops_at_next_function_call(self):
+        """When another function call follows immediately, no assistant analysis is captured."""
         items = [
             {
                 "type": "function_call",
@@ -190,7 +190,7 @@ class TestExtractSqlContexts:
             },
         ]
         result = extract_sql_contexts(self._make_result(items), db_type="snowflake")
-        assert result[0].reflection_explanation is None
+        assert result[0].assistant_analysis is None
 
     def test_default_db_type_snowflake(self):
         """Default db_type should be snowflake."""

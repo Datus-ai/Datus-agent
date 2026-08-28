@@ -511,7 +511,10 @@ def create_parser() -> argparse.ArgumentParser:
         workflow_group.add_argument(
             "--workflow",
             type=str,
-            help="Workflow planning strategy (can be builtin: fixed, reflection, dynamic, empty or custom plan name)",
+            help=(
+                "Workflow planning strategy (can be builtin: fixed, empty, metric_to_sql, "
+                "chat_agentic, gen_sql_agentic or custom plan name)"
+            ),
         )
         workflow_group.add_argument("--max_steps", type=int, default=20, help="Maximum workflow steps")
         workflow_group.add_argument("--load_cp", type=str, help="Load workflow from checkpoint file")

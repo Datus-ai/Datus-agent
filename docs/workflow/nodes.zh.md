@@ -6,15 +6,6 @@
 
 ### 1. 控制类节点（Control Nodes）
 
-#### Reflect（反思） {#reflect-node}
-- **用途**：评估结果并决定下一步
-- **要点**：自适应 SQL 生成的核心智能
-- **常见策略**：
-  - 简单再生成（重试生成 SQL）
-  - 文档检索（查找相关文档）
-  - 结构再分析（重新审视库表结构）
-  - 深度推理分析
-
 #### Parallel（并行）
 - **用途**：并行执行多个子节点
 - **场景**：对比多种 SQL 生成策略
@@ -63,10 +54,6 @@
   - 清晰的报错提示
   - 性能指标展示
 - **输出**：可读性好的结果
-
-#### Reasoning（推理）
-- **用途**：提供深入分析与解释
-- **场景**：复杂业务逻辑的说明与校验
 
 #### Fix（修复）
 - **用途**：修正存在问题的 SQL
@@ -134,7 +121,6 @@ class Context:
     sql_contexts: List[SQLContext]
     table_schemas: List[TableSchema]
     metrics: List[BusinessMetric]
-    reflections: List[Reflection]
     documents: List[Document]
 ```
 
@@ -152,10 +138,6 @@ nodes:
   schema_linking:
     model: "claude-3-sonnet"
     temperature: 0.1
-  reasoning:
-    model: "claude-3-opus"
-    temperature: 0.3
-
 agentic_nodes:
   gen_sql:
     model: "gpt-4"
@@ -183,10 +165,9 @@ nodes:
 ## 最佳实践
 
 ### 选择与组合
-1. 先做 Schema Linking，补足上下文
-2. 复杂场景结合 Reasoning 与 GenSQL
-3. 引入 Reflect 提升稳健性
-4. 用 Parallel 比较多种策略
+1. 需要结构上下文时，先执行 Schema Linking
+2. 使用 gen_sql 完成 SQL 生成和工具驱动分析
+3. 使用 Parallel 比较多种策略
 
 ### 性能优化
 - 缓存表结构，跨工作流复用
@@ -207,16 +188,6 @@ nodes:
 class CustomValidationNode(BaseNode):
     def run(self, input: ValidationInput) -> ValidationOutput:
         return ValidationOutput(is_valid=True, message="Validation passed")
-```
-
-### 动态工作流
-```python
-# 在反思节点中
-if complexity_score > threshold:
-    workflow.add_node("reasoning", after="current")
-
-if needs_validation:
-    workflow.add_node("compare", before="output")
 ```
 
 ### 组合示例

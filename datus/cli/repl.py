@@ -1331,7 +1331,7 @@ class DatusCLI:
                 temperature=0.7,
                 top_p=0.9,
                 max_tokens=8000,
-                workflow="reflection",
+                workflow="fixed",
                 max_steps=20,
                 debug=self.args.debug,
                 load_cp=False,

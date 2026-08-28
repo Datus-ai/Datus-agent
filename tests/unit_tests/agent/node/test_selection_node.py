@@ -162,27 +162,7 @@ class TestSelectionNodeSetupInput:
         assert isinstance(node.input, SelectionInput)
         assert node.input.candidate_results == candidates
 
-    def test_setup_input_no_parallel_results_uses_reasoning_node(self):
-        node = make_node()
-        workflow = MagicMock()
-        workflow.current_node_index = 1
-        workflow.node_order = ["reasoning_node_id", "sel_1"]
-        workflow.context.parallel_results = None
-
-        reasoning_node = MagicMock()
-        reasoning_node.type = "reasoning"
-        reasoning_node.status = "completed"
-        reasoning_node.result = MagicMock()
-        reasoning_node.result.success = True
-        reasoning_node.id = "reasoning_node_id"
-
-        workflow.nodes = {"reasoning_node_id": reasoning_node}
-
-        result = node.setup_input(workflow)
-        assert result["success"] is True
-        assert "reasoning_node" in node.input.candidate_results
-
-    def test_setup_input_no_parallel_no_reasoning_returns_failure(self):
+    def test_setup_input_no_parallel_results_returns_failure(self):
         node = make_node()
         workflow = MagicMock()
         workflow.current_node_index = 0
