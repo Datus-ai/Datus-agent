@@ -2774,21 +2774,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-reflection-workflow" class="md-nav__link">
+  <a href="#2-agentic-workflows" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Reflection Workflow
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-metric-to-sql-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Metric-to-SQL Workflow
+        2. Agentic Workflows
       
     </span>
   </a>
@@ -4561,21 +4550,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-reflection-workflow" class="md-nav__link">
+  <a href="#2-agentic-workflows" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Reflection Workflow
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-metric-to-sql-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Metric-to-SQL Workflow
+        2. Agentic Workflows
       
     </span>
   </a>
@@ -4678,26 +4656,18 @@
 <h2 id="embedded-workflows">Embedded Workflows<a class="headerlink" href="#embedded-workflows" title="Permanent link">&para;</a></h2>
 <p>Datus Agent offers different embedded workflows for different needs:</p>
 <h3 id="1-fixed-workflow">1. Fixed Workflow<a class="headerlink" href="#1-fixed-workflow" title="Permanent link">&para;</a></h3>
-<p><strong>Best for</strong>: Simple, straightforward questions</p>
+<p><strong>Best for</strong>: General SQL generation and execution</p>
 <ul>
 <li><strong>Performance</strong>: Fast and predictable</li>
 <li><strong>Perfect for</strong>: "List all customers from California" or "Show me total sales for 2023"</li>
-<li><strong>Use cases</strong>: Direct data retrieval, simple aggregations, basic filtering</li>
+<li><strong>Use cases</strong>: Direct data retrieval, aggregations, filtering, and multi-table queries</li>
 </ul>
-<h3 id="2-reflection-workflow">2. Reflection Workflow<a class="headerlink" href="#2-reflection-workflow" title="Permanent link">&para;</a></h3>
-<p><strong>Best for</strong>: Complex business questions</p>
+<h3 id="2-agentic-workflows">2. Agentic Workflows<a class="headerlink" href="#2-agentic-workflows" title="Permanent link">&para;</a></h3>
+<p><strong>Best for</strong>: Queries that benefit from iterative tool use</p>
 <ul>
-<li><strong>Intelligence</strong>: Automatically checks and improves its own work</li>
-<li><strong>Reliability</strong>: Can fix errors without human intervention</li>
-<li><strong>Perfect for</strong>: "Show me quarterly revenue trends by product category, excluding returns and considering seasonal adjustments"</li>
-<li><strong>Use cases</strong>: Multi-step analysis, error correction, complex business logic</li>
-</ul>
-<h3 id="3-metric-to-sql-workflow">3. Metric-to-SQL Workflow<a class="headerlink" href="#3-metric-to-sql-workflow" title="Permanent link">&para;</a></h3>
-<p><strong>Best for</strong>: Standardized business reports</p>
-<ul>
-<li><strong>Consistency</strong>: Uses predefined business metrics</li>
+<li><strong>Tool use</strong>: Can search predefined business metrics and other context</li>
 <li><strong>Perfect for</strong>: "Show monthly active users for the last quarter" or "Calculate customer churn rate"</li>
-<li><strong>Use cases</strong>: KPI reporting, standardized metrics, business intelligence</li>
+<li><strong>Use cases</strong>: KPI reporting, temporal analysis, semantic-layer queries, and complex SQL generation</li>
 </ul>
 <h2 id="nodes-the-building-blocks">Nodes: The Building Blocks<a class="headerlink" href="#nodes-the-building-blocks" title="Permanent link">&para;</a></h2>
 <p>Workflows are made up of specialized components called "<a href="../nodes/">nodes</a>." Each node does one job really well:</p>
@@ -4705,7 +4675,6 @@
 <li><strong><a href="../nodes/#schema-linking-node">Schema Linking</a></strong>: Finds the right database tables for your question</li>
 <li><strong><a href="../nodes/#generate-sql-node">Generate SQL</a></strong>: Creates the SQL query</li>
 <li><strong><a href="../nodes/#execute-sql-node">Execute SQL</a></strong>: Runs the query against your database</li>
-<li><strong><a href="../nodes/#reflect-node">Reflect</a></strong>: Checks results and decides if improvements are needed</li>
 <li><strong><a href="../nodes/#output-node">Output</a></strong>: Presents the final results to you</li>
 </ul>
 <h2 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h2>
@@ -4714,10 +4683,10 @@
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Show me monthly sales"</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Use a specific workflow type</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Show me complex revenue trends"</span><span class="w"> </span>--workflow<span class="w"> </span>reflection
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Show me complex revenue trends"</span><span class="w"> </span>--workflow<span class="w"> </span>fixed
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Use business metrics</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Calculate customer lifetime value"</span><span class="w"> </span>--workflow<span class="w"> </span>metric_to_sql
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>your_db<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">"Calculate customer lifetime value"</span><span class="w"> </span>--workflow<span class="w"> </span>gen_sql_agentic
 </span></code></pre></div>
 <h3 id="via-api">Via API<a class="headerlink" href="#via-api" title="Permanent link">&para;</a></h3>
 <p>You can also use workflows through a REST API:</p>
@@ -4727,7 +4696,7 @@
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">"http://localhost:8000/workflows/run"</span><span class="p">,</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">"Authorization"</span><span class="p">:</span> <span class="s2">"Bearer your_token"</span><span class="p">},</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">json</span><span class="o">=</span><span class="p">{</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="s2">"workflow"</span><span class="p">:</span> <span class="s2">"reflection"</span><span class="p">,</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="s2">"workflow"</span><span class="p">:</span> <span class="s2">"fixed"</span><span class="p">,</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="s2">"datasource"</span><span class="p">:</span> <span class="s2">"your_db"</span><span class="p">,</span>
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="s2">"task"</span><span class="p">:</span> <span class="s2">"Show me quarterly revenue trends"</span><span class="p">,</span>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="s2">"mode"</span><span class="p">:</span> <span class="s2">"sync"</span>
