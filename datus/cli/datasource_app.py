@@ -17,6 +17,7 @@ Follows the same architecture as :mod:`datus.cli.model_app`:
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -42,6 +43,7 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 INSTALLABLE_TYPES = (
+    "bigquery",
     "clickhouse",
     "clickzetta",
     "doris",
@@ -613,6 +615,18 @@ class DatasourceApp:
                         self._form_focus_idx = i
                         self._focus(self._form_textareas[i])
                         return
+                elif self._expects_json_object(meta):
+                    try:
+                        json_value = json.loads(value)
+                    except (TypeError, ValueError):
+                        json_value = None
+                    if not isinstance(json_value, dict):
+                        label = fn.replace("_", " ").capitalize()
+                        self._error_message = f"{label} must be a valid JSON object."
+                        self._form_focus_idx = i
+                        self._focus(self._form_textareas[i])
+                        return
+                    payload[pk] = json_value
                 else:
                     payload[pk] = value
 
@@ -620,6 +634,15 @@ class DatasourceApp:
             self._finish(DatasourceSelection(kind="edit_submit", name=self._form_edit_name, payload=payload))
         else:
             self._finish(DatasourceSelection(kind="add_submit", db_type=self._form_db_type, payload=payload))
+
+    @staticmethod
+    def _expects_json_object(field_meta: Dict[str, Any]) -> bool:
+        """Return whether adapter metadata describes a mapping field."""
+        if field_meta.get("value_type") == "json_object":
+            return True
+        field_type = field_meta.get("type", "")
+        normalized = str(field_type).replace("typing.", "").replace(" ", "").lower()
+        return normalized == "dict" or "dict[" in normalized
 
     # ── Key bindings ──────────────────────────────────────────────
 

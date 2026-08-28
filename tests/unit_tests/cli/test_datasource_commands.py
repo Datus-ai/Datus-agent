@@ -442,13 +442,18 @@ class TestDatasourceAppViews:
             assert ("duckdb", "duckdb", True) in app._db_types
             assert ("sqlite", "sqlite", True) in app._db_types
             assert (
+                "bigquery",
+                "bigquery (not installed — will install datus-bigquery)",
+                False,
+            ) in app._db_types
+            assert (
                 "maxcompute",
                 "maxcompute (not installed — will install datus-maxcompute)",
                 False,
             ) in app._db_types
 
     def test_new_database_adapters_are_installable(self):
-        assert {"doris", "gaussdb", "hologres", "maxcompute", "oracle", "tidb"} <= set(INSTALLABLE_TYPES)
+        assert {"bigquery", "doris", "gaussdb", "hologres", "maxcompute", "oracle", "tidb"} <= set(INSTALLABLE_TYPES)
 
     def test_enter_config_form(self):
         cli = _make_cli()
@@ -598,6 +603,63 @@ class TestDatasourceAppFormSubmit:
         # Our fields are: _name, host, port
         # port has type=int, value=99999 — fails port range check
         assert app._error_message == "Port must be between 1 and 65535."
+
+    def test_submit_parses_adapter_json_object_field(self):
+        cli = _make_cli()
+        app = DatasourceApp(cli.agent_config, MagicMock())
+        mock_adapter = MagicMock()
+        mock_adapter.get_config_fields.return_value = {
+            "project": {"required": True, "type": "str"},
+            "credentials_info": {
+                "required": False,
+                "type": "Optional",
+                "input_type": "password",
+                "value_type": "json_object",
+            },
+        }
+        with patch(
+            "datus.tools.db_tools.connector_registry.list_available_adapters",
+            return_value={"bigquery": mock_adapter},
+        ):
+            app._enter_config_form("bigquery")
+        app._form_textareas[0].text = "bigquery_ci"
+        app._form_textareas[1].text = "project-id"
+        app._form_textareas[2].text = '{"type": "service_account", "project_id": "project-id"}'
+        app._on_done = MagicMock()
+
+        app._submit_form()
+
+        selection = app._on_done.call_args.args[0]
+        assert selection.payload["credentials_info"] == {
+            "type": "service_account",
+            "project_id": "project-id",
+        }
+
+    def test_submit_rejects_invalid_adapter_json_object_field(self):
+        cli = _make_cli()
+        app = DatasourceApp(cli.agent_config, MagicMock())
+        mock_adapter = MagicMock()
+        mock_adapter.get_config_fields.return_value = {
+            "project": {"required": True, "type": "str"},
+            "credentials_info": {
+                "required": False,
+                "type": "Optional",
+                "input_type": "password",
+                "value_type": "json_object",
+            },
+        }
+        with patch(
+            "datus.tools.db_tools.connector_registry.list_available_adapters",
+            return_value={"bigquery": mock_adapter},
+        ):
+            app._enter_config_form("bigquery")
+        app._form_textareas[0].text = "bigquery_ci"
+        app._form_textareas[1].text = "project-id"
+        app._form_textareas[2].text = "not-json"
+
+        app._submit_form()
+
+        assert app._error_message == "Credentials info must be a valid JSON object."
 
 
 class TestDatasourceAppCursor:

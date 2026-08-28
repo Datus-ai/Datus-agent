@@ -21,6 +21,7 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-mysql": "datus-db-adapters/datus-mysql",
     "datus-clickhouse": "datus-db-adapters/datus-clickhouse",
     "datus-starrocks": "datus-db-adapters/datus-starrocks",
+    "datus-bigquery": "datus-db-adapters/datus-bigquery",
     "datus-doris": "datus-db-adapters/datus-doris",
     "datus-hologres": "datus-db-adapters/datus-hologres",
     "datus-maxcompute": "datus-db-adapters/datus-maxcompute",
@@ -57,6 +58,11 @@ class DatabaseAdapterContract(BaseModel):
 
 
 DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
+    "datus_bigquery": DatabaseAdapterContract(
+        db_type="bigquery",
+        parser_dialect="bigquery",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
     "datus_doris": DatabaseAdapterContract(db_type="doris"),
     "datus_hologres": DatabaseAdapterContract(
         db_type="hologres",

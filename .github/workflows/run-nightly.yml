@@ -219,6 +219,7 @@ jobs:
             --reinstall-package datus-semantic-dosi \
             --reinstall-package datus-semantic-osi \
             --reinstall-package datus-snowflake \
+            --reinstall-package datus-bigquery \
             --reinstall-package datus-doris \
             --reinstall-package datus-tidb \
             --reinstall-package datus-hologres \
@@ -237,6 +238,7 @@ jobs:
             ./external/datus-db-adapters/datus-db-core \
             ./external/datus-db-adapters/datus-sqlalchemy \
             ./external/datus-db-adapters/datus-snowflake \
+            ./external/datus-db-adapters/datus-bigquery \
             ./external/datus-db-adapters/datus-postgresql \
             ./external/datus-db-adapters/datus-mysql \
             ./external/datus-db-adapters/datus-clickhouse \
