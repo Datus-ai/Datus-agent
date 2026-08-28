@@ -315,6 +315,17 @@ class TestQueryMetricsCompression:
             dry_run=False,
         )
 
+    @pytest.mark.parametrize("limit", ["", " ", "null", "None"])
+    def test_query_metrics_normalizes_null_limit(self, semantic_tools, mock_adapter, limit):
+        """LLM null placeholders must not reach adapters as a present limit."""
+        query_result = QueryResult(columns=["revenue"], data=[{"revenue": 10}], metadata={})
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"], limit=limit)
+
+        assert result.success == 1
+        assert mock_adapter.query_metrics.call_args.kwargs["limit"] is None
+
     def test_query_metrics_runs_warehouse_dry_run_for_compiled_sql(self, semantic_tools, mock_adapter):
         query_result = QueryResult(
             columns=["sql"],
