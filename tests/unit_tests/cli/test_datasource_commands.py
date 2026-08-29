@@ -657,7 +657,23 @@ class TestDatasourceAppFormSubmit:
         # port has type=int, value=99999 — fails port range check
         assert app._error_message == "Port must be between 1 and 65535."
 
-    def test_submit_parses_adapter_json_object_field(self):
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            (
+                '{"type": "service_account", "project_id": "project-id"}',
+                {"type": "service_account", "project_id": "project-id"},
+            ),
+            (
+                '{"type": "service_account", "metadata": {"rotation": {"owner": {"team": "data"}}}}',
+                {
+                    "type": "service_account",
+                    "metadata": {"rotation": {"owner": {"team": "data"}}},
+                },
+            ),
+        ],
+    )
+    def test_submit_parses_adapter_json_object_field(self, raw_value, expected):
         cli = _make_cli()
         app = DatasourceApp(cli.agent_config, MagicMock())
         mock_adapter = MagicMock()
@@ -677,16 +693,13 @@ class TestDatasourceAppFormSubmit:
             app._enter_config_form("bigquery")
         app._form_textareas[0].text = "bigquery_ci"
         app._form_textareas[1].text = "project-id"
-        app._form_textareas[2].text = '{"type": "service_account", "project_id": "project-id"}'
+        app._form_textareas[2].text = raw_value
         app._on_done = MagicMock()
 
         app._submit_form()
 
         selection = app._on_done.call_args.args[0]
-        assert selection.payload["credentials_info"] == {
-            "type": "service_account",
-            "project_id": "project-id",
-        }
+        assert selection.payload["credentials_info"] == expected
 
     @pytest.mark.parametrize("invalid_value", ["not-json", "[]", "null", "42"])
     def test_submit_rejects_invalid_adapter_json_object_field(self, invalid_value):
