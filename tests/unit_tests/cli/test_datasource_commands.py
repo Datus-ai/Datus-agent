@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
-from datus.cli.datasource_app import INSTALLABLE_TYPES, DatasourceApp, DatasourceSelection, _View
+from datus.cli.datasource_app import _PW_PLACEHOLDER, INSTALLABLE_TYPES, DatasourceApp, DatasourceSelection, _View
 from datus.cli.datasource_commands import DatasourceCommands
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -367,6 +367,49 @@ class TestHandleEditSubmit:
             cmds._handle_edit_submit(sel)
             assert "pg_db" in cli.agent_config.services.datasources
 
+    def test_edit_submit_preserves_unchanged_adapter_json_object_password(self):
+        credentials = {"type": "service_account", "project_id": "project-id"}
+        bigquery_config = _FakeDbConfig(
+            type="bigquery",
+            catalog="project-id",
+            database="dataset-id",
+            extra={"credentials_info": credentials},
+        )
+        cli = _make_cli(datasources={"bigquery_ci": bigquery_config}, current="bigquery_ci")
+        cmds = DatasourceCommands(cli)
+        selection = DatasourceSelection(
+            kind="edit_submit",
+            name="bigquery_ci",
+            payload={
+                "type": "bigquery",
+                "catalog": "project-id",
+                "database": "dataset-id",
+            },
+        )
+        mock_adapter = MagicMock()
+        mock_adapter.get_config_fields.return_value = {
+            "credentials_info": {
+                "required": False,
+                "input_type": "password",
+                "value_type": "json_object",
+            }
+        }
+
+        with (
+            patch(
+                "datus.tools.db_tools.connector_registry.list_available_adapters",
+                return_value={"bigquery": mock_adapter},
+            ),
+            patch.object(cmds, "_test_connectivity", return_value=True),
+            patch.object(cmds, "_save", return_value=True),
+            patch.object(cmds, "_reload_runtime"),
+        ):
+            cmds._handle_edit_submit(selection)
+
+        assert selection.payload["credentials_info"] == credentials
+        saved = cli.agent_config.services.datasources["bigquery_ci"]
+        assert saved.extra["credentials_info"] == credentials
+
 
 class TestTestConnectivity:
     def test_success(self):
@@ -660,6 +703,38 @@ class TestDatasourceAppFormSubmit:
         app._submit_form()
 
         assert app._error_message == "Credentials info must be a valid JSON object."
+
+    def test_edit_preserves_unchanged_adapter_json_object_password(self):
+        cli = _make_cli()
+        app = DatasourceApp(cli.agent_config, MagicMock())
+        credentials = {"type": "service_account", "project_id": "project-id"}
+        mock_adapter = MagicMock()
+        mock_adapter.get_config_fields.return_value = {
+            "project": {"required": True, "type": "str"},
+            "credentials_info": {
+                "required": False,
+                "type": "Optional",
+                "input_type": "password",
+                "value_type": "json_object",
+            },
+        }
+        with patch(
+            "datus.tools.db_tools.connector_registry.list_available_adapters",
+            return_value={"bigquery": mock_adapter},
+        ):
+            app._enter_config_form(
+                "bigquery",
+                edit_name="bigquery_ci",
+                existing={"project": "project-id", "credentials_info": credentials},
+            )
+        app._on_done = MagicMock()
+
+        assert app._form_textareas[1].text == _PW_PLACEHOLDER
+
+        app._submit_form()
+
+        selection = app._on_done.call_args.args[0]
+        assert selection.payload == {"type": "bigquery", "project": "project-id"}
 
 
 class TestDatasourceAppCursor:
