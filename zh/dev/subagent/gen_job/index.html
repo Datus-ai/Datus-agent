@@ -5077,7 +5077,7 @@
 <li><strong><code>suggest_table_layout(database=target, columns_json=...)</code></strong> — 返回 OLAP 相关建议（StarRocks 的 <code>{duplicate_key, distributed_by, buckets}</code>、ClickHouse 的 <code>{engine, order_by}</code>、Trino/Hive 的 <code>{partitioned_by}</code> 等）。</li>
 <li><strong><code>validate_ddl(database=target, ddl=..., target_table=...)</code></strong> — 做结构化校验（如 StarRocks 必须有 <code>DUPLICATE KEY</code> + <code>DISTRIBUTED BY</code>；ClickHouse 必须有 <code>ENGINE</code> + <code>ORDER BY</code>）；可选再跑 <code>dry_run_ddl</code>（在目标库 CREATE + DROP 临时表）。</li>
 </ul>
-<p>本版本已实现 Mixin 的 adapter：StarRocks、Greenplum、PostgreSQL、MySQL、ClickHouse、Trino、Snowflake、Redshift、DuckDB、SQLite，以及基于 SQLAlchemy 基类的通用 OLTP fallback。其他未实装的 adapter（如 BigQuery、Hive、Spark、ClickZetta）回退到纯 LLM 模式——<code>get_migration_capabilities</code> 返回 <code>{"supported": false, "warning": ...}</code>，由 LLM 凭自身知识处理目标方言。</p>
+<p>本版本已实现 Mixin 的 adapter：StarRocks、Greenplum、PostgreSQL、MySQL、ClickHouse、Trino、Snowflake、Redshift、BigQuery、DuckDB、SQLite，以及基于 SQLAlchemy 基类的通用 OLTP fallback。其他未实装的 adapter（如 Hive、Spark、ClickZetta）回退到纯 LLM 模式——<code>get_migration_capabilities</code> 返回 <code>{"supported": false, "warning": ...}</code>，由 LLM 凭自身知识处理目标方言。</p>
 <p>要为新方言加提示：在对应 adapter 实现 <code>MigrationTargetMixin</code> 即可，agent 不需改动。</p>
 <h3 id="_11">数据传输<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
 <p><code>transfer_query_result</code> 工具负责数据搬运：</p>
