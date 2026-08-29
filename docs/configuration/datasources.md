@@ -98,6 +98,25 @@ when the private key is encrypted. The adapter uses Snowflake JWT authentication
 Snowflake uses a `database` + `schema` namespace. Leave `catalog` unset for Snowflake; catalog filters are for
 catalog-aware engines such as StarRocks.
 
+### Google BigQuery
+
+```yaml
+my_bigquery:
+  type: bigquery
+  catalog: ${BIGQUERY_PROJECT}
+  database: ${BIGQUERY_DATASET}
+  location: ${BIGQUERY_LOCATION:-US}
+  credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
+  # credentials_base64: ${BIGQUERY_CREDENTIALS_BASE64}
+  # billing_project_id: ${BIGQUERY_BILLING_PROJECT}
+```
+
+`catalog` maps to the Google Cloud project and `database` maps to the BigQuery dataset. Leave `schema` unset. Configure
+only one of `credentials_path`, `credentials_info`, or `credentials_base64`; omit all three to use Application Default
+Credentials. In YAML, `credentials_info` must be a mapping, not a quoted JSON string. See
+[Database Adapters](../adapters/db_adapters.md#google-bigquery) for correct and incorrect examples, the GitHub Secret
+flow, and detailed credential and namespace guidance.
+
 ### MaxCompute
 
 ```yaml

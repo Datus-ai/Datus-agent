@@ -32,6 +32,7 @@ PACKAGE_NAMES = (
     "datus-mysql",
     "datus-clickhouse",
     "datus-starrocks",
+    "datus-bigquery",
     "datus-doris",
     "datus-hologres",
     "datus-maxcompute",

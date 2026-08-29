@@ -98,6 +98,24 @@ Snowflake 支持密码认证和 key-pair 认证。托管/SaaS 场景推荐把 PE
 Snowflake 使用 `database` + `schema` 命名空间。Snowflake 不要配置 `catalog`；`catalog` 过滤只适用于
 StarRocks 等支持 catalog 的引擎。
 
+### Google BigQuery
+
+```yaml
+my_bigquery:
+  type: bigquery
+  catalog: ${BIGQUERY_PROJECT}
+  database: ${BIGQUERY_DATASET}
+  location: ${BIGQUERY_LOCATION:-US}
+  credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
+  # credentials_base64: ${BIGQUERY_CREDENTIALS_BASE64}
+  # billing_project_id: ${BIGQUERY_BILLING_PROJECT}
+```
+
+`catalog` 对应 Google Cloud project，`database` 对应 BigQuery dataset；不要配置 `schema`。
+`credentials_path`、`credentials_info`、`credentials_base64` 只能配置一个；三者都不配置时使用 Application
+Default Credentials。YAML 中的 `credentials_info` 必须是 mapping，不能是加引号的 JSON 字符串。正确与错误示例、
+GitHub Secret 链路以及凭据和命名空间的详细说明见[数据库适配器](../adapters/db_adapters.zh.md#google-bigquery)。
+
 ### MaxCompute
 
 ```yaml

@@ -17,14 +17,15 @@ MODULE_SPEC.loader.exec_module(verify_sources)
 
 # Registration shape a healthy nightly checkout produces, per db_type.
 _PARSER_DIALECTS = {
+    "bigquery": "bigquery",
     "hologres": "postgres",
     "gaussdb": "postgres",
     "maxcompute": "hive",
     "oracle": "oracle",
     "tidb": "mysql",
 }
-_IDENTIFIER_PARSER_ADAPTERS = {"hologres", "gaussdb", "maxcompute"}
-_SQL_NOTES_ADAPTERS = {"hologres", "gaussdb", "maxcompute", "oracle", "tidb"}
+_IDENTIFIER_PARSER_ADAPTERS = {"bigquery", "hologres", "gaussdb", "maxcompute"}
+_SQL_NOTES_ADAPTERS = {"bigquery", "hologres", "gaussdb", "maxcompute", "oracle", "tidb"}
 
 
 class _FakeDistribution:
@@ -86,6 +87,18 @@ def test_expected_sources_include_the_maxcompute_checkout_path():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
 
 
+def test_expected_sources_include_the_bigquery_checkout_path():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-bigquery"] == "datus-db-adapters/datus-bigquery"
+
+
+def test_bigquery_contract_requires_dialect_and_sql_guidance_hooks():
+    contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_bigquery"]
+
+    assert contract.db_type == "bigquery"
+    assert contract.parser_dialect == "bigquery"
+    assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
+
+
 def test_maxcompute_contract_requires_dialect_and_sql_guidance_hooks():
     contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_maxcompute"]
 
@@ -107,6 +120,7 @@ def test_managed_p0_plugins_are_not_required_as_global_packages():
 
 
 def test_expected_sources_include_new_database_adapters():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-bigquery"] == "datus-db-adapters/datus-bigquery"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-doris"] == "datus-db-adapters/datus-doris"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-hologres"] == "datus-db-adapters/datus-hologres"
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-maxcompute"] == "datus-db-adapters/datus-maxcompute"
@@ -134,6 +148,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_maxcompute": SimpleNamespace(register=lambda: None),
@@ -156,6 +171,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_maxcompute": SimpleNamespace(register=lambda: None),
@@ -198,6 +214,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_maxcompute": SimpleNamespace(register=lambda: None),
@@ -220,6 +237,7 @@ def test_verify_database_adapter_imports_rejects_non_callable_maxcompute_identif
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_maxcompute": SimpleNamespace(register=lambda: None),
@@ -244,6 +262,7 @@ def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch)
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_maxcompute": SimpleNamespace(register=lambda: None),
@@ -268,6 +287,7 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
     )
     modules = {
         "datus_db_core": SimpleNamespace(connector_registry=registry),
+        "datus_bigquery": SimpleNamespace(register=lambda: None),
         "datus_doris": SimpleNamespace(register=lambda: None),
         "datus_hologres": SimpleNamespace(register=lambda: None),
         "datus_maxcompute": SimpleNamespace(register=lambda: None),

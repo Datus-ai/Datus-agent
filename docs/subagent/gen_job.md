@@ -128,7 +128,7 @@ Type mapping and DDL requirements are NOT hardcoded in the agent. Each target ad
 - **`suggest_table_layout(database=target, columns_json=...)`** — returns OLAP-specific hints (e.g. `{duplicate_key, distributed_by, buckets}` for StarRocks, `{engine, order_by}` for ClickHouse, `{partitioned_by}` for Hive via Trino).
 - **`validate_ddl(database=target, ddl=..., target_table=...)`** — runs structural validation (e.g. StarRocks must have `DUPLICATE KEY` + `DISTRIBUTED BY`; ClickHouse must have `ENGINE` + `ORDER BY`); optionally runs `dry_run_ddl` (CREATE + DROP to a temp table).
 
-Adapters that implement the Mixin (as of this release): StarRocks, Greenplum, PostgreSQL, MySQL, ClickHouse, Trino, Snowflake, Redshift, DuckDB, SQLite, plus a generic OLTP fallback on the SQLAlchemy base. Adapters without a Mixin yet (e.g. BigQuery, Hive, Spark, ClickZetta) fall back to pure-LLM mode — `get_migration_capabilities` returns `{"supported": false, "warning": ...}` and the LLM relies on its own knowledge of the target dialect.
+Adapters that implement the Mixin (as of this release): StarRocks, Greenplum, PostgreSQL, MySQL, ClickHouse, Trino, Snowflake, Redshift, BigQuery, DuckDB, SQLite, plus a generic OLTP fallback on the SQLAlchemy base. Adapters without a Mixin yet (e.g. Hive, Spark, ClickZetta) fall back to pure-LLM mode — `get_migration_capabilities` returns `{"supported": false, "warning": ...}` and the LLM relies on its own knowledge of the target dialect.
 
 To add hints for a new target dialect, implement `MigrationTargetMixin` in the adapter — no changes to the agent are required.
 

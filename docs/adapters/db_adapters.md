@@ -30,6 +30,7 @@ This design keeps the core package lightweight while allowing you to add support
 | TiDB | datus-tidb | `pip install datus-tidb` | Ready |
 | Hologres | datus-hologres | `pip install datus-hologres` | Ready |
 | MaxCompute | datus-maxcompute | `pip install datus-maxcompute` | Ready |
+| Google BigQuery | datus-bigquery | `pip install datus-bigquery` | Ready |
 | Oracle | datus-oracle | `pip install datus-oracle` | Ready |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | Ready (Linux and macOS) |
 
@@ -79,6 +80,9 @@ pip install datus-hologres
 
 # MaxCompute
 pip install datus-maxcompute
+
+# Google BigQuery
+pip install datus-bigquery
 
 # Oracle
 pip install datus-oracle
@@ -170,6 +174,63 @@ Snowflake supports password authentication and key-pair authentication. Configur
 `password` or `private_key_file` when `private_key` is absent. `private_key` takes precedence over
 `private_key_file` and `password`; set `private_key_file_pwd` only when the private key is encrypted. Snowflake uses
 `database` and `schema`; do not set `catalog` for Snowflake.
+
+### Google BigQuery
+
+```yaml
+bigquery_data:
+  type: bigquery
+  catalog: ${BIGQUERY_PROJECT}
+  database: ${BIGQUERY_DATASET}
+  location: ${BIGQUERY_LOCATION:-US}
+  credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
+  # credentials_base64: ${BIGQUERY_CREDENTIALS_BASE64}
+  # billing_project_id: ${BIGQUERY_BILLING_PROJECT}
+  # timeout_seconds: 60
+```
+
+`catalog` is the Google Cloud project and `database` is the BigQuery dataset; BigQuery has no schema level below a
+dataset. The adapter also accepts `project` and `dataset` as aliases. Use exactly one of `credentials_path`,
+`credentials_info`, or `credentials_base64`. Local environments normally use `credentials_path`, while hosted secret
+stores can provide `credentials_base64`. The datasource form accepts a service-account JSON object in
+`credentials_info`; in YAML, provide that field as a mapping rather than a JSON string. When none is configured, the
+Google client uses Application Default Credentials.
+
+For example, this is a YAML mapping. Preserve all fields from the downloaded service-account JSON file; the values
+below are placeholders:
+
+```yaml
+bigquery_data:
+  type: bigquery
+  catalog: your-gcp-project-id
+  database: your_dataset
+  credentials_info:
+    type: service_account
+    project_id: your-gcp-project-id
+    private_key_id: your-private-key-id
+    private_key: |
+      -----BEGIN PRIVATE KEY-----
+      REPLACE_WITH_THE_PRIVATE_KEY_BODY
+      -----END PRIVATE KEY-----
+    client_email: datus-ci@your-gcp-project-id.iam.gserviceaccount.com
+    client_id: "123456789012345678901"
+    auth_uri: https://accounts.google.com/o/oauth2/auth
+    token_uri: https://oauth2.googleapis.com/token
+    auth_provider_x509_cert_url: https://www.googleapis.com/oauth2/v1/certs
+    client_x509_cert_url: https://www.googleapis.com/robot/v1/metadata/x509/...
+```
+
+Do not quote the entire JSON object:
+
+```yaml
+# Wrong: this is one YAML string, not a mapping.
+credentials_info: '{"type":"service_account","project_id":"your-gcp-project-id"}'
+```
+
+The GitHub cloud test is a separate environment-variable flow: store the original JSON file contents in the
+`BIGQUERY_CREDENTIALS_INFO` repository secret. The test fixture parses that string with `json.loads()` before creating
+the adapter config. For normal Agent YAML backed by a string-only secret store, prefer `credentials_base64` instead.
+Base64 is an encoding, not encryption.
 
 ### MaxCompute
 
@@ -503,6 +564,13 @@ All adapters support:
 - Arrow format for efficient data transfer
 - Native SDK integration
 
+#### Google BigQuery
+- GoogleSQL guidance through the adapter-provided `db-bigquery-sql` skill
+- Project and dataset navigation with fully qualified `project.dataset.table` identifiers
+- Tables, views, materialized views, and Arrow/Pandas result formats
+- Application Default Credentials, service-account file, JSON object, and base64 credential flows
+- Migration target hints, source-type mapping, BigQuery DDL validation, partitioning, and clustering suggestions
+
 #### StarRocks
 - Multi-Catalog support
 - Materialized view support
@@ -595,6 +663,7 @@ Some adapters require additional system dependencies:
 - **MySQL**: Requires `pymysql` (installed automatically)
 - **PostgreSQL**: Requires `psycopg2-binary` (installed automatically)
 - **Snowflake**: Requires `snowflake-connector-python` (installed automatically)
+- **Google BigQuery**: Requires `sqlalchemy-bigquery` and the Google Cloud BigQuery client (installed automatically)
 - **Hive**: Requires `pyhive`, `thrift`, `thrift-sasl`, `pure-sasl` (installed automatically)
 - **Spark**: Requires `pyhive`, `thrift`, `thrift-sasl`, `pure-sasl` (installed automatically)
 - **ClickHouse**: Requires `clickhouse-sqlalchemy` (installed automatically)
@@ -626,7 +695,8 @@ datus-agent (Core)
     │   ├── datus-spark
     │   ├── datus-clickhouse
     │   ├── datus-trino
-    │   └── datus-oracle
+    │   ├── datus-oracle
+    │   └── datus-bigquery
     │
     └── Native SDK Adapters
         ├── datus-snowflake

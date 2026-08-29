@@ -30,6 +30,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | TiDB | datus-tidb | `pip install datus-tidb` | 可用 |
 | Hologres | datus-hologres | `pip install datus-hologres` | 可用 |
 | MaxCompute | datus-maxcompute | `pip install datus-maxcompute` | 可用 |
+| Google BigQuery | datus-bigquery | `pip install datus-bigquery` | 可用 |
 | Oracle | datus-oracle | `pip install datus-oracle` | 可用 |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | 可用（Linux 和 macOS） |
 
@@ -76,6 +77,9 @@ pip install datus-hologres
 
 # MaxCompute
 pip install datus-maxcompute
+
+# Google BigQuery
+pip install datus-bigquery
 
 # Oracle
 pip install datus-oracle
@@ -164,6 +168,61 @@ warehouse:
 ```
 
 Snowflake 支持密码认证和 key-pair 认证。可以配置 `private_key`，或在没有 `private_key` 时配置 `password` 和 `private_key_file` 其中一个。`private_key` 会优先于 `private_key_file` 和 `password`；私钥加密时再配置 `private_key_file_pwd`。Snowflake 使用 `database` 和 `schema`，不要为 Snowflake 配置 `catalog`。
+
+### Google BigQuery
+
+```yaml
+bigquery_data:
+  type: bigquery
+  catalog: ${BIGQUERY_PROJECT}
+  database: ${BIGQUERY_DATASET}
+  location: ${BIGQUERY_LOCATION:-US}
+  credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
+  # credentials_base64: ${BIGQUERY_CREDENTIALS_BASE64}
+  # billing_project_id: ${BIGQUERY_BILLING_PROJECT}
+  # timeout_seconds: 60
+```
+
+`catalog` 对应 Google Cloud project，`database` 对应 BigQuery dataset；dataset 下没有 schema 层。adapter 也接受
+`project` 和 `dataset` 作为别名。`credentials_path`、`credentials_info`、`credentials_base64` 只能配置一个。
+本地环境通常使用 `credentials_path`，托管环境的 secret store 可以提供 `credentials_base64`。Datasource 表单可在
+`credentials_info` 中直接粘贴 service-account JSON；YAML 配置则应把该字段写成 mapping，而不是 JSON 字符串。
+三者都不配置时，Google client 会使用 Application Default Credentials。
+
+下面的 `credentials_info` 是 YAML mapping。请保留下载的 service-account JSON 文件中的全部字段；示例值均为
+占位符：
+
+```yaml
+bigquery_data:
+  type: bigquery
+  catalog: your-gcp-project-id
+  database: your_dataset
+  credentials_info:
+    type: service_account
+    project_id: your-gcp-project-id
+    private_key_id: your-private-key-id
+    private_key: |
+      -----BEGIN PRIVATE KEY-----
+      REPLACE_WITH_THE_PRIVATE_KEY_BODY
+      -----END PRIVATE KEY-----
+    client_email: datus-ci@your-gcp-project-id.iam.gserviceaccount.com
+    client_id: "123456789012345678901"
+    auth_uri: https://accounts.google.com/o/oauth2/auth
+    token_uri: https://oauth2.googleapis.com/token
+    auth_provider_x509_cert_url: https://www.googleapis.com/oauth2/v1/certs
+    client_x509_cert_url: https://www.googleapis.com/robot/v1/metadata/x509/...
+```
+
+不要给整个 JSON object 加引号：
+
+```yaml
+# 错误：这是一个 YAML 字符串，不是 mapping。
+credentials_info: '{"type":"service_account","project_id":"your-gcp-project-id"}'
+```
+
+GitHub cloud test 使用另一条环境变量链路：把原始 JSON 文件的完整内容保存到 repository secret
+`BIGQUERY_CREDENTIALS_INFO`。测试 fixture 会先调用 `json.loads()` 把字符串解析成 object，再创建 adapter 配置。
+普通 Agent YAML 如果对接只能保存字符串的 secret store，建议改用 `credentials_base64`。Base64 只是编码，不是加密。
 
 ### MaxCompute
 
@@ -481,6 +540,13 @@ agent:
 - Arrow 格式高效数据传输
 - 原生 SDK 集成
 
+#### Google BigQuery
+- 通过 adapter 内置的 `db-bigquery-sql` Skill 提供 GoogleSQL 指导
+- 支持 project、dataset 导航和完整的 `project.dataset.table` 标识符
+- 支持表、视图、物化视图以及 Arrow/Pandas 结果格式
+- 支持 Application Default Credentials、service-account 文件、JSON object 和 base64 凭据
+- 支持迁移目标提示、源类型映射、BigQuery DDL 校验、分区和聚簇建议
+
 #### StarRocks
 - 多 Catalog 支持
 - 物化视图支持
@@ -572,6 +638,7 @@ pip install datus-mysql
 
 - **MySQL**：需要 `pymysql`（自动安装）
 - **Snowflake**：需要 `snowflake-connector-python`（自动安装）
+- **Google BigQuery**：需要 `sqlalchemy-bigquery` 和 Google Cloud BigQuery client（自动安装）
 - **Hive**：需要 `pyhive`、`thrift`、`thrift-sasl`、`pure-sasl`（自动安装）
 - **Spark**：需要 `pyhive`、`thrift`、`thrift-sasl`、`pure-sasl`（自动安装）
 - **ClickHouse**：需要 `clickhouse-sqlalchemy`（自动安装）
@@ -602,7 +669,8 @@ datus-agent (核心)
     │   ├── datus-spark
     │   ├── datus-clickhouse
     │   ├── datus-trino
-    │   └── datus-oracle
+    │   ├── datus-oracle
+    │   └── datus-bigquery
     │
     └── 原生 SDK 适配器
         ├── datus-snowflake
