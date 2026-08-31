@@ -2368,6 +2368,9 @@ class TestProviderConfigurationDispatch:
             cfg.active_model()
         assert "/model" in exc_info.value.message
         assert "datus init" not in exc_info.value.message
+        # A host UI branches on this code to offer "add a model", so it must
+        # stay distinct from the generic missing-field code.
+        assert exc_info.value.code is ErrorCode.MODEL_NOT_SELECTED
 
     # ── Setters ────────────────────────────────────────────────────
 
