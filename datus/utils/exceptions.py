@@ -72,6 +72,13 @@ class ErrorCode(Enum):
         "300025",
         "Unknown custom model `{model_name}`. Available: {available_models}",
     )
+    # Distinct from MODEL_NOT_CONFIGURED: nothing is selected at all, rather
+    # than a selection naming a model that doesn't exist. A UI host branches on
+    # this to offer "add a model" instead of "pick another one".
+    MODEL_NOT_SELECTED = (
+        "300026",
+        "No active LLM model configured",
+    )
 
     # OAuth authentication errors
     OAUTH_NOT_AUTHENTICATED = ("300030", "Not authenticated. Please run OAuth login first.")

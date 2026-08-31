@@ -2483,7 +2483,7 @@ class AgentConfig:
         if self.target and self.target in self.models:
             return self._apply_reasoning_override(self.models[self.target])
         raise DatusException(
-            code=ErrorCode.COMMON_FIELD_REQUIRED,
+            code=ErrorCode.MODEL_NOT_SELECTED,
             message=(
                 "No active LLM model configured. "
                 "Run the Datus CLI and use the /model command to set up a provider and model:\n"
