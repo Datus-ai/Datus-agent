@@ -506,7 +506,9 @@ class TestDatasourceAppViews:
             ) in app._db_types
 
     def test_new_database_adapters_are_installable(self):
-        assert {"bigquery", "doris", "gaussdb", "hologres", "maxcompute", "oracle", "tidb"} <= set(INSTALLABLE_TYPES)
+        assert {"bigquery", "doris", "dws", "gaussdb", "hologres", "maxcompute", "oracle", "tidb"} <= set(
+            INSTALLABLE_TYPES
+        )
 
     def test_enter_config_form(self):
         cli = _make_cli()

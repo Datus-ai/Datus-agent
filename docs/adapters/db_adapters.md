@@ -33,6 +33,7 @@ This design keeps the core package lightweight while allowing you to add support
 | Google BigQuery | datus-bigquery | `pip install datus-bigquery` | Ready |
 | Oracle | datus-oracle | `pip install datus-oracle` | Ready |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | Ready (Linux and macOS) |
+| Huawei Cloud GaussDB(DWS) | datus-dws | `pip install datus-dws` | Ready |
 
 ## Installation
 
@@ -89,6 +90,9 @@ pip install datus-oracle
 
 # GaussDB / openGauss
 pip install datus-gaussdb
+
+# Huawei Cloud GaussDB(DWS)
+pip install datus-dws
 ```
 
 Once installed, Datus Agent will automatically detect and load the adapter.
@@ -509,6 +513,44 @@ TLS, not mutual TLS (`sslcert`/`sslkey`).
 
 Both centralized and distributed deployments are supported. The connector auto-detects the database's
 A (Oracle), B (MySQL), or PG compatibility mode so generated SQL follows the server semantics.
+
+### GaussDB(DWS)
+
+```yaml
+dws_data:
+  type: dws
+  host: example.dws.myhuaweicloud.com   # console endpoint, may embed ":8000"
+  port: 8000
+  username: dbadmin
+  password: ${DWS_PASSWORD}
+  database: gaussdb   # the cluster default
+  schema: public      # optional, default is public
+  sslmode: verify-ca
+  sslrootcert: /etc/datus/certs/dws-cacert.pem
+```
+
+DWS is a shared-nothing MPP warehouse that speaks the PostgreSQL wire protocol and answers standard MD5
+authentication, so the adapter uses psycopg2 and needs no driver selection.
+
+**TLS.** Use `verify-ca` with `sslrootcert` for production. Two DWS-specific points:
+
+- `verify-full` **cannot succeed** against the default server certificate, whose CN is `server` and which
+  carries no `subjectAltName`; hostname validation can never match a real endpoint. This is a property of
+  the certificate, not a misconfiguration.
+- The console's `dws_ssl_cert` bundle contains two CAs. Use `v2/sslcert/cacert.pem` — the v1 CA is
+  `Huawei Equipment CA` and does not match the server certificate issuer.
+
+`sslrootcert` accepts a file path or inline PEM content. If the cluster has SSL enforcement enabled under
+**Security Settings**, `disable` fails outright while the default `prefer` upgrades automatically.
+
+**Compatibility modes.** The connector detects `ORA`, `TD`, or `MySQL` mode from the catalog. ORA is the
+default for new clusters and changes expression semantics — notably `7/2` yields `3.5` rather than integer
+`3`, and an empty string is stored as NULL so `col = ''` never matches. These are surfaced in the packaged
+SQL skill and in migration notes. TD and MySQL modes are not verified.
+
+**DDL.** Table definitions come from DWS's `pg_get_tabledef()`, preserving storage orientation,
+compression, distribution and partitioning. The `TO GROUP` and `TABLESPACE` clauses it emits name objects
+of the source cluster and must be removed before replaying the DDL elsewhere.
 
 ### Multiple Database Entries
 

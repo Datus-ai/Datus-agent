@@ -20,12 +20,13 @@ _PARSER_DIALECTS = {
     "bigquery": "bigquery",
     "hologres": "postgres",
     "gaussdb": "postgres",
+    "dws": "postgres",
     "maxcompute": "hive",
     "oracle": "oracle",
     "tidb": "mysql",
 }
-_IDENTIFIER_PARSER_ADAPTERS = {"bigquery", "hologres", "gaussdb", "maxcompute"}
-_SQL_NOTES_ADAPTERS = {"bigquery", "hologres", "gaussdb", "maxcompute", "oracle", "tidb"}
+_IDENTIFIER_PARSER_ADAPTERS = {"bigquery", "hologres", "gaussdb", "dws", "maxcompute"}
+_SQL_NOTES_ADAPTERS = {"bigquery", "hologres", "gaussdb", "dws", "maxcompute", "oracle", "tidb"}
 
 
 class _FakeDistribution:
@@ -107,6 +108,22 @@ def test_maxcompute_contract_requires_dialect_and_sql_guidance_hooks():
     assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
 
 
+def test_expected_sources_include_the_dws_checkout_path():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-dws"] == "datus-db-adapters/datus-dws"
+
+
+def test_dws_contract_requires_dialect_and_sql_guidance_hooks():
+    contract = verify_sources.DATABASE_ADAPTER_CONTRACTS["datus_dws"]
+
+    assert contract.db_type == "dws"
+    # DWS speaks the PostgreSQL wire protocol, so sqlglot parses it as postgres.
+    assert contract.parser_dialect == "postgres"
+    assert contract.required_hooks == ("get_identifier_parser", "get_sql_generation_notes")
+    # The adapter registers no dialect of its own, so it declares no dialect
+    # operation methods either.
+    assert contract.dialect_operation_methods == ()
+
+
 def test_expected_sources_include_storage_packages():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-base"] == ("datus-storage-adapters/datus-storage-base")
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-postgresql"] == (
@@ -155,6 +172,7 @@ def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -178,6 +196,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -221,6 +240,7 @@ def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, mi
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -244,6 +264,7 @@ def test_verify_database_adapter_imports_rejects_non_callable_maxcompute_identif
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -269,6 +290,7 @@ def test_verify_database_adapter_imports_requires_oracle_operations(monkeypatch)
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 
@@ -294,6 +316,7 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
         "datus_gaussdb": SimpleNamespace(register=lambda: None),
         "datus_oracle": SimpleNamespace(register=lambda: None),
         "datus_tidb": SimpleNamespace(register=lambda: None),
+        "datus_dws": SimpleNamespace(register=lambda: None),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 

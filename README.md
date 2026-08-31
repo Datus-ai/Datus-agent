@@ -54,7 +54,7 @@ The diagram reads top to bottom: who uses Datus, what the agent is made of, and 
 
 ### Openness and governance
 
-- **Open ecosystem**: adapters for [18 databases](https://docs.datus.ai/latest/adapters/db_adapters/), 10+ LLM providers, and an [MCP](https://docs.datus.ai/latest/integration/mcp/) server and client.
+- **Open ecosystem**: adapters for [19 databases](https://docs.datus.ai/latest/adapters/db_adapters/), 10+ LLM providers, and an [MCP](https://docs.datus.ai/latest/integration/mcp/) server and client.
 - **External integrations**: the [plugin](https://docs.datus.ai/latest/plugin/introduction/) framework connects third-party platforms and in-house tools to the agent; one `datus-plugin.yml` manifest declares CLI commands, skills, and prompt context, with per-project activation.
 - **[Skills](https://docs.datus.ai/latest/skills/introduction/)**: packaged tools following the agentskills.io convention, installable from a marketplace.
 - **Enterprise governance**: tiered permission profiles, statement-level [SQL authorization](https://docs.datus.ai/latest/configuration/sql_policy/) with AI pre-review, bash confined to an OS-level sandbox, and [traces](https://docs.datus.ai/latest/develop/observability/) exportable to any OTLP platform.

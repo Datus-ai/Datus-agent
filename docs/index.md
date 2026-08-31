@@ -50,7 +50,7 @@ Curate context, tools, and rules for one business domain and package them as a [
 ### Plugin ecosystem and governance
 
 - The [plugin](plugin/introduction.md) framework connects third-party platforms and in-house tools to the agent: one `datus-plugin.yml` manifest declares CLI commands, skills, and prompt context, activated per project.
-- Adapters cover [18 databases](adapters/db_adapters.md) and 10+ LLM providers, and Datus ships both an [MCP](integration/mcp.md) server and client; [skills](skills/introduction.md) follow the agentskills.io convention and install from a marketplace.
+- Adapters cover [19 databases](adapters/db_adapters.md) and 10+ LLM providers, and Datus ships both an [MCP](integration/mcp.md) server and client; [skills](skills/introduction.md) follow the agentskills.io convention and install from a marketplace.
 - Governance covers tiered permission profiles, statement-level [SQL authorization](configuration/sql_policy.md) with AI pre-review, bash confined to an OS-level sandbox, and [traces](develop/observability.md) exportable to any OTLP platform.
 
 ![Open ecosystem: install a plugin, connect the stack you already run](assets/ecosystem_plugins.svg)

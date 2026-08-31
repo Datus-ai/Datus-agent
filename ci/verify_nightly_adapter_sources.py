@@ -32,6 +32,7 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-spark": "datus-db-adapters/datus-spark",
     "datus-gaussdb": "datus-db-adapters/datus-gaussdb",
     "datus-tidb": "datus-db-adapters/datus-tidb",
+    "datus-dws": "datus-db-adapters/datus-dws",
     "datus-bi-core": "datus-bi-adapters/datus-bi-core",
     "datus-bi-superset": "datus-bi-adapters/datus-bi-superset",
     "datus-bi-grafana": "datus-bi-adapters/datus-bi-grafana",
@@ -98,6 +99,13 @@ DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
         db_type="tidb",
         parser_dialect="mysql",
         required_hooks=("get_sql_generation_notes",),
+    ),
+    # DWS speaks the PostgreSQL wire protocol and reuses the psycopg2 transport
+    # from datus-postgresql, so it registers no dialect of its own.
+    "datus_dws": DatabaseAdapterContract(
+        db_type="dws",
+        parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
     ),
 }
 
