@@ -532,13 +532,20 @@ dws_data:
 DWS is a shared-nothing MPP warehouse that speaks the PostgreSQL wire protocol and answers standard MD5
 authentication, so the adapter uses psycopg2 and needs no driver selection.
 
-**TLS.** Use `verify-ca` with `sslrootcert` for production. Two DWS-specific points:
+**TLS.** Use `verify-ca` with `sslrootcert` for production. Three DWS-specific points:
 
 - `verify-full` **cannot succeed** against the default server certificate, whose CN is `server` and which
   carries no `subjectAltName`; hostname validation can never match a real endpoint. This is a property of
   the certificate, not a misconfiguration.
 - The console's `dws_ssl_cert` bundle contains two CAs. Use `v2/sslcert/cacert.pem` — the v1 CA is
   `Huawei Equipment CA` and does not match the server certificate issuer.
+- **`verify-ca` leaves a residual risk.** It proves the server certificate chains to the configured CA,
+  but it does not prove you reached the cluster you intended: the DWS default certificate is not issued
+  per cluster, so any endpoint presenting a certificate from that same CA passes. Because `verify-full`
+  is unavailable, no `sslmode` setting closes this gap — treat the endpoint itself as the trust
+  boundary. Reach the cluster over a VPC or a fixed, verified EIP rather than relying on `verify-ca`
+  alone on an untrusted network, since a substituted endpoint would still receive the configured
+  password.
 
 `sslrootcert` accepts a file path or inline PEM content. If the cluster has SSL enforcement enabled under
 **Security Settings**, `disable` fails outright while the default `prefer` upgrades automatically.

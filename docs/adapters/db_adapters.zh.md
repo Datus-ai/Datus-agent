@@ -513,12 +513,17 @@ dws_data:
 DWS 是 shared-nothing 架构的 MPP 数仓，使用 PostgreSQL wire 协议，并支持标准 MD5 认证，
 因此适配器直接使用 psycopg2，无需选择驱动。
 
-**TLS。** 生产环境建议使用 `verify-ca` 并配置 `sslrootcert`。有两点是 DWS 特有的：
+**TLS。** 生产环境建议使用 `verify-ca` 并配置 `sslrootcert`。有三点是 DWS 特有的：
 
 - `verify-full` **无法成功**。默认服务端证书的 CN 为 `server` 且不含 `subjectAltName`，
   hostname 校验对任何真实 endpoint 都不可能匹配。这是证书本身的属性，不是配置错误。
 - 控制台下载的 `dws_ssl_cert` 压缩包中包含两套 CA，应使用 `v2/sslcert/cacert.pem`；
   v1 的 CA 是 `Huawei Equipment CA`，与服务端证书签发者不匹配。
+- **`verify-ca` 存在残余风险。** 它能证明服务端证书由所配置的 CA 签发，但无法证明你连上的
+  就是目标集群：DWS 默认证书并非按集群签发，因此任何出示同一 CA 所签证书的 endpoint 都能通过校验。
+  由于 `verify-full` 不可用，这个缺口无法通过任何 `sslmode` 配置弥补——应把 endpoint 本身
+  视为信任边界。请通过 VPC 或经过核实的固定 EIP 访问集群，不要在不可信网络上仅依赖 `verify-ca`，
+  否则被替换的 endpoint 依然会收到所配置的密码。
 
 `sslrootcert` 既接受文件路径，也接受 PEM 内容。若集群在**安全设置**中开启了 SSL 连接，
 `disable` 会直接失败，而默认的 `prefer` 会自动升级为 TLS。

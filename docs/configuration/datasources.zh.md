@@ -272,6 +272,11 @@ DWS 使用 PostgreSQL wire 协议并支持标准 MD5 认证，无需选择驱动
 无法成功——其 CN 为 `server` 且不含 `subjectAltName`。`sslrootcert` 既接受文件路径，
 也接受 PEM 内容。
 
+需要注意 `verify-ca` 没有覆盖的部分：它只能证明证书由所配置的 CA 签发，不能证明连上的是目标集群。
+DWS 默认证书并非按集群签发，任何出示同一 CA 所签证书的 endpoint 都能通过；而 `verify-full`
+又不可用，因此没有任何 `sslmode` 能弥补这个缺口。请通过 VPC 或经过核实的固定 EIP 访问集群——
+被替换的 endpoint 依然会收到所配置的密码。
+
 新建集群默认为 ORA 兼容模式：空字符串在写入时即变为 NULL，且 `7/2` 得到 `3.5` 而非整数 `3`。
 兼容模式、TLS 细节与 DDL 可移植性详见[数据库适配器](../adapters/db_adapters.md#gaussdbdws)。
 

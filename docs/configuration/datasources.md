@@ -271,6 +271,12 @@ since the v1 CA does not match the server certificate issuer. `verify-full` cann
 against the default server certificate, whose CN is `server` with no `subjectAltName`.
 `sslrootcert` accepts a file path or inline PEM content.
 
+Note what `verify-ca` does not cover: it proves the certificate chains to the configured CA,
+not that you reached the intended cluster. The DWS default certificate is not issued per
+cluster, so any endpoint presenting one from the same CA passes — and with `verify-full`
+unavailable, no `sslmode` closes that gap. Reach the cluster over a VPC or a verified fixed
+EIP; a substituted endpoint would still receive the configured password.
+
 New clusters default to ORA compatibility mode, which stores empty strings as NULL and
 evaluates `7/2` as `3.5` rather than integer `3`. See
 [Database Adapters](../adapters/db_adapters.md#gaussdbdws) for compatibility modes, TLS
