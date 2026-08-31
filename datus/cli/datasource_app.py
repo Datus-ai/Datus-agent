@@ -47,6 +47,7 @@ INSTALLABLE_TYPES = (
     "clickhouse",
     "clickzetta",
     "doris",
+    "dws",
     "gaussdb",
     "greenplum",
     "hive",

@@ -251,6 +251,37 @@ hostname 能保证与证书匹配时，使用 `verify-full` 可提供更严格�
 `verify-ca`。当前仅支持单向 TLS，不支持客户端证书双向认证。
 模式、平台、认证方式及 A/B/PG 兼容模式详情见[数据库适配器](../adapters/db_adapters.md#gaussdb)。
 
+### 华为云 GaussDB(DWS)
+
+```yaml
+my_dws:
+  type: dws
+  host: ${DWS_HOST}              # 控制台 endpoint，可内嵌 ":8000"
+  port: 8000
+  username: ${DWS_USER}
+  password: ${DWS_PASSWORD}
+  database: gaussdb              # 集群默认库名
+  schema: public
+  sslmode: verify-ca             # 生产环境基线配置
+  sslrootcert: /etc/datus/certs/dws-cacert.pem
+```
+
+DWS 使用 PostgreSQL wire 协议并支持标准 MD5 认证，无需选择驱动。生产环境应以 `verify-ca`
+配合 `sslrootcert` 提供服务端 CA 为基线；该 CA 应取自控制台 `dws_ssl_cert` 压缩包中的
+`v2/sslcert/cacert.pem`，v1 的 CA 与服务端证书签发者不匹配。`verify-full` 不受支持——华为官方
+明确说明 "verify-full: DWS does not support this mode"
+（[SSL 连接设置](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)），
+原因是默认服务端证书的 CN 为 `server` 且不含 `subjectAltName`。`sslrootcert` 既接受文件路径，
+也接受 PEM 内容。
+
+需要注意 `verify-ca` 没有覆盖的部分：它只能证明证书由所配置的 CA 签发，不能证明连上的是目标集群。
+DWS 默认证书并非按集群签发，任何出示同一 CA 所签证书的 endpoint 都能通过；而 `verify-full`
+又不可用，因此没有任何 `sslmode` 能弥补这个缺口。请通过 VPC 或经过核实的固定 EIP 访问集群——
+被替换的 endpoint 依然会收到所配置的密码。
+
+新建集群默认为 ORA 兼容模式：空字符串在写入时即变为 NULL，且 `7/2` 得到 `3.5` 而非整数 `3`。
+兼容模式、TLS 细节与 DDL 可移植性详见[数据库适配器](../adapters/db_adapters.md#gaussdbdws)。
+
 ### 路径模式（批量发现多个文件）
 
 使用 glob 模式自动发现数据库文件：

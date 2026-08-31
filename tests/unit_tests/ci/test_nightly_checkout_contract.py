@@ -100,7 +100,7 @@ def test_nightly_installs_p0_plugins_only_through_managed_store():
 def test_nightly_installs_new_database_adapters_from_latest_checkout():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    for package_name in ("datus-doris", "datus-hologres", "datus-oracle", "datus-gaussdb", "datus-tidb"):
+    for package_name in ("datus-doris", "datus-hologres", "datus-oracle", "datus-gaussdb", "datus-tidb", "datus-dws"):
         assert f"--reinstall-package {package_name}" in workflow
         assert f"./external/datus-db-adapters/{package_name}" in workflow
 

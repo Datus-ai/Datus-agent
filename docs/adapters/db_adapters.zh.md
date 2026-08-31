@@ -33,6 +33,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | Google BigQuery | datus-bigquery | `pip install datus-bigquery` | 可用 |
 | Oracle | datus-oracle | `pip install datus-oracle` | 可用 |
 | GaussDB / openGauss | datus-gaussdb | `pip install datus-gaussdb` | 可用（Linux 和 macOS） |
+| 华为云 GaussDB(DWS) | datus-dws | `pip install datus-dws` | 可用 |
 
 ## 安装
 
@@ -86,6 +87,9 @@ pip install datus-oracle
 
 # GaussDB / openGauss
 pip install datus-gaussdb
+
+# 华为云 GaussDB(DWS)
+pip install datus-dws
 ```
 
 安装后，Datus Agent 会自动检测并加载适配器。
@@ -490,6 +494,50 @@ TLS），因为其 API 无法表达 libpq 的明文优先重试顺序。当前�
 
 集中式与分布式部署均受支持。连接器会自动探测数据库的 A（Oracle）、B（MySQL）或 PG 兼容模式，
 使生成的 SQL 遵循对应语义。
+
+### GaussDB(DWS)
+
+```yaml
+dws_data:
+  type: dws
+  host: example.dws.myhuaweicloud.com   # 控制台 endpoint，可内嵌 ":8000"
+  port: 8000
+  username: dbadmin
+  password: ${DWS_PASSWORD}
+  database: gaussdb   # 集群默认库名
+  schema: public      # 可选，默认为 public
+  sslmode: verify-ca
+  sslrootcert: /etc/datus/certs/dws-cacert.pem
+```
+
+DWS 是 shared-nothing 架构的 MPP 数仓，使用 PostgreSQL wire 协议，并支持标准 MD5 认证，
+因此适配器直接使用 psycopg2，无需选择驱动。
+
+**TLS。** 生产环境建议使用 `verify-ca` 并配置 `sslrootcert`。有三点是 DWS 特有的：
+
+- **`verify-full` 不受支持。** 华为官方明确说明："verify-full: DWS does not support this mode"
+  （[SSL 连接设置](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)）。
+  原因在证书本身：默认服务端证书的 CN 为 `server` 且不含 `subjectAltName`，hostname 校验
+  对任何真实 endpoint 都不可能匹配。该证书是按产品签发一次、而非按集群签发，因此客户端
+  无论如何配置都无法通过。
+- 控制台下载的 `dws_ssl_cert` 压缩包中包含两套 CA，应使用 `v2/sslcert/cacert.pem`；
+  v1 的 CA 是 `Huawei Equipment CA`，与服务端证书签发者不匹配。
+- **`verify-ca` 存在残余风险。** 它能证明服务端证书由所配置的 CA 签发，但无法证明你连上的
+  就是目标集群：DWS 默认证书并非按集群签发，因此任何出示同一 CA 所签证书的 endpoint 都能通过校验。
+  由于 `verify-full` 不可用，这个缺口无法通过任何 `sslmode` 配置弥补——应把 endpoint 本身
+  视为信任边界。请通过 VPC 或经过核实的固定 EIP 访问集群，不要在不可信网络上仅依赖 `verify-ca`，
+  否则被替换的 endpoint 依然会收到所配置的密码。
+
+`sslrootcert` 既接受文件路径，也接受 PEM 内容。若集群在**安全设置**中开启了 SSL 连接，
+`disable` 会直接失败，而默认的 `prefer` 会自动升级为 TLS。
+
+**兼容模式。** 连接器会从 catalog 探测 `ORA`、`TD` 或 `MySQL` 模式。新建集群默认为 ORA 模式，
+该模式会改变表达式语义——尤其是 `7/2` 得到 `3.5` 而非整数 `3`，以及空字符串在写入时即变为 NULL、
+导致 `col = ''` 永远无法匹配。这些差异已写入随包发布的 SQL Skill 和迁移说明中。
+TD 与 MySQL 模式未经验证。
+
+**DDL。** 表定义来自 DWS 的 `pg_get_tabledef()`，可完整保留存储方式、压缩、分布方式和分区信息。
+其输出中的 `TO GROUP` 与 `TABLESPACE` 子句指向源集群的对象，迁移到其他集群前必须剥离。
 
 ## 多数据库连接
 

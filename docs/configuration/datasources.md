@@ -249,6 +249,41 @@ validation; otherwise keep `verify-ca`. The adapter supports one-way TLS, not cl
 for mutual TLS. See [Database Adapters](../adapters/db_adapters.md#gaussdb) for mode, platform,
 authentication, and A/B/PG compatibility details.
 
+### Huawei Cloud GaussDB(DWS)
+
+```yaml
+my_dws:
+  type: dws
+  host: ${DWS_HOST}              # console endpoint, may embed ":8000"
+  port: 8000
+  username: ${DWS_USER}
+  password: ${DWS_PASSWORD}
+  database: gaussdb              # the cluster default
+  schema: public
+  sslmode: verify-ca             # recommended production baseline
+  sslrootcert: /etc/datus/certs/dws-cacert.pem
+```
+
+DWS answers standard MD5 authentication over the PostgreSQL wire protocol, so no driver
+selection is needed. Use `verify-ca` with the server CA in `sslrootcert` as the production
+baseline — take that CA from `v2/sslcert/cacert.pem` in the console's `dws_ssl_cert` bundle,
+since the v1 CA does not match the server certificate issuer. `verify-full` is not supported —
+Huawei states "verify-full: DWS does not support this mode"
+([SSL connection settings](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)) —
+because the default server certificate has `CN=server` with no `subjectAltName`.
+`sslrootcert` accepts a file path or inline PEM content.
+
+Note what `verify-ca` does not cover: it proves the certificate chains to the configured CA,
+not that you reached the intended cluster. The DWS default certificate is not issued per
+cluster, so any endpoint presenting one from the same CA passes — and with `verify-full`
+unavailable, no `sslmode` closes that gap. Reach the cluster over a VPC or a verified fixed
+EIP; a substituted endpoint would still receive the configured password.
+
+New clusters default to ORA compatibility mode, which stores empty strings as NULL and
+evaluates `7/2` as `3.5` rather than integer `3`. See
+[Database Adapters](../adapters/db_adapters.md#gaussdbdws) for compatibility modes, TLS
+details, and DDL portability.
+
 ### Path Pattern (Multiple Files)
 
 Use glob patterns to auto-discover database files:
