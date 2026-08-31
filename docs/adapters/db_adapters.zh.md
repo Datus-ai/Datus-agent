@@ -515,8 +515,11 @@ DWS 是 shared-nothing 架构的 MPP 数仓，使用 PostgreSQL wire 协议，�
 
 **TLS。** 生产环境建议使用 `verify-ca` 并配置 `sslrootcert`。有三点是 DWS 特有的：
 
-- `verify-full` **无法成功**。默认服务端证书的 CN 为 `server` 且不含 `subjectAltName`，
-  hostname 校验对任何真实 endpoint 都不可能匹配。这是证书本身的属性，不是配置错误。
+- **`verify-full` 不受支持。** 华为官方明确说明："verify-full: DWS does not support this mode"
+  （[SSL 连接设置](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)）。
+  原因在证书本身：默认服务端证书的 CN 为 `server` 且不含 `subjectAltName`，hostname 校验
+  对任何真实 endpoint 都不可能匹配。该证书是按产品签发一次、而非按集群签发，因此客户端
+  无论如何配置都无法通过。
 - 控制台下载的 `dws_ssl_cert` 压缩包中包含两套 CA，应使用 `v2/sslcert/cacert.pem`；
   v1 的 CA 是 `Huawei Equipment CA`，与服务端证书签发者不匹配。
 - **`verify-ca` 存在残余风险。** 它能证明服务端证书由所配置的 CA 签发，但无法证明你连上的

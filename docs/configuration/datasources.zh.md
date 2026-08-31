@@ -268,8 +268,10 @@ my_dws:
 
 DWS 使用 PostgreSQL wire 协议并支持标准 MD5 认证，无需选择驱动。生产环境应以 `verify-ca`
 配合 `sslrootcert` 提供服务端 CA 为基线；该 CA 应取自控制台 `dws_ssl_cert` 压缩包中的
-`v2/sslcert/cacert.pem`，v1 的 CA 与服务端证书签发者不匹配。`verify-full` 对默认服务端证书
-无法成功——其 CN 为 `server` 且不含 `subjectAltName`。`sslrootcert` 既接受文件路径，
+`v2/sslcert/cacert.pem`，v1 的 CA 与服务端证书签发者不匹配。`verify-full` 不受支持——华为官方
+明确说明 "verify-full: DWS does not support this mode"
+（[SSL 连接设置](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)），
+原因是默认服务端证书的 CN 为 `server` 且不含 `subjectAltName`。`sslrootcert` 既接受文件路径，
 也接受 PEM 内容。
 
 需要注意 `verify-ca` 没有覆盖的部分：它只能证明证书由所配置的 CA 签发，不能证明连上的是目标集群。

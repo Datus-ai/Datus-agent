@@ -534,9 +534,11 @@ authentication, so the adapter uses psycopg2 and needs no driver selection.
 
 **TLS.** Use `verify-ca` with `sslrootcert` for production. Three DWS-specific points:
 
-- `verify-full` **cannot succeed** against the default server certificate, whose CN is `server` and which
-  carries no `subjectAltName`; hostname validation can never match a real endpoint. This is a property of
-  the certificate, not a misconfiguration.
+- **`verify-full` is not supported.** Huawei states this directly: "verify-full: DWS does not support this
+  mode" ([SSL connection settings](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)).
+  The reason is visible in the certificate itself — the default server certificate has `CN=server` and
+  carries no `subjectAltName`, so hostname validation cannot match any real endpoint. It is issued once for
+  the product rather than per cluster, which is why no client configuration makes it pass.
 - The console's `dws_ssl_cert` bundle contains two CAs. Use `v2/sslcert/cacert.pem` — the v1 CA is
   `Huawei Equipment CA` and does not match the server certificate issuer.
 - **`verify-ca` leaves a residual risk.** It proves the server certificate chains to the configured CA,

@@ -267,8 +267,10 @@ my_dws:
 DWS answers standard MD5 authentication over the PostgreSQL wire protocol, so no driver
 selection is needed. Use `verify-ca` with the server CA in `sslrootcert` as the production
 baseline — take that CA from `v2/sslcert/cacert.pem` in the console's `dws_ssl_cert` bundle,
-since the v1 CA does not match the server certificate issuer. `verify-full` cannot succeed
-against the default server certificate, whose CN is `server` with no `subjectAltName`.
+since the v1 CA does not match the server certificate issuer. `verify-full` is not supported —
+Huawei states "verify-full: DWS does not support this mode"
+([SSL connection settings](https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html)) —
+because the default server certificate has `CN=server` with no `subjectAltName`.
 `sslrootcert` accepts a file path or inline PEM content.
 
 Note what `verify-ca` does not cover: it proves the certificate chains to the configured CA,
