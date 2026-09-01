@@ -13,8 +13,10 @@ gets its own directory under ``{data_dir}/{project}/``.
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, Optional
 
 from datus_storage_base.backend_config import StorageBackendConfig
 
@@ -34,6 +36,50 @@ _factory_registry: Dict[str, Callable[..., BaseEmbeddingStore]] = {}
 
 # Deployment-level config injected once via configure_storage_defaults().
 _storage_defaults: Dict[str, Any] = {}
+
+# Per-context override for ``table_prefix`` only.
+#
+# WHY: a process may have to serve two table sets at once. Datus-backend can host
+# the Studio surface (``tb_*``) and the publication surface (``pub_tb_*``) in one
+# process, and which one a request reads is a property OF THE REQUEST, not of the
+# deployment — so it cannot come from ``_storage_defaults``, which is a module
+# global written once at startup.
+#
+# A ContextVar rather than a thread-local: the callers are asyncio tasks, and
+# each task inherits a copy of the context at creation, so a value set for one
+# request cannot leak into a concurrently running one.
+#
+# Only ``table_prefix``. The rest of the defaults (``extra_fields``,
+# ``scope_indices``) genuinely are deployment-level, and making them overridable
+# would invite per-request schema divergence.
+_table_prefix_override: ContextVar[Optional[str]] = ContextVar("datus_table_prefix_override", default=None)
+
+
+@contextmanager
+def table_prefix_scope(table_prefix: str) -> Iterator[None]:
+    """Read and write the ``table_prefix`` table set inside this block.
+
+    Nests and restores, so a caller that wraps a whole request cannot be undone
+    by an inner block. Prefer this over ``configure_storage_defaults`` for
+    anything request-scoped: that one mutates a module global, which in a
+    serving process races every concurrent request (and poisons the store cache
+    — see ``_get_storage_cached``).
+
+    Example::
+
+        with table_prefix_scope("pub_tb_"):
+            store = get_storage(MetricStore, "default", project=pid)
+    """
+    token = _table_prefix_override.set(table_prefix)
+    try:
+        yield
+    finally:
+        _table_prefix_override.reset(token)
+
+
+def current_table_prefix() -> str:
+    """The prefix in force here — the context override, else the global default."""
+    return get_storage_defaults().get("table_prefix", "")
 
 
 def configure_storage_defaults(
@@ -59,8 +105,19 @@ def configure_storage_defaults(
 
 
 def get_storage_defaults() -> Dict[str, Any]:
-    """Return the current deployment-level defaults (read-only copy)."""
-    return dict(_storage_defaults)
+    """Return the defaults in force here (read-only copy).
+
+    The deployment-level dict, with ``table_prefix`` replaced by the context
+    override when one is in force. Every reader of the defaults goes through
+    this function, which is what makes the override reach places that take no
+    parameter for it — notably ``SubjectTreeStore.__init__``, which calls this
+    itself and has no ``table_prefix`` argument.
+    """
+    defaults = dict(_storage_defaults)
+    override = _table_prefix_override.get()
+    if override is not None:
+        defaults["table_prefix"] = override
+    return defaults
 
 
 @lru_cache(maxsize=256)
@@ -69,14 +126,32 @@ def _get_storage_cached(
     embedding_model_conf_name: str,
     project: str,
     datasource_id: str,
+    table_prefix: str,
 ) -> BaseEmbeddingStore:
-    """LRU-cached storage creation, keyed by (factory, embedding model, project, datasource)."""
+    """LRU-cached storage creation, keyed by (factory, embedding model, project, datasource, prefix).
+
+    ⚠️ ``table_prefix`` IS PART OF THE KEY, and that is the whole reason this
+    signature has a parameter it never reads for anything but the key.
+
+    A store snapshots the prefix into its table names at construction time. With
+    the prefix out of the key, an instance built while the process pointed at one
+    table set stays cached under a key that says nothing about it — so a process
+    serving two table sets would answer from whichever one happened to construct
+    first, until it restarted. Keying on it makes the two sets two entries.
+    """
     from datus.storage.backend_holder import create_vector_connection
     from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
 
     with _registry_lock:
         factory = _factory_registry[factory_name]
-    kwargs = dict(_storage_defaults)
+    # Through the accessor, not ``_storage_defaults`` directly, so a context
+    # override reaches this instance as well as the nested stores that read it
+    # themselves. It resolves to the same value as the ``table_prefix`` in the
+    # key: both come from ``get_storage_defaults()`` in this same call stack, and
+    # therefore this same context. The parameter is here to key the cache, and
+    # is deliberately NOT re-assigned into kwargs — doing so handed the factory
+    # a ``table_prefix=""`` it never used to receive when no defaults were set.
+    kwargs = get_storage_defaults()
     kwargs["db"] = create_vector_connection(project)
 
     # Subject-aware stores need ``project`` so their constructor can build the
@@ -109,20 +184,31 @@ def get_storage(
     """
     with _registry_lock:
         _factory_registry[factory.__name__] = factory
-    return _get_storage_cached(factory.__name__, embedding_model_conf_name, project, datasource_id or "")
+    return _get_storage_cached(
+        factory.__name__,
+        embedding_model_conf_name,
+        project,
+        datasource_id or "",
+        current_table_prefix(),
+    )
 
 
 @lru_cache(maxsize=256)
-def _get_subject_tree_cached(project: str, datasource_id: str) -> "SubjectTreeStore":
-    """LRU-cached SubjectTreeStore creation."""
+def _get_subject_tree_cached(project: str, datasource_id: str, table_prefix: str) -> "SubjectTreeStore":
+    """LRU-cached SubjectTreeStore creation, keyed by the prefix too.
+
+    ``SubjectTreeStore.__init__`` reads ``get_storage_defaults()`` itself and
+    takes no prefix argument, so the value it picks up is whatever the context
+    said at construction time — same trap as ``_get_storage_cached``, same fix.
+    """
     from datus.storage.subject_tree.store import SubjectTreeStore
 
     return SubjectTreeStore(project=project, datasource_id=datasource_id)
 
 
 def get_subject_tree_store(project: str, datasource_id: str = "") -> "SubjectTreeStore":
-    """Return a SubjectTreeStore instance (LRU-cached per project/datasource)."""
-    return _get_subject_tree_cached(project, datasource_id or "")
+    """Return a SubjectTreeStore instance (LRU-cached per project/datasource/prefix)."""
+    return _get_subject_tree_cached(project, datasource_id or "", current_table_prefix())
 
 
 def preload_all_storages(
