@@ -536,7 +536,7 @@ async def test_execute_stream_informational_answer_ends_normally(real_agent_conf
 
 @pytest.mark.asyncio
 async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_config, mock_llm_create):
-    """LLM binds but never calls validate_render → distinct incomplete-artifact failure."""
+    """LLM writes render files but never calls validate_render → incomplete-artifact failure."""
     mock_llm_create.reset(
         responses=[
             build_tool_then_response(
@@ -551,8 +551,21 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
                             }
                         ),
                     ),
+                    # The write is what makes this a half-finished build rather
+                    # than a consultative turn — without it the run is just prose.
+                    MockToolCall(
+                        name="write_file",
+                        arguments=json.dumps(
+                            {
+                                "path": "reports/halfway/render/app.jsx",
+                                "content": (
+                                    "import React from 'react';\nexport default function App() { return null; }\n"
+                                ),
+                            }
+                        ),
+                    ),
                 ],
-                content="I bound a report but forgot to finalize.",
+                content="I wrote the render tree but forgot to finalize.",
             ),
         ]
     )
@@ -579,3 +592,52 @@ async def test_execute_stream_bound_but_no_validate_marks_failure(real_agent_con
     assert result["name"] == "halfway"
     assert result["description"] == "Bound but never validated — unit-test fixture."
     assert result["created_at"]  # ISO timestamp written by start_new_report
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
+    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
+
+    Hard rule 1 of the system prompt makes the model bind before answering
+    anything — meta-discussion included — so a "should I keep this section?"
+    question binds, reads the render tree, and replies with options. Nothing
+    was written, so there is no render to validate and no error to surface.
+    """
+    project_root = Path(real_agent_config.project_root)
+    existing_slug = "consult_demo"
+    _seed_render_on_disk(project_root, existing_slug)
+
+    answer = "That section restates the KPI strip. Three options: drop it, merge it, or make it a callout."
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="bind_existing_report",
+                        arguments=json.dumps({"report_slug": existing_slug}),
+                    ),
+                    MockToolCall(
+                        name="read_file",
+                        arguments=json.dumps({"path": f"reports/{existing_slug}/render/app.jsx"}),
+                    ),
+                ],
+                content=answer,
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualReportNodeInput(user_message="is this section worth keeping?")
+
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert isinstance(result, dict)
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["app_jsx_path"] is None
+    assert result["response"] == answer

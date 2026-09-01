@@ -696,6 +696,19 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
                             }
                         ),
                     ),
+                    # The write is what makes this a half-finished build rather
+                    # than a consultative turn — without it the run is just prose.
+                    MockToolCall(
+                        name="write_file",
+                        arguments=json.dumps(
+                            {
+                                "path": "dashboards/incomplete/render/app.jsx",
+                                "content": (
+                                    "import React from 'react';\nexport default function App() { return null; }\n"
+                                ),
+                            }
+                        ),
+                    ),
                 ],
                 content="started but never validated",
             ),
@@ -715,6 +728,133 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
     # ``_active_dashboard_slug`` got captured even though validate_render didn't run.
     assert result["dashboard_slug"] == "incomplete"
     assert "validate_render" in (result.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_stream_bound_consultative_turn_ends_normally(real_agent_config, mock_llm_create):
+    """Binding + reading + a prose answer is a valid turn, not an incomplete artifact.
+
+    Hard rule 1 of the system prompt makes the model bind before answering
+    anything — meta-discussion included — so "is this chart worth keeping?"
+    binds, reads the render tree, and replies with options. Nothing was
+    written, so there is no render to validate and no error to surface.
+    """
+    project_root = Path(real_agent_config.project_root)
+    existing_slug = "consult_demo"
+    dash_dir = project_root / "dashboards" / existing_slug
+    (dash_dir / "render").mkdir(parents=True, exist_ok=True)
+    (dash_dir / "render" / "app.jsx").write_text(
+        "import React from 'react';\nexport default function App() { return null; }\n",
+        encoding="utf-8",
+    )
+    (dash_dir / "manifest.json").write_text(
+        f'{{"slug":"{existing_slug}","name":"consult demo","description":"Seeded for a read-only turn.",'
+        '"kind":"dashboard","created_at":"2026-05-14T00:00:00Z"}\n',
+        encoding="utf-8",
+    )
+
+    answer = "That chart tracks a step nobody owns. Three options: drop it, demote it to text, or refocus it."
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="bind_existing_dashboard",
+                        arguments=json.dumps({"dashboard_slug": existing_slug}),
+                    ),
+                    MockToolCall(
+                        name="read_file",
+                        arguments=json.dumps({"path": f"dashboards/{existing_slug}/render/app.jsx"}),
+                    ),
+                ],
+                content=answer,
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    node.input = GenVisualDashboardNodeInput(
+        user_message="this chart doesn't look useful — is it worth keeping?",
+        database="california_schools",
+    )
+    actions = []
+    async for action in node.execute_stream(ActionHistoryManager()):
+        actions.append(action)
+
+    final = actions[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["app_jsx_path"] is None
+    assert result["response"] == answer
+
+
+@pytest.mark.asyncio
+async def test_reused_action_manager_does_not_leak_a_prior_runs_write(real_agent_config, mock_llm_create):
+    """A run is classified on its own actions, not on what an earlier pass left behind.
+
+    The backend's mid-run-insert continuation loop calls ``execute_stream``
+    again with the manager the previous pass filled, so a ``write_file`` from
+    pass 1 must not make a pass-2 consultative turn look half-finished.
+    """
+    slug = "reused_mgr"
+    app_jsx = "import React from 'react';\nexport default function App() { return null; }\n"
+    mock_llm_create.reset(
+        responses=[
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="start_new_dashboard",
+                        arguments=json.dumps(
+                            {"slug": slug, "name": slug, "description": "Half-built — unit-test fixture."}
+                        ),
+                    ),
+                    MockToolCall(
+                        name="write_file",
+                        arguments=json.dumps({"path": f"dashboards/{slug}/render/app.jsx", "content": app_jsx}),
+                    ),
+                ],
+                content="wrote the render tree",
+            ),
+            build_tool_then_response(
+                tool_calls=[
+                    MockToolCall(
+                        name="bind_existing_dashboard",
+                        arguments=json.dumps({"dashboard_slug": slug}),
+                    ),
+                    MockToolCall(
+                        name="read_file",
+                        arguments=json.dumps({"path": f"dashboards/{slug}/render/app.jsx"}),
+                    ),
+                ],
+                content="Hold off — that chart tracks a step nobody owns. Drop it, or refocus it?",
+            ),
+        ]
+    )
+
+    node = _make_node(real_agent_config)
+    manager = ActionHistoryManager()
+
+    node.input = GenVisualDashboardNodeInput(user_message="build it", database="california_schools")
+    first = [action async for action in node.execute_stream(manager)]
+    # Pass 1 wrote render files and never validated — still a real failure.
+    assert first[-1].output["success"] is False
+    assert "validate_render" in (first[-1].output.get("error") or "")
+    assert (Path(real_agent_config.project_root) / "dashboards" / slug / "render" / "app.jsx").is_file()
+
+    node.input = GenVisualDashboardNodeInput(
+        user_message="actually hold on — is that chart worth keeping?",
+        database="california_schools",
+    )
+    second = [action async for action in node.execute_stream(manager)]
+
+    final = second[-1]
+    assert final.status == ActionStatus.SUCCESS
+    result = final.output
+    assert result["success"] is True
+    assert not result.get("error")
+    assert result["app_jsx_path"] is None
 
 
 class TestFinalizeLanguageDirective:
