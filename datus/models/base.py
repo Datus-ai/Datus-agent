@@ -12,6 +12,7 @@ from typing import Any, AsyncGenerator, ClassVar, Dict, List, Optional, Tuple, U
 
 from agents import SQLiteSession, Tool
 from agents.mcp import MCPServerStdio
+from agents.run import CallModelData, ModelInputData, RunConfig
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
@@ -220,6 +221,115 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         """
         self.workflow = workflow
         self.current_node = current_node
+
+    @staticmethod
+    def drain_pending_user_inserts(
+        pending_input_queue,
+        interrupt_controller=None,
+        interaction_broker=None,
+    ) -> List[str]:
+        """Drain mid-run user messages staged during the current agent run.
+
+        Shared by every model path that supports mid-run insertion so the
+        "when is a staged message flushed" contract has exactly one definition:
+        at a turn boundary, all-or-nothing, and never while an interrupt is in
+        flight (an aborting run must not swallow text the user will re-send).
+
+        Each drained message is emitted as a USER ``ActionHistory`` through the
+        broker so the CLI transcript and the API SSE stream show the injection
+        at the moment the model actually receives it. Callers own the
+        provider-specific step of appending the text to the model input.
+
+        Returns the drained messages in FIFO order, empty when there is
+        nothing to flush.
+        """
+        if pending_input_queue is None:
+            return []
+        if interrupt_controller is not None and getattr(interrupt_controller, "is_interrupted", False):
+            return []
+        try:
+            pending = pending_input_queue.drain()
+        except Exception:  # noqa: BLE001 — a queue hiccup must never abort the run
+            logger.exception("Failed to drain pending user inserts; continuing without them.")
+            return []
+        if not pending:
+            return []
+
+        if interaction_broker is not None:
+            for text in pending:
+                try:
+                    interaction_broker.emit_user_insert(text)
+                except Exception:  # noqa: BLE001 — emission is best-effort
+                    logger.exception("Failed to emit user_insert ActionHistory; model still sees the text.")
+        return pending
+
+    def _build_run_config(
+        self,
+        pending_input_queue=None,
+        session: Optional[SQLiteSession] = None,
+        interrupt_controller=None,
+        interaction_broker=None,
+        agent_name: Optional[str] = None,
+    ) -> Optional[RunConfig]:
+        """Build a :class:`RunConfig` carrying our mid-run input filter.
+
+        Lives on the base class because every agents-SDK-driven provider needs
+        the same filter: ``OpenAICompatibleModel`` and ``CodexModel`` build
+        their own ``Runner.run_streamed`` calls, and a provider that quietly
+        omits the filter silently loses mid-run insertion (the queue then only
+        drains at the run boundary, via the chat layer's auto-continuation).
+
+        Returns ``None`` when neither tracing context nor ``pending_input_queue``
+        is wired in — the SDK then runs with its default config and behavior is
+        unchanged.
+
+        The filter is invoked by the SDK before every LLM turn within a
+        ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). It drains
+        the queue (every queued item, FIFO) and appends each as a structured
+        Responses-API user message, also persisting them onto the session so
+        future runs see them.
+
+        All exceptions in the filter body are swallowed: the SDK re-raises
+        uncaught filter errors and aborts the entire run, which we must never
+        let a queue or sqlite hiccup do.
+        """
+        from datus.utils.trace_context import build_agents_run_config_kwargs
+
+        trace_kwargs = build_agents_run_config_kwargs(agent_name=agent_name)
+        if pending_input_queue is None and not trace_kwargs:
+            return None
+
+        async def _filter(data: CallModelData) -> ModelInputData:
+            try:
+                pending = LLMBaseModel.drain_pending_user_inserts(
+                    pending_input_queue,
+                    interrupt_controller=interrupt_controller,
+                    interaction_broker=interaction_broker,
+                )
+                if not pending:
+                    return data.model_data
+                new_items = list(data.model_data.input)
+                for text in pending:
+                    user_item = {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": text}],
+                    }
+                    new_items.append(user_item)
+                    if session is not None:
+                        try:
+                            await session.add_items([user_item])
+                        except Exception:  # noqa: BLE001 — never abort the run on a session write
+                            logger.exception("Failed to persist injected user item; in-memory only.")
+                return ModelInputData(input=new_items, instructions=data.model_data.instructions)
+            except Exception:  # noqa: BLE001 — filter exceptions abort the SDK run
+                logger.exception("call_model_input_filter raised; returning original input unchanged.")
+                return data.model_data
+
+        if pending_input_queue is None:
+            return RunConfig(**trace_kwargs)
+
+        return RunConfig(call_model_input_filter=_filter, **trace_kwargs)
 
     def supports_builtin_web_search(self) -> bool:
         """Whether this provider serves web search through a vendor-native tool.

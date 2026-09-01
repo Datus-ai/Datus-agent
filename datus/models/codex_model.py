@@ -562,9 +562,18 @@ class CodexModel(LLMBaseModel):
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
         interrupt_controller=None,
+        pending_input_queue=None,
+        interaction_broker=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
-        """Generate response with streaming and tool support via the Codex Responses API."""
+        """Generate response with streaming and tool support via the Codex Responses API.
+
+        ``pending_input_queue`` and ``interaction_broker`` are named explicitly
+        rather than read out of ``**kwargs``: the base signature ends in
+        ``**kwargs``, so a provider that forgets to forward them loses mid-run
+        message insertion without any error — the queue then only drains at the
+        run boundary via the chat layer's auto-continuation.
+        """
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
@@ -591,8 +600,16 @@ class CodexModel(LLMBaseModel):
 
             agent = Agent(**agent_kwargs)
 
-            run_config_kwargs = build_agents_run_config_kwargs(agent_name=agent_kwargs["name"])
-            run_config = RunConfig(**run_config_kwargs) if run_config_kwargs else None
+            # Carries the mid-run input filter as well as the trace kwargs, so a
+            # message typed while this run is streaming reaches the model at the
+            # next turn boundary instead of waiting for the whole run to finish.
+            run_config = self._build_run_config(
+                pending_input_queue=pending_input_queue,
+                session=session,
+                interrupt_controller=interrupt_controller,
+                interaction_broker=interaction_broker,
+                agent_name=agent_kwargs["name"],
+            )
             with _agents_trace_baggage(agent_kwargs["name"]):
                 result = Runner.run_streamed(
                     agent, input=prompt, max_turns=max_turns, session=session, run_config=run_config

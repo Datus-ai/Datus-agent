@@ -8,6 +8,8 @@ Unit tests for datus/models/claude_model.py.
 CI-level: zero external dependencies. Anthropic client and all I/O mocked.
 """
 
+import copy
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -3353,3 +3355,153 @@ class TestSslVerify:
         assert model.proxy_client is None
         assert model.async_proxy_client is None
         assert "SSL_VERIFY" not in os.environ
+
+
+class TestNativeMidRunInsert:
+    """Mid-run message insertion on the native Anthropic loop.
+
+    Every Claude model pointed at the official ``api.anthropic.com`` endpoint
+    runs here — ``supports_builtin_web_search()`` is true for that host, which
+    routes ``generate_with_tools_stream`` to the native path for API-key and
+    subscription auth alike. The native loop is not driven by the agents-SDK
+    Runner, so it gets no ``call_model_input_filter``; without an explicit
+    drain, a message typed mid-run stayed queued for the whole run and only
+    landed afterwards through the chat layer's auto-continuation.
+    """
+
+    @staticmethod
+    async def _run_two_turns(model, queue, push_during_tool: bool = True):
+        """Drive turn 1 (tool_use) → turn 2 (text), recording each turn's messages."""
+        from unittest.mock import AsyncMock
+
+        from datus.schemas.action_history import ActionHistoryManager
+
+        seen_messages = []
+        responses = [
+            _make_response([_make_tool_use_block(name="probe_tool", block_id="tu_1", input_data={})]),
+            _make_response([_make_text_block("done")]),
+        ]
+
+        def _create(**request_kwargs):
+            seen_messages.append(copy.deepcopy(request_kwargs.get("messages")))
+            return responses[len(seen_messages) - 1]
+
+        func_tool = MagicMock()
+        func_tool.name = "probe_tool"
+        func_tool.description = "Probe tool"
+        func_tool.params_json_schema = {"type": "object"}
+
+        async def _invoke(ctx, input_json):
+            # The user types while the tool is executing.
+            if push_during_tool:
+                queue.push("STOP_AND_CHECK")
+            return "tool finished"
+
+        func_tool.on_invoke_tool = _invoke
+
+        with (
+            patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)),
+            patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp,
+        ):
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="start",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                pending_input_queue=queue,
+            ):
+                pass
+
+        return seen_messages
+
+    @pytest.mark.asyncio
+    async def test_insert_during_tool_call_reaches_the_next_model_call(self):
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+
+        seen = await self._run_two_turns(model, queue)
+
+        assert len(seen) == 2
+        assert "STOP_AND_CHECK" not in json.dumps(seen[0], default=str)
+        assert "STOP_AND_CHECK" in json.dumps(seen[1], default=str)
+        assert len(queue) == 0
+
+    @pytest.mark.asyncio
+    async def test_insert_is_appended_as_a_user_text_message(self):
+        """Anthropic shape check: a user message with a plain ``text`` block.
+
+        The native path speaks the Messages API, not the Responses API, so the
+        item shape differs from the SDK filter's ``input_text`` block. Getting
+        this wrong yields a 400 from Anthropic rather than a silent no-op.
+        """
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+
+        seen = await self._run_two_turns(model, queue)
+
+        inserted = [
+            m
+            for m in seen[1]
+            if m.get("role") == "user" and "STOP_AND_CHECK" in json.dumps(m.get("content"), default=str)
+        ]
+        assert len(inserted) == 1
+        # A plain ``text`` block, not the Responses API's ``input_text``.
+        # ``cache_control`` may be attached by ``wrap_prompt_cache`` — being the
+        # newest message, the insert legitimately becomes the cache breakpoint.
+        (block,) = inserted[0]["content"]
+        assert block["type"] == "text"
+        assert block["text"] == "STOP_AND_CHECK"
+        # It must trail the tool_result, never replace or precede it: Anthropic
+        # requires the tool_use to be answered by its tool_result.
+        assert json.dumps(seen[1][-1], default=str) == json.dumps(inserted[0], default=str)
+        assert any("tool_result" in json.dumps(m.get("content"), default=str) for m in seen[1])
+
+    @pytest.mark.asyncio
+    async def test_interrupted_run_does_not_consume_the_queue(self):
+        """An aborting native run must leave staged text for the next run."""
+        from datus.cli.execution_state import ExecutionInterrupted, InterruptController, PendingInputQueue
+        from datus.schemas.action_history import ActionHistoryManager
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+        queue.push("STOP_AND_CHECK")
+        controller = InterruptController()
+        controller.interrupt()
+
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(ExecutionInterrupted):
+                async for _ in model._generate_with_mcp_stream(
+                    prompt="start",
+                    mcp_servers={},
+                    instruction="sys",
+                    output_type={},
+                    func_tools=[],
+                    action_history_manager=ActionHistoryManager(),
+                    interrupt_controller=controller,
+                    pending_input_queue=queue,
+                ):
+                    pass
+
+        assert queue.snapshot() == ["STOP_AND_CHECK"]
+
+    @pytest.mark.asyncio
+    async def test_idle_queue_adds_no_message(self):
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = _make_claude_model()
+        queue = PendingInputQueue()
+
+        seen = await self._run_two_turns(model, queue, push_during_tool=False)
+
+        # Turn 2 = initial user prompt + assistant tool_use + tool_result.
+        assert len(seen[1]) == 3
