@@ -707,6 +707,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     # ── Template hooks ─────────────────────────────────────────────────────
 
     async def _before_stream(self, ctx: "StreamRunContext") -> None:
+        # One manager can span several runs (the backend's mid-run-insert
+        # continuation loop reuses it), so record where this run starts:
+        # classification below must not see a previous pass's actions.
+        ctx.extras["artifact_run_action_start"] = ctx.action_history_manager.checkpoint()
         # Bind artifact tools for this run (regenerates artifact id every call).
         self._prepare_artifacts(ctx.user_input)
 
@@ -758,7 +762,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             # — end normally instead of forcing an artifact error. Binding is
             # not the discriminator: Hard rule 1 of the system prompt makes the
             # model bind before any answer, consultative turns included.
-            build_attempted = any(a.action_type in self._build_attempt_action_types() for a in all_actions)
+            run_start = int(ctx.extras.get("artifact_run_action_start") or 0)
+            build_attempted = any(a.action_type in self._build_attempt_action_types() for a in all_actions[run_start:])
             informational_answer = not build_attempted and bool(response_content.strip())
             if informational_answer:
                 if hasattr(result, "success"):
