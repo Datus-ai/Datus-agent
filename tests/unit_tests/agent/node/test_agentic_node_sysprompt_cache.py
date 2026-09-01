@@ -322,6 +322,81 @@ class TestDatasourceReminder:
         assert "database: explicit_db" in line
         assert "default_db" not in line
 
+    def test_connector_sql_generation_context_is_included(self, session_manager):
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="dws")})
+        cfg = _agent_config(current_datasource="main", services=services)
+        requested_databases = []
+
+        class Connector:
+            database_name = "customer_db"
+
+            def get_sql_generation_context(self, database_name=""):
+                requested_databases.append(database_name)
+                return {"compatibility_mode": "TD"}
+
+        node = _SnapshotNode(
+            session_manager,
+            cfg,
+            db_func_tool=SimpleNamespace(connector=Connector()),
+        )
+
+        line = node._build_datasource_reminder(SimpleNamespace(db_schema="test"))
+
+        assert (
+            "Current datasource: main "
+            "(dialect: dws, database: customer_db, compatibility mode: TD, schema: test)" in line
+        )
+        assert requested_databases == ["customer_db"]
+
+    def test_connector_sql_generation_context_failure_is_non_blocking(self, session_manager):
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="dws")})
+        cfg = _agent_config(current_datasource="main", services=services)
+
+        class Connector:
+            database_name = "customer_db"
+
+            def get_sql_generation_context(self, database_name=""):
+                raise RuntimeError("catalog unavailable")
+
+        node = _SnapshotNode(
+            session_manager,
+            cfg,
+            db_func_tool=SimpleNamespace(connector=Connector()),
+        )
+
+        line = node._build_datasource_reminder()
+
+        assert "Current datasource: main (dialect: dws, database: customer_db)" in line
+        assert "compatibility mode" not in line
+
+    def test_connector_sql_generation_context_tracks_datasource_switch(self, session_manager):
+        services = SimpleNamespace(
+            datasources={
+                "warehouse_td": SimpleNamespace(type="dws"),
+                "warehouse_ora": SimpleNamespace(type="dws"),
+            }
+        )
+        cfg = _agent_config(current_datasource="warehouse_td", services=services)
+
+        def connector(database_name, compatibility_mode):
+            return SimpleNamespace(
+                database_name=database_name,
+                get_sql_generation_context=lambda **_kwargs: {"compatibility_mode": compatibility_mode},
+            )
+
+        db_tool = SimpleNamespace(connector=connector("sales_td", "TD"))
+        node = _SnapshotNode(session_manager, cfg, db_func_tool=db_tool)
+
+        assert "database: sales_td, compatibility mode: TD" in node._build_datasource_reminder()
+
+        cfg.current_datasource = "warehouse_ora"
+        db_tool.connector = connector("sales_ora", "ORA")
+
+        switched = node._build_datasource_reminder()
+        assert "Current datasource: warehouse_ora" in switched
+        assert "database: sales_ora, compatibility mode: ORA" in switched
+        assert "TD" not in switched
+
     def test_enhanced_message_carries_reminder_in_envelope(self, session_manager):
         """The reminder rides inside the existing <system_reminder> envelope."""
         from datus.utils.message_utils import extract_enhanced_context, extract_user_input
