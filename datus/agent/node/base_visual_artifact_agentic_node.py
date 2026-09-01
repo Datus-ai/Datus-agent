@@ -650,12 +650,19 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         return None
 
     def _binding_tool_action_types(self) -> set:
-        """Tool action types that bind an artifact for this run.
-
-        Used to tell a real "never bound" failure apart from an
-        informational prose answer (which makes no binding attempt).
-        """
+        """Tool action types that bind an artifact for this run."""
         return {f"start_new_{self.ARTIFACT_KIND}", f"bind_existing_{self.ARTIFACT_KIND}"}
+
+    def _build_attempt_action_types(self) -> set:
+        """Tool action types that prove the run actually started building.
+
+        Binding alone doesn't: the system prompt requires a bind on turn 1
+        even for meta-discussion, so a consultative turn ("is this chart
+        worth keeping?") binds, reads, and answers in prose. Only a write
+        into the artifact tree — or a validate attempt — means the model
+        was mid-build and owes a successful ``validate_render``.
+        """
+        return {"write_file", "edit_file", "delete_file", self.QUERY_SAVE_ACTION_TYPE, "validate_render"}
 
     def _missing_binding_error(self) -> str:
         kind = self.ARTIFACT_KIND
@@ -744,15 +751,15 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         )
 
         if app_jsx_rel_path is None:
-            # No render produced. Separate a genuine "forgot to bind / render"
-            # failure from a legitimate informational turn: when the model
-            # never attempted to bind an artifact and answered the user in
-            # prose (e.g. "what changes did I make?"), that's a valid response
-            # — end normally instead of forcing the missing-binding error.
-            binding_attempted = any(a.action_type in self._binding_tool_action_types() for a in all_actions)
-            informational_answer = (
-                self._active_artifact_slug is None and not binding_attempted and bool(response_content.strip())
-            )
+            # No render produced. Separate a genuine "forgot to render" failure
+            # from a legitimate informational turn: a run that never wrote into
+            # the artifact tree and answered the user in prose ("what changes
+            # did I make?", "is this chart worth keeping?") is a valid response
+            # — end normally instead of forcing an artifact error. Binding is
+            # not the discriminator: Hard rule 1 of the system prompt makes the
+            # model bind before any answer, consultative turns included.
+            build_attempted = any(a.action_type in self._build_attempt_action_types() for a in all_actions)
+            informational_answer = not build_attempted and bool(response_content.strip())
             if informational_answer:
                 if hasattr(result, "success"):
                     result.success = True  # type: ignore[attr-defined]
