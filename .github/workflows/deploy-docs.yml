@@ -3,9 +3,13 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*.*.*'
-      - '*.*.*'
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'requirements-docs.txt'
+      - 'ci/prepare_docs_build.py'
+      - 'ci/docs_versioning.py'
+      - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
     inputs:
       version:
