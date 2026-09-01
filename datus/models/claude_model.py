@@ -690,6 +690,8 @@ class ClaudeModel(OpenAICompatibleModel):
         interrupt_controller=None,
         session: Optional[Any] = None,
         hooks=None,
+        pending_input_queue=None,
+        interaction_broker=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Async generator: native Anthropic API with real-time tool call ActionHistory.
@@ -850,6 +852,31 @@ class ClaudeModel(OpenAICompatibleModel):
                         raise ExecutionInterrupted("Interrupted by user")
 
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
+
+                    # Mid-run message insertion. The native loop is not driven by
+                    # the SDK Runner, so ``call_model_input_filter`` never fires
+                    # here; this is its equivalent and sits at the same point in
+                    # the cycle — after the previous round's tool_results were
+                    # appended, before the next model call. Without it a message
+                    # typed mid-run stays queued for the whole run and only lands
+                    # via the chat layer's auto-continuation, i.e. a full round
+                    # trip too late to steer anything.
+                    #
+                    # Appending to ``messages`` is the only persistence needed:
+                    # ``persisted_message_index`` was advanced to ``len(messages)``
+                    # at the end of the previous round, so this round's checkpoint
+                    # writes the inserted message along with the rest of the turn.
+                    for inserted_text in self.drain_pending_user_inserts(
+                        pending_input_queue,
+                        interrupt_controller=interrupt_controller,
+                        interaction_broker=interaction_broker,
+                    ):
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": [{"type": "text", "text": inserted_text}],
+                            }
+                        )
 
                     request_kwargs = dict(
                         model=self.model_name,
@@ -1932,12 +1959,21 @@ class ClaudeModel(OpenAICompatibleModel):
         session=None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         hooks=None,
+        interrupt_controller=None,
+        pending_input_queue=None,
+        interaction_broker=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support.
 
         Routes to native Anthropic API for OAuth subscription tokens,
         otherwise uses parent class LiteLLM implementation.
+
+        The mid-run insertion plumbing (``pending_input_queue`` /
+        ``interaction_broker``) is named explicitly rather than left to
+        ``**kwargs``: both branches need it, and the base signature ends in
+        ``**kwargs``, so forwarding it implicitly hides a dropped argument as
+        "insertion silently doesn't work" instead of a TypeError.
         """
         # Route to the native Anthropic path for (a) OAuth subscription tokens
         # (LiteLLM sends x-api-key which is incompatible with Bearer auth), or
@@ -1961,9 +1997,11 @@ class ClaudeModel(OpenAICompatibleModel):
                 max_turns=max_turns,
                 func_tools=tools,
                 action_history_manager=action_history_manager,
-                interrupt_controller=kwargs.pop("interrupt_controller", None),
+                interrupt_controller=interrupt_controller,
                 session=session,
                 hooks=hooks,
+                pending_input_queue=pending_input_queue,
+                interaction_broker=interaction_broker,
                 **kwargs,
             ):
                 yield action
@@ -1982,6 +2020,9 @@ class ClaudeModel(OpenAICompatibleModel):
                 session=session,
                 action_history_manager=action_history_manager,
                 hooks=hooks,
+                interrupt_controller=interrupt_controller,
+                pending_input_queue=pending_input_queue,
+                interaction_broker=interaction_broker,
                 **kwargs,
             ):
                 yield action

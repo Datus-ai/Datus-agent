@@ -1457,3 +1457,111 @@ class TestConsumeStreamText:
         with patch.object(model, "_refresh_client_token"), patch.object(model, "_get_client") as client:
             client.return_value.responses.create.return_value = events
             assert model.generate_with_json_output("judge this", output_schema={"type": "object"}) == payload
+
+
+class TestCodexMidRunInsert:
+    """Mid-run message insertion on the Codex streaming path.
+
+    ``CodexModel`` builds its own ``Runner.run_streamed`` call, and its
+    ``RunConfig`` used to carry only trace kwargs — the ``pending_input_queue``
+    handed down by ``AgenticNode`` was swallowed by ``**kwargs``, so a message
+    typed mid-run never reached the model until the run had finished and the
+    chat layer's auto-continuation started a fresh one.
+    """
+
+    @staticmethod
+    async def _run_two_turns(model, stub, queue, push_during_tool: bool = True):
+        from agents import function_tool
+
+        @function_tool
+        def probe_tool() -> str:
+            """Probe tool; the user types while it runs."""
+            if push_during_tool:
+                queue.push("STOP_AND_CHECK")
+            return "tool finished"
+
+        with (
+            patch.object(type(model), "_get_responses_model", lambda self: stub),
+            patch.object(type(model), "_refresh_client_token", lambda self: None),
+        ):
+            async for _ in model.generate_with_tools_stream(
+                prompt="start",
+                tools=[probe_tool],
+                mcp_servers={},
+                instruction="",
+                max_turns=5,
+                session=None,
+                pending_input_queue=queue,
+            ):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_insert_during_tool_call_reaches_the_next_turn(self, model_config, mock_oauth, two_turn_agents_model):
+        from datus.cli.execution_state import PendingInputQueue
+        from datus.models.codex_model import CodexModel
+
+        model = CodexModel(model_config=model_config)
+        stub = two_turn_agents_model()
+        queue = PendingInputQueue()
+
+        await self._run_two_turns(model, stub, queue)
+
+        assert stub.turn == 2
+        assert not stub.saw_on_turn(0, "STOP_AND_CHECK")
+        assert stub.saw_on_turn(1, "STOP_AND_CHECK")
+        assert len(queue) == 0
+
+    @pytest.mark.asyncio
+    async def test_idle_queue_leaves_the_run_unchanged(self, model_config, mock_oauth, two_turn_agents_model):
+        from datus.cli.execution_state import PendingInputQueue
+        from datus.models.codex_model import CodexModel
+
+        model = CodexModel(model_config=model_config)
+        stub = two_turn_agents_model()
+        queue = PendingInputQueue()
+
+        await self._run_two_turns(model, stub, queue, push_during_tool=False)
+
+        assert stub.turn == 2
+        assert not stub.saw_on_turn(1, "STOP_AND_CHECK")
+
+    @pytest.mark.asyncio
+    async def test_interrupted_run_does_not_consume_the_queue(self, model_config, mock_oauth, two_turn_agents_model):
+        """Text staged while an interrupt is in flight survives for the next run."""
+        from datus.cli.execution_state import ExecutionInterrupted, InterruptController, PendingInputQueue
+        from datus.models.codex_model import CodexModel
+
+        model = CodexModel(model_config=model_config)
+        stub = two_turn_agents_model()
+        queue = PendingInputQueue()
+        controller = InterruptController()
+
+        from agents import function_tool
+
+        @function_tool
+        def probe_tool() -> str:
+            """Probe tool; the user types, then interrupts."""
+            queue.push("STOP_AND_CHECK")
+            controller.interrupt()
+            return "tool finished"
+
+        with (
+            patch.object(type(model), "_get_responses_model", lambda self: stub),
+            patch.object(type(model), "_refresh_client_token", lambda self: None),
+        ):
+            # The interrupt aborts the run, as it should.
+            with pytest.raises(ExecutionInterrupted):
+                async for _ in model.generate_with_tools_stream(
+                    prompt="start",
+                    tools=[probe_tool],
+                    mcp_servers={},
+                    instruction="",
+                    max_turns=5,
+                    session=None,
+                    pending_input_queue=queue,
+                    interrupt_controller=controller,
+                ):
+                    pass
+
+        assert not stub.saw_on_turn(1, "STOP_AND_CHECK")
+        assert queue.snapshot() == ["STOP_AND_CHECK"]
