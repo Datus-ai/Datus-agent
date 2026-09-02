@@ -348,6 +348,30 @@ class TestDatasourceReminder:
         )
         assert requested_databases == ["customer_db"]
 
+    def test_connector_sql_generation_context_ignores_whitespace_mode(self, session_manager):
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="dws")})
+        cfg = _agent_config(current_datasource="main", services=services)
+        requested_databases = []
+
+        class Connector:
+            database_name = "customer_db"
+
+            def get_sql_generation_context(self, database_name=""):
+                requested_databases.append(database_name)
+                return {"compatibility_mode": "   "}
+
+        node = _SnapshotNode(
+            session_manager,
+            cfg,
+            db_func_tool=SimpleNamespace(connector=Connector()),
+        )
+
+        line = node._build_datasource_reminder(SimpleNamespace(db_schema="test"))
+
+        assert "Current datasource: main (dialect: dws, database: customer_db, schema: test)" in line
+        assert "compatibility mode:" not in line
+        assert requested_databases == ["customer_db"]
+
     def test_connector_sql_generation_context_failure_is_non_blocking(self, session_manager):
         services = SimpleNamespace(datasources={"main": SimpleNamespace(type="dws")})
         cfg = _agent_config(current_datasource="main", services=services)
