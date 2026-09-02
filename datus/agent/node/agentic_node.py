@@ -692,10 +692,10 @@ class AgenticNode(Node):
         stale dialect in every later turn. Instead this line rides in the
         ``<system_reminder>`` envelope of each user message. It merges what
         used to be a separate "Database Context" block — dialect, catalog,
-        database (resolved via the connector default), and schema — into one
-        line so the dialect is stated exactly once per turn. Gated on
-        ``db_func_tool`` so non-DB nodes add no noise; returns an empty string
-        when no datasource is selected.
+        database (resolved via the connector default), adapter-provided SQL
+        semantics, and schema — into one line so the dialect is stated exactly
+        once per turn. Gated on ``db_func_tool`` so non-DB nodes add no noise;
+        returns an empty string when no datasource is selected.
         """
         agent_config = getattr(self, "agent_config", None)
         if not agent_config or getattr(self, "db_func_tool", None) is None:
@@ -718,6 +718,20 @@ class AgenticNode(Node):
         database = resolve_database_name_for_prompt(connector, getattr(user_input, "database", "") or "")
         if database:
             details.append(f"database: {database}")
+        sql_context_getter = getattr(connector, "get_sql_generation_context", None)
+        if callable(sql_context_getter):
+            try:
+                sql_context = sql_context_getter(database_name=database) or {}
+                compatibility_mode = sql_context.get("compatibility_mode") if isinstance(sql_context, dict) else None
+                if compatibility_mode:
+                    compatibility_mode = str(compatibility_mode).strip()
+                    if compatibility_mode:
+                        details.append(f"compatibility mode: {compatibility_mode}")
+            except Exception as e:
+                # SQL-generation hints must never make an otherwise usable
+                # datasource fail. The adapter may be talking to an older or
+                # restricted server that cannot expose the requested trait.
+                logger.debug("Unable to read connector SQL-generation context: %s", e)
         schema = getattr(user_input, "db_schema", "") or ""
         if schema:
             details.append(f"schema: {schema}")
