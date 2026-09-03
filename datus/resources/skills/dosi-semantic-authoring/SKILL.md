@@ -1,12 +1,12 @@
 ---
 name: dosi-semantic-authoring
-description: Dosi native OSI dataset, relationship, metric, and structured-window authoring contract
+description: Dosi native OSI dataset, relationship, and metric authoring guidance
 tags:
   - semantic-model
   - metrics
   - osi
   - dosi
-version: "1.0.0"
+version: "1.1.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -29,16 +29,16 @@ Author the active Dosi semantic model as strict OSI core YAML. Use this skill fo
 - Give a dataset `ai_context.instructions` when its grain or intended use does not follow from the description, and give a field `ai_context.synonyms` when users ask for it by a name the column does not carry. Leave both out otherwise: restating the description dilutes what a reader can act on.
 - Define model-level relationships with aligned `from_columns` and `to_columns`; bind the target columns to one complete verified key.
 
-## Author DATUS extensions
+## Choose DATUS metric capabilities
 
-Put each Dosi-only key in the owning object's `custom_extensions` entry. Encode `data` as one JSON-object string and stamp it with the runtime `<datus_extension_version>`.
+Put Dosi-only metadata in the owning object's DATUS `custom_extensions` entry. Encode `data` as one JSON-object string and stamp it with the runtime `<datus_extension_version>`. The injected active DATUS extension specification is authoritative for supported carriers, keys, exact shapes, enums, constraints, and examples; never invent a field from this conceptual guide.
 
-| Carrier | Supported keys |
-|---|---|
-| Dataset | `time_dimension` |
-| Time field | `time_granularity` |
-| Relationship | `join_type` |
-| Metric | `dataset`, `time_dimension`, `fill_nulls_with`, `window`, `subject_path`, `unit`, `format` |
+- Prefer a plain base metric when one aggregate or arithmetic expression completely represents the business meaning.
+- Use a derived filter metric when the business concept narrows a reusable base metric. Use a derived compose metric when it combines reusable metrics. Do not inline the full base calculation again.
+- Use a structured window metric for period comparison, rolling, cumulative, ranking, distribution, or framed statistical calculations. Keep the underlying OSI expression as the plain aggregate described by the active contract.
+- Use a parameterized metric only when a caller must provide a bounded runtime business input. Declare its type, default or required behavior, and allowed values or bounds according to the active contract; do not turn stable business rules into parameters.
+- Use explicit measure metadata only when the metric needs a stable engine-facing measure identity or behavior that cannot be inferred from its OSI expression.
+- Combine capabilities only when the active contract explicitly permits their keys and dependencies on the same carrier. If the requested capability is absent from that contract, report it as unsupported by the installed engine instead of approximating it in YAML.
 
 - Use `time_dimension` to resolve the business time when inference is ambiguous; qualify metric-level references when field names collide.
 - Use `time_granularity` for the field's stored grain and `join_type` for `left` or `inner` relationship behavior.
@@ -55,24 +55,13 @@ Put each Dosi-only key in the owning object's `custom_extensions` entry. Encode 
       data: '{"v":"<datus_extension_version>","time_dimension":"orders.order_date","subject_path":["sales","revenue","total"],"unit":"USD"}'
 ```
 
-## Author metrics and windows
+## Author base and window metrics
 
 - Express a base metric with its natural aggregate, ratio, or arithmetic expression. Put a durable metric condition inside its aggregate with `CASE WHEN`.
 - Express each window result as a standalone metric whose OSI expression is one plain aggregate. Put the derivation in one structured `window` object.
-- Choose the window form from the intended calculation:
-
-| Intent | Form |
-|---|---|
-| Period comparison or following-period value | `pop` or general `offset` |
-| Trailing buckets | `rolling` |
-| Running or period-to-date value | `cumulative` |
-| Explicit aggregate/statistical frame | general `frame` |
-| Ranking or distribution | `rank` |
-| First, last, or nth value | `value` |
+- Choose the window family from the intended calculation and use the exact form advertised by the active contract.
 
 - Derive time, query grain, ordering, partition, and frame from the requested analytic meaning. Treat query grain as a runtime argument.
-- Use `order.by` values `time` or `value`. Use partition modes `query_dimensions`, `query_dimensions_except`, `time_bucket`, or `none`; qualify excluded fields.
-- Supply `buckets` for `ntile`, `n` for `nth_value`, and a second plain aggregate metric for covariance or correlation.
 - Reuse a window metric only when its base aggregate, time axis, calculation, ordering, partition, and frame all match.
 - Preserve meaningful window nulls for missing comparison buckets or incomplete required frames.
 

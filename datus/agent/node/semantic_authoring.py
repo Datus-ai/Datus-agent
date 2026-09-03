@@ -908,6 +908,9 @@ def render_required_authoring_skill(
         ) from exc
 
     rendered_skill = content.replace(_DATUS_EXTENSION_VERSION_TOKEN, datus_extension_version())
+    # Keep the placeholder argument while older adapter releases remain in
+    # supported environments. Current adapters accept it for compatibility
+    # but return the engine-owned dialect-neutral contract unchanged.
     extension_spec = datus_extension_authoring_spec_text("<osi_dialect>")
     sections = [rendered_skill]
     if include_osi_core:
@@ -924,6 +927,7 @@ def authoring_prompt_snapshot_meta(agent_config: Any, node_name: str) -> Dict[st
         return {}
 
     try:
+        from datus_semantic_dosi import authoring_spec
         from datus_semantic_dosi.engine import datus_extension_version
     except ImportError as exc:
         from datus.utils.exceptions import DatusException, ErrorCode
@@ -933,7 +937,19 @@ def authoring_prompt_snapshot_meta(agent_config: Any, node_name: str) -> Dict[st
             message_args={"config_error": "semantic_adapter=dosi requires the datus-semantic-dosi package"},
         ) from exc
 
-    return {"datus_extension_version": datus_extension_version()}
+    digest_reader = getattr(authoring_spec, "datus_extension_authoring_spec_digest", None)
+    if callable(digest_reader):
+        contract_digest = digest_reader()
+    else:
+        # Compatibility with adapters that predate the digest API. This path
+        # disappears naturally once the new adapter is the minimum version.
+        contract_text = authoring_spec.datus_extension_authoring_spec_text("<osi_dialect>")
+        contract_digest = f"sha256:{hashlib.sha256(contract_text.encode('utf-8')).hexdigest()}"
+
+    return {
+        "datus_extension_version": datus_extension_version(),
+        "datus_authoring_contract_digest": contract_digest,
+    }
 
 
 def default_optional_skills(agent_config: Any, node_name: str) -> str:

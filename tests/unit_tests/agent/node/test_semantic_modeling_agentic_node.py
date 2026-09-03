@@ -84,6 +84,9 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "## Active OSI Core authoring specification" in prompt
     assert "# Apache Ossie - Core Metadata Spec" in prompt
     assert "## Active DATUS extension authoring specification" in prompt
+    assert "Use a derived filter metric" in prompt
+    assert "Use a parameterized metric only" in prompt
+    assert "active contract explicitly permits" in prompt
 
 
 def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agent_config, mock_llm_create):

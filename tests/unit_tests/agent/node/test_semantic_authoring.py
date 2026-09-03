@@ -89,11 +89,69 @@ def test_dosi_prompt_rendering_reports_missing_adapter_package(monkeypatch):
         semantic_authoring.render_required_authoring_skill("dosi-semantic-authoring", "authoring")
 
 
+def test_dosi_prompt_uses_engine_owned_extension_contract(monkeypatch):
+    package_module = ModuleType("datus_semantic_dosi")
+    package_module.__path__ = []
+    authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
+    authoring_module.authoring_spec_text = lambda dialect: f"core dialect: {dialect}"
+    authoring_module.datus_extension_authoring_spec_text = lambda _dialect: "engine contract"
+    engine_module = ModuleType("datus_semantic_dosi.engine")
+    engine_module.datus_extension_version = lambda: "1.5"
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
+
+    rendered = semantic_authoring.render_required_authoring_skill(
+        "dosi-semantic-authoring",
+        'extension version: "<datus_extension_version>"',
+        include_osi_core=True,
+    )
+
+    assert 'extension version: "1.5"' in rendered
+    assert "core dialect: <osi_dialect>" in rendered
+    assert "engine contract" in rendered
+
+
 def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", None)
 
     with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
         semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
+
+
+def test_dosi_prompt_snapshot_includes_engine_contract_digest(monkeypatch):
+    package_module = ModuleType("datus_semantic_dosi")
+    package_module.__path__ = []
+    authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
+    authoring_module.datus_extension_authoring_spec_digest = lambda: "sha256:contract"
+    engine_module = ModuleType("datus_semantic_dosi.engine")
+    engine_module.datus_extension_version = lambda: "1.5"
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
+
+    assert semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling") == {
+        "datus_extension_version": "1.5",
+        "datus_authoring_contract_digest": "sha256:contract",
+    }
+
+
+def test_dosi_prompt_snapshot_hashes_legacy_adapter_spec(monkeypatch):
+    package_module = ModuleType("datus_semantic_dosi")
+    package_module.__path__ = []
+    authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
+    authoring_module.datus_extension_authoring_spec_text = lambda dialect: f"legacy {dialect}"
+    package_module.authoring_spec = authoring_module
+    engine_module = ModuleType("datus_semantic_dosi.engine")
+    engine_module.datus_extension_version = lambda: "1.4"
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
+
+    meta = semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
+
+    assert meta["datus_extension_version"] == "1.4"
+    assert meta["datus_authoring_contract_digest"].startswith("sha256:")
 
 
 def test_legacy_node_config_fields_are_ignored():
