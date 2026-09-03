@@ -4,7 +4,7 @@
 
 import hashlib
 from types import SimpleNamespace
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -479,7 +479,7 @@ class TestEndMetricGeneration:
         state = _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         state.record_artifact_snapshot(target, b"pre-authoring")
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
-        _record_compiled_evidence(generation_tools, target, ["order_count"])
+        expected_catalog = _record_compiled_evidence(generation_tools, target, ["order_count"])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
         with (
@@ -499,7 +499,7 @@ class TestEndMetricGeneration:
             {},
             metric_names_to_sync={"order_count"},
             metric_names_to_reconcile={"order_count"},
-            compiled_metric_catalog=ANY,
+            compiled_metric_catalog=expected_catalog,
         )
         assert result.result["metric_file"] == str(target)
         assert generation_tools.generation_evidence.has_metric_kb_sync(["order_count"])
@@ -525,7 +525,7 @@ class TestEndMetricGeneration:
             touched_dataset_names=["orders"],
         )
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
-        _record_compiled_evidence(generation_tools, target, ["order_count"])
+        expected_catalog = _record_compiled_evidence(generation_tools, target, ["order_count"])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
         with (
@@ -545,7 +545,7 @@ class TestEndMetricGeneration:
             {},
             metric_names_to_sync={"order_count"},
             metric_names_to_reconcile={"order_count"},
-            compiled_metric_catalog=ANY,
+            compiled_metric_catalog=expected_catalog,
         )
         assert generation_tools.generation_evidence.semantic_kb_sync_passed is True
 

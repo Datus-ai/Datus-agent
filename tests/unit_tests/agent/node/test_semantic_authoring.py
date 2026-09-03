@@ -1,5 +1,6 @@
 """Unit tests for semantic authoring format resolution."""
 
+import hashlib
 import sys
 from contextlib import asynccontextmanager
 from types import ModuleType, SimpleNamespace
@@ -151,7 +152,8 @@ def test_dosi_prompt_snapshot_hashes_legacy_adapter_spec(monkeypatch):
     meta = semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
 
     assert meta["datus_extension_version"] == "1.4"
-    assert meta["datus_authoring_contract_digest"].startswith("sha256:")
+    expected_digest = hashlib.sha256(b"legacy <osi_dialect>").hexdigest()
+    assert meta["datus_authoring_contract_digest"] == f"sha256:{expected_digest}"
 
 
 def test_legacy_node_config_fields_are_ignored():

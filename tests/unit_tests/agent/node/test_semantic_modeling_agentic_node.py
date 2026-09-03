@@ -6,7 +6,7 @@
 
 import hashlib
 import json
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -346,7 +346,8 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
     )
     assert planned.success == 1
     target = node.osi_target_state.selected_path
-    assert target is not None
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    assert target == str((model_dir / "commerce.yml").resolve())
 
     dataset_result = node.filesystem_func_tool.upsert_osi_datasets(
         target,
@@ -598,23 +599,27 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     node.osi_target_state.artifact_snapshot_path = str(target.resolve())
     node.osi_target_state.artifact_snapshot_content = target.read_bytes()
     node.osi_target_state.touched_metric_names = list(touched_metrics)
+    compiled_validation_recorded = False
+    expected_compiled_catalog = {}
     if touched_metrics:
-        assert node.generation_evidence.record_compiled_validation(
+        expected_compiled_catalog = {
+            "order_count": {
+                "name": "order_count",
+                "kind": "aggregate",
+                "datasets": ["orders"],
+                "measures": ["order_count"],
+            }
+        }
+        compiled_validation_recorded = node.generation_evidence.record_compiled_validation(
             {
                 "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
                 "artifact_sha256": {str(target.resolve()): "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()},
-                "compiled_metrics": [
-                    {
-                        "name": "order_count",
-                        "kind": "aggregate",
-                        "datasets": ["orders"],
-                        "measures": ["order_count"],
-                    }
-                ],
+                "compiled_metrics": list(expected_compiled_catalog.values()),
                 "compiled_metric_digests": {"order_count": "sha256:" + hashlib.sha256(b"order_count").hexdigest()},
             },
             metric_names=touched_metrics,
         )
+    assert compiled_validation_recorded is bool(touched_metrics)
     node.semantic_tools.validate_semantic = MagicMock(
         return_value=FuncToolResult(result={"valid": True, "scope": expected_scope})
     )
@@ -636,7 +641,7 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
         include_semantic_objects=True,
         include_metrics=bool(touched_metrics),
         metric_names_to_sync=set(touched_metrics),
-        compiled_metric_catalog=ANY if touched_metrics else {},
+        compiled_metric_catalog=expected_compiled_catalog,
     )
     assert node.osi_target_state.artifact_snapshot_path == ""
 

@@ -255,8 +255,10 @@ class TestGenerationEvidence:
 
         assert not ev.record_compiled_validation(
             {
-                "contract_digest": "sha256:not-a-digest",
-                "artifact_sha256": {str(artifact): "sha256:not-a-digest"},
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {
+                    str(artifact.resolve()): "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()
+                },
                 "compiled_metrics": [{"name": "revenue"}],
                 "compiled_metric_digests": {},
             },
