@@ -4,6 +4,8 @@
 
 """Unit tests for datus.tools.func_tool.generation_evidence."""
 
+import hashlib
+
 from datus.tools.func_tool.generation_evidence import (
     GenerationEvidence,
     _metadata_from_result,
@@ -223,6 +225,45 @@ class TestGenerationEvidence:
 
         assert ev.validation_passed is False
         assert not ev.semantic_artifact_validation_passed("sales", artifact)
+
+    def test_compiled_validation_is_bound_to_artifact_contract_and_metric_set(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        metric_digest = "sha256:" + hashlib.sha256(b"revenue").hexdigest()
+        ev = GenerationEvidence()
+
+        assert ev.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {str(artifact): "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()},
+                "compiled_metrics": [{"name": "revenue", "kind": "aggregate", "datasets": ["orders"]}],
+                "compiled_metric_digests": {"revenue": metric_digest},
+            },
+            metric_names=["revenue"],
+        )
+        assert ev.compiled_validation_passed(artifact, ["revenue"])
+        assert not ev.compiled_validation_passed(artifact, ["revenue", "orders"])
+        assert ev.compiled_metric_catalog(["revenue"])["revenue"]["datasets"] == ["orders"]
+
+        artifact.write_text("semantic_model: changed\n", encoding="utf-8")
+        assert not ev.compiled_validation_passed(artifact, ["revenue"])
+
+    def test_compiled_validation_rejects_incomplete_digest_evidence(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence()
+
+        assert not ev.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {
+                    str(artifact.resolve()): "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()
+                },
+                "compiled_metrics": [{"name": "revenue"}],
+                "compiled_metric_digests": {},
+            },
+            metric_names=["revenue"],
+        )
 
     def test_record_metric_dry_run_failure_ignored(self):
         ev = GenerationEvidence()

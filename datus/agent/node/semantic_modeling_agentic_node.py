@@ -458,6 +458,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         """Validate and fully reconcile one target YAML before returning success."""
         semantic_model_file, resolved, model_name = self._selected_osi_artifact()
         metric_names = self.generation_tools.extract_osi_metric_names(resolved)
+        present_metrics, _ = self.osi_target_state.partition_touched_metrics(metric_names)
         validation_scope = "all" if metric_names else "semantic_model"
 
         artifact_validated = self.generation_evidence.semantic_artifact_validation_passed(
@@ -486,10 +487,20 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             ):
                 raise RuntimeError("Cannot bind semantic validation evidence to the planned OSI artifact.")
 
+        if self.osi_target_state.touched_metric_names and not self.generation_evidence.compiled_validation_passed(
+            resolved,
+            present_metrics,
+        ):
+            raise RuntimeError(
+                "validate_semantic did not produce current engine compile evidence for every present touched metric."
+            )
+
         sync_result = self.generation_tools.sync_osi_to_db(
             resolved,
             include_semantic_objects=True,
-            include_metrics=True,
+            include_metrics=bool(self.osi_target_state.touched_metric_names),
+            metric_names_to_sync=set(present_metrics),
+            compiled_metric_catalog=self.generation_evidence.compiled_metric_catalog(present_metrics),
         )
         if not sync_result.get("success"):
             raise RuntimeError(f"OSI semantic model KB reconcile failed: {sync_result.get('error', 'unknown error')}")

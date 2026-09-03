@@ -347,6 +347,7 @@ class SemanticTools:
         runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
         warehouse_dry_run_provider: Optional[Callable[[str], Mapping[str, Any]]] = None,
         semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
+        semantic_metric_names_provider: Optional[Callable[[], Optional[List[str]]]] = None,
     ):
         """
         Initialize semantic function tool.
@@ -363,6 +364,8 @@ class SemanticTools:
                 adapter-compiled SQL against the active warehouse.
             semantic_model_path_provider: Optional callback that returns the exact
                 request-local semantic model selected for authoring or validation.
+            semantic_metric_names_provider: Optional callback returning the
+                present touched metrics that require compiled publish evidence.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
@@ -371,6 +374,7 @@ class SemanticTools:
         self._runtime_db_context_provider = runtime_db_context_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
         self._semantic_model_path_provider = semantic_model_path_provider
+        self._semantic_metric_names_provider = semantic_metric_names_provider
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
@@ -816,7 +820,9 @@ class SemanticTools:
         return [
             trans_to_function_tool(self.list_metrics),
             trans_to_function_tool(self.get_dimensions),
-            trans_to_function_tool(self.query_metrics),
+            # Parameterized Dosi metrics need arbitrary declaration-driven
+            # binding names, so this one schema cannot be strict/closed.
+            trans_to_function_tool(self.query_metrics, strict_mode=False),
             trans_to_function_tool(self.validate_semantic),
             trans_to_function_tool(self.attribution_analyze),
         ]
@@ -978,6 +984,7 @@ class SemanticTools:
         where: Optional[str] = None,
         limit: Optional[int] = None,
         order_by: Optional[List[str]] = None,
+        params: Optional[Dict[str, Any]] = None,
         dry_run: bool = False,
     ) -> FuncToolResult:
         """
@@ -1009,6 +1016,8 @@ class SemanticTools:
                       produce a result/order key such as `metric_time__day`. Examples:
                       ['metric_time__day'] for ascending, ['-message_count'] for descending.
                       Do NOT use 'asc'/'desc' keywords.
+            params: Optional parameter bindings for Dosi parameterized metrics.
+                Values may be scalars or lists and are passed through unchanged.
             dry_run: If True, compile and return the query plan. Live OSI
                 backends also validate the compiled SQL with a warehouse dry-run.
 
@@ -1019,6 +1028,7 @@ class SemanticTools:
         dimensions = _normalize_name_list(dimensions)
         path = _normalize_name_list(path)
         order_by = _normalize_name_list(order_by)
+        params = normalize_null(params)
 
         adapter, error = self._require_adapter("query_metrics")
         if error:
@@ -1031,6 +1041,17 @@ class SemanticTools:
                     "query_metrics requires at least one metric name. "
                     "Call list_metrics first and pass one or more metric names exactly as returned."
                 ),
+            )
+        if params is not None and not isinstance(params, dict):
+            return FuncToolResult(
+                success=0,
+                error="query_metrics params must be an object of parameter bindings",
+            )
+        adapter_name = str(self.adapter_type or getattr(adapter, "service_type", "") or "").strip().lower()
+        if params and adapter_name != "dosi":
+            return FuncToolResult(
+                success=0,
+                error="query_metrics params are supported only by the Dosi semantic adapter",
             )
 
         # Sanitize optional parameters: LLMs may pass string null placeholders
@@ -1062,6 +1083,17 @@ class SemanticTools:
                 "order_by": order_by or None,
                 "dry_run": dry_run,
             }
+            if params:
+                try:
+                    query_parameters = inspect.signature(adapter.query_metrics).parameters
+                except (TypeError, ValueError):
+                    query_parameters = {}
+                if not _signature_accepts_parameter(query_parameters, "params"):
+                    return FuncToolResult(
+                        success=0,
+                        error="The current Dosi adapter does not support parameterized metrics; upgrade it first",
+                    )
+                adapter_query_kwargs["params"] = params
             result = _run_async(adapter.query_metrics(**adapter_query_kwargs))
 
             # Drop non-JSON-serializable metadata entries (MetricFlow puts a
@@ -1213,6 +1245,9 @@ class SemanticTools:
         try:
             validate_semantic = adapter.validate_semantic
             validation_kwargs = {}
+            validation_metric_names: Optional[List[str]] = None
+            if callable(self._semantic_metric_names_provider):
+                validation_metric_names = _normalize_name_list(self._semantic_metric_names_provider())
             try:
                 signature = inspect.signature(validate_semantic)
                 params = signature.parameters
@@ -1246,6 +1281,8 @@ class SemanticTools:
                             result=None,
                         )
                     validation_kwargs["baseline_artifact"] = baseline_artifact
+                if validation_metric_names is not None and _signature_accepts_parameter(params, "metric_names"):
+                    validation_kwargs["metric_names"] = validation_metric_names
             except (TypeError, ValueError):
                 if checks_list is not None or baseline_artifact is not None:
                     return FuncToolResult(
@@ -1256,6 +1293,7 @@ class SemanticTools:
                 validation_kwargs = {}
 
             validation_result = _run_async(validate_semantic(**validation_kwargs))
+            validation_metadata = getattr(validation_result, "metadata", None)
 
             # Serialize ValidationIssue objects to dicts
             issues_data = [_serialize_validation_issue(issue) for issue in validation_result.issues]
@@ -1305,6 +1343,14 @@ class SemanticTools:
                 "issue_count": len(effective_issues),
                 "ignored_issue_count": len(ignored_issues),
             }
+            if effective_valid and isinstance(validation_metadata, dict):
+                contract_digest = str(validation_metadata.get("contract_digest") or "").strip()
+                metric_digests = validation_metadata.get("compiled_metric_digests")
+                if contract_digest:
+                    result_payload["contract_digest"] = contract_digest
+                if isinstance(metric_digests, dict):
+                    result_payload["compiled_metric_digests"] = dict(metric_digests)
+                    result_payload["compiled_metric_count"] = len(metric_digests)
             if effective_valid and semantic_model_name:
                 result_payload.update(self._semantic_model_artifact_evidence(semantic_model_name))
 
@@ -1315,6 +1361,11 @@ class SemanticTools:
             )
             if self.generation_evidence:
                 self.generation_evidence.record_validation_result(tool_result)
+                if effective_valid:
+                    self.generation_evidence.record_compiled_validation(
+                        validation_metadata,
+                        metric_names=validation_metric_names,
+                    )
             return tool_result
 
         except Exception as e:

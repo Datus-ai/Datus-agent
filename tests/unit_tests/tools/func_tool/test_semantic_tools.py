@@ -2,6 +2,7 @@
 Test cases for SemanticTools utility functions and query_metrics compression.
 """
 
+import hashlib
 import json
 from enum import Enum
 from types import SimpleNamespace
@@ -104,7 +105,7 @@ class TestQueryMetricsCompression:
     """Test cases for query_metrics with DataCompressor integration."""
 
     def test_tool_schema_exposes_osi_half_open_time_range(self, semantic_tools):
-        schema = trans_to_function_tool(semantic_tools.query_metrics).params_json_schema
+        schema = trans_to_function_tool(semantic_tools.query_metrics, strict_mode=False).params_json_schema
 
         start_description = schema["properties"]["time_start"]["description"].lower()
         end_description = schema["properties"]["time_end"]["description"].lower()
@@ -161,6 +162,39 @@ class TestQueryMetricsCompression:
         assert result_dict["metadata"]["_full_result_cached"] is True
         assert result_dict["metadata"]["_full_result_row_count"] == 2
         assert "complete uncompressed query result is cached" in result_dict["metadata"]["_full_result_note"]
+
+    def test_query_metrics_passes_dosi_parameter_bindings(self, semantic_tools):
+        calls = {}
+
+        class _Adapter:
+            service_type = "dosi"
+
+            async def query_metrics(self, metrics, params=None, **kwargs):
+                calls["metrics"] = metrics
+                calls["params"] = params
+                return QueryResult(columns=["revenue"], data=[{"revenue": 1}])
+
+        semantic_tools.adapter_type = "dosi"
+        semantic_tools._adapter = _Adapter()
+        result = semantic_tools.query_metrics(
+            metrics=["revenue"],
+            params={"regions": ["APAC", "EMEA"], "threshold": 100},
+        )
+
+        assert result.success == 1
+        assert calls == {
+            "metrics": ["revenue"],
+            "params": {"regions": ["APAC", "EMEA"], "threshold": 100},
+        }
+
+    def test_query_metrics_rejects_params_for_non_dosi_adapter(self, semantic_tools):
+        result = semantic_tools.query_metrics(
+            metrics=["revenue"],
+            params={"region": "APAC"},
+        )
+
+        assert result.success == 0
+        assert "only by the Dosi" in result.error
 
     def test_query_metrics_small_data_not_compressed(self, semantic_tools):
         """Test that small data within token threshold is not compressed."""
@@ -829,7 +863,7 @@ class TestAvailableTools:
 
             with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
 
-                def _mock_tool(func):
+                def _mock_tool(func, **_kwargs):
                     tool = Mock()
                     tool.name = func.__name__
                     return tool
@@ -858,7 +892,7 @@ class TestAvailableTools:
             tool._adapter = Mock()  # Set adapter (also enables attribution_tool)
 
             with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
-                mock_trans.side_effect = lambda f: Mock(name=f.__name__)
+                mock_trans.side_effect = lambda f, **_kwargs: Mock(name=f.__name__)
                 tools = tool.available_tools()
         # 3 base + validate_semantic + attribution_analyze (both enabled when adapter is set)
         assert len(tools) == 5
@@ -881,7 +915,7 @@ class TestAvailableTools:
 
             with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
 
-                def _mock_tool(func):
+                def _mock_tool(func, **_kwargs):
                     tool = Mock()
                     tool.name = func.__name__
                     return tool
@@ -1470,6 +1504,48 @@ class TestValidateSemantic:
         assert result.result["valid"] is True
         assert result.result["issues"] == []
         assert evidence.validation_passed is True
+
+    def test_records_compiled_evidence_without_exposing_descriptions(self, semantic_tools_with_adapter, tmp_path):
+        tool, _ = semantic_tools_with_adapter
+        artifact = tmp_path / "commerce.yml"
+        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        calls = {}
+        evidence = GenerationEvidence()
+        tool.generation_evidence = evidence
+        tool.adapter_type = "dosi"
+        tool._semantic_metric_names_provider = lambda: ["revenue"]
+
+        class _Adapter:
+            async def validate_semantic(self, scope="all", metric_names=None):
+                calls["metric_names"] = metric_names
+                return SimpleNamespace(
+                    valid=True,
+                    issues=[],
+                    metadata={
+                        "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                        "artifact_sha256": {
+                            str(artifact): "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()
+                        },
+                        "compiled_metrics": [
+                            {
+                                "name": "revenue",
+                                "kind": "aggregate",
+                                "datasets": ["orders"],
+                            }
+                        ],
+                        "compiled_metric_digests": {"revenue": "sha256:" + hashlib.sha256(b"revenue").hexdigest()},
+                    },
+                )
+
+        tool._adapter = _Adapter()
+        with patch.object(tool, "_reload_adapter", return_value=True):
+            result = tool.validate_semantic()
+
+        assert result.success == 1
+        assert calls["metric_names"] == ["revenue"]
+        assert result.result["compiled_metric_count"] == 1
+        assert "compiled_metrics" not in result.result
+        assert evidence.compiled_validation_passed(artifact, ["revenue"])
 
     def test_invalid_result(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter

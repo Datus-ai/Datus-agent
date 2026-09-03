@@ -84,6 +84,9 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "## Active OSI Core authoring specification" in prompt
     assert "# Apache Ossie - Core Metadata Spec" in prompt
     assert "## Active DATUS extension authoring specification" in prompt
+    assert "Use a derived filter metric" in prompt
+    assert "Use a parameterized metric only" in prompt
+    assert "active contract explicitly permits" in prompt
 
 
 def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agent_config, mock_llm_create):
@@ -343,7 +346,8 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
     )
     assert planned.success == 1
     target = node.osi_target_state.selected_path
-    assert target is not None
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    assert target == str((model_dir / "commerce.yml").resolve())
 
     dataset_result = node.filesystem_func_tool.upsert_osi_datasets(
         target,
@@ -543,15 +547,16 @@ def test_unified_result_can_skip_when_no_semantic_change_is_needed(real_agent_co
 
 
 @pytest.mark.parametrize(
-    ("metrics_yaml", "expected_scope"),
+    ("metrics_yaml", "expected_scope", "touched_metrics"),
     [
-        ("    metrics: []\n", "semantic_model"),
+        ("    metrics: []\n", "semantic_model", []),
         (
             "    metrics:\n"
             "      - name: order_count\n"
             "        expression:\n"
             "          dialects: [{dialect: STARROCKS, expression: 'COUNT(*)'}]\n",
             "all",
+            ["order_count"],
         ),
     ],
 )
@@ -560,6 +565,7 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     mock_llm_create,
     metrics_yaml,
     expected_scope,
+    touched_metrics,
 ):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.tools.func_tool.base import FuncToolResult
@@ -592,6 +598,28 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     )
     node.osi_target_state.artifact_snapshot_path = str(target.resolve())
     node.osi_target_state.artifact_snapshot_content = target.read_bytes()
+    node.osi_target_state.touched_metric_names = list(touched_metrics)
+    compiled_validation_recorded = False
+    expected_compiled_catalog = {}
+    if touched_metrics:
+        expected_compiled_catalog = {
+            "order_count": {
+                "name": "order_count",
+                "kind": "aggregate",
+                "datasets": ["orders"],
+                "measures": ["order_count"],
+            }
+        }
+        compiled_validation_recorded = node.generation_evidence.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {str(target.resolve()): "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()},
+                "compiled_metrics": list(expected_compiled_catalog.values()),
+                "compiled_metric_digests": {"order_count": "sha256:" + hashlib.sha256(b"order_count").hexdigest()},
+            },
+            metric_names=touched_metrics,
+        )
+    assert compiled_validation_recorded is bool(touched_metrics)
     node.semantic_tools.validate_semantic = MagicMock(
         return_value=FuncToolResult(result={"valid": True, "scope": expected_scope})
     )
@@ -611,7 +639,9 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     reconcile.assert_called_once_with(
         str(target.resolve()),
         include_semantic_objects=True,
-        include_metrics=True,
+        include_metrics=bool(touched_metrics),
+        metric_names_to_sync=set(touched_metrics),
+        compiled_metric_catalog=expected_compiled_catalog,
     )
     assert node.osi_target_state.artifact_snapshot_path == ""
 

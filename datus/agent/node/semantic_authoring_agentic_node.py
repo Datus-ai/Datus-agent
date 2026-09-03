@@ -236,6 +236,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
                 runtime_db_context_provider=self._semantic_runtime_db_context,
                 warehouse_dry_run_provider=self._warehouse_dry_run_compiled_sql,
                 semantic_model_path_provider=lambda: self.osi_target_state.selected_path,
+                semantic_metric_names_provider=self._semantic_validation_metric_names,
             )
 
             # Add all available tools from semantic func tool
@@ -251,6 +252,16 @@ class SemanticAuthoringAgenticNode(AgenticNode):
 
         except Exception as e:
             logger.error(f"Failed to setup semantic tools: {e}")
+
+    def _semantic_validation_metric_names(self) -> List[str]:
+        """Return present touched metrics for same-pass compile evidence."""
+        state = self.osi_target_state
+        path = state.selected_path
+        if not path or not state.touched_metric_names or not self.generation_tools:
+            return []
+        current_names = self.generation_tools.extract_osi_metric_names(path)
+        present, _ = state.partition_touched_metrics(current_names)
+        return present
 
     def _setup_db_tools(self, *, expose_tools: bool = True):
         """Setup the database helper, optionally without exposing LLM tools."""
