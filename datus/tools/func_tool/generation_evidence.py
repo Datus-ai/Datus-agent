@@ -55,6 +55,11 @@ class GenerationEvidence:
     metric_kb_sync_metrics: Set[str] = field(default_factory=set)
     generic_kb_sync_passed: bool = False
     validated_semantic_artifacts: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    compiled_metric_descriptions: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    compiled_metric_digests: Dict[str, str] = field(default_factory=dict)
+    compiled_contract_digest: str = ""
+    compiled_artifact_sha256: Dict[str, str] = field(default_factory=dict)
+    compiled_metric_names: Set[str] = field(default_factory=set)
     mutated_artifact_paths: Set[str] = field(default_factory=set)
 
     def reset(self) -> None:
@@ -97,6 +102,11 @@ class GenerationEvidence:
         self.metric_kb_sync_metrics.clear()
         self.generic_kb_sync_passed = False
         self.validated_semantic_artifacts.clear()
+        self.compiled_metric_descriptions.clear()
+        self.compiled_metric_digests.clear()
+        self.compiled_contract_digest = ""
+        self.compiled_artifact_sha256.clear()
+        self.compiled_metric_names.clear()
 
     @property
     def kb_sync_passed(self) -> bool:
@@ -180,6 +190,93 @@ class GenerationEvidence:
         if required_scope == "semantic_model":
             return validation_scope in {"all", "semantic_model"}
         return validation_scope == required_scope
+
+    @staticmethod
+    def _normalize_sha256(value: Any) -> str:
+        digest = str(value or "").strip().lower()
+        if digest.startswith("sha256:"):
+            digest = digest[7:]
+        return digest if len(digest) == 64 and all(c in "0123456789abcdef" for c in digest) else ""
+
+    def record_compiled_validation(
+        self,
+        metadata: Any,
+        *,
+        metric_names: Optional[Iterable[str]] = None,
+    ) -> bool:
+        """Record compiled metric semantics only when all identities are sound."""
+        if not isinstance(metadata, dict):
+            return False
+        contract_digest = str(metadata.get("contract_digest") or "").strip()
+        if not contract_digest.startswith("sha256:") or not self._normalize_sha256(contract_digest):
+            return False
+
+        artifacts = metadata.get("artifact_sha256")
+        if not isinstance(artifacts, dict) or not artifacts:
+            return False
+        verified_artifacts: Dict[str, str] = {}
+        for raw_path, raw_digest in artifacts.items():
+            state = self._semantic_artifact_state(str(raw_path))
+            digest = self._normalize_sha256(raw_digest)
+            if state is None or not digest or state["sha256"] != digest:
+                return False
+            verified_artifacts[state["path"]] = digest
+
+        descriptions: Dict[str, Dict[str, Any]] = {}
+        for item in metadata.get("compiled_metrics") or []:
+            if not isinstance(item, dict):
+                return False
+            name = str(item.get("name") or "").strip()
+            if not name or name in descriptions:
+                return False
+            descriptions[name] = dict(item)
+
+        raw_digests = metadata.get("compiled_metric_digests")
+        if not isinstance(raw_digests, dict):
+            return False
+        digests = {
+            str(name).strip(): str(digest).strip()
+            for name, digest in raw_digests.items()
+            if str(name).strip() and self._normalize_sha256(digest)
+        }
+        if set(digests) != set(descriptions):
+            return False
+
+        expected_names = (
+            {str(name).strip() for name in metric_names if str(name).strip()}
+            if metric_names is not None
+            else set(descriptions)
+        )
+        if set(descriptions) != expected_names:
+            return False
+
+        self.compiled_metric_descriptions = descriptions
+        self.compiled_metric_digests = digests
+        self.compiled_contract_digest = contract_digest
+        self.compiled_artifact_sha256 = verified_artifacts
+        self.compiled_metric_names = expected_names
+        return True
+
+    def compiled_validation_passed(
+        self,
+        path: str | Path,
+        metric_names: Iterable[str],
+    ) -> bool:
+        """Check artifact, contract, touched-set, and per-metric evidence identity."""
+        state = self._semantic_artifact_state(path)
+        expected_names = {str(name).strip() for name in metric_names if str(name).strip()}
+        if state is None or self.compiled_artifact_sha256.get(state["path"]) != state["sha256"]:
+            return False
+        if not self.compiled_contract_digest or expected_names != self.compiled_metric_names:
+            return False
+        return expected_names == set(self.compiled_metric_descriptions) == set(self.compiled_metric_digests)
+
+    def compiled_metric_catalog(self, metric_names: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        """Return saved descriptions for an already identity-checked metric set."""
+        names = {str(name).strip() for name in metric_names if str(name).strip()}
+        if not names.issubset(self.compiled_metric_names):
+            return {}
+        return {name: dict(self.compiled_metric_descriptions[name]) for name in names}
 
     def record_metric_dry_run(
         self,

@@ -88,6 +88,14 @@ Use the narrow metric workflow below:
 {% endif %}
 - Do not invent helper metrics named like `previous_month_*`, `*_previous_period`, or standalone prior-period values. Use them only if they are already listed as dedicated catalog metrics and directly match the user's requested final output.
 
+{% if semantic_adapter_type == "dosi" %}
+## Parameterized Metric Queries
+
+- When `list_metrics` exposes `metadata.param_schema`, pass bindings through `query_metrics.params` using exactly the declared names and scalar/list shapes.
+- Use declared defaults when the user does not override them. If the request requires a different business value, bind the user's value rather than guessing.
+- Do not pass `params` to metrics that do not declare them, and do not translate parameter values into an ad hoc SQL `where` clause.
+{% endif %}
+
 ## Window Metric Queries
 
 {% if semantic_adapter_type == "dosi" %}

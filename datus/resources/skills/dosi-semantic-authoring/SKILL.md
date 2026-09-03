@@ -34,9 +34,9 @@ Author the active Dosi semantic model as strict OSI core YAML. Use this skill fo
 Put Dosi-only metadata in the owning object's DATUS `custom_extensions` entry. Encode `data` as one JSON-object string and stamp it with the runtime `<datus_extension_version>`. The injected active DATUS extension specification is authoritative for supported carriers, keys, exact shapes, enums, constraints, and examples; never invent a field from this conceptual guide.
 
 - Prefer a plain base metric when one aggregate or arithmetic expression completely represents the business meaning.
-- Use a derived filter metric when the business concept narrows a reusable base metric. Use a derived compose metric when it combines reusable metrics. Do not inline the full base calculation again.
+- Use a derived filter metric when the business concept narrows one reusable base metric. Use a derived compose metric only when the result combines two or more reusable metrics. Author and validate every referenced base metric first; do not inline its calculation again or create a one-input passthrough.
 - Use a structured window metric for period comparison, rolling, cumulative, ranking, distribution, or framed statistical calculations. Keep the underlying OSI expression as the plain aggregate described by the active contract.
-- Use a parameterized metric only when a caller must provide a bounded runtime business input. Declare its type, default or required behavior, and allowed values or bounds according to the active contract; do not turn stable business rules into parameters.
+- Use a parameterized metric only when different callers must supply a bounded runtime business input to the same reusable definition. Stable policy belongs in the metric itself. Declare each parameter's type, default, and allowed values or bounds according to the active contract.
 - Use explicit measure metadata only when the metric needs a stable engine-facing measure identity or behavior that cannot be inferred from its OSI expression.
 - Combine capabilities only when the active contract explicitly permits their keys and dependencies on the same carrier. If the requested capability is absent from that contract, report it as unsupported by the installed engine instead of approximating it in YAML.
 
@@ -66,3 +66,5 @@ Put Dosi-only metadata in the owning object's DATUS `custom_extensions` entry. E
 - Preserve meaningful window nulls for missing comparison buckets or incomplete required frames.
 
 Validate the final model with the native Dosi parser/compiler after the last mutation.
+
+For a parameterized metric, inspect its `param_schema` in `list_metrics`, then verify query behavior with `query_metrics(params={...}, dry_run=True)`. Exercise the default and meaningful enum/boundary or list-valued cases; never invent undeclared parameter names. Native validation proves the definition compiles, while this optional query check proves a user-requested binding shape.

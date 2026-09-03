@@ -40,6 +40,8 @@ from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
 
+_COMPILED_CATALOG_UNSET = object()
+
 if TYPE_CHECKING:
     from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
@@ -471,6 +473,7 @@ class GenerationTools:
             osi_metric_names_to_sync: Optional[set[str]] = None
             osi_touched_metric_names: Optional[set[str]] = None
             osi_absent_metric_names: set[str] = set()
+            compiled_metric_catalog: Any = _COMPILED_CATALOG_UNSET
             if exact_osi_target_required:
                 state = self.osi_target_state
                 if state is None or state.bound is None:
@@ -525,6 +528,18 @@ class GenerationTools:
                         success=0,
                         error="validate_semantic must pass for the exact bound OSI semantic-model artifact.",
                     )
+                if not self.generation_evidence.compiled_validation_passed(
+                    abs_bound_metric,
+                    present_metric_names,
+                ):
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            "validate_semantic must produce current engine compile evidence "
+                            "for every present touched metric before publishing."
+                        ),
+                    )
+                compiled_metric_catalog = self.generation_evidence.compiled_metric_catalog(present_metric_names)
 
             if not exact_osi_target_required and not self.generation_evidence.validation_passed:
                 return FuncToolResult(
@@ -601,6 +616,8 @@ class GenerationTools:
             sync_kwargs: Dict[str, Any] = {"metric_names_to_sync": osi_metric_names_to_sync}
             if osi_touched_metric_names is not None:
                 sync_kwargs["metric_names_to_reconcile"] = osi_touched_metric_names
+            if compiled_metric_catalog is not _COMPILED_CATALOG_UNSET:
+                sync_kwargs["compiled_metric_catalog"] = compiled_metric_catalog
             sync_result = self._sync_osi_metric_to_db(
                 abs_metric,
                 abs_semantic_files,
@@ -1317,12 +1334,15 @@ class GenerationTools:
         metric_file: str,
         target_metric_names: set[str],
         metric_sqls: Optional[Dict[str, str]] = None,
+        compiled_metric_catalog: Any = _COMPILED_CATALOG_UNSET,
     ) -> List[dict]:
         """Materialize metric rows from raw presentation and compiled semantics."""
 
         semantic_model_name = str(getattr(doc, "name", "") or "")
         db_parts = self._current_db_parts(self.agent_config)
-        compiled_catalog = self._compiled_metric_catalog(metric_file) if target_metric_names else None
+        compiled_catalog = compiled_metric_catalog
+        if compiled_catalog is _COMPILED_CATALOG_UNSET:
+            compiled_catalog = self._compiled_metric_catalog(metric_file) if target_metric_names else None
         if compiled_catalog is not None:
             missing = target_metric_names.difference(compiled_catalog)
             if missing:
@@ -1337,23 +1357,36 @@ class GenerationTools:
             compiled = compiled_catalog.get(metric_name) if compiled_catalog is not None else None
             semantic_metric = copy(metric)
             if compiled is not None:
-                metadata = getattr(compiled, "metadata", None) or {}
+                metadata = compiled if isinstance(compiled, dict) else getattr(compiled, "metadata", None) or {}
                 compiled_datasets = self._dedupe_strings(metadata.get("datasets") or [])
                 semantic_metric.datasets = compiled_datasets
                 semantic_metric.dataset = compiled_datasets[0] if len(compiled_datasets) == 1 else None
 
+            compiled_dimensions = (
+                compiled.get("conformed_dimensions") or compiled.get("dimensions") or []
+                if isinstance(compiled, dict)
+                else getattr(compiled, "dimensions", None) or []
+            )
             dimensions = (
-                self._dedupe_strings(getattr(compiled, "dimensions", None) or [])
-                if compiled is not None
+                self._dedupe_strings(compiled_dimensions)
+                if compiled is not None and compiled_dimensions
                 else self._metric_query_dimensions(doc, semantic_metric)
             )
             entities = self._metric_entities(doc, semantic_metric)
             subject_path = self._metric_subject_path(semantic_metric)
             measure_expr = self._metric_expression(metric)
             window_payload = getattr(metric, "window", None)
-            metric_type = getattr(compiled, "type", None) if compiled is not None else None
+            metric_type = None
+            if isinstance(compiled, dict):
+                metric_type = "window" if compiled.get("window") else compiled.get("kind")
+            elif compiled is not None:
+                metric_type = getattr(compiled, "type", None)
             base_measures = (
-                self._dedupe_strings(getattr(compiled, "measures", None) or [])
+                self._dedupe_strings(
+                    compiled.get("measures")
+                    if isinstance(compiled, dict)
+                    else getattr(compiled, "measures", None) or []
+                )
                 if compiled is not None
                 else ([measure_expr] if measure_expr else [])
             )
@@ -1471,6 +1504,7 @@ class GenerationTools:
         metric_sqls: Optional[Dict[str, str]] = None,
         metric_names_to_sync: Optional[set[str]] = None,
         metric_names_to_reconcile: Optional[set[str]] = None,
+        compiled_metric_catalog: Any = _COMPILED_CATALOG_UNSET,
     ) -> dict:
         """Upsert the requested scope and reconcile stale rows from final YAML."""
         try:
@@ -1526,6 +1560,7 @@ class GenerationTools:
                 metric_file=metric_file,
                 target_metric_names=target_metric_names,
                 metric_sqls=metric_sqls,
+                compiled_metric_catalog=compiled_metric_catalog,
             )
 
             if target_metric_names and not metric_objects:
@@ -1606,6 +1641,8 @@ class GenerationTools:
         *,
         include_semantic_objects: bool = True,
         include_metrics: bool = True,
+        metric_names_to_sync: Optional[set[str]] = None,
+        compiled_metric_catalog: Any = _COMPILED_CATALOG_UNSET,
     ) -> dict:
         """Sync an explicitly scoped OSI document into the Knowledge Base.
 
@@ -1643,14 +1680,28 @@ class GenerationTools:
                     replacement_plans.append((self.semantic_dataset_rag, osi_file_path, dataset_rows))
 
             declared_metric_names = set(self.extract_osi_metric_names(osi_file_path))
+            target_metric_names = declared_metric_names
+            if metric_names_to_sync is not None:
+                target_metric_names = set(metric_names_to_sync)
+                missing_metric_names = target_metric_names.difference(declared_metric_names)
+                if missing_metric_names:
+                    return {
+                        "success": False,
+                        "error": (
+                            "OSI metric sync scope contains names not declared in the document: "
+                            f"{', '.join(sorted(missing_metric_names))}"
+                        ),
+                        "synced": 0,
+                    }
             metric_objects: List[dict] = []
             if include_metrics:
                 metric_objects = self._build_osi_metric_objects(
                     doc=doc,
                     metric_file=osi_file_path,
-                    target_metric_names=declared_metric_names,
+                    target_metric_names=target_metric_names,
+                    compiled_metric_catalog=compiled_metric_catalog,
                 )
-                if declared_metric_names and not metric_objects:
+                if target_metric_names and not metric_objects:
                     return {
                         "success": False,
                         "error": (
@@ -1684,7 +1735,14 @@ class GenerationTools:
                 if metric_objects:
                     self.metric_rag.upsert_batch(metric_objects)
                     self.metric_rag.create_indices()
-                delete_stale_artifact_rows(replacement_plans)
+                semantic_plans = [plan for plan in replacement_plans if plan[0] is not self.metric_rag]
+                delete_stale_artifact_rows(semantic_plans)
+                if include_metrics:
+                    keep_metric_ids = [build_metric_id([], name) for name in declared_metric_names]
+                    self.metric_rag.delete_artifact_rows_except(
+                        osi_file_path,
+                        keep_metric_ids,
+                    )
             except Exception as sync_exc:
                 restore_failures = restore_artifact_replacements(snapshots)
                 if restore_failures:

@@ -4,7 +4,7 @@
 
 import hashlib
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 
@@ -54,6 +54,30 @@ def _plan_osi_target(generation_tools, target, *, model_name):
     generation_tools.authoring_format = "osi"
     generation_tools.osi_target_state = state
     return state
+
+
+def _record_compiled_evidence(generation_tools, target, metric_names):
+    descriptions = [
+        {
+            "name": name,
+            "kind": "aggregate",
+            "datasets": ["orders"],
+            "measures": [name],
+        }
+        for name in metric_names
+    ]
+    assert generation_tools.generation_evidence.record_compiled_validation(
+        {
+            "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+            "artifact_sha256": {str(target.resolve()): "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()},
+            "compiled_metrics": descriptions,
+            "compiled_metric_digests": {
+                name: "sha256:" + hashlib.sha256(name.encode()).hexdigest() for name in metric_names
+            },
+        },
+        metric_names=metric_names,
+    )
+    return {item["name"]: item for item in descriptions}
 
 
 @pytest.fixture
@@ -455,6 +479,7 @@ class TestEndMetricGeneration:
         state = _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         state.record_artifact_snapshot(target, b"pre-authoring")
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
+        _record_compiled_evidence(generation_tools, target, ["order_count"])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
         with (
@@ -474,6 +499,7 @@ class TestEndMetricGeneration:
             {},
             metric_names_to_sync={"order_count"},
             metric_names_to_reconcile={"order_count"},
+            compiled_metric_catalog=ANY,
         )
         assert result.result["metric_file"] == str(target)
         assert generation_tools.generation_evidence.has_metric_kb_sync(["order_count"])
@@ -499,6 +525,7 @@ class TestEndMetricGeneration:
             touched_dataset_names=["orders"],
         )
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
+        _record_compiled_evidence(generation_tools, target, ["order_count"])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
         with (
@@ -518,6 +545,7 @@ class TestEndMetricGeneration:
             {},
             metric_names_to_sync={"order_count"},
             metric_names_to_reconcile={"order_count"},
+            compiled_metric_catalog=ANY,
         )
         assert generation_tools.generation_evidence.semantic_kb_sync_passed is True
 
@@ -540,6 +568,7 @@ class TestEndMetricGeneration:
         )
         state.record_artifact_snapshot(target, b"pre-deletion")
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
+        _record_compiled_evidence(generation_tools, target, [])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
         with (
@@ -559,6 +588,7 @@ class TestEndMetricGeneration:
             {},
             metric_names_to_sync=set(),
             metric_names_to_reconcile={"old_metric", "already_missing"},
+            compiled_metric_catalog={},
         )
         assert generation_tools.generation_evidence.has_metric_kb_sync(["old_metric", "already_missing"])
         assert state.artifact_snapshot_content is None
@@ -589,6 +619,7 @@ class TestEndMetricGeneration:
         target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: replacement_metric\n")
         _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
+        _record_compiled_evidence(generation_tools, target, [])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
         with (
@@ -608,6 +639,7 @@ class TestEndMetricGeneration:
             {},
             metric_names_to_sync=set(),
             metric_names_to_reconcile={"order_count"},
+            compiled_metric_catalog={},
         )
 
     def test_osi_rejects_unrelated_validation_evidence(self, generation_tools, tmp_path):

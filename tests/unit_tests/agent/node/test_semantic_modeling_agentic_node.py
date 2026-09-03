@@ -6,7 +6,7 @@
 
 import hashlib
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -546,15 +546,16 @@ def test_unified_result_can_skip_when_no_semantic_change_is_needed(real_agent_co
 
 
 @pytest.mark.parametrize(
-    ("metrics_yaml", "expected_scope"),
+    ("metrics_yaml", "expected_scope", "touched_metrics"),
     [
-        ("    metrics: []\n", "semantic_model"),
+        ("    metrics: []\n", "semantic_model", []),
         (
             "    metrics:\n"
             "      - name: order_count\n"
             "        expression:\n"
             "          dialects: [{dialect: STARROCKS, expression: 'COUNT(*)'}]\n",
             "all",
+            ["order_count"],
         ),
     ],
 )
@@ -563,6 +564,7 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     mock_llm_create,
     metrics_yaml,
     expected_scope,
+    touched_metrics,
 ):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.tools.func_tool.base import FuncToolResult
@@ -595,6 +597,24 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     )
     node.osi_target_state.artifact_snapshot_path = str(target.resolve())
     node.osi_target_state.artifact_snapshot_content = target.read_bytes()
+    node.osi_target_state.touched_metric_names = list(touched_metrics)
+    if touched_metrics:
+        assert node.generation_evidence.record_compiled_validation(
+            {
+                "contract_digest": "sha256:" + hashlib.sha256(b"contract").hexdigest(),
+                "artifact_sha256": {str(target.resolve()): "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()},
+                "compiled_metrics": [
+                    {
+                        "name": "order_count",
+                        "kind": "aggregate",
+                        "datasets": ["orders"],
+                        "measures": ["order_count"],
+                    }
+                ],
+                "compiled_metric_digests": {"order_count": "sha256:" + hashlib.sha256(b"order_count").hexdigest()},
+            },
+            metric_names=touched_metrics,
+        )
     node.semantic_tools.validate_semantic = MagicMock(
         return_value=FuncToolResult(result={"valid": True, "scope": expected_scope})
     )
@@ -614,7 +634,9 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     reconcile.assert_called_once_with(
         str(target.resolve()),
         include_semantic_objects=True,
-        include_metrics=True,
+        include_metrics=bool(touched_metrics),
+        metric_names_to_sync=set(touched_metrics),
+        compiled_metric_catalog=ANY if touched_metrics else {},
     )
     assert node.osi_target_state.artifact_snapshot_path == ""
 
