@@ -71,3 +71,8 @@ class StreamRunContext:
     # same run. ``None`` for non-interactive callers (regression tests,
     # batch workflows) — those keep current behavior.
     pending_input_queue: Optional["PendingInputQueue"] = None
+
+    # Per-run mid-turn compactor (``MidTurnCompactor``); created by
+    # ``_stream_once`` and handed to the model layer so the context can be
+    # rewritten before each model call.
+    context_rewriter: Optional[Any] = None

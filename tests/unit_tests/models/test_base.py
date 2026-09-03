@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
-from unittest.mock import MagicMock, patch
+from typing import Any, List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -335,3 +335,292 @@ class TestBuildRunConfigDeliversInsertAtTurnBoundary:
                 not (isinstance(item, dict) and item.get("role") == "user" and item.get("content") == [])
                 for item in turn_input
             )
+
+
+class TestSummarizeItemsDefault:
+    """``LLMBaseModel.summarize_items``: a session-less, tool-less single call
+    over an explicit transcript. This is what keeps the compaction summary from
+    writing into (or reading from) the live session mid-run."""
+
+    @pytest.mark.asyncio
+    async def test_appends_prompt_as_user_item_and_runs_without_session_or_tools(self):
+        model = MagicMock()
+        model.generate_with_tools = AsyncMock(return_value={"content": "S", "usage": {"output_tokens": 3}})
+        items = [
+            {"role": "user", "content": "start"},
+            {"type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "big"},
+        ]
+
+        result = await LLMBaseModel.summarize_items(
+            model, items, instruction="sys", prompt="SUMMARIZE", agent_name="chat"
+        )
+
+        assert result == {"content": "S", "usage": {"output_tokens": 3}}
+        kwargs = model.generate_with_tools.await_args.kwargs
+        assert kwargs["prompt"] == items + [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "SUMMARIZE"}]}
+        ]
+        assert kwargs["session"] is None
+        assert kwargs["tools"] is None
+        assert kwargs["mcp_servers"] is None
+        assert kwargs["max_turns"] == 1
+        assert kwargs["instruction"] == "sys"
+        assert kwargs["agent_name"] == "chat"
+        # The transcript passed in is not mutated.
+        assert len(items) == 3
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_responses_transcripts(self):
+        from datus.utils.exceptions import DatusException
+
+        model = MagicMock()
+        model.generate_with_tools = AsyncMock()
+        with pytest.raises(DatusException):
+            await LLMBaseModel.summarize_items(model, [], instruction="", prompt="P", item_format="anthropic")
+        model.generate_with_tools.assert_not_awaited()
+
+
+class _CompactingFakeNode:
+    """Node double for the SDK-loop tests below.
+
+    Mirrors the real ``AgenticNode.compact_mid_turn`` contract: decide from
+    ``base_tokens + estimate(tail)`` against a token budget, rebuild the view
+    with ``build_mid_turn_view`` and persist it to the session when one is
+    wired. ``results`` can override the dict returned on each call.
+    """
+
+    def __init__(self, *, budget_tokens: int, session=None, results=None, summary: str = "SUMMARY", once: bool = False):
+        from datus.configuration.agent_config import CompactConfig
+
+        self.context_length = 1000
+        self.running_turn_usage = None
+        self._compact_cfg = CompactConfig()
+        self._budget = budget_tokens
+        self._session = session
+        self._results = list(results or [])
+        self._summary = summary
+        # ``once``: after one major rewrite report noop forever, standing in for
+        # the real node's ratio dropping once the context has been compacted.
+        self._once = once
+        self._done = False
+        self.calls: List[dict] = []
+
+    def _mid_turn_output_reserve(self) -> int:
+        return 0
+
+    async def compact_mid_turn(self, items, *, item_format, base_tokens, tail_start, instruction, turn_request, reason):
+        from datus.agent.node.context_rewriter import build_mid_turn_view, estimate_items_tokens
+
+        self.calls.append({"items": list(items), "base_tokens": base_tokens, "tail_start": tail_start})
+        if self._results:
+            return self._results.pop(0)
+        if self._done or base_tokens + estimate_items_tokens(items[tail_start:]) < self._budget:
+            return {"mode": "noop", "success": True, "items": items}
+        view = build_mid_turn_view(items, self._summary, item_format=item_format, turn_request=turn_request)
+        if self._session is not None:
+            await self._session.clear_session()
+            await self._session.add_items(view)
+        if self._once:
+            self._done = True
+        return {"mode": "major", "success": True, "items": view, "summary": self._summary}
+
+
+class TestBuildRunConfigCompactsMidRun:
+    """End-to-end through the real SDK turn loop.
+
+    A mid-turn compaction that only rewrote SQLite never changed what the
+    in-flight run sent to the model (the SDK rebuilds each call's input from
+    memory). These tests drive ``Runner.run_streamed`` for real (stub model,
+    no network) and assert what each LLM call actually receives.
+    """
+
+    @staticmethod
+    async def _run(model, rewriter, *, queue=None, session=None, tool_pushes=None, hooks=True, max_turns=8):
+        from agents import Agent, Runner, function_tool
+
+        @function_tool
+        def probe_tool() -> str:
+            """Probe tool returning a bulky result."""
+            if tool_pushes is not None and queue is not None:
+                queue.push(tool_pushes)
+            return "result " + "x" * 400
+
+        agent = Agent(
+            name="probe_agent",
+            instructions="",
+            model=model,
+            tools=[probe_tool],
+            hooks=rewriter if hooks else None,
+        )
+        run_config = LLMBaseModel._build_run_config(
+            MagicMock(),
+            pending_input_queue=queue,
+            session=session,
+            agent_name="probe_agent",
+            context_rewriter=rewriter,
+        )
+        result = Runner.run_streamed(agent, input="start", max_turns=max_turns, session=session, run_config=run_config)
+        async for _ in result.stream_events():
+            pass
+
+    @staticmethod
+    def _rewriter(node):
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+
+        return MidTurnCompactor(node)
+
+    @staticmethod
+    def _call_ids(turn_input):
+        return [item.get("call_id") for item in turn_input if isinstance(item, dict) and item.get("call_id")]
+
+    @pytest.mark.asyncio
+    async def test_turn_two_receives_the_compacted_view(self, scripted_agents_model):
+        """The regression: a compaction decided before turn 2 must change what
+        turn 2 is sent. On the pre-fix code turn 2 still carried ``call_1``."""
+        from datus.agent.node.compact_prompts import MID_TURN_RESUME_PREFIX
+
+        model = scripted_agents_model(["tool", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=1)  # anything crosses the line
+        await self._run(model, self._rewriter(node))
+
+        assert model.turn == 3
+        turn2 = model.inputs[1]
+        assert "call_1" not in self._call_ids(turn2)
+        assert turn2[0]["role"] == "user" and "start" in json.dumps(turn2[0])
+        assert any(item.get("role") == "assistant" and "SUMMARY" in json.dumps(item) for item in turn2)
+        assert turn2[-1]["role"] == "user"
+        assert turn2[-1]["content"][0]["text"].startswith(MID_TURN_RESUME_PREFIX)
+        # Turn 1 was untouched: the very first call of a run never compacts.
+        assert model.inputs[0] == [{"role": "user", "content": "start"}]
+
+    @pytest.mark.asyncio
+    async def test_the_view_is_replayed_on_every_later_call(self, scripted_agents_model):
+        """The SDK does not write the filter's output back, so turn 3 must be
+        the same view plus turn 2's tool round — never the raw history."""
+        model = scripted_agents_model(["tool", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=1, once=True)
+        rewriter = self._rewriter(node)
+        await self._run(model, rewriter)
+
+        turn2, turn3 = model.inputs[1], model.inputs[2]
+        assert turn3[: len(turn2)] == turn2
+        tail_ids = self._call_ids(turn3[len(turn2) :])
+        assert tail_ids == ["call_2", "call_2"]
+        assert "call_1" not in self._call_ids(turn3)
+        assert rewriter.compactions == 1  # compacted once, replayed after
+
+    @pytest.mark.asyncio
+    async def test_tail_estimate_pushes_the_decision_over_the_line(self, scripted_agents_model):
+        """Usage reported by the last call is stale by the time the tool output
+        lands; the estimate of the new items must count."""
+        from datus.schemas.token_usage import TokenUsage
+
+        model = scripted_agents_model(["tool", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=150)
+        # Last call's input alone is under budget; with the ~100-token tool
+        # output appended it is over.
+        node.running_turn_usage = TokenUsage(requests=1, session_total_tokens=120, context_length=1000)
+        await self._run(model, self._rewriter(node))
+
+        assert node.calls[0]["base_tokens"] == 120
+        assert node.calls[0]["tail_start"] == 1
+        assert "call_1" not in self._call_ids(model.inputs[1])
+
+    @pytest.mark.asyncio
+    async def test_below_budget_leaves_the_run_untouched(self, scripted_agents_model):
+        model = scripted_agents_model(["tool", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=10_000)
+        rewriter = self._rewriter(node)
+        await self._run(model, rewriter)
+
+        assert rewriter.compactions == 0
+        assert self._call_ids(model.inputs[2]) == ["call_1", "call_1", "call_2", "call_2"]
+
+    @pytest.mark.asyncio
+    async def test_session_mirrors_the_view_after_the_run(self, scripted_agents_model, tmp_path):
+        """SQLite must equal the view plus everything appended afterwards — no
+        pre-compaction tool rounds, no duplicated prompt."""
+        from agents.extensions.memory import AdvancedSQLiteSession
+
+        session = AdvancedSQLiteSession(session_id="sid_compact", db_path=str(tmp_path / "s.db"), create_tables=True)
+        model = scripted_agents_model(["tool", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=1, session=session, once=True)
+        await self._run(model, self._rewriter(node), session=session)
+
+        stored = await session.get_items()
+        turn3 = model.inputs[2]
+        # The persisted history is exactly what the last call saw, plus the
+        # final assistant message the model produced on that call.
+        assert stored[: len(turn3)] == turn3
+        assert len(stored) == len(turn3) + 1
+        assert stored[-1]["role"] == "assistant" and "done" in json.dumps(stored[-1])
+        assert "call_1" not in self._call_ids(stored)
+        assert sum(1 for it in stored if it.get("role") == "user" and "start" in json.dumps(it)) == 1
+
+    @pytest.mark.asyncio
+    async def test_insert_in_the_same_call_lands_after_the_resume_and_stays_visible(self, scripted_agents_model):
+        """A message typed while tool 1 runs is drained in the same filter call
+        that compacts. It must trail the resume instruction (compaction first,
+        then inserts) and still be present on turn 3 — on the pre-fix code an
+        insert was visible for exactly one call and then vanished."""
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = scripted_agents_model(["tool", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=1, once=True)
+        queue = PendingInputQueue()
+        await self._run(model, self._rewriter(node), queue=queue, tool_pushes="STOP_AND_CHECK")
+
+        turn2, turn3 = model.inputs[1], model.inputs[2]
+        assert "STOP_AND_CHECK" in json.dumps(turn2[-1])
+        assert turn2[-2]["content"][0]["text"].startswith("[DATUS_COMPACT_RESUME]")
+        assert model.saw_on_turn(2, "STOP_AND_CHECK")
+        assert turn3[: len(turn2)] == turn2
+        assert len(queue) == 0
+
+    @pytest.mark.asyncio
+    async def test_insert_without_compaction_stays_visible_on_later_calls(self, scripted_agents_model):
+        """Pinning fixes the pre-existing one-call visibility of inserts."""
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = scripted_agents_model(["tool", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=10_000)
+        queue = PendingInputQueue()
+        await self._run(model, self._rewriter(node), queue=queue, tool_pushes="STOP_AND_CHECK")
+
+        assert not model.saw_on_turn(0, "STOP_AND_CHECK")
+        assert model.saw_on_turn(1, "STOP_AND_CHECK")
+        assert model.saw_on_turn(2, "STOP_AND_CHECK")
+
+    @pytest.mark.asyncio
+    async def test_failures_trip_the_breaker_and_never_abort_the_run(self, scripted_agents_model):
+        model = scripted_agents_model(["tool", "tool", "tool", "tool", "tool", "final"])
+        failing = [{"mode": "major", "success": False}] * 10
+        node = _CompactingFakeNode(budget_tokens=1, results=failing)
+        await self._run(model, self._rewriter(node))
+
+        assert model.turn == 6  # the run completed
+        assert len(node.calls) == 3  # 3 strikes, then pass-through
+        assert self._call_ids(model.inputs[-1])[:2] == ["call_1", "call_1"]
+
+    @pytest.mark.asyncio
+    async def test_a_new_run_starts_without_the_previous_overlay(self, scripted_agents_model):
+        """``on_start`` resets the compactor, so a retried / follow-up run that
+        re-reads the session is never spliced with a stale prefix."""
+        model = scripted_agents_model(["tool", "final", "tool", "final"])
+        node = _CompactingFakeNode(budget_tokens=1, once=True)
+        rewriter = self._rewriter(node)
+        await self._run(model, rewriter)
+        assert rewriter.compactions == 1
+        await self._run(model, rewriter)
+        # Run 2, call 1: plain prompt, no overlay, and no compaction attempt
+        # (the first call of a run never compacts); the per-run counter was
+        # reset by ``on_start``.
+        assert model.inputs[2] == [{"role": "user", "content": "start"}]
+        assert rewriter.compactions == 0
+        assert "SUMMARY" not in json.dumps(model.inputs[3])
+
+    def test_rewriter_alone_installs_the_filter(self):
+        node = _CompactingFakeNode(budget_tokens=1)
+        rc = LLMBaseModel._build_run_config(MagicMock(), context_rewriter=self._rewriter(node))
+        assert rc is not None and rc.call_model_input_filter is not None

@@ -1036,8 +1036,15 @@ class ChatCommands:
         output_checkpoint,
     ) -> None:
         """Remove an ESC-cancelled, unanswered turn from every transcript."""
+        # A mid-turn compaction rewrites the whole session, so every row —
+        # including the compacted view of earlier turns — is newer than the
+        # checkpoint taken before the turn. Rolling back to that checkpoint
+        # would empty the session; the node publishes a fresh checkpoint right
+        # after each rewrite, and that one is the safe boundary.
+        rewrite_checkpoint = getattr(current_node, "mid_turn_rewrite_checkpoint", None)
+        effective_checkpoint = rewrite_checkpoint if rewrite_checkpoint is not None else session_checkpoint
         try:
-            session_manager.rollback_turn(current_node.session_id, session_checkpoint)
+            session_manager.rollback_turn(current_node.session_id, effective_checkpoint)
         except Exception:  # pragma: no cover - rollback remains best-effort on damaged DBs
             logger.exception("Failed to roll back unanswered SQLite turn")
 

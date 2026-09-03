@@ -3537,6 +3537,7 @@ def test_rollback_unanswered_turn_cleans_all_in_memory_and_output_state(chat_cmd
     node.session_id = "chat_session_cancelled"
     node.actions = [kept, cancelled]
     node.running_turn_usage = object()
+    node.mid_turn_rewrite_checkpoint = None
     session_manager = MagicMock()
     output_buffer = MagicMock()
     checkpoint = object()
@@ -3559,6 +3560,33 @@ def test_rollback_unanswered_turn_cleans_all_in_memory_and_output_state(chat_cmd
     assert node.running_turn_usage is None
     session_manager.rollback_turn.assert_called_once_with(node.session_id, checkpoint)
     output_buffer.rollback.assert_called_once_with(checkpoint)
+
+
+def test_rollback_after_mid_turn_rewrite_uses_the_post_rewrite_checkpoint(chat_cmd):
+    """A mid-turn compaction replaces every SQLite row, so the checkpoint taken
+    before the turn would now delete the whole session. The node publishes a
+    boundary right after the rewrite; ESC must roll back to *that* one."""
+    node = MagicMock()
+    node.session_id = "chat_session_rewritten"
+    node.actions = []
+    node.running_turn_usage = None
+    pre_turn_checkpoint = object()
+    post_rewrite_checkpoint = object()
+    node.mid_turn_rewrite_checkpoint = post_rewrite_checkpoint
+    session_manager = MagicMock()
+
+    chat_cmd._rollback_unanswered_turn(
+        current_node=node,
+        incremental_actions=[],
+        action_checkpoint=chat_cmd.cli.actions.checkpoint(),
+        node_action_checkpoint=0,
+        session_manager=session_manager,
+        session_checkpoint=pre_turn_checkpoint,
+        output_buffer=None,
+        output_checkpoint=None,
+    )
+
+    session_manager.rollback_turn.assert_called_once_with(node.session_id, post_rewrite_checkpoint)
 
 
 def test_interrupted_turn_skips_final_action_render_and_resets_controller(chat_cmd, monkeypatch):

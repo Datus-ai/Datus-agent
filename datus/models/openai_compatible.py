@@ -932,6 +932,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         interrupt_controller=None,
         pending_input_queue=None,
         interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """
@@ -970,6 +971,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             interrupt_controller=interrupt_controller,
             pending_input_queue=pending_input_queue,
             interaction_broker=interaction_broker,
+            context_rewriter=context_rewriter,
             **kwargs,
         ):
             yield action
@@ -1240,6 +1242,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         interrupt_controller=None,
         pending_input_queue=None,
         interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Internal method for tool streaming execution with error handling.
@@ -1272,6 +1275,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     interrupt_controller=interrupt_controller,
                     interaction_broker=interaction_broker,
                     agent_name=agent_name,
+                    context_rewriter=context_rewriter,
                 )
                 try:
                     with _agents_trace_baggage(agent_name):

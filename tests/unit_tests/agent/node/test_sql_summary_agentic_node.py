@@ -13,11 +13,13 @@ via the conftest mock_llm_create fixture.
 import json
 
 import pytest
+from agents.lifecycle import AgentHooksBase
 
 from datus.schemas.action_history import ActionStatus
 from datus.schemas.sql_summary_agentic_node_models import SqlSummaryNodeInput
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.permission.permission_hooks import PermissionHooks
 from tests.unit_tests.mock_llm_model import (
     MockToolCall,
     build_simple_response,
@@ -642,12 +644,12 @@ class TestSqlSummaryNonInteractiveBridge:
 
     def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
         node = _create_node(real_agent_config, execution_mode="workflow")
-        # Workflow now also wires CompactHook (multi-turn history is enabled
+        # Workflow now also wires the token-usage hook (multi-turn history is enabled
         # for all execution_mode values), so _compose_hooks may return a
         # CompositeHooks bundle. Validate the permission gate directly on the
         # node — that's what keeps /bootstrap parallel pools from deadlocking.
         hooks = node._compose_hooks()
-        assert hooks is not None
-        assert node.permission_hooks is not None
+        assert isinstance(hooks, AgentHooksBase)
+        assert isinstance(node.permission_hooks, PermissionHooks)
         assert node.permission_hooks.non_interactive is True
         assert node.permission_manager.active_profile == "dangerous"
