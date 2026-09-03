@@ -215,15 +215,16 @@ dev = [
 ]
 ci = [
     "datus-storage-postgresql>=0.1.5",
-    # Pinned exactly: each adapter release pins its dosi-engine release-for-
-    # release (0.1.9 → dosi-engine==0.1.9), whose wheels cover manylinux
-    # (x86_64/aarch64) and macOS arm64; the marker keeps other platforms
-    # resolvable. 0.1.9 adds DosiAdapter.lineage_graph (metric lineage DAG),
-    # the authoring contract and parameterized query_metrics that #1392 probes
-    # for. Kept in step with Datus-backend's pin so this CI exercises the
-    # adapter the backend ships; being a dependency group, it is never
+    # A floor, not an exact pin: every adapter release since 0.1.7 pins its
+    # dosi-engine release-for-release (0.1.9 → dosi-engine==0.1.9), so whatever
+    # the resolver picks is an installable pair; the marker keeps platforms
+    # without a dosi-engine wheel resolvable (wheels exist for manylinux
+    # x86_64/aarch64 and macOS arm64). 0.1.9 is the floor because it adds
+    # DosiAdapter.lineage_graph (metric lineage DAG), the authoring contract
+    # and parameterized query_metrics that #1392 probes for. Datus-backend pins
+    # exactly for its image; being a dependency group, this line is never
     # inherited by the backend's own resolution.
-    "datus-semantic-dosi==0.1.9 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'darwin')",
+    "datus-semantic-dosi>=0.1.9 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'darwin')",
 ]
 
 [tool.coverage.run]
