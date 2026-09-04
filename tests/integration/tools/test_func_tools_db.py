@@ -474,6 +474,7 @@ class TestAllToolsNameContract:
             "execute_write",
             "execute_ddl",
             "get_table_ddl",
+            "quote_sql_identifier",
         ):
             assert hasattr(DBFuncTool, method), f"{method} should still exist as a method"
             assert method not in names, f"{method} is not an agent tool and must be excluded"

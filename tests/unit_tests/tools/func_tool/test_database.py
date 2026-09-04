@@ -1131,6 +1131,19 @@ class TestGetConnectorRouting:
         assert conn_named is conn_other
         assert conn_default is mock_connector
 
+    def test_quote_sql_identifier_uses_selected_connector(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "bigquery"
+        mock_connector.get_databases.return_value = []
+        mock_connector.quote_identifier.return_value = "`example-analytics-12345`"
+
+        tool = self._make_single_mode_tool(mock_connector)
+
+        quoted = tool.quote_sql_identifier("example-analytics-12345", database="main")
+
+        assert quoted == "`example-analytics-12345`"
+        mock_connector.quote_identifier.assert_called_once_with("example-analytics-12345")
+
     def test_multi_connector_routes_by_database_name(self):
         """In multi-connector mode, _get_connector returns different connectors."""
         from datus.tools.db_tools.db_manager import DBManager
