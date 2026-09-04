@@ -23,6 +23,7 @@ import warnings
 import pytest
 
 from datus.models.sdk_patches import (
+    REASONING_UNAVAILABLE_PLACEHOLDER,
     _cache_reasoning_content,
     _extract_reasoning_content,
     _get_cached_reasoning_content,
@@ -450,7 +451,13 @@ class TestReasoningContentStreamWrapper:
 
 
 class TestPostprocessMessagesForReasoning:
-    """Tests for _postprocess_messages_for_reasoning."""
+    """Tests for _postprocess_messages_for_reasoning.
+
+    The rule under test: a message may only carry reasoning that is its own --
+    the text it arrived with, or (for the single in-flight turn) the streaming
+    cache. Every other gap is filled with the neutral placeholder, never with a
+    thought borrowed from a different turn.
+    """
 
     def test_non_kimi_model_returns_unchanged(self):
         """Non-Kimi model messages are returned unchanged."""
@@ -464,8 +471,10 @@ class TestPostprocessMessagesForReasoning:
         result = _postprocess_messages_for_reasoning(messages, None)
         assert result is messages
 
-    def test_kimi_injects_reasoning_content(self):
-        """Kimi model injects reasoning_content into assistant+tool_calls messages."""
+    def test_kimi_keeps_own_reasoning_and_never_lends_it(self):
+        """An earlier turn's reasoning stays on that turn; the next gap gets the placeholder."""
+        _reasoning_content_cache.clear()
+
         messages = [
             {
                 "role": "assistant",
@@ -477,16 +486,17 @@ class TestPostprocessMessagesForReasoning:
             {"role": "assistant", "content": None, "tool_calls": [{"id": "2"}]},
         ]
         result = _postprocess_messages_for_reasoning(messages, "kimi-1.5")
-        # First message already has reasoning_content
+
         assert result[0]["reasoning_content"] == "I should think..."
-        # Second assistant message should get injected reasoning_content
-        assert result[2]["reasoning_content"] == "I should think..."
+        assert result[2]["reasoning_content"] == REASONING_UNAVAILABLE_PLACEHOLDER
         # content=None should be set to ""
         assert result[0]["content"] == ""
         assert result[2]["content"] == ""
 
+        _reasoning_content_cache.clear()
+
     def test_kimi_uses_cached_reasoning_content(self):
-        """When no reasoning_content in messages, uses cached value."""
+        """The in-flight turn recovers its own reasoning from the streaming cache."""
         _reasoning_content_cache.clear()
         _reasoning_content_cache["kimi-cached"] = "Cached thinking..."
 
@@ -498,20 +508,20 @@ class TestPostprocessMessagesForReasoning:
 
         _reasoning_content_cache.clear()
 
-    def test_kimi_empty_reasoning_when_no_source(self):
-        """When no reasoning_content anywhere, sets empty string."""
+    def test_kimi_placeholder_when_no_source(self):
+        """With no reasoning anywhere the field is filled, not left empty."""
         _reasoning_content_cache.clear()
 
         messages = [
             {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
         ]
         result = _postprocess_messages_for_reasoning(messages, "kimi-norcache")
-        assert result[0]["reasoning_content"] == ""
+        assert result[0]["reasoning_content"] == REASONING_UNAVAILABLE_PLACEHOLDER
 
         _reasoning_content_cache.clear()
 
-    def test_deepseek_injects_reasoning_content_from_cache(self):
-        """DeepSeek model uses cached reasoning_content as fallback for tool_calls messages."""
+    def test_deepseek_cache_applies_only_to_the_inflight_turn(self):
+        """Cached reasoning belongs to the latest response, so only the last turn may use it."""
         _reasoning_content_cache.clear()
         _reasoning_content_cache["deepseek/deepseek-v4"] = "cached deepseek thinking"
 
@@ -521,7 +531,8 @@ class TestPostprocessMessagesForReasoning:
             {"role": "assistant", "content": None, "tool_calls": [{"id": "2"}]},
         ]
         result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4")
-        assert result[0]["reasoning_content"] == "cached deepseek thinking"
+
+        assert result[0]["reasoning_content"] == REASONING_UNAVAILABLE_PLACEHOLDER
         assert result[2]["reasoning_content"] == "cached deepseek thinking"
         # content=None must be normalized to "" so the provider accepts tool_calls-only messages
         assert result[0]["content"] == ""
@@ -529,13 +540,12 @@ class TestPostprocessMessagesForReasoning:
 
         _reasoning_content_cache.clear()
 
-    def test_deepseek_does_not_inject_empty_placeholder(self):
-        """DeepSeek must NOT get an empty reasoning_content placeholder when no source exists.
+    def test_deepseek_placeholder_is_never_empty(self):
+        """DeepSeek rejects an empty reasoning_content in thinking mode.
 
-        DeepSeek's API rejects empty reasoning_content in thinking mode with the same error
-        we're trying to fix; Kimi tolerates it. Only Kimi gets the "" fallback. Since this
-        message is after the last user turn, it is an in-flight tool call and must not be
-        hidden by cross-provider history cleanup.
+        The filler therefore has to be non-empty. It also has to be neutral: an
+        empty string is safe but rejected, and a borrowed thought is accepted but
+        poisons the context.
         """
         _reasoning_content_cache.clear()
 
@@ -544,28 +554,45 @@ class TestPostprocessMessagesForReasoning:
             {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
         ]
         result = _postprocess_messages_for_reasoning(messages, "deepseek-v4")
-        # Key should NOT be present (leave the message alone)
-        assert "reasoning_content" not in result[1]
+
+        assert result[1]["reasoning_content"] == REASONING_UNAVAILABLE_PLACEHOLDER
+        assert result[1]["reasoning_content"].strip()
 
         _reasoning_content_cache.clear()
 
-    def test_deepseek_reuses_existing_reasoning_content_in_messages(self):
-        """Existing non-empty reasoning_content in messages is propagated to later tool_calls msgs."""
+    def test_deepseek_never_borrows_another_turns_reasoning(self):
+        """Regression: an earlier turn's reasoning must not be stamped onto a later one.
+
+        This is the production loop in miniature. The model calls a tool, thinks
+        "I have my answer, let me produce the final output", then emits another
+        tool call with no reasoning of its own. Lending that sentence to the
+        second call shows the model a precedent -- "thinking I am done means
+        calling the tool again" -- which it then imitates until max_turns.
+        """
         _reasoning_content_cache.clear()
 
         messages = [
             {
                 "role": "assistant",
                 "content": None,
-                "reasoning_content": "first turn thinking",
+                "reasoning_content": "The SQL validated. I have my answer. Final JSON output.",
                 "tool_calls": [{"id": "1"}],
             },
-            {"role": "tool", "content": "result"},
+            {"role": "tool", "content": "23 rows"},
             {"role": "assistant", "content": None, "tool_calls": [{"id": "2"}]},
+            {"role": "tool", "content": "23 rows"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "3"}]},
         ]
+        borrowed = "The SQL validated. I have my answer. Final JSON output."
         result = _postprocess_messages_for_reasoning(messages, "deepseek-reasoner")
-        assert result[0]["reasoning_content"] == "first turn thinking"
-        assert result[2]["reasoning_content"] == "first turn thinking"
+
+        assert result[0]["reasoning_content"] == borrowed
+        for idx in (2, 4):
+            # The property, not the filler: whatever fills the gap, it must not
+            # be another turn's thought, and it must be non-empty because both
+            # providers reject an empty reasoning_content in thinking mode.
+            assert result[idx]["reasoning_content"] != borrowed
+            assert result[idx]["reasoning_content"].strip()
 
         _reasoning_content_cache.clear()
 
@@ -612,7 +639,9 @@ class TestPostprocessMessagesForReasoning:
         ]
         result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-pro")
 
-        assert result[0]["reasoning_content"] == "final answer thinking"
+        # The cache belongs to the newest response, which produced the final
+        # assistant message -- not the tool call two turns back.
+        assert result[0]["reasoning_content"] == REASONING_UNAVAILABLE_PLACEHOLDER
         assert result[0]["content"] == ""
         assert result[2]["reasoning_content"] == "final answer thinking"
         assert result[2]["content"] == "Final answer after tool."
@@ -693,7 +722,7 @@ class TestPostprocessMessagesForReasoning:
 
         assert result is messages
         assert result[1]["tool_calls"]
-        assert "reasoning_content" not in result[1]
+        assert result[1]["reasoning_content"] == REASONING_UNAVAILABLE_PLACEHOLDER
         assert result[2]["role"] == "tool"
 
         _reasoning_content_cache.clear()
@@ -718,7 +747,8 @@ class TestPostprocessMessagesForReasoning:
         result = _postprocess_messages_for_reasoning(messages, "deepseek/deepseek-v4-flash")
 
         assert result is messages
-        assert result[1]["reasoning_content"] == "cached reasoning"
+        # History is kept (not dropped) but only the newest turn may claim the cache.
+        assert result[1]["reasoning_content"] == REASONING_UNAVAILABLE_PLACEHOLDER
         assert result[1]["content"] == ""
         assert result[3]["reasoning_content"] == "cached reasoning"
 

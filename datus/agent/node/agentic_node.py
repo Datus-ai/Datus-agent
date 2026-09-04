@@ -197,6 +197,10 @@ class AgenticNode(Node):
         # first ``_compose_hooks`` call, after ``setup_tools`` and any
         # ``apply_proxy_tools`` rewrites — see ``_ensure_tool_transformers``.
         self._tool_transformers_applied = False
+        # Same lazy-once pattern for the tool no-progress guard (see
+        # ``_ensure_repeat_guard``); reset alongside the flag above whenever
+        # ``self.tools`` is rebuilt so remounted tools get re-wrapped.
+        self._repeat_guard_applied = False
 
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
@@ -2872,6 +2876,7 @@ class AgenticNode(Node):
         # ``apply_tool_transformers`` skips already-wrapped tools, so the re-wrap
         # never double-transforms the tools carried over above.
         self._tool_transformers_applied = False
+        self._repeat_guard_applied = False
         if desired:
             logger.info(
                 f"Web tools injected into node '{self.get_node_name()}': "
@@ -3332,6 +3337,13 @@ class AgenticNode(Node):
         # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
         # argument too late and the first run would execute unwrapped tools.
         self._ensure_tool_transformers()
+        # Guard wrapping and its per-run counter reset share this chokepoint:
+        # the window must cover exactly one stream run, so a retry-policy
+        # iteration starts counting from zero rather than inheriting a streak.
+        self._ensure_repeat_guard()
+        from datus.tools.middleware import reset_repeat_guard
+
+        reset_repeat_guard()
         self._current_action_history = ctx.action_history_manager
         try:
             async for stream_action in self.model.generate_with_tools_stream(
@@ -4120,6 +4132,30 @@ class AgenticNode(Node):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Tool transformer setup failed for {self.get_node_name()}: {e}"},
             ) from e
+
+    def _ensure_repeat_guard(self) -> None:
+        """Wrap ``self.tools`` with the no-progress guard, once.
+
+        Unlike the plugin transformers above this is unconditional: a model that
+        replays one tool call until ``max_turns`` is a failure mode of the loop
+        itself, not of any plugin, so the guard must not depend on an operator
+        having enabled anything. Failures are swallowed — losing the guard costs
+        a wasted turn budget, while failing the run costs the whole answer.
+        """
+        if getattr(self, "_repeat_guard_applied", False):
+            return
+        try:
+            from datus.tools.middleware import apply_repeat_guard
+
+            wrapped = apply_repeat_guard(self)
+            logger.debug(
+                "Applied the tool no-progress guard on node '%s': %d tool(s) wrapped",
+                self.get_node_name(),
+                wrapped,
+            )
+        except Exception as e:  # noqa: BLE001 - the guard is a safety net, never a gate
+            logger.warning("Could not apply the tool no-progress guard for %s: %s", self.get_node_name(), e)
+        self._repeat_guard_applied = True
 
     @staticmethod
     def _extract_total_tokens(actions: List[ActionHistory]) -> int:

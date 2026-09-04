@@ -477,6 +477,34 @@ class _ReasoningContentStreamWrapper:
         return getattr(self._stream, name)
 
 
+# Stand-in for a turn whose reasoning the provider never returned. Both DeepSeek
+# and Moonshot require reasoning_content to be present and non-empty on
+# tool-calling turns; neither requires it to carry any particular text. A neutral
+# marker satisfies them without asserting anything the model did not think.
+REASONING_UNAVAILABLE_PLACEHOLDER = "(no reasoning was returned for this turn)"
+
+
+def _last_patchable_assistant_index(messages: list[dict[str, Any]], is_deepseek: bool) -> int:
+    """Index of the assistant message the current API response belongs to.
+
+    Mirrors the patch loop's own ``should_patch_message`` test so the two never
+    disagree about which message is the in-flight one: an assistant message with
+    tool_calls, or -- DeepSeek only -- one that directly follows a tool result.
+    Returns ``-1`` when there is none.
+    """
+    last = -1
+    for idx, msg in enumerate(messages):
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        previous_message = messages[idx - 1] if idx > 0 else None
+        follows_tool_result = (
+            is_deepseek and isinstance(previous_message, dict) and previous_message.get("role") == "tool"
+        )
+        if msg.get("tool_calls") or follows_tool_result:
+            last = idx
+    return last
+
+
 def _postprocess_messages_for_reasoning(
     messages: list[dict[str, Any]],
     model: str | None,
@@ -488,31 +516,39 @@ def _postprocess_messages_for_reasoning(
     Per DeepSeek/Moonshot docs, reasoning_content must be passed back during
     tool calling to allow the model to continue reasoning.
     See: https://api-docs.deepseek.com/guides/thinking_mode
+
+    A message may only carry reasoning that is actually its own: either the text
+    it arrived with, or -- for the single in-flight turn -- the streaming cache,
+    which holds the reasoning of the most recent API response. Everything else
+    gets :data:`REASONING_UNAVAILABLE_PLACEHOLDER`.
+
+    This function used to fill any gap with the last reasoning found anywhere in
+    the list, and rewrote the whole history on every call. That put "I have my
+    answer, let me produce the final output" onto turns whose actual emission was
+    another tool call, and the model -- shown twenty such precedents -- kept
+    reproducing them: 28 identical ``execute_sql`` calls against the same 23-row
+    result until ``max_turns`` tripped. Borrowed reasoning is context poisoning;
+    a neutral placeholder satisfies the same provider requirement without
+    asserting a thought that was never had.
     """
     if not model or not _needs_reasoning_injection(model):
         return messages
 
-    is_kimi = _is_kimi_model(model)
     is_deepseek = _is_deepseek_model(model)
 
-    # Find the last non-empty reasoning_content to reuse if needed
-    last_reasoning_content = None
-    for msg in messages:
-        if isinstance(msg, dict):
-            rc = _extract_reasoning_content(msg)
-            if rc:
-                last_reasoning_content = rc
-                logger.debug(f"[SDK Patch] Found non-empty reasoning_content in messages, length={len(rc)}")
+    # The streaming cache holds the reasoning of the *most recent* API response,
+    # so it belongs to the in-flight assistant turn and to nothing else. Any
+    # earlier message that arrives without reasoning_content never had any.
+    cached_rc = _get_cached_reasoning_content(model) if model else None
+    if cached_rc:
+        logger.debug(f"[SDK Patch] Cached reasoning_content available, length={len(cached_rc)}")
 
-    # Fallback: use cached reasoning_content from a previous API response
-    if not last_reasoning_content and model:
-        cached_rc = _get_cached_reasoning_content(model)
-        if cached_rc:
-            last_reasoning_content = cached_rc
-            logger.debug(f"[SDK Patch] Using cached reasoning_content as fallback, length={len(cached_rc)}")
+    has_own_reasoning = any(isinstance(msg, dict) and _extract_reasoning_content(msg) for msg in messages)
 
-    if is_deepseek and not last_reasoning_content:
+    if is_deepseek and not has_own_reasoning and not cached_rc:
         messages = _sanitize_deepseek_history_without_reasoning(messages)
+
+    last_patchable_idx = _last_patchable_assistant_index(messages, is_deepseek)
 
     # Ensure assistant messages preserve reasoning_content on tool-calling turns.
     # DeepSeek also requires the final assistant message immediately after a tool
@@ -531,19 +567,16 @@ def _postprocess_messages_for_reasoning(
             current_rc = _coerce_reasoning_text(msg.get("reasoning_content"))
             if current_rc:
                 msg["reasoning_content"] = current_rc
-            elif last_reasoning_content:
-                msg["reasoning_content"] = last_reasoning_content
-                logger.debug("[SDK Patch] Injected reasoning_content into assistant message")
-            elif has_tool_calls and "reasoning_content" not in msg and is_kimi:
-                # Moonshot historically tolerates an empty reasoning_content field when
-                # thinking is off; DeepSeek rejects both missing and empty, so we must
-                # NOT inject an empty placeholder for DeepSeek — leave the message as-is
-                # and let the provider surface a clean error if thinking was actually on.
-                msg["reasoning_content"] = ""
-                logger.warning(
-                    "[SDK Patch] No reasoning_content available for assistant+tool_calls message. "
-                    "Moonshot API may reject this request. Check if streaming cache is working."
-                )
+            elif idx == last_patchable_idx and cached_rc:
+                msg["reasoning_content"] = cached_rc
+                logger.debug("[SDK Patch] Restored the in-flight turn's cached reasoning_content")
+            else:
+                # Never borrow another turn's thought. Both providers require the
+                # field to be present and non-empty; neither requires it to say
+                # anything in particular. A thought that contradicts the call it
+                # is stapled to is read by the model as a precedent to imitate.
+                msg["reasoning_content"] = REASONING_UNAVAILABLE_PLACEHOLDER
+                logger.debug("[SDK Patch] No reasoning for this turn; used the neutral placeholder")
 
             # Ensure content is empty string, not None (Moonshot requirement;
             # DeepSeek also accepts content="" for tool_calls-only messages).
