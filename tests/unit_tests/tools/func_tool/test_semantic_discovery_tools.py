@@ -6,6 +6,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 
@@ -299,6 +301,57 @@ class TestGetMultipleTablesDDL:
 
 
 class TestValidateSemanticKeyCandidate:
+    @pytest.mark.parametrize(
+        "table_name",
+        [
+            "example-analytics-12345.main.customers",
+            "`example-analytics-12345.main.customers`",
+        ],
+    )
+    def test_quotes_non_simple_table_parts_with_the_selected_connector(self, table_name):
+        db_tool = _make_db_tool()
+        db_tool.quote_sql_identifier.side_effect = lambda name, database="": f"`{name}`"
+        db_tool.read_query.side_effect = [
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "index,row_count,null_key_rows\n0,12,0\n"},
+            ),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,0,0\n")},
+            ),
+        ]
+        tools = _make_tools(db_tool)
+
+        result = tools.validate_semantic_key_candidate(
+            table_name,
+            ["customer_id"],
+        )
+
+        assert result.success == 1
+        summary_sql = db_tool.read_query.call_args_list[0].args[0]
+        duplicate_sql = db_tool.read_query.call_args_list[1].args[0]
+        expected_table = "`example-analytics-12345`.main.customers"
+        assert f"FROM {expected_table}" in summary_sql
+        assert f"FROM {expected_table}" in duplicate_sql
+        assert '"example-analytics-12345"' not in summary_sql
+        db_tool.quote_sql_identifier.assert_called_once_with(
+            "example-analytics-12345",
+            database="",
+        )
+
+    def test_keeps_simple_identifiers_unquoted(self):
+        db_tool = _make_db_tool()
+        tools = _make_tools(db_tool)
+
+        assert tools._quote_sql_identifier("customer_id") == "customer_id"
+        db_tool.quote_sql_identifier.assert_not_called()
+
+    def test_legacy_db_tool_keeps_ansi_fallback_for_non_simple_identifiers(self):
+        tools = SemanticDiscoveryTools(db_tool=SimpleNamespace())
+
+        assert tools._quote_sql_identifier("order-detail") == '"order-detail"'
+
     def test_accepts_full_table_non_null_unique_composite_key(self):
         db_tool = _make_db_tool()
         db_tool.read_query.side_effect = [

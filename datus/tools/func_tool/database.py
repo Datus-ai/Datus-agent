@@ -483,6 +483,16 @@ class DBFuncTool:
         """Get the primary/default connector (for backward compatibility)."""
         return self._primary_connector
 
+    def quote_sql_identifier(
+        self,
+        name: str,
+        database: str = "",
+        datasource: Optional[str] = "",
+    ) -> str:
+        """Quote one identifier with the connector selected for this request."""
+        connector = self._get_connector(datasource, database)
+        return connector.quote_identifier(name)
+
     def _get_connector(self, datasource: Optional[str] = None, database: str = "") -> BaseSqlConnector:
         """
         Get connector for the specified (datasource, database).

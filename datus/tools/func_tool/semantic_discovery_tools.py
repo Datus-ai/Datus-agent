@@ -1942,6 +1942,9 @@ class SemanticDiscoveryTools:
         value = str(value).strip().strip('"`[]')
         if value and value.replace("_", "").isalnum() and not value[0].isdigit():
             return value
+        connector_quote = getattr(self.db_tool, "quote_sql_identifier", None)
+        if callable(connector_quote):
+            return connector_quote(value, database=database)
         return '"' + value.replace('"', '""') + '"'
 
     def _sanitize_profile_sql(self, value: str) -> str:
