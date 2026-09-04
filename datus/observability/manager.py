@@ -341,7 +341,13 @@ def _trace_baggage_attributes(span_name: str, attributes: dict[str, Any]) -> dic
     # span: exporters read trace-level identity from the baggage a child span
     # carries, so a key left behind is a key no backend ever sees.
     for baggage_key, metadata_key in _TRACE_JOIN_KEYS.items():
-        value = _string_attr(attributes.get(baggage_key) or attributes.get(f"datus.metadata.{metadata_key}"))
+        # Fall back on absence, not on falsiness: these carry numbers, and an
+        # ``or`` chain would read a configured ``max_turns: 0`` as "unset" and
+        # then either drop it or let a stale metadata copy win.
+        raw = attributes.get(baggage_key)
+        if raw is None:
+            raw = attributes.get(f"datus.metadata.{metadata_key}")
+        value = _string_attr(raw)
         if value:
             baggage_attrs[baggage_key] = value
 

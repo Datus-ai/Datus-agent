@@ -200,23 +200,32 @@ def test_datadog_adapter_defaults_to_local_agent(monkeypatch):
 
 
 def test_langfuse_maps_join_keys_onto_the_trace():
-    """Every join key the baggage carries must land somewhere queryable."""
+    """The whole chain, end to end: trace context -> span attrs -> baggage -> Langfuse.
+
+    Driven by the real producers rather than a hand-built baggage dict, because
+    the failure this guards against is precisely the three layers disagreeing
+    about a key's spelling -- and a hand-built input would encode the mistake on
+    both sides and pass.
+    """
     import json as _json
 
-    from datus.utils.trace_context import TRACE_IDENTITY_ATTRIBUTE_PREFIX
+    from datus.observability.manager import _trace_baggage_attributes
+    from datus.utils.trace_context import build_chat_trace_context, build_trace_span_attributes
 
-    attrs = _langfuse_attributes_from_baggage(
-        {
-            "datus.trace.name": "agent/chat",
-            "datus.node_name": "olist_order_analyst",
-            "datus.max_turns": "30",
-            "datus.release": "0.4.0",
-            f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}workspace_id": "ws_abc",
-            f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}tenant": "acme",
-            "datus.tags": "chat,workspace_id:ws_abc",
-        }
+    ctx = build_chat_trace_context(
+        session_id="chat_session_1",
+        node_name="olist_order_analyst",
+        max_turns=30,
+        release="0.4.0",
+        identity={"workspace_id": "ws_abc", "tenant": "acme"},
     )
+    span_attributes = build_trace_span_attributes(operation="chat", ctx=ctx)
+    baggage_attrs = _trace_baggage_attributes("chat", span_attributes)
 
+    attrs = _langfuse_attributes_from_baggage(baggage_attrs)
+
+    assert attrs["langfuse.trace.name"] == "agent/olist_order_analyst"
+    assert attrs["langfuse.session.id"] == "chat_session_1"
     assert attrs["langfuse.trace.metadata.node_name"] == "olist_order_analyst"
     assert attrs["langfuse.trace.metadata.max_turns"] == "30"
     assert attrs["langfuse.trace.metadata.release"] == "0.4.0"
@@ -226,7 +235,12 @@ def test_langfuse_maps_join_keys_onto_the_trace():
     # the namespace and never interprets what is left
     assert attrs["langfuse.trace.metadata.workspace_id"] == "ws_abc"
     assert attrs["langfuse.trace.metadata.tenant"] == "acme"
-    assert _json.loads(attrs["langfuse.trace.tags"]) == ["chat", "workspace_id:ws_abc"]
+    assert set(_json.loads(attrs["langfuse.trace.tags"])) == {
+        "chat",
+        "agent:olist_order_analyst",
+        "workspace_id:ws_abc",
+        "tenant:acme",
+    }
 
 
 def test_langfuse_omits_join_keys_that_were_never_set():
