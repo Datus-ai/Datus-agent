@@ -9,6 +9,7 @@ the client can reconnect and resume from where it left off.
 
 import asyncio
 import copy
+import os
 import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
@@ -37,7 +38,31 @@ from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import set_current_path_manager
 from datus.utils.time_utils import now_utc_iso
-from datus.utils.trace_context import build_chat_trace_context, reset_trace_context, set_trace_context
+from datus.utils.trace_context import (
+    build_chat_trace_context,
+    reset_trace_context,
+    resolve_trace_identity,
+    set_trace_context,
+)
+
+
+def _release_stamp() -> Optional[str]:
+    """Build identity for the running agent.
+
+    ``DATUS_RELEASE`` wins so a deployment can stamp the image tag it actually
+    rolled out; the package version is the fallback for anything that runs
+    outside a container.
+    """
+    release = os.environ.get("DATUS_RELEASE")
+    if release and release.strip():
+        return release.strip()
+    try:
+        from datus import __version__
+
+        return str(__version__).strip() or None
+    except Exception:  # noqa: BLE001 - never fail a chat turn over a version lookup
+        return None
+
 
 logger = get_logger(__name__)
 
@@ -627,6 +652,9 @@ class ChatTaskManager:
                     source=request.source or self._default_source,
                     model=request.model,
                     agent_home=agent_config.home,
+                    identity=resolve_trace_identity(),
+                    max_turns=getattr(node, "max_turns", None),
+                    release=_release_stamp(),
                 )
             )
 

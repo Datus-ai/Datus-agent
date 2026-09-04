@@ -197,3 +197,40 @@ def test_datadog_adapter_defaults_to_local_agent(monkeypatch):
 
     assert resolved.endpoint == "http://localhost:4318/v1/traces"
     assert resolved.headers == {}
+
+
+def test_langfuse_maps_join_keys_onto_the_trace():
+    """Every join key the baggage carries must land somewhere queryable."""
+    import json as _json
+
+    from datus.utils.trace_context import TRACE_IDENTITY_ATTRIBUTE_PREFIX
+
+    attrs = _langfuse_attributes_from_baggage(
+        {
+            "datus.trace.name": "agent/chat",
+            "datus.node_name": "olist_order_analyst",
+            "datus.max_turns": "30",
+            "datus.release": "0.4.0",
+            f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}workspace_id": "ws_abc",
+            f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}tenant": "acme",
+            "datus.tags": "chat,workspace_id:ws_abc",
+        }
+    )
+
+    assert attrs["langfuse.trace.metadata.node_name"] == "olist_order_analyst"
+    assert attrs["langfuse.trace.metadata.max_turns"] == "30"
+    assert attrs["langfuse.trace.metadata.release"] == "0.4.0"
+    # release also gets Langfuse's first-class field so runs group by deploy
+    assert attrs["langfuse.release"] == "0.4.0"
+    # host identity keeps the host's own key names -- the adapter strips only
+    # the namespace and never interprets what is left
+    assert attrs["langfuse.trace.metadata.workspace_id"] == "ws_abc"
+    assert attrs["langfuse.trace.metadata.tenant"] == "acme"
+    assert _json.loads(attrs["langfuse.trace.tags"]) == ["chat", "workspace_id:ws_abc"]
+
+
+def test_langfuse_omits_join_keys_that_were_never_set():
+    """Absent keys must not become empty strings on the trace."""
+    attrs = _langfuse_attributes_from_baggage({"datus.trace.name": "agent/chat"})
+
+    assert attrs == {"langfuse.trace.name": "agent/chat"}

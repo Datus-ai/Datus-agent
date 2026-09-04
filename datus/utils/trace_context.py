@@ -20,6 +20,57 @@ _CURRENT_TRACE_CONTEXT: contextvars.ContextVar[Optional["TraceContext"]] = conte
     default=None,
 )
 
+# Attribute namespace for host-supplied trace identity. Everything downstream
+# (baggage propagation, the exporters) forwards this prefix as a whole, so a
+# deployment can add a correlation field without a change anywhere in Datus.
+TRACE_IDENTITY_ATTRIBUTE_PREFIX = "datus.identity."
+
+# A host registers one of these at startup to name the runs it serves. It takes
+# no arguments on purpose: the host owns its request-scoped state, and Datus
+# passing it something would mean guessing which of the host's own channels the
+# identity lives in. Called inside the run, so a contextvar the host set at the
+# request boundary is still visible.
+TraceIdentityProvider = Any  # Callable[[], Mapping[str, Any]]
+
+_TRACE_IDENTITY_PROVIDER: Optional[TraceIdentityProvider] = None
+
+
+def set_trace_identity_provider(provider: Optional[TraceIdentityProvider]) -> None:
+    """Register (or clear, with ``None``) the host's trace-identity provider.
+
+    Called once at startup by whatever application embeds Datus. A plain OSS
+    install registers nothing and its traces simply carry no host identity.
+    """
+    global _TRACE_IDENTITY_PROVIDER
+    _TRACE_IDENTITY_PROVIDER = provider
+
+
+def resolve_trace_identity() -> dict[str, str]:
+    """Ask the host to name this run, and normalise whatever comes back.
+
+    Returns ``{}`` when no provider is registered, when the provider declines,
+    or when it raises -- identity is a correlation aid, and losing it must never
+    cost a user their answer. Values are coerced to non-empty strings so a
+    provider cannot inject ``None`` into an exporter's attributes.
+    """
+    provider = _TRACE_IDENTITY_PROVIDER
+    if provider is None:
+        return {}
+    try:
+        resolved = provider()
+    except Exception:  # noqa: BLE001 - a broken host hook must not fail the run
+        return {}
+    if not isinstance(resolved, Mapping):
+        return {}
+    identity: dict[str, str] = {}
+    for key, value in resolved.items():
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text and str(key).strip():
+            identity[str(key).strip()] = text
+    return identity
+
 
 def _compact_slug(value: Any, fallback: str = "unknown") -> str:
     text = str(value or "").strip()
@@ -69,6 +120,12 @@ class TraceContext:
     user_id: Optional[str] = None
     tags: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    # Host-supplied correlation fields, propagated verbatim and never
+    # interpreted here. Datus has no opinion on what a deployment considers an
+    # identity -- a private install may key runs by workspace and project,
+    # another by tenant, an OSS user by nothing at all -- so the names live
+    # with the host that defines them. See :func:`resolve_trace_identity`.
+    identity: Mapping[str, str] = field(default_factory=dict)
 
     def langfuse_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"trace_name": self.name}
@@ -78,9 +135,10 @@ class TraceContext:
             kwargs["user_id"] = self.user_id
         if self.tags:
             kwargs["tags"] = list(dict.fromkeys(self.tags))
-        if self.metadata:
+        merged_metadata = {**(self.metadata or {}), **(self.identity or {})}
+        if merged_metadata:
             kwargs["metadata"] = {
-                str(key): _string_metadata_value(value) for key, value in self.metadata.items() if value is not None
+                str(key): _string_metadata_value(value) for key, value in merged_metadata.items() if value is not None
             }
         return kwargs
 
@@ -174,6 +232,14 @@ def build_trace_span_attributes(
     run_id = (trace_ctx.metadata or {}).get("run_id") or (trace_ctx.metadata or {}).get("benchmark_run_id")
     if run_id:
         attrs["datus.run_id"] = run_id
+    # Host identity gets its own namespace rather than joining
+    # ``datus.metadata.*``: the layers downstream propagate this prefix
+    # wholesale, which is what lets a host add a field without any of them
+    # learning its name.
+    for key, value in (trace_ctx.identity or {}).items():
+        if value is None or not str(value).strip():
+            continue
+        attrs[f"{TRACE_IDENTITY_ATTRIBUTE_PREFIX}{key}"] = str(value)
     return attrs
 
 
@@ -366,8 +432,26 @@ def build_chat_trace_context(
     source: Optional[str] = None,
     model: Optional[str] = None,
     agent_home: Optional[str] = None,
+    max_turns: Optional[int] = None,
+    release: Optional[str] = None,
+    identity: Optional[Mapping[str, str]] = None,
     extra: Optional[Mapping[str, Any]] = None,
 ) -> TraceContext:
+    """Trace identity for one chat turn.
+
+    The last three arguments exist so a trace can be tied back to the rest of
+    the system without guessing. Before them the only shared identifiers were
+    ``user_id`` and a timestamp, so correlating a trace with its HTTP request or
+    its pod meant eyeballing two clocks:
+
+    * ``max_turns`` makes "did this run hit its ceiling" a comparison instead of
+      an assumption about which node ran with which config.
+    * ``release`` records the build, so a bad run can be attributed to a deploy.
+    * ``identity`` is whatever the host uses to name a run, forwarded verbatim.
+      Datus does not define those names: a private install may key runs by
+      workspace and project, another deployment by tenant, a plain OSS install
+      by nothing. Build it with :func:`resolve_trace_identity`.
+    """
     display_name = node_name or subagent_id or "chat"
     display_slug = _compact_slug(display_name, "chat")
     tags = ["chat", f"agent:{display_slug}"]
@@ -375,6 +459,13 @@ def build_chat_trace_context(
         tags.append(f"datasource:{_compact_slug(datasource)}")
     if source:
         tags.append(f"source:{_compact_slug(source)}")
+    # Tags are the only trace field the Langfuse list API can filter on, so
+    # every host identity field is tagged as well as recorded, letting a scan
+    # group by it server-side. The key is the host's, so the tag name is too.
+    identity = dict(identity or {})
+    for key, value in identity.items():
+        if value:
+            tags.append(f"{_compact_slug(key)}:{_compact_slug(value)}")
 
     metadata = _metadata_base(
         component="chat",
@@ -388,6 +479,8 @@ def build_chat_trace_context(
             "source_session_id": source_session_id,
             "source": source,
             "model": model,
+            "max_turns": max_turns,
+            "release": release,
             **(dict(extra) if extra else {}),
         },
     )
@@ -397,4 +490,5 @@ def build_chat_trace_context(
         user_id=user_id,
         tags=tuple(tags),
         metadata=metadata,
+        identity=identity,
     )
