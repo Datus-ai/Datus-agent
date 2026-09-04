@@ -185,7 +185,12 @@ class _BaggageAttributeSpanProcessor(SpanProcessor):
 
 
 def _is_trace_baggage_key(key: str) -> bool:
-    return key in {"session.id", "user.id", "datus.trace.name", "datus.run_id"}
+    from datus.observability.manager import _TRACE_JOIN_KEYS
+    from datus.utils.trace_context import TRACE_IDENTITY_ATTRIBUTE_PREFIX
+
+    if key.startswith(TRACE_IDENTITY_ATTRIBUTE_PREFIX):
+        return True
+    return key in {"session.id", "user.id", "datus.trace.name", "datus.run_id", "datus.tags"} or key in _TRACE_JOIN_KEYS
 
 
 def _provider_neutral_attributes_from_baggage(baggage_attrs: dict[str, Any]) -> dict[str, Any]:

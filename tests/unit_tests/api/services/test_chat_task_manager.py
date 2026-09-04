@@ -2560,3 +2560,20 @@ class TestDuplicateAssistantMessage:
 
         other = _make_assistant_message("second", "m2", SSEDataType.UPDATE_MESSAGE)
         assert _should_skip_duplicate_assistant_message(_response_action(), other, seen) is False
+
+
+class TestReleaseStamp:
+    """The build identity is Datus' own fact, so Datus reads it."""
+
+    def test_release_prefers_the_deployed_image_tag(self, monkeypatch):
+        from datus.api.services.chat_task_manager import _release_stamp
+
+        monkeypatch.setenv("DATUS_RELEASE", "0.4.0")
+        assert _release_stamp() == "0.4.0"
+
+    def test_release_falls_back_to_the_package_version(self, monkeypatch):
+        from datus import __version__
+        from datus.api.services.chat_task_manager import _release_stamp
+
+        monkeypatch.delenv("DATUS_RELEASE", raising=False)
+        assert _release_stamp() == str(__version__)

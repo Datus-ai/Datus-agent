@@ -19,6 +19,7 @@ from datus.observability.privacy import redact_value
 from datus.observability.reference import TraceReference
 from datus.observability.registry import adapter_registry
 from datus.utils.loggings import get_logger
+from datus.utils.trace_context import TRACE_IDENTITY_ATTRIBUTE_PREFIX
 
 logger = get_logger(__name__)
 
@@ -301,6 +302,17 @@ def _attach_trace_baggage(span_name: str, attributes: dict[str, Any]) -> Any | N
         return None
 
 
+# Agent-owned join keys, as ``baggage key -> TraceContext metadata key``. Only
+# facts Datus itself knows belong here; anything a *deployment* defines arrives
+# under ``TRACE_IDENTITY_ATTRIBUTE_PREFIX`` instead and is forwarded by prefix,
+# so this list never has to learn a host's vocabulary.
+_TRACE_JOIN_KEYS = {
+    "datus.node_name": "node_name",
+    "datus.max_turns": "max_turns",
+    "datus.release": "release",
+}
+
+
 def _trace_baggage_attributes(span_name: str, attributes: dict[str, Any]) -> dict[str, str]:
     """Return trace-level attributes that should propagate to every span."""
     baggage_attrs: dict[str, str] = {}
@@ -324,6 +336,34 @@ def _trace_baggage_attributes(span_name: str, attributes: dict[str, Any]) -> dic
     )
     if run_id:
         baggage_attrs["datus.run_id"] = run_id
+
+    # Join keys. These have to ride the baggage rather than stay on the root
+    # span: exporters read trace-level identity from the baggage a child span
+    # carries, so a key left behind is a key no backend ever sees.
+    for baggage_key, metadata_key in _TRACE_JOIN_KEYS.items():
+        # Fall back on absence, not on falsiness: these carry numbers, and an
+        # ``or`` chain would read a configured ``max_turns: 0`` as "unset" and
+        # then either drop it or let a stale metadata copy win.
+        raw = attributes.get(baggage_key)
+        if raw is None:
+            raw = attributes.get(f"datus.metadata.{metadata_key}")
+        value = _string_attr(raw)
+        if value:
+            baggage_attrs[baggage_key] = value
+
+    # Host identity travels by prefix, not by name. Forwarding the namespace
+    # whole is the whole point: a deployment adds a correlation field and every
+    # layer below carries it without a code change.
+    for key, value in attributes.items():
+        if not str(key).startswith(TRACE_IDENTITY_ATTRIBUTE_PREFIX):
+            continue
+        text = _string_attr(value)
+        if text:
+            baggage_attrs[str(key)] = text
+
+    tags = _string_attr(attributes.get("datus.tags"))
+    if tags:
+        baggage_attrs["datus.tags"] = tags
 
     return baggage_attrs
 
