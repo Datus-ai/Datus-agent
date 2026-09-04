@@ -1120,6 +1120,7 @@ class DBFuncTool:
             "execute_write",
             "execute_ddl",
             "get_table_ddl",
+            "quote_sql_identifier",
         }
     )
 
