@@ -145,12 +145,18 @@ class TestDecideCompactMode:
                 assert await node._decide_compact_mode() == "minor"
 
     @pytest.mark.asyncio
-    async def test_mid_turn_still_allows_major(self, tmp_path):
-        """major still fires mid-turn — its token-ratio gate genuinely changes
-        as the turn progresses."""
+    async def test_mid_turn_major_is_suppressed(self, tmp_path):
+        """A mid-turn major is a no-op however high the ratio climbs.
+
+        The ratio does change as a turn progresses, but a mid-turn major cannot
+        act on it: the in-flight run holds the conversation in memory, so
+        clearing the session shrinks nothing the model is being sent. The
+        trigger would simply fire again after the next tool call."""
         node = _build_node(tmp_path)
         with patch.object(_Node, "_history_token_ratio_sync", return_value=0.95):
-            assert await node._decide_compact_mode(mid_turn=True) == "major"
+            assert await node._decide_compact_mode(mid_turn=True) == "noop"
+            # ...and the same state still compacts at the start of a turn.
+            assert await node._decide_compact_mode() == "major"
 
 
 class TestUserTurnCountFromSession:
