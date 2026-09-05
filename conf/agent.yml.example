@@ -25,7 +25,7 @@ agent:
   #   slash command in the CLI can then switch between any model exposed by
   #   that provider without rewriting YAML. Supported providers (keys) are
   #   shipped in ``conf/providers.yml``: openai, claude, claude_subscription,
-  #   codex, deepseek, kimi, qwen, gemini, glm, minimax, openrouter,
+  #   codex, deepseek, kimi, qwen, gemini, glm, minimax, openrouter, orcarouter,
   #   alibaba_coding, bigmodel_coding, zai_coding, minimax_coding, kimi_coding.
   #
   # - ``agent.models.<name>`` (legacy / custom)
@@ -52,6 +52,9 @@ agent:
       api_key: ${DEEPSEEK_API_KEY}
     gemini:
       api_key: ${GEMINI_API_KEY}
+    # OrcaRouter unified gateway (one key, 150+ models across vendors).
+    orcarouter:
+      api_key: ${ORCAROUTER_API_KEY}
     # Claude Pro/Max (subscription token via `claude setup-token`, auto-detected).
     claude_subscription:
       auth_type: subscription

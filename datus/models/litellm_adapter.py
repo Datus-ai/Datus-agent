@@ -136,6 +136,7 @@ class LiteLLMAdapter:
         "gemini": "gemini/",
         "kimi": "moonshot/",  # Moonshot AI - https://docs.litellm.ai/docs/providers/moonshot
         "openrouter": "openrouter/",  # OpenRouter unified gateway
+        "orcarouter": "openai/",  # OrcaRouter - OpenAI-compatible gateway
         "minimax": "openai/",  # MiniMax - OpenAI-compatible API
         "glm": "openai/",  # Zhipu GLM - OpenAI-compatible API
     }
@@ -149,6 +150,7 @@ class LiteLLMAdapter:
         "gemini": None,  # Use LiteLLM default (native Gemini API, not OpenAI-compatible)
         "kimi": "https://api.moonshot.ai/v1",  # Moonshot AI global endpoint
         "openrouter": None,  # Use LiteLLM default (https://openrouter.ai/api/v1)
+        "orcarouter": "https://api.orcarouter.ai/v1",  # OrcaRouter unified gateway
         "minimax": "https://api.minimaxi.com/v1",  # MiniMax OpenAI-compatible endpoint
         "glm": "https://open.bigmodel.cn/api/paas/v4",  # Zhipu GLM OpenAI-compatible endpoint
     }
@@ -177,6 +179,7 @@ class LiteLLMAdapter:
         "qwen": ["dashscope.aliyuncs.com"],
         "gemini": ["generativelanguage.googleapis.com"],
         "kimi": ["api.moonshot.ai", "api.moonshot.cn", "api.kimi.com"],
+        "orcarouter": ["api.orcarouter.ai"],
         "minimax": ["api.minimaxi.com"],
         "glm": ["open.bigmodel.cn"],
     }
@@ -245,8 +248,9 @@ class LiteLLMAdapter:
             The detected provider name
         """
         # Skip auto-detection for providers that must not be overridden
-        # (e.g., openrouter models contain provider/ prefix that would trigger false detection)
-        if provider.lower() == "openrouter":
+        # (e.g., openrouter models contain provider/ prefix that would trigger false detection;
+        #  orcarouter namespaced models would be auto-detected away from the gateway too)
+        if provider.lower() in ("openrouter", "orcarouter"):
             return provider
 
         model_lower = model.lower()
@@ -318,6 +322,14 @@ class LiteLLMAdapter:
         # even when model name contains / (e.g., anthropic/claude-sonnet-4)
         if self.provider == "openrouter":
             return self.model if self.model.startswith("openrouter/") else f"openrouter/{self.model}"
+
+        # OrcaRouter models always need the openai/ prefix so LiteLLM strips the
+        # provider segment and routes the full vendor/slug namespace (e.g.
+        # openai/deepseek/deepseek-chat) to the OrcaRouter base URL. Unconditional:
+        # a model that already starts with openai/ (e.g. openai/gpt-5.5) must still
+        # reach OrcaRouter with its full namespace, so it becomes openai/openai/gpt-5.5.
+        if self.provider == "orcarouter":
+            return f"openai/{self.model}"
 
         # If model already has a prefix, don't add another
         if "/" in self.model:
@@ -395,8 +407,8 @@ class LiteLLMAdapter:
         - **Anthropic Claude** uses :class:`CacheControlLitellmModel` so the
           prompt caching control markers survive the LiteLLM transform.
         - **Every other OpenAI-compatible provider** (DeepSeek, Kimi, Qwen,
-          Gemini, OpenRouter, GLM, MiniMax, vLLM, and self-hosted proxies)
-          uses :class:`LitellmModel` as before.
+          Gemini, OpenRouter, OrcaRouter, GLM, MiniMax, vLLM, and self-hosted
+          proxies) uses :class:`LitellmModel` as before.
 
         Kimi/Moonshot thinking models still go through the LiteLLM path and
         continue to rely on :mod:`datus.models.sdk_patches` for the

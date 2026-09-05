@@ -107,6 +107,23 @@ providers:
       - google/gemini-2.5-pro
       - deepseek/deepseek-chat
 
+  # OrcaRouter unified gateway — one API key, 150+ models routed by vendor/slug.
+  # Model ids keep the vendor/slug namespace; the LiteLLM adapter prepends the
+  # openai/ provider prefix and routes the full namespace to the base URL below.
+  orcarouter:
+    type: orcarouter
+    base_url: https://api.orcarouter.ai/v1
+    api_key_env: ORCAROUTER_API_KEY
+    default_model: deepseek/deepseek-chat
+    models:
+      - deepseek/deepseek-chat
+      - deepseek/deepseek-v4-flash
+      - openai/gpt-5.5
+      - openai/gpt-5.4-mini
+      - anthropic/claude-sonnet-4.6
+      - google/gemini-2.5-flash
+      - orcarouter/auto
+
   # Coding Plan providers (vendor Anthropic-compatible endpoints)
   alibaba_coding:
     type: claude
