@@ -27,6 +27,9 @@ from datus.utils.time_utils import to_utc_iso
 
 logger = get_logger(__name__)
 
+#: Cap on the preserved title. It is a sidebar label, not a document.
+MAX_TITLE_SIDECAR_CHARS = 500
+
 if TYPE_CHECKING:
     from datus.utils.path_manager import DatusPathManager
 
@@ -408,6 +411,17 @@ class SessionManager:
                 logger.debug(f"Deleted session archive dir: {archive_root}")
             except OSError as exc:
                 logger.warning("Failed to remove session archive dir %s: %s", archive_root, exc)
+
+        # The title sidecar holds the deleted conversation's first user message,
+        # so it must not outlive it: leaving it behind keeps user text on disk
+        # after a delete, and would retitle a later session that reuses the id.
+        title_path = self.title_sidecar_path(session_id)
+        if os.path.isfile(title_path):
+            try:
+                os.remove(title_path)
+                logger.debug(f"Deleted session title sidecar: {title_path}")
+            except OSError as exc:
+                logger.warning("Failed to remove session title sidecar %s: %s", title_path, exc)
 
         # The frozen system prompt belongs to the deleted conversation.
         self.delete_system_prompt_snapshot(session_id)
@@ -940,6 +954,15 @@ class SessionManager:
             if key in session_metadata and session_metadata[key]:
                 session_metadata[key] = to_utc_iso(session_metadata[key])
 
+        # A major compact clears the session and re-adds only an assistant
+        # recap, so the scan above finds no user rows and the title nulls — or,
+        # once the conversation continues, picks a mid-conversation message and
+        # silently retitles the chat. The sidecar written before the first
+        # compact holds the ORIGINAL first user message and wins.
+        preserved_title = self._read_title_sidecar(session_id)
+        if preserved_title:
+            session_metadata["first_user_message"] = preserved_title
+
         return {
             "exists": True,
             "session_id": session_id,
@@ -947,6 +970,36 @@ class SessionManager:
             **file_info,
             **session_metadata,
         }
+
+    def title_sidecar_path(self, session_id: str) -> str:
+        """Path of the ``<session_id>.title`` sidecar for this session."""
+        return os.path.join(self.session_dir, f"{session_id}.title")
+
+    def save_title_sidecar(self, session_id: str, title: str) -> None:
+        """Preserve a session's title before compaction clears its user rows.
+
+        Only ever called with a title that could still be read, so a later
+        compact — which sees no user rows — cannot overwrite a good title with
+        nothing.
+        """
+        if not session_id or not title or not title.strip():
+            return
+        try:
+            with open(self.title_sidecar_path(session_id), "w", encoding="utf-8") as handle:
+                handle.write(title.strip()[:MAX_TITLE_SIDECAR_CHARS])
+        except OSError as e:
+            logger.warning(f"Could not save title sidecar for {session_id}: {e}")
+
+    def _read_title_sidecar(self, session_id: str) -> Optional[str]:
+        """Read ``<session_id>.title``, written before a compact cleared history."""
+        try:
+            path = self.title_sidecar_path(session_id)
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8") as handle:
+                    return handle.read().strip() or None
+        except OSError as e:
+            logger.debug(f"Could not read title sidecar for {session_id}: {e}")
+        return None
 
     def get_detailed_usage(self, session_id: str) -> Dict[str, Any]:
         """Query turn_usage table and return aggregated + per-turn token usage.
