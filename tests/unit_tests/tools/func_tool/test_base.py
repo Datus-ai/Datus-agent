@@ -7,7 +7,7 @@ import asyncio
 import json
 import threading
 from types import SimpleNamespace
-from typing import Optional
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -556,3 +556,131 @@ class TestFuncToolListResult:
         assert dumped["items"] == []
         assert dumped["total"] == 0
         assert dumped["has_more"] is False
+
+
+class TestStringifiedArgumentCoercion:
+    """Some models serialize a list argument as a JSON string, and an int as a
+    string. The JSON itself is well formed, so nothing upstream repairs it — the
+    value simply arrives with the wrong type."""
+
+    @staticmethod
+    def _probe():
+        seen = {}
+
+        class Tool:
+            def probe(
+                self,
+                query_text: str,
+                kinds: Optional[List[str]] = None,
+                top_n: int = 5,
+                label: str = "",
+                flag: bool = False,
+            ):
+                """Probe tool."""
+                seen.update(kinds=kinds, top_n=top_n, label=label, flag=flag)
+                return FuncToolResult(success=1, result="ok")
+
+        return trans_to_function_tool(Tool().probe), seen
+
+    def _call(self, **arguments):
+        tool, seen = self._probe()
+        arguments.setdefault("query_text", "q")
+        asyncio.run(tool.on_invoke_tool(None, json.dumps(arguments)))
+        return seen
+
+    def test_stringified_list_becomes_a_list(self):
+        assert self._call(kinds='["dataset"]')["kinds"] == ["dataset"]
+
+    def test_double_encoded_list_becomes_a_list(self):
+        assert self._call(kinds='"[\\"field\\"]"')["kinds"] == ["field"]
+
+    def test_stringified_int_becomes_an_int(self):
+        assert self._call(top_n="7")["top_n"] == 7
+
+    def test_a_real_list_is_untouched(self):
+        assert self._call(kinds=["dataset", "field"])["kinds"] == ["dataset", "field"]
+
+    def test_a_string_parameter_is_never_coerced(self):
+        """A str parameter whose value looks like a list must stay a string."""
+        assert self._call(label="[1, 2]")["label"] == "[1, 2]"
+
+    def test_unparseable_values_reach_the_tool_unchanged(self):
+        """The tool's own validation must still see what the model actually sent."""
+        seen = self._call(kinds="not json", top_n="many")
+        assert seen["kinds"] == "not json"
+        assert seen["top_n"] == "many"
+
+    def test_non_string_values_are_passed_through_untouched(self):
+        """Coercion only ever inspects strings.
+
+        A bool handed to an int-annotated parameter is the case worth pinning:
+        ``int(True)`` would silently become ``1``, so the guard is that a
+        non-string is returned before any conversion is considered.
+        """
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, top_n: int = 5, kinds: Optional[List[str]] = None):
+                """Probe tool."""
+                seen.update(top_n=top_n, kinds=kinds)
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "top_n": True, "kinds": ["a"]})))
+        assert seen["top_n"] is True
+        assert seen["kinds"] == ["a"]
+
+    def test_pep604_optional_int_is_coerced(self):
+        """``int | None`` reports types.UnionType, not typing.Union."""
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, top_n: int | None = None):
+                """Probe tool."""
+                seen["top_n"] = top_n
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "top_n": "7"})))
+        assert seen["top_n"] == 7
+
+    def test_pep604_optional_list_is_coerced(self):
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, kinds: list[str] | None = None):
+                """Probe tool."""
+                seen["kinds"] = kinds
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "kinds": '["dataset"]'})))
+        assert seen["kinds"] == ["dataset"]
+
+    def test_bare_list_annotation_without_none_is_coerced(self):
+        """``list`` on its own reports no origin either."""
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, kinds: list = None):
+                """Probe tool."""
+                seen["kinds"] = kinds
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "kinds": '["dataset"]'})))
+        assert seen["kinds"] == ["dataset"]
+
+    def test_bare_list_annotation_is_coerced(self):
+        """``list`` and ``list | None`` report no origin of their own."""
+        seen = {}
+
+        class Tool:
+            def probe(self, query_text: str, kinds: list | None = None):
+                """Probe tool."""
+                seen["kinds"] = kinds
+                return FuncToolResult(success=1, result="ok")
+
+        tool = trans_to_function_tool(Tool().probe)
+        asyncio.run(tool.on_invoke_tool(None, json.dumps({"query_text": "q", "kinds": '["dataset"]'})))
+        assert seen["kinds"] == ["dataset"]
