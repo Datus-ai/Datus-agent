@@ -53,6 +53,25 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _coerce_token_count(value: Any) -> int:
+    """A provider-reported token count as a non-negative int, or 0.
+
+    Usage dicts come from the provider, so a count may be missing, a string, or
+    negative. Callers run on paths where raising is not acceptable."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token count for text, matching the fallback used elsewhere in the
+    codebase (see ``compress_utils.count_tokens``): roughly 4 characters per
+    token. Used where an exact count is unavailable and a floor is better than
+    zero."""
+    return len(text) // 4 if text else 0
+
+
 class AgenticNode(Node):
     """
     Base agentic node that provides session-based, streaming interactions
@@ -1921,6 +1940,65 @@ class AgenticNode(Node):
             return None
         return path
 
+    def _reset_context_occupancy(self, summary_token: int, continuation: str = "") -> None:
+        """Point the occupancy meter at the post-compact history size.
+
+        ``_decide_compact_mode`` reads the ratio from
+        ``_history_token_ratio_sync``, which prefers the ``running_turn_usage``
+        snapshot. Compaction rewrites the history but leaves that snapshot at
+        its pre-compact value, so the next pre-turn check sees the same
+        near-limit figure and compacts again — every turn, until the session is
+        gutted.
+
+        The recap is the whole of the new history, so its token count is the new
+        occupancy. Underestimating is safe: the next LLM call refreshes the
+        snapshot with the true figure, and a genuine crossing still triggers.
+
+        Best-effort throughout — the compact has already succeeded by the time
+        this runs, so nothing here may turn it into a reported failure.
+        """
+        # A zero — any provider that does not report usage — would fall through
+        # the ``tok > 0`` guard in ``_history_token_ratio_sync`` and send it back
+        # to the stale pre-compact fallback, which is the loop this exists to
+        # close. Measure the text actually persisted instead, so those providers
+        # get a real floor rather than a sentinel.
+        post_compact_tokens = _coerce_token_count(summary_token) or _estimate_tokens(continuation) or 1
+        try:
+            context_length = (
+                int(getattr(self, "context_length", 0) or 0)
+                or int(getattr(self, "_restored_context_length", 0) or 0)
+                or 0
+            )
+        except Exception:  # noqa: BLE001 - a model without a known window
+            context_length = 0
+
+        usage = getattr(self, "running_turn_usage", None)
+        if usage is not None:
+            try:
+                # Only ``session_total_tokens`` is touched. The ratio reads
+                # ``session_total_tokens or input_tokens``, so this is the field
+                # that matters — and ``input_tokens`` is the turn-cumulative
+                # counter reported verbatim in the API's end event, where a
+                # post-compact value would contradict the turn's own totals.
+                usage.session_total_tokens = post_compact_tokens
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not reset running_turn_usage after compact: %s", exc)
+
+        # Set the in-memory mirrors FIRST. ``persist_context_state`` updates them
+        # only after a successful save, and it returns early when there is no
+        # resolvable state path — so relying on it would leave
+        # ``_restored_context_used`` at the pre-compact value. Once
+        # ``running_turn_usage`` is cleared at turn end,
+        # ``_history_token_ratio_sync`` falls back to exactly that value, and the
+        # re-compact loop this fix exists to close would reopen through it.
+        self._restored_context_used = post_compact_tokens
+        if context_length:
+            self._restored_context_length = context_length
+            try:
+                self.persist_context_state(post_compact_tokens, context_length)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not persist post-compact context state: %s", exc)
+
     async def _major_compact(self, *, reason: str) -> Dict[str, Any]:
         """LLM-driven full-history compact pass.
 
@@ -1966,7 +2044,12 @@ class AgenticNode(Node):
             )
             summary = result.get("content", "") if isinstance(result, dict) else getattr(result, "content", "") or ""
             usage = result.get("usage", {}) if isinstance(result, dict) else {}
-            summary_token = usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+            # Straight from the provider, so it may be absent, non-numeric or
+            # negative. Normalize once here: everything downstream — the %d in
+            # the completion log, the occupancy reset, the returned dict —
+            # assumes an int, and all of it runs after the compact has already
+            # persisted, where raising would turn a good compact into a failure.
+            summary_token = _coerce_token_count(usage.get("output_tokens", 0) if isinstance(usage, dict) else 0)
         except Exception as exc:
             logger.error("Failed to generate major-compact summary: %s", exc)
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
@@ -2000,6 +2083,7 @@ class AgenticNode(Node):
         # a single assistant continuation message, so the next minor pass
         # starts scanning from the top of the rewritten session.
         self._compacted_until = 0
+        self._reset_context_occupancy(summary_token, continuation)
 
         logger.info(
             "Major compact complete: %d chars summary, %d output tokens, history=%s",
