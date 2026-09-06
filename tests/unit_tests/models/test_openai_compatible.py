@@ -1747,6 +1747,30 @@ class TestBuildAgent:
         ms = call_args[1]["model_settings"]
         assert ms.extra_headers == {"X-Custom": "value"}
 
+    @pytest.mark.parametrize(
+        "model_name,provider,base_url,expected_retention,expected_cache_key",
+        [
+            ("gpt-6-astra", "openai", None, "24h", True),
+            ("gpt-6-astra", "openai", "https://api.openai.com/v1", "24h", True),
+            ("gpt-6-astra-2026-09-01", "openai", None, "24h", True),
+            ("gpt-5.5", "openai", None, "24h", True),
+            ("gpt-4o", "openai", None, None, True),
+            ("gpt-7-test", "openai", None, None, True),
+            ("gpt-7-test", "openai", "https://api.openai.com/v1", None, True),
+            ("future-model", "openai", None, None, True),
+            ("gpt-6-astra", "openai", "https://proxy.example.com/v1", None, False),
+            ("openai/gpt-6-astra", "openrouter", None, None, False),
+        ],
+    )
+    def test_prompt_cache_settings(self, model_name, provider, base_url, expected_retention, expected_cache_key):
+        cfg = _make_model_config(model=model_name, model_type=provider, base_url=base_url)
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = provider
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.prompt_cache_retention == expected_retention
+        assert bool((ms.extra_args or {}).get("prompt_cache_key")) == expected_cache_key
+
     def test_max_tokens_from_model_specs_applied_to_model_settings(self):
         """Streaming/tool path: model_specs.max_tokens flows into ModelSettings."""
         model = _make_model()
