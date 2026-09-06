@@ -199,6 +199,10 @@ class MajorCompactConfig:
     # Fraction of the model's context window above which a major compact is
     # forced (overrides minor compact selection in the auto dispatcher).
     token_threshold: float = 0.9
+    # Allow the LLM summary to run in the middle of a turn (before the next
+    # model call, once ``token_threshold`` is crossed). Turn-start and manual
+    # ``/compact`` are unaffected by this switch.
+    mid_turn_enabled: bool = True
 
 
 @dataclass
@@ -226,6 +230,14 @@ class MinorCompactConfig:
     # outputs automatically get a 2× preview so the LLM can read the failure
     # context without round-tripping to read_file.
     archive_preview_chars: int = 1000
+    # Mid-turn archive stage: before the LLM summary is considered, archive
+    # the tool outputs of the turn in progress (older than the most recent
+    # ``keep_recent_tool_results``) once the estimated occupancy reaches
+    # ``mid_turn_token_threshold``. Every rewrite cools the provider prompt
+    # cache for one call, hence a threshold well above zero.
+    mid_turn_enabled: bool = True
+    mid_turn_token_threshold: float = 0.75
+    keep_recent_tool_results: int = 5
 
 
 @dataclass
@@ -250,10 +262,11 @@ class CompactConfig:
             minor_raw = {}
         major_kwargs = {f.name: major_raw[f.name] for f in fields(MajorCompactConfig) if f.name in major_raw}
         minor_kwargs = {f.name: minor_raw[f.name] for f in fields(MinorCompactConfig) if f.name in minor_raw}
-        if "enabled" in major_kwargs:
-            major_kwargs["enabled"] = _coerce_bool(major_kwargs["enabled"], True)
-        if "enabled" in minor_kwargs:
-            minor_kwargs["enabled"] = _coerce_bool(minor_kwargs["enabled"], True)
+        for bool_key in ("enabled", "mid_turn_enabled"):
+            if bool_key in major_kwargs:
+                major_kwargs[bool_key] = _coerce_bool(major_kwargs[bool_key], True)
+            if bool_key in minor_kwargs:
+                minor_kwargs[bool_key] = _coerce_bool(minor_kwargs[bool_key], True)
         _coerce_numeric_fields(major_kwargs, fields(MajorCompactConfig))
         _coerce_numeric_fields(minor_kwargs, fields(MinorCompactConfig))
         return cls(major=MajorCompactConfig(**major_kwargs), minor=MinorCompactConfig(**minor_kwargs))

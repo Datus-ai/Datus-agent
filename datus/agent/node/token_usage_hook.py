@@ -128,7 +128,7 @@ class TokenUsageHook(RunHooks):
         context_length = self._resolve_context_length()
         last_call_input_tokens = int(cumulative.get("last_call_input_tokens", 0) or 0)
 
-        self._update_node_snapshot(cumulative, context_length, last_call_input_tokens)
+        self._update_node_snapshot(cumulative, context_length, last_call_input_tokens, delta)
         self._persist_snapshot(cumulative, context_length)
         self._enqueue_action(cumulative, delta, context_length, last_call_input_tokens)
         self._notify_status_dirty()
@@ -145,13 +145,24 @@ class TokenUsageHook(RunHooks):
         cumulative: Dict[str, Any],
         context_length: int,
         last_call_input_tokens: int,
+        delta: Optional[Dict[str, int]] = None,
     ) -> None:
         try:
             from datus.schemas.token_usage import TokenUsage
 
+            # ``session_total_tokens`` is the context-window occupancy of the
+            # most recent call. When the provider reports no per-request entry,
+            # fall back to this call's input delta — never to the run-cumulative
+            # ``input_tokens``, which grows with every call and would make the
+            # compaction trigger fire far too early.
+            occupancy = last_call_input_tokens
+            if not occupancy and delta is not None:
+                occupancy = int(delta.get("input_tokens", 0) or 0)
+            if not occupancy:
+                occupancy = int(cumulative.get("input_tokens", 0) or 0)
             self._node.running_turn_usage = TokenUsage.from_usage_dict(
                 cumulative,
-                session_total_tokens=last_call_input_tokens or int(cumulative.get("input_tokens", 0) or 0),
+                session_total_tokens=occupancy,
                 context_length=context_length,
             )
         except Exception:  # noqa: BLE001

@@ -3505,3 +3505,257 @@ class TestNativeMidRunInsert:
 
         # Turn 2 = initial user prompt + assistant tool_use + tool_result.
         assert len(seen[1]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Mid-turn compaction on the native loop
+# ---------------------------------------------------------------------------
+
+
+class TestNativeMidTurnCompaction:
+    """The native Anthropic loop consults the per-run context rewriter before
+    every model call — the equivalent of the SDK's ``call_model_input_filter``
+    boundary — and continues from the rewritten ``messages`` in place."""
+
+    @staticmethod
+    def _view():
+        return [
+            {"role": "user", "content": [{"type": "text", "text": "start"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "SUMMARY of the work so far"}]},
+            {"role": "user", "content": [{"type": "text", "text": "[DATUS_COMPACT_RESUME] continue"}]},
+        ]
+
+    async def _run(self, model, rewriter, session):
+        from unittest.mock import AsyncMock
+
+        from datus.schemas.action_history import ActionHistoryManager
+
+        seen_messages = []
+        responses = [
+            _make_response([_make_tool_use_block(name="probe_tool", block_id="tu_1", input_data={})]),
+            _make_response([_make_text_block("done")]),
+        ]
+
+        def _create(**request_kwargs):
+            seen_messages.append(copy.deepcopy(request_kwargs.get("messages")))
+            return responses[len(seen_messages) - 1]
+
+        func_tool = MagicMock()
+        func_tool.name = "probe_tool"
+        func_tool.description = "Probe tool"
+        func_tool.params_json_schema = {"type": "object"}
+
+        async def _invoke(ctx, input_json):
+            return "tool finished " + "x" * 200
+
+        func_tool.on_invoke_tool = _invoke
+
+        with (
+            patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)),
+            patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp,
+        ):
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="start",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                session=session,
+                context_rewriter=rewriter,
+            ):
+                pass
+        return seen_messages
+
+    @pytest.mark.asyncio
+    async def test_second_request_sends_the_rewritten_messages(self):
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        view = self._view()
+        rewriter_calls = []
+
+        async def _rewrite(messages):
+            rewriter_calls.append(copy.deepcopy(messages))
+            # A fresh list, like the real compactor: the loop appends to it.
+            return list(view) if len(rewriter_calls) == 2 else None
+
+        rewriter = MagicMock()
+        rewriter.rewrite_native_messages = _rewrite
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        seen = await self._run(model, rewriter, session)
+
+        assert len(seen) == 2
+        # Consulted before every model call, with the pre-rewrite transcript on
+        # the second call: prompt, assistant tool_use, tool_result.
+        assert len(rewriter_calls) == 2
+        assert rewriter_calls[0] == [{"role": "user", "content": [{"type": "text", "text": "start"}]}]
+        assert any("tool_result" in json.dumps(m, default=str) for m in rewriter_calls[1])
+        # The second request is exactly the rewritten view (plus the cache marker).
+        assert seen[1] == wrap_prompt_cache(view)
+        assert "tool_result" not in json.dumps(seen[1], default=str)
+        assert "tool_use" not in json.dumps(seen[1], default=str)
+
+    @pytest.mark.asyncio
+    async def test_only_the_post_rewrite_delta_is_persisted(self):
+        """The compactor already persisted the view; the loop must not re-add
+        it, and must not replay the compacted prefix either."""
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        view = self._view()
+        calls = {"n": 0}
+
+        async def _rewrite(messages):
+            calls["n"] += 1
+            return list(view) if calls["n"] == 2 else None
+
+        rewriter = MagicMock()
+        rewriter.rewrite_native_messages = _rewrite
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        await self._run(model, rewriter, session)
+
+        batches = [call.args[0] for call in session.add_items.await_args_list]
+        # Checkpoint after tool round 1 (before the rewrite): prompt + tool round.
+        assert batches[0][0] == {"role": "user", "content": [{"type": "text", "text": "start"}]}
+        assert any("tool_result" in json.dumps(m, default=str) for m in batches[0])
+        # After the rewrite only the final assistant message is appended.
+        assert len(batches[-1]) == 1
+        assert batches[-1][0]["role"] == "assistant"
+        assert "done" in json.dumps(batches[-1][0], default=str)
+        assert not any("SUMMARY" in json.dumps(b, default=str) for b in batches)
+
+    @pytest.mark.asyncio
+    async def test_no_rewriter_leaves_the_loop_unchanged(self):
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        session = MagicMock()
+        session.get_items = AsyncMock(return_value=[])
+        session.add_items = AsyncMock()
+
+        seen = await self._run(model, None, session)
+
+        assert len(seen) == 2
+        assert any("tool_result" in json.dumps(m, default=str) for m in seen[1])
+
+
+class TestClaudeSummarizeItems:
+    """``ClaudeModel.summarize_items`` on Anthropic-format transcripts."""
+
+    @staticmethod
+    def _transcript():
+        return [
+            {"role": "user", "content": [{"type": "text", "text": "analyse refunds"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "running"},
+                    {"type": "tool_use", "id": "t1", "name": "execute_sql", "input": {"sql": "select 1"}},
+                ],
+            },
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "1 row"}]},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_native_summary_sends_tool_stubs_and_returns_text(self):
+        model = _make_claude_model()
+        captured = {}
+
+        def _create(**kw):
+            captured.update(kw)
+            return _make_response([_make_text_block("## Summary\nprogress")], input_tokens=50, output_tokens=7)
+
+        with patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)):
+            result = await model.summarize_items(
+                self._transcript(), instruction="sys", prompt="SUMMARIZE", item_format="anthropic"
+            )
+
+        assert result["content"] == "## Summary\nprogress"
+        assert result["usage"]["output_tokens"] == 7
+        assert result["usage"]["input_tokens"] == 50
+        messages = captured["messages"]
+        # The prompt is folded into the trailing user (tool_result) message so
+        # user/assistant alternation is preserved.
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"][0]["type"] == "tool_result"
+        assert messages[-1]["content"][-1]["text"] == "SUMMARIZE"
+        assert len(messages) == 3
+        # tool_use/tool_result blocks in the history require tool definitions;
+        # stubs are sent, and tool_choice forbids calling them.
+        assert [t["name"] for t in captured["tools"]] == ["execute_sql"]
+        assert captured["tool_choice"] == {"type": "none"}
+        assert captured["max_tokens"] == 4000
+        assert "system" in captured
+
+    @pytest.mark.asyncio
+    async def test_text_only_transcript_sends_no_tools_and_appends_the_prompt(self):
+        model = _make_claude_model()
+        captured = {}
+
+        def _create(**kw):
+            captured.update(kw)
+            return _make_response([_make_text_block("S")])
+
+        transcript = [
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+        ]
+        with patch.object(type(model), "_anthropic_messages_create", lambda self, **kw: _create(**kw)):
+            result = await model.summarize_items(
+                transcript, instruction="sys", prompt="SUMMARIZE", item_format="anthropic"
+            )
+
+        assert result["content"] == "S"
+        assert "tools" not in captured and "tool_choice" not in captured
+        assert captured["messages"][-1]["role"] == "user"
+        assert captured["messages"][-1]["content"][0]["text"] == "SUMMARIZE"
+        assert len(captured["messages"]) == 3
+        # The caller's list is not mutated.
+        assert len(transcript) == 2
+
+    @pytest.mark.asyncio
+    async def test_non_text_response_yields_empty_summary(self):
+        model = _make_claude_model()
+        with patch.object(
+            type(model),
+            "_anthropic_messages_create",
+            lambda self, **kw: _make_response([_make_tool_use_block(name="execute_sql", block_id="t9")]),
+        ):
+            result = await model.summarize_items(
+                self._transcript(), instruction="", prompt="P", item_format="anthropic"
+            )
+        assert result["content"] == ""
+
+    @pytest.mark.asyncio
+    async def test_responses_transcript_uses_the_litellm_path(self):
+        from unittest.mock import AsyncMock
+
+        model = _make_claude_model()
+        items = [{"role": "user", "content": "hi"}]
+        with patch(
+            "datus.models.openai_compatible.OpenAICompatibleModel.summarize_items",
+            new=AsyncMock(return_value={"content": "via litellm", "usage": {}}),
+        ) as base:
+            result = await model.summarize_items(items, instruction="sys", prompt="P", item_format="responses")
+        assert result["content"] == "via litellm"
+        assert base.await_args.args[0] == items
+        assert base.await_args.kwargs["item_format"] == "responses"
+
+    @pytest.mark.asyncio
+    async def test_oauth_only_model_cannot_summarize_responses_transcripts(self):
+        from datus.utils.exceptions import DatusException
+
+        model = _make_claude_model()
+        model.use_native_api = True
+        model._is_oauth_token = True
+        with pytest.raises(DatusException):
+            await model.summarize_items([{"role": "user", "content": "hi"}], instruction="", prompt="P")

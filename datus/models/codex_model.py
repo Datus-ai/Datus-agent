@@ -564,6 +564,7 @@ class CodexModel(LLMBaseModel):
         interrupt_controller=None,
         pending_input_queue=None,
         interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support via the Codex Responses API.
@@ -609,6 +610,7 @@ class CodexModel(LLMBaseModel):
                 interrupt_controller=interrupt_controller,
                 interaction_broker=interaction_broker,
                 agent_name=agent_kwargs["name"],
+                context_rewriter=context_rewriter,
             )
             with _agents_trace_baggage(agent_kwargs["name"]):
                 result = Runner.run_streamed(

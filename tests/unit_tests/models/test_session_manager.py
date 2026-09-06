@@ -2461,3 +2461,34 @@ class TestSystemPromptSnapshot:
         sm_custom.save_system_prompt_snapshot("chat_session_tmp", "P", dict(self.META))
         leftovers = [f for f in os.listdir(sm_custom.session_dir) if f.endswith(".tmp")]
         assert leftovers == []
+
+
+def test_get_session_messages_hides_the_mid_turn_resume_instruction(sm):
+    """A mid-turn compaction closes the rewritten history with a synthetic
+    ``[DATUS_COMPACT_RESUME]`` user message so the model keeps working. It is
+    not something the user typed and must not render as a user bubble."""
+    import asyncio
+
+    from datus.agent.node.compact_prompts import build_mid_turn_resume_message
+
+    session_id = f"test_resume_marker_{uuid.uuid4().hex[:8]}"
+    session = sm.get_session(session_id)
+    asyncio.run(
+        session.add_items(
+            [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "analyse refunds"}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "## Summary"}]},
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": build_mid_turn_resume_message()}],
+                },
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "final answer"}]},
+            ]
+        )
+    )
+
+    messages = sm.get_session_messages(session_id)
+    user_texts = [m["content"] for m in messages if m["role"] == "user"]
+    assert user_texts == ["analyse refunds"]
+    assert not any("DATUS_COMPACT_RESUME" in json.dumps(m, default=str) for m in messages)

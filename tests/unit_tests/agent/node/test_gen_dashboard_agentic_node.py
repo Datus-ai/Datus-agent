@@ -445,7 +445,7 @@ class TestGenDashboardPermissionWiring:
         A ``None`` hook means the permission_manager never intercepts tool
         calls — rules defined in the profile are effectively ignored.
 
-        Workflow mode now also wires ``CompactHook`` (multi-turn history is
+        Workflow mode now also wires the token-usage hook (multi-turn history is
         enabled for all modes), so ``_compose_hooks`` may return a
         ``CompositeHooks`` bundle. Validate the permission gate on the node.
         """

@@ -237,3 +237,173 @@ class TestMaybeTruncateItem:
         assert "<unavailable" in out["output"]
         # New dict so the rest of the compact pass continues.
         assert out is not item
+
+
+class TestArchiveOldToolOutputs:
+    """Mid-turn archive stage: everything but the newest K tool outputs."""
+
+    @staticmethod
+    def _responses_items(n_outputs: int, size: int = 1200):  # above the 1000-char default threshold
+        items = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "ask"}]}]
+        for i in range(n_outputs):
+            items.append({"type": "function_call", "call_id": f"c{i}", "name": "execute_sql", "arguments": "{}"})
+            items.append({"type": "function_call_output", "call_id": f"c{i}", "output": f"{i}:" + "x" * size})
+        return items
+
+    def test_keeps_the_newest_k_outputs_and_archives_the_rest(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._responses_items(7)
+        rewritten, archived = archive_old_tool_outputs(
+            items, item_format="responses", archive=archive, threshold=100, keep_recent=5
+        )
+        assert archived == 2
+        outputs = [it for it in rewritten if it.get("type") == "function_call_output"]
+        assert is_archived_output(outputs[0]["output"]) and is_archived_output(outputs[1]["output"])
+        for kept in outputs[2:]:
+            assert not is_archived_output(kept["output"])
+        # Untouched items are the very same objects; calls are never rewritten.
+        assert rewritten[0] is items[0]
+        assert all(rewritten[i] is items[i] for i in range(len(items)) if items[i].get("type") == "function_call")
+
+    def test_archived_content_is_recoverable_from_disk(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._responses_items(2)
+        rewritten, archived = archive_old_tool_outputs(
+            items, item_format="responses", archive=archive, threshold=100, keep_recent=1
+        )
+        assert archived == 1
+        marker = parse_archived_marker(rewritten[2]["output"])
+        assert Path(marker["path"]).read_text() == items[2]["output"]
+
+    def test_short_outputs_below_threshold_are_left_alone(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._responses_items(4, size=10)
+        rewritten, archived = archive_old_tool_outputs(
+            items, item_format="responses", archive=archive, threshold=100, keep_recent=1
+        )
+        assert archived == 0
+        assert rewritten == items
+
+    def test_second_pass_is_idempotent(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._responses_items(6)
+        once, first = archive_old_tool_outputs(
+            items, item_format="responses", archive=archive, threshold=100, keep_recent=3
+        )
+        twice, second = archive_old_tool_outputs(
+            once, item_format="responses", archive=archive, threshold=100, keep_recent=3
+        )
+        assert first == 3 and second == 0
+        assert twice == once
+
+    def test_keep_recent_zero_archives_everything_eligible(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._responses_items(3)
+        _, archived = archive_old_tool_outputs(
+            items, item_format="responses", archive=archive, threshold=100, keep_recent=0
+        )
+        assert archived == 3
+
+    @staticmethod
+    def _anthropic_items(n_results: int, size: int = 1200, as_blocks: bool = False):
+        items = [{"role": "user", "content": [{"type": "text", "text": "ask"}]}]
+        for i in range(n_results):
+            items.append(
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": f"t{i}", "name": "execute_sql", "input": {}}],
+                }
+            )
+            body = f"{i}:" + "y" * size
+            content = [{"type": "text", "text": body}] if as_blocks else body
+            items.append(
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": content}]}
+            )
+        return items
+
+    def test_anthropic_string_tool_results_are_archived_in_place(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._anthropic_items(4)
+        rewritten, archived = archive_old_tool_outputs(
+            items, item_format="anthropic", archive=archive, threshold=100, keep_recent=2
+        )
+        assert archived == 2
+        results = [m for m in rewritten if m["role"] == "user" and m["content"][0].get("type") == "tool_result"]
+        assert is_archived_output(results[0]["content"][0]["content"])
+        assert is_archived_output(results[1]["content"][0]["content"])
+        assert not is_archived_output(results[2]["content"][0]["content"])
+        # The tool_use pairing is untouched: same ids, same assistant messages.
+        assert results[0]["content"][0]["tool_use_id"] == "t0"
+        assert all(rewritten[i] is items[i] for i in range(len(items)) if items[i]["role"] == "assistant")
+
+    def test_anthropic_text_block_tool_results_are_archived(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._anthropic_items(2, as_blocks=True)
+        rewritten, archived = archive_old_tool_outputs(
+            items, item_format="anthropic", archive=archive, threshold=100, keep_recent=1
+        )
+        assert archived == 1
+        marker = rewritten[2]["content"][0]["content"]
+        assert is_archived_output(marker)
+        assert Path(parse_archived_marker(marker)["path"]).read_text() == items[2]["content"][0]["content"][0]["text"]
+
+    def test_anthropic_pass_is_idempotent(self, archive):
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._anthropic_items(3)
+        once, first = archive_old_tool_outputs(
+            items, item_format="anthropic", archive=archive, threshold=100, keep_recent=1
+        )
+        twice, second = archive_old_tool_outputs(
+            once, item_format="anthropic", archive=archive, threshold=100, keep_recent=1
+        )
+        assert first == 2 and second == 0
+        assert twice == once
+
+    def test_outputs_not_longer_than_the_preview_are_left_alone(self, archive):
+        """Archiving only pays off when the marker is shorter than the text.
+
+        With ``preview_chars=100`` a 120-char output would become a ~220-char
+        marker, so it must neither be rewritten nor counted (both formats).
+        """
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        items = self._responses_items(3, size=120)
+        rewritten, archived = archive_old_tool_outputs(
+            items, item_format="responses", archive=archive, threshold=100, keep_recent=0
+        )
+        assert archived == 0
+        assert all(new is old for new, old in zip(rewritten, items))
+        assert not any("[DATUS_ARCHIVED]" in it.get("output", "") for it in rewritten if isinstance(it, dict))
+
+        anthropic_items = [
+            {"role": "user", "content": [{"type": "text", "text": "ask"}]},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t0", "name": "f", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t0", "content": "r" * 120}]},
+        ]
+        rewritten, archived = archive_old_tool_outputs(
+            anthropic_items, item_format="anthropic", archive=archive, threshold=100, keep_recent=0
+        )
+        assert archived == 0
+        assert rewritten[2] is anthropic_items[2]
+
+    def test_a_marker_longer_than_the_text_is_discarded(self, archive, tmp_path):
+        """A very long archive path can make even a >preview output grow; keep the original then."""
+        from datus.agent.node.compact_archive import archive_old_tool_outputs
+
+        long_dir = tmp_path / ("d" * 200) / ("e" * 200)
+        long_dir.mkdir(parents=True)
+        big_path_archive = ToolArchive(project_name="proj", session_id="sid1", base_dir=long_dir, preview_chars=100)
+        items = self._responses_items(1, size=150)
+        rewritten, archived = archive_old_tool_outputs(
+            items, item_format="responses", archive=big_path_archive, threshold=100, keep_recent=0
+        )
+        assert archived == 0
+        assert rewritten[-1] is items[-1]
