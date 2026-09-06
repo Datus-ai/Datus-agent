@@ -82,9 +82,10 @@ def should_replay_reasoning_content(context: Any) -> bool:
     time.
 
     Replay only when the request targets a thinking-mode DeepSeek or Kimi model
-    and the item records an origin model of the same provider family. Items
-    without provenance are never replayed, so reasoning produced by another
-    provider before a model switch cannot leak into the request.
+    and the item records a thinking-mode origin model of the same provider
+    family. Items without provenance, or produced by a non-thinking model, are
+    never replayed, so reasoning from another provider or a stale session
+    cannot leak into the request.
     """
     model = getattr(context, "model", None)
     if not is_reasoning_echo_provider(model):
@@ -92,7 +93,7 @@ def should_replay_reasoning_content(context: Any) -> bool:
 
     reasoning = getattr(context, "reasoning", None)
     origin_model = getattr(reasoning, "origin_model", None)
-    if not origin_model:
+    if not is_reasoning_echo_provider(origin_model):
         return False
     return reasoning_provider_family(origin_model) == reasoning_provider_family(model)
 

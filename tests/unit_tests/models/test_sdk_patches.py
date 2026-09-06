@@ -260,6 +260,48 @@ class TestApplyAndRemoveSdkPatches:
         assert complete.choices[0].message.content == "why"
         assert stream.choices[0].message.content == ""
 
+    @pytest.mark.asyncio
+    async def test_wrappers_handle_positional_model_and_messages(self, monkeypatch):
+        """LiteLLM accepts model/messages positionally; placeholders and recovery must still apply."""
+        import litellm
+
+        captured = {}
+
+        def fake_completion(model, messages, **kwargs):
+            captured["sync"] = (model, messages)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
+            )
+
+        async def fake_acompletion(model, messages, **kwargs):
+            captured["async"] = (model, messages, kwargs.get("stream"))
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
+            )
+
+        history = [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}], "reasoning_content": "t1"},
+            {"role": "tool", "tool_call_id": "c1", "content": "{}"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c2"}]},
+        ]
+        monkeypatch.setattr(litellm, "completion", fake_completion)
+        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+        apply_sdk_patches()
+        try:
+            sync_reply = litellm.completion("moonshot/kimi-k3", [dict(m) for m in history])
+            async_reply = await litellm.acompletion("moonshot/kimi-k3", [dict(m) for m in history])
+            streamed = await litellm.acompletion("moonshot/kimi-k3", [dict(m) for m in history], stream=True)
+        finally:
+            remove_sdk_patches()
+
+        assert captured["sync"][0] == "moonshot/kimi-k3"
+        assert captured["sync"][1][3]["reasoning_content"] == ""
+        assert captured["async"][1][3]["reasoning_content"] == ""
+        assert sync_reply.choices[0].message.content == "why"
+        assert async_reply.choices[0].message.content == "why"
+        assert streamed.choices[0].message.content == ""
+
     def test_apply_patches_idempotent(self):
         """Calling apply_sdk_patches twice must not re-capture the already-patched
         litellm functions as 'originals'. Otherwise remove_sdk_patches() would
