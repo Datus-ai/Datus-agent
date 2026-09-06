@@ -44,7 +44,7 @@ agent:
       type: kimi
       base_url: https://api.moonshot.cn/v1
       api_key: ${KIMI_API_KEY}
-      model: kimi-k2.5
+      model: kimi-k3
       temperature: 1
       top_p: 0.95
       enable_thinking: true

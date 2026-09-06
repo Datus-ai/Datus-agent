@@ -16,6 +16,8 @@
 /tests/data/datus_db_bird_sqlite
 /tests/data/datus_db_ssb_sqlite
 /tests/data/datus_db_duckdb
+# Project-scoped LanceDB dirs created when tests run with DATUS_TEST_HOME pointing at a workspace
+/tests/data/*-.datus_test_data-workspace/
 /tests/data/sub_agents
 /tests/save
 /tests/sessions

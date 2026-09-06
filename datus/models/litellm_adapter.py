@@ -123,7 +123,7 @@ class LiteLLMAdapter:
     - DeepSeek (deepseek-chat, deepseek-reasoner, etc.)
     - Qwen/DashScope (qwen3-coder, etc.)
     - Google Gemini (gemini-2.5-pro, gemini-3-pro, etc.)
-    - Moonshot/Kimi (kimi-k2.5, kimi-k2-thinking, etc.)
+    - Moonshot/Kimi (kimi-k2.6, etc.)
     """
 
     # Model name prefix mapping for LiteLLM
@@ -156,7 +156,7 @@ class LiteLLMAdapter:
     # Model name prefixes for auto-detection
     # When provider is generic (e.g., "openai"), detect actual provider from model name
     MODEL_NAME_PREFIXES = {
-        "kimi": "kimi",  # kimi-k2, kimi-k2.5, kimi-k2-thinking
+        "kimi": "kimi",  # kimi-k2.6
         "moonshot": "kimi",  # moonshot-v1-8k, etc.
         "claude": "claude",  # claude-sonnet-4, etc.
         "gpt": "openai",  # gpt-4o, gpt-5, etc.
@@ -205,7 +205,7 @@ class LiteLLMAdapter:
 
         Args:
             provider: The model provider (openai, claude, deepseek, qwen, gemini, kimi)
-            model: The model name (e.g., gpt-4o, claude-sonnet-4, kimi-k2.5)
+            model: The model name (e.g., gpt-4o, claude-sonnet-4, kimi-k2.6)
             api_key: API key for the provider
             base_url: Optional custom base URL (overrides default)
             enable_thinking: Legacy bool switch; True is equivalent to reasoning_effort="medium".
@@ -228,7 +228,7 @@ class LiteLLMAdapter:
         """
         Auto-detect provider from model name when provider is generic.
 
-        This allows configurations like type: "openai" with model: "kimi-k2.5"
+        This allows configurations like type: "openai" with model: "kimi-k2.6"
         to be automatically detected as kimi provider for correct LiteLLM routing.
 
         When a custom base_url is provided and its domain doesn't match the detected
@@ -238,7 +238,7 @@ class LiteLLMAdapter:
 
         Args:
             provider: The configured provider (e.g., "openai")
-            model: The model name (e.g., "kimi-k2.5")
+            model: The model name (e.g., "kimi-k2.6")
             base_url: Optional custom base URL for domain validation
 
         Returns:
@@ -398,10 +398,11 @@ class LiteLLMAdapter:
           Gemini, OpenRouter, GLM, MiniMax, vLLM, and self-hosted proxies)
           uses :class:`LitellmModel` as before.
 
-        Kimi/Moonshot thinking models still go through the LiteLLM path and
-        continue to rely on :mod:`datus.models.sdk_patches` for the
-        ``reasoning_content`` echo-back behaviour required on tool-calling
-        turns.
+        Every LiteLLM-path model receives
+        :func:`datus.models.reasoning_replay.should_replay_reasoning_content`
+        as the SDK's ``should_replay_reasoning_content`` hook, so DeepSeek and
+        Kimi/Moonshot thinking models get each turn's own ``reasoning_content``
+        echoed back on later requests.
 
         Returns:
             Model instance configured for this adapter
@@ -417,9 +418,12 @@ class LiteLLMAdapter:
         if self._is_official_openai():
             return self._build_openai_responses_model()
 
+        from datus.models.reasoning_replay import should_replay_reasoning_content
+
         # Build model kwargs for the LiteLLM path
         model_kwargs = {
             "model": self.litellm_model_name,
+            "should_replay_reasoning_content": should_replay_reasoning_content,
         }
 
         # Add API key - LiteLLM uses different env var names per provider

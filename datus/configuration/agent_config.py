@@ -408,8 +408,8 @@ class ModelConfig:
     max_retry: int = 3
     retry_interval: float = 2.0  # seconds
     # Model-specific parameters
-    temperature: Optional[float] = None  # Some models like kimi-k2.5 require temperature=1
-    top_p: Optional[float] = None  # Some models like kimi-k2.5 require top_p=0.95
+    temperature: Optional[float] = None  # Some models like kimi-k2.6 require temperature=1
+    top_p: Optional[float] = None  # Some models like kimi-k2.6 require top_p=0.95
     auth_type: str = "api_key"  # "api_key" | "oauth" | "subscription"
     use_native_api: bool = False  # Use native Anthropic client instead of LiteLLM
     # SSL/TLS verification for this model's endpoint. Mirrors httpx/litellm `verify`:
@@ -2557,7 +2557,7 @@ class AgentConfig:
           - ``type``, ``auth_type``: ``providers.yml`` is authoritative; the
             user override cannot change them (would require different SDK).
           - ``temperature`` / ``top_p`` / etc.: read from
-            ``providers.yml.model_overrides[model_name]`` (e.g. ``kimi-k2.5``
+            ``providers.yml.model_overrides[model_name]`` (e.g. ``kimi-k2.6``
             forces temperature=1).
         """
         catalog = self.provider_catalog

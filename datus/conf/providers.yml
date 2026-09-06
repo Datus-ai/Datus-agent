@@ -42,11 +42,10 @@ providers:
     type: kimi
     base_url: https://api.moonshot.cn/v1
     api_key_env: KIMI_API_KEY
-    default_model: kimi-k2.6
+    default_model: kimi-k3
     models:
+      - kimi-k3
       - kimi-k2.6
-      - kimi-k2.5
-      - kimi-k2-thinking
 
   qwen:
     type: openai
@@ -180,7 +179,7 @@ providers:
 # Model-specific parameter overrides
 # Some models enforce fixed values; these are auto-applied during init.
 model_overrides:
-  kimi-k2.5:
+  kimi-k3:
     temperature: 1.0
     top_p: 0.95
   kimi-k2.6:
@@ -247,18 +246,12 @@ model_specs:
     max_tokens: 65535
 
   # Moonshot (Kimi) Models
+  kimi-k3:
+    context_length: 1000000
+    max_tokens: 65536
   kimi-k2.6:
     context_length: 256000
     max_tokens: 65536
-  kimi-k2.5:
-    context_length: 256000
-    max_tokens: 16384
-  kimi-k2:
-    context_length: 256000
-    max_tokens: 8192
-  kimi-k2-turbo:
-    context_length: 256000
-    max_tokens: 8192
 
   # Qwen Models
   qwen3.6-plus:

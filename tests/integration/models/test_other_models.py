@@ -221,13 +221,13 @@ class TestKimiModel:
         """Test Kimi model initialization."""
         assert self.model is not None
         assert self.model.model_config is not None
-        assert self.model.model_config.model == "kimi-k2.5"
+        assert self.model.model_config.model == "kimi-k3"
         assert self.model.model_config.base_url == "https://api.moonshot.cn/v1"
 
     def test_generate_basic(self):
         """Test basic text generation functionality."""
         # Kimi/Moonshot API requires temperature=1 for this model; use model config default
-        # kimi-k2.5 is a reasoning model: reasoning_content is injected into content
+        # kimi-k3 is a reasoning model: reasoning_content is injected into content
         # by sdk_patches when litellm.completion returns empty content.
         result = self.model.generate(
             "Explain what SQL JOIN does in exactly two sentences.",

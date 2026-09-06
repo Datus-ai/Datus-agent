@@ -626,7 +626,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 if kwargs["temperature"] is not None:
                     params["temperature"] = kwargs["temperature"]
             elif self.model_config.temperature is not None:
-                # Use temperature from model config (e.g., kimi-k2.5 requires temperature=1)
+                # Use temperature from model config (e.g., kimi-k2.6 requires temperature=1)
                 params["temperature"] = self.model_config.temperature
             elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default temperature only for non-reasoning models
@@ -640,7 +640,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 if kwargs["top_p"] is not None:
                     params["top_p"] = kwargs["top_p"]
             elif self.model_config.top_p is not None:
-                # Use top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
+                # Use top_p from model config (e.g., kimi-k2.6 requires top_p=0.95)
                 params["top_p"] = self.model_config.top_p
             elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
                 # Add default top_p only for non-reasoning models
@@ -1064,7 +1064,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                     "Skipping reasoning (effort=%s) for %s: Datus recognises this model "
                     "as not supporting thinking. Use `/effort off` or switch to a "
                     "thinking-capable model (gpt-5*, o-series, claude-4*, gemini-2.5*+, "
-                    "deepseek-v4*, deepseek-reasoner, kimi-k2.5+) to silence this warning.",
+                    "deepseek-v4*, deepseek-reasoner, kimi-k2.6+) to silence this warning.",
                     effort,
                     self.model_name,
                 )

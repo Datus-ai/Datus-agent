@@ -240,7 +240,7 @@ class DataCompressor:
                 - OpenAI: "gpt-4", "gpt-3.5-turbo", "gpt-4o", "o1", "o3", etc.
                 - Anthropic: "anthropic/claude-3-sonnet", "anthropic/claude-sonnet-4", etc.
                 - DeepSeek: "deepseek/deepseek-chat", "deepseek/deepseek-r1", etc.
-                - Moonshot: "moonshot/kimi-k2.5", etc.
+                - Moonshot: "moonshot/kimi-k2.6", etc.
                 - Gemini: "gemini/gemini-2.5-flash", "gemini/gemini-3-pro", etc.
             token_threshold: Token threshold
             tolerance_ratio: Tolerance ratio, no compression if exceeding within this ratio
