@@ -98,6 +98,18 @@ class TestShouldReplayReasoningContent:
         origin = "moonshot/kimi-k2.5" if "moonshot" in target else "deepseek/deepseek-v4-pro"
         assert should_replay_reasoning_content(_context(target, origin)) is False
 
+    @pytest.mark.parametrize(
+        ("target", "origin"),
+        [
+            ("moonshot/kimi-k3", "moonshot/moonshot-v1-8k"),
+            ("moonshot/kimi-k3", "kimi-k2"),
+            ("deepseek/deepseek-v4-pro", "deepseek-chat"),
+        ],
+    )
+    def test_non_thinking_origins_never_replay(self, target, origin):
+        """A non-thinking model cannot have produced reasoning; same-family origin is not enough."""
+        assert should_replay_reasoning_content(_context(target, origin)) is False
+
 
 class TestEnsureReasoningContentPlaceholders:
     def _history(self):

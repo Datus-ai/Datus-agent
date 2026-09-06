@@ -21,6 +21,7 @@ wired in :meth:`datus.models.litellm_adapter.LiteLLMAdapter.get_agents_sdk_model
 """
 
 import copy
+import inspect
 import warnings
 from collections.abc import Iterable
 from typing import Any
@@ -286,6 +287,57 @@ def _patch_litellm_usage_serialization() -> None:
         Usage.model_dump_json = _patched_usage_model_dump_json
 
 
+def _locate_call_arg(func: Any, name: str, args: tuple, kwargs: dict) -> tuple[str | None, int | None]:
+    """Return where ``name`` lives in a call to ``func``: ``("kwargs", None)``, ``("args", index)`` or ``(None, None)``.
+
+    LiteLLM's ``completion``/``acompletion`` accept ``model`` and ``messages``
+    positionally, so wrappers must look in both places.
+    """
+    if name in kwargs:
+        return "kwargs", None
+    try:
+        params = list(inspect.signature(func).parameters)
+    except (TypeError, ValueError):
+        return None, None
+    if name in params:
+        index = params.index(name)
+        if index < len(args):
+            return "args", index
+    return None, None
+
+
+def _read_call_arg(func: Any, name: str, args: tuple, kwargs: dict, default: Any = None) -> Any:
+    where, index = _locate_call_arg(func, name, args, kwargs)
+    if where == "kwargs":
+        return kwargs[name]
+    if where == "args":
+        return args[index]
+    return default
+
+
+def _replace_call_arg(func: Any, name: str, args: tuple, kwargs: dict, value: Any) -> tuple[tuple, dict]:
+    where, index = _locate_call_arg(func, name, args, kwargs)
+    if where == "args":
+        replaced = list(args)
+        replaced[index] = value
+        return tuple(replaced), kwargs
+    if where == "kwargs":
+        kwargs[name] = value
+    return args, kwargs
+
+
+def _prepare_litellm_call(func: Any, args: tuple, kwargs: dict) -> tuple[tuple, dict, str, bool]:
+    """Apply reasoning_content placeholders and return ``(args, kwargs, model, stream)`` for a LiteLLM call."""
+    model = _read_call_arg(func, "model", args, kwargs, "") or ""
+    messages = _read_call_arg(func, "messages", args, kwargs)
+    if isinstance(messages, list):
+        args, kwargs = _replace_call_arg(
+            func, "messages", args, kwargs, ensure_reasoning_content_placeholders(messages, model)
+        )
+    stream = bool(_read_call_arg(func, "stream", args, kwargs, False))
+    return args, kwargs, model, stream
+
+
 def _recover_empty_kimi_content(response: Any) -> None:
     """Moonshot non-thinking responses may arrive with empty content and only reasoning_content.
 
@@ -341,12 +393,10 @@ def apply_sdk_patches() -> None:
 
         @wraps(_original_acompletion)
         async def _patched_acompletion(*args, **kwargs):
-            model = kwargs.get("model", "")
-            if "messages" in kwargs:
-                kwargs["messages"] = ensure_reasoning_content_placeholders(kwargs["messages"], model)
+            args, kwargs, model, stream = _prepare_litellm_call(_original_acompletion, args, kwargs)
             response = await _original_acompletion(*args, **kwargs)
             # Streaming returns an async iterator; only complete responses carry a message to recover.
-            if is_kimi_model(model) and not kwargs.get("stream"):
+            if is_kimi_model(model) and not stream:
                 _recover_empty_kimi_content(response)
             return response
 
@@ -359,11 +409,9 @@ def apply_sdk_patches() -> None:
 
         @wraps(_original_completion)
         def _patched_completion(*args, **kwargs):
-            model = kwargs.get("model", "")
-            if "messages" in kwargs:
-                kwargs["messages"] = ensure_reasoning_content_placeholders(kwargs["messages"], model)
+            args, kwargs, model, stream = _prepare_litellm_call(_original_completion, args, kwargs)
             response = _original_completion(*args, **kwargs)
-            if is_kimi_model(model):
+            if is_kimi_model(model) and not stream:
                 _recover_empty_kimi_content(response)
             return response
 
