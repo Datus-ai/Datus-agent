@@ -120,14 +120,15 @@ flow_groups:
             status: covered
             nodeids:
               - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
-              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_real_llm_loads_skill_and_stops_at_manifest
-              - tests/integration/agent/test_gen_dashboard_agentic.py
-              - tests/integration/tools/test_bi_dashboard.py
+              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticInit
+              - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
               - tests/integration/tools/test_bi_grafana.py
             notes: >
               The P0 Superset path installs the managed plugin from source, verifies a real
-              dashboard SQL export manifest and checksums, and uses a real LLM to load the
-              dashboard-bootstrap skill and stop at its explicit confirmation boundary.
+              dashboard SQL export manifest and checksums, checks node/tool initialization,
+              and exercises BI orchestration with fixed generation results. Superset real-model
+              workflows are manual evaluations; nightly does not guarantee model adherence
+              to the skill's confirmation boundary. See ci/cross-repo-harness.md.
           weekly_benchmark:
             status: not_applicable
             notes: >
@@ -453,7 +454,7 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
-              - tests/integration/tools/test_bi_dashboard.py
+              - tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/adapters/test_starrocks.py
@@ -786,7 +787,7 @@ flow_groups:
           nightly:
             status: covered
             nodeids:
-              - tests/integration/agent/test_gen_dashboard_agentic.py
+              - tests/integration/agent/test_gen_dashboard_agentic.py::TestGenDashboardAgenticInit
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_gen_table_agentic.py
@@ -800,7 +801,9 @@ flow_groups:
             notes: >
               Real-LLM smoke now covers gen_table (CTAS), gen_job (single-DB ETL on an isolated
               SQLite copy), gen_visual_report, and gen_visual_dashboard in addition to the existing
-              dashboard/scheduler/Grafana paths. gen_job cross-DB transfer stays in the unit tier.
+              scheduler/Grafana paths. Superset dashboard initialization is checked with a fake
+              model; its real-model workflow is a manual evaluation. gen_job cross-DB transfer
+              stays in the unit tier.
           weekly_benchmark:
             status: not_applicable
             notes: >
@@ -980,7 +983,6 @@ flow_groups:
             nodeids:
               - tests/integration/plugins/test_sql_policy_plugin.py::test_managed_sql_policy_enforces_sql_semantic_and_api_reads
               - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries
-              - tests/integration/plugins/test_dashboard_bootstrap_plugin.py::test_dashboard_bootstrap_real_llm_loads_skill_and_stops_at_manifest
             notes: >
               P0 installs two real source packages only into isolated managed plugin stores (with no
               globally installed fallback), exercises fresh-process entry-point discovery and CLI

@@ -33,17 +33,6 @@ entries:
       - nightly
     action: rerun_only
 
-  - id: superset-bi-complete-workflow-provider-disconnect
-    type: test
-    nodeid: tests/integration/tools/test_bi_dashboard.py::TestE2EIntegration::test_complete_workflow
-    owner: bi-agent
-    layer: product_e2e
-    reason: DeepSeek provider disconnected during Superset BI metric generation; rerun passed.
-    allowed_until: 2026-09-05
-    allowed_in:
-      - nightly
-    action: rerun_only
-
   - id: litellm-async-pending-task-teardown
     type: log_pattern
     pattern: "Task was destroyed but it is pending"
