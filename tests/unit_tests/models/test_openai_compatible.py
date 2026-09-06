@@ -1273,10 +1273,10 @@ class TestModelSpecsAndTokenLimits:
         assert model.max_tokens() == 16384
 
     def test_prefix_match_context_length(self):
-        cfg = _make_model_config(model="kimi-k2-0711-preview")
+        cfg = _make_model_config(model="kimi-k3-0716-preview")
         model = _make_model(cfg)
-        # Should match "kimi-k2" prefix
-        assert model.context_length() == 256000
+        # Should match "kimi-k3" prefix
+        assert model.context_length() == 1000000
 
     def test_unknown_model_returns_none_for_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")

@@ -3,106 +3,35 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-SDK Patches for openai-agents SDK.
-
-This module provides monkey patches to extend SDK functionality for
-providers whose thinking mode requires reasoning_content to be echoed
-back on every assistant-with-tool_calls turn.
+SDK Patches for openai-agents SDK and LiteLLM.
 
 Current patches:
-- Kimi/Moonshot reasoning_content support in Converter.items_to_messages()
-- Chat-style ``text`` block normalization for session replay through Chat
-  Completions providers such as DeepSeek.
-- Kimi/Moonshot + DeepSeek reasoning_content preservation in
-  litellm.(a)completion() via a streaming cache fallback.
+- Chat-style ``text`` block normalization in ``Converter.items_to_messages()``
+  for session replay through Chat Completions providers such as DeepSeek.
+- ``reasoning_content`` placeholders on thinking-mode requests in
+  ``litellm.(a)completion()`` (see :mod:`datus.models.reasoning_replay`), plus
+  Kimi/Moonshot empty-content recovery on the sync path.
 - LiteLLM ``Usage`` serialization warning suppression for provider-specific
   ``server_tool_use`` dict payloads.
+- Pydantic serializer warnings redirected from the CLI to the logger.
 
-Reference: https://github.com/openai/openai-agents-python/pull/2328
-The SDK already supports DeepSeek reasoning_content when the streamed
-`summary` is populated. For DeepSeek V4 thinking mode, the SDK sometimes
-misses the reasoning delta (empty summary) and the provider rejects the
-next turn with:
-
-    The `reasoning_content` in the thinking mode must be passed back to
-    the API.
-
-This patch adds the same streaming cache + injection fallback used for
-Kimi/Moonshot to DeepSeek models.
+Per-turn ``reasoning_content`` replay itself is handled by the SDK: DeepSeek by
+default, Kimi/Moonshot through the ``should_replay_reasoning_content`` hook
+wired in :meth:`datus.models.litellm_adapter.LiteLLMAdapter.get_agents_sdk_model`.
 """
 
 import copy
 import warnings
-from collections.abc import Iterable, Iterator, MutableMapping
-from contextvars import ContextVar
+from collections.abc import Iterable
 from typing import Any
 
+from datus.models.reasoning_replay import ensure_reasoning_content_placeholders, is_kimi_model
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 # NOTE: Do NOT import agents SDK at module level!
 # Import it inside functions to avoid circular dependencies and ensure patches are applied first.
-
-
-def _is_kimi_model(model_name: str) -> bool:
-    """Check if a model name is a Kimi/Moonshot model (kimi, moonshot, k2.5, k2-*, etc.)."""
-    name = model_name.lower()
-    return "kimi" in name or "moonshot" in name or "k2.5" in name or "k2-" in name
-
-
-def _is_deepseek_model(model_name: str) -> bool:
-    """Check if a model name is a DeepSeek model (deepseek-chat, deepseek-reasoner, deepseek-v4, ...)."""
-    if not model_name:
-        return False
-    return "deepseek" in model_name.lower()
-
-
-def _needs_reasoning_injection(model_name: str) -> bool:
-    """Providers whose thinking mode requires reasoning_content to be echoed back on tool-calling turns."""
-    if not model_name:
-        return False
-    return _is_kimi_model(model_name) or _is_deepseek_model(model_name)
-
-
-def _normalize_provider_data(item: Any) -> Any:
-    """
-    Normalize provider_data model name to use 'deepseek' prefix if it's a
-    Kimi/Moonshot model. This allows the SDK's existing DeepSeek logic to
-    handle reasoning_content correctly.
-
-    Handles both plain dicts and Pydantic model objects (e.g., ResponseReasoningItem,
-    ResponseFunctionToolCall) which the agents SDK uses internally.
-    """
-    if isinstance(item, dict):
-        provider_data = item.get("provider_data")
-        if not provider_data or not isinstance(provider_data, dict):
-            return item
-        item_model = provider_data.get("model")
-        if not item_model or not _is_kimi_model(item_model):
-            return item
-        item_copy = copy.deepcopy(item)
-        item_copy["provider_data"]["model"] = f"deepseek-{item_model}"
-        return item_copy
-
-    # Handle Pydantic/object items with provider_data attribute
-    # (e.g., ResponseReasoningItem, ResponseFunctionToolCall from agents SDK)
-    provider_data = getattr(item, "provider_data", None)
-    if not provider_data or not isinstance(provider_data, dict):
-        return item
-    item_model = provider_data.get("model")
-    if not item_model or not _is_kimi_model(item_model):
-        return item
-
-    # Deep copy the Pydantic object to avoid mutating the SDK's internal state
-    if hasattr(item, "model_copy"):
-        item_copy = item.model_copy(deep=True)
-    elif hasattr(item, "copy"):
-        item_copy = item.copy(deep=True)
-    else:
-        item_copy = copy.deepcopy(item)
-    item_copy.provider_data["model"] = f"deepseek-{item_model}"
-    return item_copy
 
 
 def _normalize_text_content_blocks(item: Any) -> Any:
@@ -148,28 +77,11 @@ def _normalize_text_content_blocks(item: Any) -> Any:
     return normalized_item
 
 
-def _preprocess_items_for_reasoning(
-    items: str | Iterable[Any],
-    model: str | None,
-) -> tuple[str | list[Any], str | None]:
-    """
-    Preprocess items and model name to enable reasoning_content support
-    for Kimi/Moonshot models.
-
-    The SDK's items_to_messages() only handles reasoning_content for DeepSeek models.
-    This function normalizes Kimi/Moonshot models to use DeepSeek format so the
-    existing logic can handle them.
-    """
-    normalized_model = model
-    if model and _is_kimi_model(model):
-        normalized_model = f"deepseek-{model}"
-        logger.debug(f"Normalized model name for reasoning_content support: {model} -> {normalized_model}")
-
+def _normalize_items(items: str | Iterable[Any]) -> str | list[Any]:
+    """Apply :func:`_normalize_text_content_blocks` to every item of a session replay."""
     if isinstance(items, str):
-        return items, normalized_model
-
-    normalized_items = [_normalize_text_content_blocks(_normalize_provider_data(item)) for item in items]
-    return normalized_items, normalized_model
+        return items
+    return [_normalize_text_content_blocks(item) for item in items]
 
 
 # Store the original methods (will be initialized in apply_sdk_patches)
@@ -180,47 +92,6 @@ _original_usage_model_dump = None
 _original_usage_model_dump_json = None
 _original_usage_init = None
 _original_showwarning = None
-
-# Cache reasoning_content from API responses, keyed by model name within the
-# current execution context. This avoids leaking one session's hidden reasoning
-# into another request while preserving the fallback inside a tool-calling run.
-_reasoning_content_cache_var: ContextVar[dict[str, str] | None] = ContextVar(
-    "datus_reasoning_content_cache",
-    default=None,
-)
-
-
-def _current_reasoning_content_cache() -> dict[str, str]:
-    cache = _reasoning_content_cache_var.get()
-    if cache is None:
-        cache = {}
-        _reasoning_content_cache_var.set(cache)
-    return cache
-
-
-class _ReasoningContentCache(MutableMapping[str, str]):
-    """Context-local mapping kept for tests and local cache helpers."""
-
-    def __getitem__(self, key: str) -> str:
-        return _current_reasoning_content_cache()[key]
-
-    def __setitem__(self, key: str, value: str) -> None:
-        _current_reasoning_content_cache()[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del _current_reasoning_content_cache()[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(_current_reasoning_content_cache())
-
-    def __len__(self) -> int:
-        return len(_current_reasoning_content_cache())
-
-    def clear(self) -> None:
-        _current_reasoning_content_cache().clear()
-
-
-_reasoning_content_cache: MutableMapping[str, str] = _ReasoningContentCache()
 
 
 _REASONING_CONTENT_FIELD_NAMES = (
@@ -303,278 +174,25 @@ def _extract_reasoning_content(value: Any) -> str | None:
     return None
 
 
-def _reasoning_cache_keys(model: str | None) -> list[str]:
-    """Return equivalent cache keys for prefixed/unprefixed LiteLLM model names."""
-    if not model:
-        return []
-
-    raw_model = str(model).strip()
-    if not raw_model:
-        return []
-
-    keys: list[str] = []
-
-    def add(key: str | None) -> None:
-        if not key:
-            return
-        stripped = key.strip()
-        if stripped and stripped not in keys:
-            keys.append(stripped)
-        lowered = stripped.lower()
-        if lowered and lowered not in keys:
-            keys.append(lowered)
-
-    add(raw_model)
-
-    if "/" in raw_model:
-        _, suffix = raw_model.split("/", 1)
-        add(suffix)
-    elif _is_deepseek_model(raw_model):
-        add(f"deepseek/{raw_model}")
-    elif _is_kimi_model(raw_model):
-        add(f"moonshot/{raw_model}")
-
-    return keys
-
-
-def _cache_reasoning_content(model: str | None, reasoning_content: str) -> None:
-    """Cache reasoning_content under all equivalent model aliases."""
-    if not reasoning_content or not reasoning_content.strip():
-        return
-    for key in _reasoning_cache_keys(model):
-        _reasoning_content_cache[key] = reasoning_content
-
-
-def _get_cached_reasoning_content(model: str | None) -> str | None:
-    """Fetch cached reasoning_content across prefixed/unprefixed aliases."""
-    for key in _reasoning_cache_keys(model):
-        cached = _reasoning_content_cache.get(key)
-        if cached and cached.strip():
-            return cached
-    return None
-
-
-def _content_text(content: Any) -> str | None:
-    """Extract visible text from a chat-completion content value."""
-    if isinstance(content, str):
-        text = content.strip()
-        return text or None
-
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-            else:
-                text = _read_field(item, "text")
-            if isinstance(text, str) and text.strip():
-                parts.append(text.strip())
-        joined = "\n".join(parts).strip()
-        return joined or None
-
-    return None
-
-
-def _sanitize_deepseek_history_without_reasoning(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop historical tool protocol messages that DeepSeek thinking cannot replay.
-
-    DeepSeek thinking mode requires every assistant message with ``tool_calls``
-    to carry the exact reasoning_content that DeepSeek produced. When a user
-    switches from another provider, old session history can contain tool-call
-    turns without any DeepSeek reasoning source. The current turn still has a
-    trailing user message, so only sanitize messages before the last user
-    message and leave in-flight DeepSeek tool calls untouched.
-    """
-    last_user_index = -1
-    for idx, msg in enumerate(messages):
-        if isinstance(msg, dict) and msg.get("role") == "user":
-            last_user_index = idx
-
-    if last_user_index <= 0:
-        return messages
-
-    sanitized: list[dict[str, Any]] = []
-    dropped_count = 0
-    for idx, msg in enumerate(messages):
-        if not isinstance(msg, dict) or idx >= last_user_index:
-            sanitized.append(msg)
-            continue
-
-        role = msg.get("role")
-        if role == "assistant" and msg.get("tool_calls") and not _extract_reasoning_content(msg):
-            text = _content_text(msg.get("content"))
-            if text:
-                clean_msg = {key: value for key, value in msg.items() if key not in ("tool_calls", "reasoning_content")}
-                clean_msg["content"] = text
-                sanitized.append(clean_msg)
-            dropped_count += 1
-            continue
-
-        if role == "tool":
-            dropped_count += 1
-            continue
-
-        sanitized.append(msg)
-
-    if dropped_count:
-        logger.info(
-            "[SDK Patch] Dropped %s historical tool-protocol message(s) before DeepSeek thinking call "
-            "because no replayable reasoning_content was available.",
-            dropped_count,
-        )
-    return sanitized
-
-
-class _ReasoningContentStreamWrapper:
-    """
-    Async iterator wrapper that intercepts streaming chunks to cache
-    reasoning_content for Kimi/Moonshot models.
-
-    When stream=True, litellm.acompletion returns an async iterable (not a
-    ModelResponse with .choices), so reasoning_content must be captured from
-    individual delta chunks as they stream through.
-    """
-
-    def __init__(self, stream: Any, model: str):
-        self._stream = stream
-        self._model = model
-        self._reasoning_chunks: list[str] = []
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        try:
-            chunk = await self._stream.__anext__()
-        except StopAsyncIteration:
-            self._flush_cache()
-            raise
-
-        try:
-            choices = _read_field(chunk, "choices") or []
-            for choice in choices:
-                delta = _read_field(choice, "delta")
-                if delta:
-                    rc = _extract_reasoning_content(delta)
-                    if rc:
-                        self._reasoning_chunks.append(rc)
-        except Exception:
-            pass
-
-        return chunk
-
-    def _flush_cache(self) -> None:
-        """Flush accumulated reasoning_content chunks into the cache."""
-        if self._reasoning_chunks:
-            full_rc = "".join(self._reasoning_chunks)
-            if full_rc.strip():
-                _cache_reasoning_content(self._model, full_rc)
-                logger.debug(
-                    f"[SDK Patch] Cached reasoning_content from stream, model={self._model}, length={len(full_rc)}"
-                )
-
-    def __getattr__(self, name: str):
-        return getattr(self._stream, name)
-
-
-def _postprocess_messages_for_reasoning(
-    messages: list[dict[str, Any]],
-    model: str | None,
-) -> list[dict[str, Any]]:
-    """
-    Post-process messages to preserve reasoning_content for thinking-mode
-    providers (Kimi/Moonshot, DeepSeek) during tool calling.
-
-    Per DeepSeek/Moonshot docs, reasoning_content must be passed back during
-    tool calling to allow the model to continue reasoning.
-    See: https://api-docs.deepseek.com/guides/thinking_mode
-    """
-    if not model or not _needs_reasoning_injection(model):
-        return messages
-
-    is_kimi = _is_kimi_model(model)
-    is_deepseek = _is_deepseek_model(model)
-
-    # Find the last non-empty reasoning_content to reuse if needed
-    last_reasoning_content = None
-    for msg in messages:
-        if isinstance(msg, dict):
-            rc = _extract_reasoning_content(msg)
-            if rc:
-                last_reasoning_content = rc
-                logger.debug(f"[SDK Patch] Found non-empty reasoning_content in messages, length={len(rc)}")
-
-    # Fallback: use cached reasoning_content from a previous API response
-    if not last_reasoning_content and model:
-        cached_rc = _get_cached_reasoning_content(model)
-        if cached_rc:
-            last_reasoning_content = cached_rc
-            logger.debug(f"[SDK Patch] Using cached reasoning_content as fallback, length={len(cached_rc)}")
-
-    if is_deepseek and not last_reasoning_content:
-        messages = _sanitize_deepseek_history_without_reasoning(messages)
-
-    # Ensure assistant messages preserve reasoning_content on tool-calling turns.
-    # DeepSeek also requires the final assistant message immediately after a tool
-    # result to carry reasoning_content. Keep ordinary assistant history untouched.
-    for idx, msg in enumerate(messages):
-        if not isinstance(msg, dict) or msg.get("role") != "assistant":
-            continue
-
-        has_tool_calls = bool(msg.get("tool_calls"))
-        previous_message = messages[idx - 1] if idx > 0 else None
-        follows_tool_result = (
-            is_deepseek and isinstance(previous_message, dict) and previous_message.get("role") == "tool"
-        )
-        should_patch_message = has_tool_calls or follows_tool_result
-        if should_patch_message:
-            current_rc = _coerce_reasoning_text(msg.get("reasoning_content"))
-            if current_rc:
-                msg["reasoning_content"] = current_rc
-            elif last_reasoning_content:
-                msg["reasoning_content"] = last_reasoning_content
-                logger.debug("[SDK Patch] Injected reasoning_content into assistant message")
-            elif has_tool_calls and "reasoning_content" not in msg and is_kimi:
-                # Moonshot historically tolerates an empty reasoning_content field when
-                # thinking is off; DeepSeek rejects both missing and empty, so we must
-                # NOT inject an empty placeholder for DeepSeek — leave the message as-is
-                # and let the provider surface a clean error if thinking was actually on.
-                msg["reasoning_content"] = ""
-                logger.warning(
-                    "[SDK Patch] No reasoning_content available for assistant+tool_calls message. "
-                    "Moonshot API may reject this request. Check if streaming cache is working."
-                )
-
-            # Ensure content is empty string, not None (Moonshot requirement;
-            # DeepSeek also accepts content="" for tool_calls-only messages).
-            if has_tool_calls and msg.get("content") is None:
-                msg["content"] = ""
-
-    return messages
-
-
 def _patched_items_to_messages(
     cls,
     items: str | Iterable[Any],
     model: str | None = None,
     preserve_thinking_blocks: bool = False,
     preserve_tool_output_all_content: bool = False,
+    base_url: str | None = None,
+    should_replay_reasoning_content: Any = None,
 ) -> list[dict[str, Any]]:
-    """
-    Patched Converter.items_to_messages that extends reasoning_content
-    support from DeepSeek to Kimi/Moonshot models.
-    """
-    normalized_items, normalized_model = _preprocess_items_for_reasoning(items, model)
-
-    messages = _original_items_to_messages(
+    """Patched ``Converter.items_to_messages`` that normalizes Chat-style text blocks first."""
+    return _original_items_to_messages(
         cls,
-        normalized_items,
-        normalized_model,
+        _normalize_items(items),
+        model,
         preserve_thinking_blocks,
         preserve_tool_output_all_content,
+        base_url,
+        should_replay_reasoning_content,
     )
-
-    return _postprocess_messages_for_reasoning(messages, model)
 
 
 def _redirect_pydantic_serializer_warnings_to_log() -> None:
@@ -668,6 +286,29 @@ def _patch_litellm_usage_serialization() -> None:
         Usage.model_dump_json = _patched_usage_model_dump_json
 
 
+def _recover_empty_kimi_content(response: Any) -> None:
+    """Moonshot non-thinking responses may arrive with empty content and only reasoning_content.
+
+    Surface the reasoning as the visible content so ``generate()`` callers do not
+    receive an empty string.
+    """
+    try:
+        for choice in getattr(response, "choices", []):
+            msg = getattr(choice, "message", None)
+            if not msg:
+                continue
+            content = getattr(msg, "content", None)
+            if content and content.strip():
+                return
+            reasoning_content = _extract_reasoning_content(msg)
+            if reasoning_content:
+                msg.content = reasoning_content
+                logger.debug("[SDK Patch] Injected reasoning_content into empty sync response content")
+            return
+    except Exception as e:
+        logger.debug(f"[SDK Patch] Failed to recover empty Kimi content: {e}")
+
+
 def apply_sdk_patches() -> None:
     """
     Apply all SDK patches.
@@ -687,59 +328,27 @@ def apply_sdk_patches() -> None:
     _patch_litellm_usage_serialization()
     _redirect_pydantic_serializer_warnings_to_log()
 
-    # Patch 1: Converter.items_to_messages for Kimi/Moonshot reasoning_content
+    # Patch 1: Converter.items_to_messages content-block normalization
     if _original_items_to_messages is None:
         _original_items_to_messages = Converter.items_to_messages.__func__  # type: ignore
 
     Converter.items_to_messages = classmethod(_patched_items_to_messages)  # type: ignore
-    logger.info("Applied SDK patch: Converter.items_to_messages (content-block normalization + reasoning_content)")
+    logger.info("Applied SDK patch: Converter.items_to_messages (content-block normalization)")
 
-    # Patch 2: litellm.acompletion wrapper (safety net)
-    # Re-applies reasoning_content preservation right before API calls,
-    # in case the SDK modifies messages after items_to_messages.
+    # Patch 2: litellm.acompletion reasoning_content placeholders
     if _original_acompletion is None:
         _original_acompletion = litellm.acompletion
 
         @wraps(_original_acompletion)
         async def _patched_acompletion(*args, **kwargs):
-            model = kwargs.get("model", "")
             if "messages" in kwargs:
-                kwargs["messages"] = _postprocess_messages_for_reasoning(kwargs["messages"], model)
-            response = await _original_acompletion(*args, **kwargs)
-
-            # Cache reasoning_content from the API response for future fallback.
-            # This handles cases where the SDK converter fails to extract it from items.
-            if model and _needs_reasoning_injection(model):
-                stream = kwargs.get("stream", False)
-                if stream:
-                    # Streaming: wrap the async iterator to capture reasoning_content
-                    # from delta chunks as they flow through.
-                    response = _ReasoningContentStreamWrapper(response, model)
-                else:
-                    # Non-streaming: extract from ModelResponse.choices directly.
-                    try:
-                        for choice in getattr(response, "choices", []):
-                            msg = getattr(choice, "message", None)
-                            if msg:
-                                rc = _extract_reasoning_content(msg)
-                                if rc:
-                                    _cache_reasoning_content(model, rc)
-                                    logger.debug(
-                                        f"[SDK Patch] Cached reasoning_content from response, "
-                                        f"model={model}, length={len(rc)}"
-                                    )
-                                    break
-                    except Exception as e:
-                        logger.debug(f"[SDK Patch] Failed to cache reasoning_content from async response: {e}")
-
-            return response
+                kwargs["messages"] = ensure_reasoning_content_placeholders(kwargs["messages"], kwargs.get("model", ""))
+            return await _original_acompletion(*args, **kwargs)
 
         litellm.acompletion = _patched_acompletion
-        logger.info("Applied SDK patch: litellm.acompletion (Kimi/Moonshot + DeepSeek reasoning_content)")
+        logger.info("Applied SDK patch: litellm.acompletion (reasoning_content placeholders)")
 
-    # Patch 3: litellm.completion wrapper (sync version)
-    # The generate() method uses litellm.completion (sync), which was not patched.
-    # Without this, kimi-k2.5 returns empty content because reasoning_content is not exposed.
+    # Patch 3: litellm.completion reasoning_content placeholders + Kimi empty-content recovery
     if _original_completion is None:
         _original_completion = litellm.completion
 
@@ -747,42 +356,14 @@ def apply_sdk_patches() -> None:
         def _patched_completion(*args, **kwargs):
             model = kwargs.get("model", "")
             if "messages" in kwargs:
-                kwargs["messages"] = _postprocess_messages_for_reasoning(kwargs["messages"], model)
+                kwargs["messages"] = ensure_reasoning_content_placeholders(kwargs["messages"], model)
             response = _original_completion(*args, **kwargs)
-
-            # Cache reasoning_content and inject it into message.content if empty.
-            # The empty-content injection is Kimi-specific: Moonshot non-thinking
-            # responses may arrive with empty content + reasoning_content. DeepSeek's
-            # sync path returns real content, so we only cache (no content rewrite).
-            if model and _needs_reasoning_injection(model):
-                is_kimi = _is_kimi_model(model)
-                try:
-                    for choice in getattr(response, "choices", []):
-                        msg = getattr(choice, "message", None)
-                        if msg:
-                            rc = _extract_reasoning_content(msg)
-                            if rc:
-                                _cache_reasoning_content(model, rc)
-                                logger.debug(
-                                    f"[SDK Patch] Cached reasoning_content from sync response, "
-                                    f"model={model}, length={len(rc)}"
-                                )
-                                # If main content is empty, inject reasoning_content (Kimi only)
-                                if is_kimi:
-                                    content = getattr(msg, "content", None)
-                                    if not content or not content.strip():
-                                        msg.content = rc
-                                        logger.debug(
-                                            "[SDK Patch] Injected reasoning_content into empty sync response content"
-                                        )
-                                break
-                except Exception as e:
-                    logger.debug(f"[SDK Patch] Failed to cache reasoning_content from sync response: {e}")
-
+            if is_kimi_model(model):
+                _recover_empty_kimi_content(response)
             return response
 
         litellm.completion = _patched_completion
-        logger.info("Applied SDK patch: litellm.completion (Kimi/Moonshot + DeepSeek reasoning_content sync)")
+        logger.info("Applied SDK patch: litellm.completion (reasoning_content placeholders, Kimi content recovery)")
 
 
 def remove_sdk_patches() -> None:
@@ -835,5 +416,3 @@ def remove_sdk_patches() -> None:
         warnings.showwarning = _original_showwarning
         _original_showwarning = None
         logger.info("Removed SDK patch: warnings.showwarning (Pydantic serializer warnings)")
-
-    _reasoning_content_cache.clear()

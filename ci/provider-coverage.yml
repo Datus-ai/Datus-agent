@@ -20,7 +20,8 @@ providers:
       - DEEPSEEK_API_KEY
     deterministic:
       nodeids:
-        - tests/unit_tests/models/test_sdk_patches.py::TestDeepSeekHistorySanitization
+        - tests/unit_tests/models/test_reasoning_replay.py::TestShouldReplayReasoningContent
+        - tests/unit_tests/models/test_reasoning_replay.py::TestEnsureReasoningContentPlaceholders
     live_provider_health:
       mode: warn-only
       nodeids:
