@@ -341,12 +341,17 @@ def apply_sdk_patches() -> None:
 
         @wraps(_original_acompletion)
         async def _patched_acompletion(*args, **kwargs):
+            model = kwargs.get("model", "")
             if "messages" in kwargs:
-                kwargs["messages"] = ensure_reasoning_content_placeholders(kwargs["messages"], kwargs.get("model", ""))
-            return await _original_acompletion(*args, **kwargs)
+                kwargs["messages"] = ensure_reasoning_content_placeholders(kwargs["messages"], model)
+            response = await _original_acompletion(*args, **kwargs)
+            # Streaming returns an async iterator; only complete responses carry a message to recover.
+            if is_kimi_model(model) and not kwargs.get("stream"):
+                _recover_empty_kimi_content(response)
+            return response
 
         litellm.acompletion = _patched_acompletion
-        logger.info("Applied SDK patch: litellm.acompletion (reasoning_content placeholders)")
+        logger.info("Applied SDK patch: litellm.acompletion (reasoning_content placeholders, Kimi content recovery)")
 
     # Patch 3: litellm.completion reasoning_content placeholders + Kimi empty-content recovery
     if _original_completion is None:
