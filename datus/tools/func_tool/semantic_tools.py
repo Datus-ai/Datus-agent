@@ -28,7 +28,13 @@ from datus.tools.func_tool.attribution_utils import (
     AttributionValidationException,
     DimensionAttributionUtil,
 )
-from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, normalize_null, trans_to_function_tool
+from datus.tools.func_tool.base import (
+    FuncToolListResult,
+    FuncToolResult,
+    normalize_null,
+    tool_schema,
+    trans_to_function_tool,
+)
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
 from datus.tools.semantic_tools.models import AnomalyContext
@@ -820,9 +826,7 @@ class SemanticTools:
         return [
             trans_to_function_tool(self.list_metrics),
             trans_to_function_tool(self.get_dimensions),
-            # Parameterized Dosi metrics need arbitrary declaration-driven
-            # binding names, so this one schema cannot be strict/closed.
-            trans_to_function_tool(self.query_metrics, strict_mode=False),
+            trans_to_function_tool(self.query_metrics),
             trans_to_function_tool(self.validate_semantic),
             trans_to_function_tool(self.attribution_analyze),
         ]
@@ -973,6 +977,8 @@ class SemanticTools:
                 error=f"Failed to get dimensions: {str(e)}",
             )
 
+    # Dosi binding names come from metric declarations and require an open schema.
+    @tool_schema(strict_mode=False)
     def query_metrics(
         self,
         metrics: List[str],

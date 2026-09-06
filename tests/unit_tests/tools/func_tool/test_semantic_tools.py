@@ -5,6 +5,7 @@ Test cases for SemanticTools utility functions and query_metrics compression.
 import hashlib
 import json
 from enum import Enum
+from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -104,8 +105,57 @@ def mock_adapter(semantic_tools):
 class TestQueryMetricsCompression:
     """Test cases for query_metrics with DataCompressor integration."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "node_module, node_class",
+        [
+            ("gen_sql_agentic_node", "GenSQLAgenticNode"),
+            ("gen_report_agentic_node", "GenReportAgenticNode"),
+            ("gen_visual_report_agentic_node", "GenVisualReportAgenticNode"),
+            ("gen_visual_dashboard_agentic_node", "GenVisualDashboardAgenticNode"),
+        ],
+    )
+    async def test_named_registration_preserves_parameter_schema(self, semantic_tools, node_module, node_class):
+        node_type = getattr(import_module(f"datus.agent.node.{node_module}"), node_class)
+        node = object.__new__(node_type)
+        node.tools = []
+        node.semantic_tools = semantic_tools
+        node._setup_specific_tool_method("semantic_tools", "query_metrics")
+
+        assert [tool.name for tool in node.tools] == ["query_metrics"]
+        await self._assert_parameterized_query_executes(semantic_tools, node.tools[0])
+
+    @pytest.mark.asyncio
+    async def test_cli_registration_preserves_parameter_schema(self, semantic_tools):
+        from datus.cli.service_client import READ_METHODS, ServiceClient
+
+        client = ServiceClient("semantic_layer", "dosi", semantic_tools, READ_METHODS["semantic_layer"])
+        query_tool = client.get_tool("query_metrics")
+
+        assert query_tool.name == "query_metrics"
+        assert query_tool is client.get_tool("query_metrics")
+        await self._assert_parameterized_query_executes(semantic_tools, query_tool)
+
+    async def _assert_parameterized_query_executes(self, semantic_tools, query_tool):
+        calls = []
+
+        class Adapter:
+            async def query_metrics(self, metrics, params=None, **kwargs):
+                calls.append((metrics, params))
+                return QueryResult(columns=["revenue"], data=[{"revenue": 100}])
+
+        semantic_tools.adapter_type = "dosi"
+        semantic_tools._adapter = Adapter()
+        params = {"regions": ["APAC", "EMEA"], "threshold": 100}
+        assert query_tool.strict_json_schema is False
+        result = await query_tool.on_invoke_tool(None, json.dumps({"metrics": ["revenue"], "params": params}))
+
+        assert result["success"] == 1
+        assert result["result"]["columns"] == ["revenue"]
+        assert calls == [(["revenue"], params)]
+
     def test_tool_schema_exposes_osi_half_open_time_range(self, semantic_tools):
-        schema = trans_to_function_tool(semantic_tools.query_metrics, strict_mode=False).params_json_schema
+        schema = trans_to_function_tool(semantic_tools.query_metrics).params_json_schema
 
         start_description = schema["properties"]["time_start"]["description"].lower()
         end_description = schema["properties"]["time_end"]["description"].lower()

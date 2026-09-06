@@ -6,7 +6,7 @@
 import asyncio
 import inspect
 import json
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
 
 import json_repair
 from agents import FunctionTool, function_tool
@@ -183,10 +183,27 @@ class FuncToolListResult(BaseModel):
     )
 
 
+_ToolMethod = TypeVar("_ToolMethod", bound=Callable)
+
+
+def tool_schema(*, strict_mode: bool) -> Callable[[_ToolMethod], _ToolMethod]:
+    """Declare schema policy on a callable without wrapping or registering it.
+
+    ``trans_to_function_tool`` reads this declaration for every registration path,
+    including methods selected by name and methods listed by ``available_tools``.
+    """
+
+    def declare(method: _ToolMethod) -> _ToolMethod:
+        method.__datus_tool_strict_mode__ = strict_mode
+        return method
+
+    return declare
+
+
 def trans_to_function_tool(
     bound_method: Callable,
     *,
-    strict_mode: bool = True,
+    strict_mode: Optional[bool] = None,
     excluded_params: Optional[Iterable[str]] = None,
 ) -> FunctionTool:
     """
@@ -195,14 +212,15 @@ def trans_to_function_tool(
 
     Args:
         bound_method: The instance method to wrap.
-        strict_mode: When True (default), the OpenAI Agents SDK enforces a strict JSON schema
-            (no extra properties, no free-form ``Dict[str, Any]`` parameters). Set to False
-            for tools that genuinely need an open-ended object parameter — e.g. a
-            ``sample_params``-style dict where the LLM provides arbitrary keys matching
-            a declaration the tool itself validates.
+        strict_mode: Override the method's ``@tool_schema`` declaration. When omitted,
+            use the declaration, defaulting to True for undeclared methods. Strict mode
+            rejects free-form ``Dict[str, Any]`` parameters. Declare ``strict_mode=False``
+            on methods that accept binding names validated by the tool itself.
         excluded_params: Optional parameter names to remove from the exposed JSON schema.
             Use this for dialect-specific parameters that the current tool instance does not support.
     """
+    if strict_mode is None:
+        strict_mode = getattr(bound_method, "__datus_tool_strict_mode__", True)
     tool_template = function_tool(bound_method, strict_mode=strict_mode)
     excluded_param_set = set(excluded_params or [])
 

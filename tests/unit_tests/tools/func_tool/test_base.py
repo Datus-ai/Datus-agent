@@ -7,11 +7,12 @@ import asyncio
 import json
 import threading
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock
 
 import pytest
 from agents import Agent, Runner, SQLiteSession
+from agents.exceptions import UserError
 from agents.items import ToolCallItem
 from agents.models.interface import Model
 from agents.run import RunConfig
@@ -22,7 +23,7 @@ from openai.types.responses import (
     ResponseOutputText,
 )
 
-from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
+from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, tool_schema, trans_to_function_tool
 from datus.tools.permission.permission_hooks import PermissionHooks
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.permission.profiles import get_profile
@@ -35,6 +36,46 @@ class TestTransToFunctionTool:
     def _make_tool_from_method(self, method):
         """Helper to create a FunctionTool from a bound method."""
         return trans_to_function_tool(method)
+
+    @pytest.mark.asyncio
+    async def test_method_schema_declaration_preserves_dynamic_bindings(self):
+        class ParameterTool:
+            @tool_schema(strict_mode=False)
+            def query(self, params: dict[str, Any]) -> FuncToolResult:
+                return FuncToolResult(result=params)
+
+        class InheritedTool(ParameterTool):
+            pass
+
+        instance = InheritedTool()
+        params = {"regions": ["APAC", "EMEA"], "threshold": 100, "enabled": False}
+        assert instance.query(params).result == params
+        tool = trans_to_function_tool(instance.query)
+        assert tool.strict_json_schema is False
+        assert tool.params_json_schema["properties"]["params"]["additionalProperties"] is True
+        assert "self" not in tool.params_json_schema["properties"]
+        result = await tool.on_invoke_tool(None, json.dumps({"params": params}))
+        assert result == {"success": 1, "error": None, "result": params}
+
+    def test_undeclared_methods_keep_strict_schema(self):
+        class ParameterTool:
+            def query(self, params: dict[str, Any]) -> FuncToolResult:
+                return FuncToolResult(result=params)
+
+        with pytest.raises(UserError, match="additionalProperties should not be set"):
+            trans_to_function_tool(ParameterTool().query)
+
+    @pytest.mark.parametrize("declared_strict", [True, False])
+    @pytest.mark.parametrize("override_strict", [True, False])
+    def test_explicit_schema_mode_overrides_method_declaration(self, declared_strict, override_strict):
+        class ParameterTool:
+            @tool_schema(strict_mode=declared_strict)
+            def query(self, name: str) -> FuncToolResult:
+                return FuncToolResult(result=name)
+
+        tool = trans_to_function_tool(ParameterTool().query, strict_mode=override_strict)
+        assert tool.strict_json_schema is override_strict
+        assert tool.params_json_schema.get("additionalProperties", True) is not override_strict
 
     @pytest.mark.asyncio
     async def test_filters_unexpected_parameters(self):
