@@ -2,7 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from unittest.mock import MagicMock, Mock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -70,6 +71,62 @@ def _make_node(real_agent_config, *, tree, adapter=True, node_config=None, node_
 
 
 class TestAskMetricsAgenticNode:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_patterns, expected_names",
+        [
+            (
+                "semantic_tools.list_metrics,semantic_tools.query_metrics",
+                {"list_metrics", "query_metrics"},
+            ),
+            (
+                "semantic_tools.*",
+                {"list_metrics", "get_dimensions", "query_metrics", "validate_semantic", "attribution_analyze"},
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("params", [None, {"regions": ["APAC", "EMEA"], "threshold": 100}])
+    async def test_registered_query_metrics_executes_with_parameter_bindings(
+        self, real_agent_config, mock_llm_create, tool_patterns, expected_names, params
+    ):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+        from datus.tools.semantic_tools.models import QueryResult
+
+        real_agent_config.agentic_nodes["ask_metrics"] = {"tools": tool_patterns}
+        semantic_tools = SemanticTools(real_agent_config, adapter_type="dosi")
+        adapter = Mock()
+        adapter.query_metrics = AsyncMock(return_value=QueryResult(columns=["revenue"], data=[{"revenue": 100}]))
+        semantic_tools._adapter = adapter
+        with (
+            patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", return_value=semantic_tools),
+            patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", return_value=_context_tools({})),
+        ):
+            node = AskMetricsAgenticNode(
+                node_id="ask_metrics_schema_test",
+                description="Ask metrics",
+                node_type=NodeType.TYPE_ASK_METRICS,
+                agent_config=real_agent_config,
+            )
+
+        tools = {tool.name: tool for tool in node.tools}
+        assert set(tools) == expected_names
+        assert tools["list_metrics"].strict_json_schema is True
+        query_tool = tools["query_metrics"]
+        assert query_tool.strict_json_schema is False
+
+        arguments = {"metrics": ["revenue"]}
+        if params is not None:
+            arguments["params"] = params
+        result = await query_tool.on_invoke_tool(None, json.dumps(arguments))
+
+        assert result["success"] == 1
+        assert result["result"]["columns"] == ["revenue"]
+        assert result["result"]["data"]["original_rows"] == 1
+        assert adapter.query_metrics.await_count == 1
+        assert adapter.query_metrics.call_args.kwargs["metrics"] == ["revenue"]
+        assert adapter.query_metrics.call_args.kwargs.get("params") == params
+
     def test_small_subject_tree_in_prompt_and_no_list_subject_tree_tool(self, real_agent_config, mock_llm_create):
         tree = {
             "Sales": {
