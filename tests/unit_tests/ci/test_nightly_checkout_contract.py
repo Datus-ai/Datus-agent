@@ -1,6 +1,8 @@
 import os
 import re
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -131,6 +133,48 @@ def test_nightly_runs_p0_contracts_without_reruns_or_skips():
 
     assert '"P0 PostgreSQL Agent Storage Contracts"' in script.split("DOCKER_GROUPS=(", maxsplit=1)[1]
     assert '"P0 Dashboard Bootstrap Skill E2E"' in script.split("COMPOSE_GROUPS=(", maxsplit=1)[1]
+
+
+def test_dashboard_nightly_collects_only_deterministic_contracts(monkeypatch):
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    command = next(
+        line
+        for line in script.replace("\\\n", " ").splitlines()
+        if line.startswith('run_compose_suite "P0 Dashboard Bootstrap Skill E2E"')
+    )
+    tokens = shlex.split(command)
+    pytest_args = tokens[tokens.index("pytest") + 1 :]
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            *pytest_args,
+            "--collect-only",
+            "-o",
+            "addopts=",
+            "-o",
+            "log_cli=false",
+            "-q",
+            "-q",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    nodeids = {line.strip() for line in result.stdout.splitlines() if line.startswith("tests/") and "::" in line}
+    assert nodeids == {
+        "tests/integration/plugins/test_dashboard_bootstrap_plugin.py::"
+        "test_dashboard_bootstrap_installs_plugin_and_exports_verified_superset_queries",
+        "tests/integration/agent/test_gen_dashboard_agentic.py::"
+        "TestGenDashboardAgenticInit::test_node_initialization_with_bi_tools",
+        "tests/integration/agent/test_gen_dashboard_agentic.py::"
+        "TestGenDashboardAgenticInit::test_no_db_or_filesystem_tools",
+        "tests/integration/tools/test_bi_dashboard.py::TestPartialIntegration::test_workflow_without_llm",
+    }
 
 
 def test_nightly_tracebacks_do_not_publish_local_credentials():

@@ -233,7 +233,7 @@ def test_dashboard_bootstrap_real_llm_loads_skill_and_stops_at_manifest(
     managed_plugin_runtime,
     tmp_path,
 ):
-    """Keep one real-model smoke at the skill's explicit confirmation boundary."""
+    """Manual real-model evaluation of the skill's confirmation boundary."""
     assert os.environ.get("DEEPSEEK_API_KEY"), "P0 Dashboard LLM smoke requires DEEPSEEK_API_KEY"
     assert importlib.util.find_spec("datus_superset_plugin") is None, (
         "P0 must not have a globally installed datus-superset-plugin fallback"

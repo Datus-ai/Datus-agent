@@ -6,7 +6,7 @@
 
 Contains two test classes at different verification levels:
 - TestPartialIntegration: Real Superset API + mocked LLM (nightly)
-- TestE2EIntegration: Full end-to-end with zero mocks (nightly only)
+- TestE2EIntegration: Full end-to-end with zero mocks (manual, ``-m product_e2e``)
 """
 
 import os

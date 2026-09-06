@@ -30,3 +30,28 @@ When an adapter workflow job is renamed or a new adapter capability is added,
 update the owning adapter repository's required-check document and GitHub ruleset
 in the same change sequence. Datus-agent should only need updates when the
 cross-repository integration contract changes.
+
+## Dashboard Bootstrap Nightly Scope
+
+The P0 Superset group gates four deterministic checks: managed plugin installation
+and real SQL export integrity, two dashboard-node/tool initialization contracts,
+and BI orchestration with fixed generation results. It selects `nightly and not
+product_e2e` from the three dashboard test files. These files are excluded from
+the broad nightly groups, so their three real-model workflows do not run again
+through Product E2E. The deterministic checks do not require provider credentials.
+
+Real-model dashboard workflows are explicit evaluations when changing a skill,
+prompt, or model. They are not warn-only nightly checks. With the normal integration
+environment prepared (test configuration/data, source checkouts, adapter packages,
+Superset/PostgreSQL, and provider credentials), run:
+
+```bash
+uv run pytest -m product_e2e \
+  tests/integration/plugins/test_dashboard_bootstrap_plugin.py \
+  tests/integration/agent/test_gen_dashboard_agentic.py \
+  tests/integration/tools/test_bi_dashboard.py
+```
+
+Evaluation failures retain pytest's nonzero exit status. A green P0 Superset gate
+proves the deterministic contracts, not that a model will always honor the skill's
+confirmation boundary.
