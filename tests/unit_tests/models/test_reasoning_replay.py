@@ -45,6 +45,24 @@ class TestProviderDetection:
         assert reasoning_provider_family(name) is None
         assert is_reasoning_echo_provider(name) is False
 
+    @pytest.mark.parametrize("name", ["deepseek/deepseek-v4-pro", "deepseek-reasoner", "moonshot/kimi-k3", "kimi-k2.6"])
+    def test_thinking_models_echo_reasoning(self, name):
+        assert is_reasoning_echo_provider(name) is True
+
+    @pytest.mark.parametrize(
+        ("name", "family"),
+        [
+            ("deepseek/deepseek-chat", "deepseek"),
+            ("deepseek-chat", "deepseek"),
+            ("moonshot/moonshot-v1-8k", "kimi"),
+            ("kimi-k2", "kimi"),
+        ],
+    )
+    def test_known_non_thinking_models_do_not_echo_reasoning(self, name, family):
+        """Vendor models on the non-thinking deny-list are still Kimi/DeepSeek, but never replay or pad."""
+        assert reasoning_provider_family(name) == family
+        assert is_reasoning_echo_provider(name) is False
+
 
 def _context(model, origin_model=None, provider_data=None):
     return SimpleNamespace(
@@ -69,13 +87,16 @@ class TestShouldReplayReasoningContent:
         assert should_replay_reasoning_content(_context("gpt-5.4", "gpt-5.4")) is False
         assert should_replay_reasoning_content(_context("anthropic/claude-sonnet-5", None)) is False
 
-    def test_untracked_origin_is_trusted_only_without_provider_data(self):
-        assert should_replay_reasoning_content(_context("deepseek/deepseek-v4-pro", None, {})) is True
-        assert should_replay_reasoning_content(_context("moonshot/kimi-k2.6", None, {})) is True
-        assert (
-            should_replay_reasoning_content(_context("deepseek/deepseek-v4-pro", None, {"model": None, "x": 1}))
-            is False
-        )
+    def test_missing_provenance_never_replays(self):
+        """Items without an origin model may come from another provider; they are never replayed."""
+        assert should_replay_reasoning_content(_context("deepseek/deepseek-v4-pro", None, {})) is False
+        assert should_replay_reasoning_content(_context("moonshot/kimi-k3", None, {})) is False
+        assert should_replay_reasoning_content(_context("moonshot/kimi-k3", None, {"model": None})) is False
+
+    @pytest.mark.parametrize("target", ["moonshot/moonshot-v1-8k", "moonshot/kimi-k2", "deepseek/deepseek-chat"])
+    def test_non_thinking_targets_never_replay(self, target):
+        origin = "moonshot/kimi-k2.5" if "moonshot" in target else "deepseek/deepseek-v4-pro"
+        assert should_replay_reasoning_content(_context(target, origin)) is False
 
 
 class TestEnsureReasoningContentPlaceholders:
@@ -99,9 +120,13 @@ class TestEnsureReasoningContentPlaceholders:
             {"role": "assistant", "content": "final answer"},
         ]
 
-    def test_non_echo_provider_untouched(self):
+    @pytest.mark.parametrize(
+        "model", ["gpt-5.4", "moonshot/moonshot-v1-8k", "moonshot/kimi-k2", "deepseek/deepseek-chat"]
+    )
+    def test_non_echo_provider_untouched(self, model):
+        """Other vendors and known non-thinking Kimi/DeepSeek models get no placeholders at all."""
         messages = self._history()
-        result = ensure_reasoning_content_placeholders(messages, "gpt-5.4")
+        result = ensure_reasoning_content_placeholders(messages, model)
         assert result is messages
         assert "reasoning_content" not in messages[4]
         assert messages[4]["content"] is None

@@ -232,6 +232,34 @@ class TestApplyAndRemoveSdkPatches:
         assert captured["messages"][1]["reasoning_content"] == "t1"
         assert reply.choices[0].message.content == "why"
 
+    @pytest.mark.asyncio
+    async def test_patched_acompletion_recovers_kimi_content_for_complete_responses(self, monkeypatch):
+        """The async wrapper recovers reasoning-only Kimi replies, but leaves streaming iterators untouched."""
+        import litellm
+
+        complete = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
+        )
+        stream = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
+        )
+
+        async def fake_acompletion(*args, **kwargs):
+            return stream if kwargs.get("stream") else complete
+
+        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+        apply_sdk_patches()
+        try:
+            await litellm.acompletion(model="moonshot/kimi-k3", messages=[{"role": "user", "content": "q"}])
+            await litellm.acompletion(
+                model="moonshot/kimi-k3", messages=[{"role": "user", "content": "q"}], stream=True
+            )
+        finally:
+            remove_sdk_patches()
+
+        assert complete.choices[0].message.content == "why"
+        assert stream.choices[0].message.content == ""
+
     def test_apply_patches_idempotent(self):
         """Calling apply_sdk_patches twice must not re-capture the already-patched
         litellm functions as 'originals'. Otherwise remove_sdk_patches() would
