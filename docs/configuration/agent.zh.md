@@ -124,7 +124,7 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 | `openai` | `gpt-5.2`、`gpt-4.1`、`o3` | `openai` | API Key |
 | `deepseek` | `deepseek-v4-pro`、`deepseek-v4-flash` | `deepseek` | API Key |
 | `claude` | `claude-sonnet-4-5`、`claude-opus-4-5` | `claude` | API Key |
-| `kimi` | `kimi-k2.5`、`kimi-k2-thinking` | `kimi` | API Key |
+| `kimi` | `kimi-k3`、`kimi-k2.6` | `kimi` | API Key |
 | `qwen` | `qwen3-max`、`qwen3-coder-plus` | `openai` | API Key |
 | `gemini` | `gemini-2.5-flash`、`gemini-2.5-pro` | `gemini` | API Key |
 | `minimax` | `MiniMax-M2.7`、`MiniMax-M2.5` | `minimax` | API Key |
@@ -172,7 +172,7 @@ api_key: ${OPENAI_API_KEY}
 
 另外，当前实现会对少数模型自动补充固定参数覆盖：
 
-- `kimi-k2.5`：自动设置 `temperature: 1.0`、`top_p: 0.95`
+- `kimi-k3`、`kimi-k2.6`：自动设置 `temperature: 1.0`、`top_p: 0.95`
 - `qwen3-coder-plus`：自动设置 `temperature: 1.0`、`top_p: 0.95`
 
 ### 配置示例
@@ -219,7 +219,7 @@ kimi:
   type: kimi
   base_url: https://api.moonshot.cn/v1
   api_key: ${KIMI_API_KEY}
-  model: kimi-k2.5
+  model: kimi-k3
 ```
 
 === "Qwen (Alibaba)"

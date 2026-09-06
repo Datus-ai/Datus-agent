@@ -604,8 +604,8 @@ class TestGetAgentsSdkModelRouting:
         assert not isinstance(model, OpenAIResponsesModel)
 
     def test_kimi_still_uses_litellm(self):
-        """Kimi/Moonshot relies on sdk_patches.py for reasoning_content echo-back,
-        which only applies on the LiteLLM path. It must not be routed to Responses."""
+        """Kimi/Moonshot reasoning_content replay goes through the LiteLLM path's
+        should_replay_reasoning_content hook. It must not be routed to Responses."""
         from agents.extensions.models.litellm_model import LitellmModel
         from agents.models.openai_responses import OpenAIResponsesModel
 
@@ -613,3 +613,16 @@ class TestGetAgentsSdkModelRouting:
         model = adapter.get_agents_sdk_model()
         assert isinstance(model, LitellmModel)
         assert not isinstance(model, OpenAIResponsesModel)
+
+    @pytest.mark.parametrize(
+        ("provider", "model_name"),
+        [("deepseek", "deepseek-v4-pro"), ("kimi", "kimi-k2.6"), ("claude", "claude-sonnet-5")],
+    )
+    def test_litellm_models_get_reasoning_replay_hook(self, provider, model_name):
+        """Every LiteLLM-path model carries the Datus replay hook so the SDK echoes
+        each turn's own reasoning_content for DeepSeek and Kimi."""
+        from datus.models.reasoning_replay import should_replay_reasoning_content
+
+        adapter = LiteLLMAdapter(provider=provider, model=model_name, api_key="sk-test")
+        model = adapter.get_agents_sdk_model()
+        assert model.should_replay_reasoning_content is should_replay_reasoning_content
