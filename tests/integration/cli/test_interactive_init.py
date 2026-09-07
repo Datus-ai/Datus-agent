@@ -14,11 +14,11 @@ pytestmark = [pytest.mark.nightly, pytest.mark.provider_health]
 
 
 class TestInitKimiConnectivity:
-    """Integration test for kimi-k2.5 LLM connectivity during interactive init."""
+    """Integration test for kimi-k3 LLM connectivity during interactive init."""
 
     @pytest.mark.skipif(not os.getenv("KIMI_API_KEY"), reason="KIMI_API_KEY not available")
-    def test_kimi_k25_connectivity_with_param_overrides(self):
-        """Verify that interactive init sets temperature=1.0 and top_p=0.95 for kimi-k2.5,
+    def test_kimi_k3_connectivity_with_param_overrides(self):
+        """Verify that interactive init sets temperature=1.0 and top_p=0.95 for kimi-k3,
         and the LLM connectivity test succeeds (would fail with default temperature=0.7)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
@@ -27,21 +27,19 @@ class TestInitKimiConnectivity:
                 "type": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
                 "api_key": os.getenv("KIMI_API_KEY"),
-                "model": "kimi-k2.5",
+                "model": "kimi-k3",
                 "temperature": 1.0,
                 "top_p": 0.95,
             }
 
             success, error_msg = init._test_llm_connectivity()
 
-            assert success is True, (
-                f"kimi-k2.5 connectivity should succeed with temperature=1.0, top_p=0.95: {error_msg}"
-            )
-            logger.info("kimi-k2.5 init connectivity test passed with correct param overrides")
+            assert success is True, f"kimi-k3 connectivity should succeed with temperature=1.0, top_p=0.95: {error_msg}"
+            logger.info("kimi-k3 init connectivity test passed with correct param overrides")
 
     @pytest.mark.skipif(not os.getenv("KIMI_API_KEY"), reason="KIMI_API_KEY not available")
-    def test_kimi_k25_fails_without_param_overrides(self):
-        """Confirm that kimi-k2.5 rejects default temperature (0.7), proving the override is necessary."""
+    def test_kimi_k3_fails_without_param_overrides(self):
+        """Confirm that kimi-k3 rejects default temperature (0.7), proving the override is necessary."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
@@ -50,13 +48,13 @@ class TestInitKimiConnectivity:
                 "type": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
                 "api_key": os.getenv("KIMI_API_KEY"),
-                "model": "kimi-k2.5",
+                "model": "kimi-k3",
             }
 
             success, error_msg = init._test_llm_connectivity()
 
-            assert success is False, "kimi-k2.5 should fail without temperature override"
+            assert success is False, "kimi-k3 should fail without temperature override"
             assert "temperature" in error_msg.lower() or "400" in error_msg, (
                 f"Error should mention temperature or 400, got: {error_msg}"
             )
-            logger.info(f"kimi-k2.5 correctly rejected default params: {error_msg}")
+            logger.info(f"kimi-k3 correctly rejected default params: {error_msg}")

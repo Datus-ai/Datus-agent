@@ -201,7 +201,7 @@ Providers are defined in `conf/providers.yml` and activated by adding credential
 | `openai` | `gpt-5.2`, `gpt-4.1`, `o3` | `openai` | API key |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | `deepseek` | API key |
 | `claude` | `claude-sonnet-4-5`, `claude-opus-4-5` | `claude` | API key |
-| `kimi` | `kimi-k2.5`, `kimi-k2-thinking` | `kimi` | API key |
+| `kimi` | `kimi-k3`, `kimi-k2.6` | `kimi` | API key |
 | `qwen` | `qwen3-max`, `qwen3-coder-plus` | `openai` | API key |
 | `gemini` | `gemini-2.5-flash`, `gemini-2.5-pro` | `gemini` | API key |
 | `minimax` | `MiniMax-M2.7`, `MiniMax-M2.5` | `minimax` | API key |
@@ -250,7 +250,7 @@ For OpenAI, DeepSeek, Claude, Kimi, Qwen, Gemini, and OpenRouter, the configurat
 
 The current implementation also auto-applies fixed parameter overrides for a few models:
 
-- `kimi-k2.5`: `temperature: 1.0`, `top_p: 0.95`
+- `kimi-k3`, `kimi-k2.6`: `temperature: 1.0`, `top_p: 0.95`
 - `qwen3-coder-plus`: `temperature: 1.0`, `top_p: 0.95`
 
 ### Provider Configuration Examples

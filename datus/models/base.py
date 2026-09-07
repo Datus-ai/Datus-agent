@@ -45,7 +45,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
 
     # Module-level LRU cache for instantiated models. Keyed on the
     # configuration fingerprint so ``/model`` can flip ``active_model()``
-    # between ``(openai, gpt-4.1)`` and ``(kimi, kimi-k2.5)`` without
+    # between ``(openai, gpt-4.1)`` and ``(kimi, kimi-k2.6)`` without
     # repeatedly paying the client-construction cost (LiteLLM + tokenizer
     # download). Size is intentionally tiny — users seldom juggle more
     # than a handful of models — so stale entries are evicted quickly.

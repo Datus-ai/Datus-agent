@@ -1256,6 +1256,24 @@ class TestDetectToolFailure:
 
 
 class TestModelSpecsAndTokenLimits:
+    @pytest.fixture(autouse=True)
+    def _yaml_specs_only(self):
+        """Resolve specs from providers.yml alone.
+
+        ``_load_model_specs`` also merges exact IDs from the user's OpenRouter
+        cache file, so a developer cache could turn a prefix-match assertion
+        into an exact match. Wipe the module-level cache and hide the file.
+        """
+        import datus.models.openai_compatible as oc
+
+        original = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None
+        try:
+            with patch("datus.cli.provider_model_catalog.load_cached_model_details", return_value={}):
+                yield
+        finally:
+            oc._MODEL_SPECS_CACHE = original
+
     def test_exact_match_max_tokens(self):
         cfg = _make_model_config(model="gpt-4o")
         model = _make_model(cfg)
@@ -1273,10 +1291,10 @@ class TestModelSpecsAndTokenLimits:
         assert model.max_tokens() == 16384
 
     def test_prefix_match_context_length(self):
-        cfg = _make_model_config(model="kimi-k2-0711-preview")
+        cfg = _make_model_config(model="kimi-k3-0716-preview")
         model = _make_model(cfg)
-        # Should match "kimi-k2" prefix
-        assert model.context_length() == 256000
+        # Should match "kimi-k3" prefix
+        assert model.context_length() == 1000000
 
     def test_unknown_model_returns_none_for_max_tokens(self):
         cfg = _make_model_config(model="unknown-model-xyz")
@@ -1747,8 +1765,11 @@ class TestBuildAgent:
         ms = call_args[1]["model_settings"]
         assert ms.extra_headers == {"X-Custom": "value"}
 
+    # ``configured_base_url`` rather than ``base_url``: the pytest-base-url plugin (pulled in by
+    # pytest-playwright in the nightly environment) owns a session-scoped ``base_url`` fixture, and a
+    # parametrized argument of the same name collides with it.
     @pytest.mark.parametrize(
-        "model_name,provider,base_url,expected_retention,expected_cache_key",
+        "model_name,provider,configured_base_url,expected_retention,expected_cache_key",
         [
             ("gpt-6-astra", "openai", None, "24h", True),
             ("gpt-6-astra", "openai", "https://api.openai.com/v1", "24h", True),
@@ -1762,8 +1783,10 @@ class TestBuildAgent:
             ("openai/gpt-6-astra", "openrouter", None, None, False),
         ],
     )
-    def test_prompt_cache_settings(self, model_name, provider, base_url, expected_retention, expected_cache_key):
-        cfg = _make_model_config(model=model_name, model_type=provider, base_url=base_url)
+    def test_prompt_cache_settings(
+        self, model_name, provider, configured_base_url, expected_retention, expected_cache_key
+    ):
+        cfg = _make_model_config(model=model_name, model_type=provider, base_url=configured_base_url)
         model = _make_model(cfg)
         model.litellm_adapter.provider = provider
         _, call_args = self._call_build_agent(model)

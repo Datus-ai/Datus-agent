@@ -16,7 +16,8 @@ class KimiModel(OpenAICompatibleModel):
     Implementation of the BaseModel for Moonshot Kimi's API.
 
     Kimi K2 and K2.5 models support a "thinking" mode that returns reasoning_content.
-    The sdk_patches.py module handles reasoning_content preservation during tool calling.
+    Per-turn reasoning_content replay on tool-calling turns is handled by the
+    agents SDK through the hook in :mod:`datus.models.reasoning_replay`.
     """
 
     def __init__(

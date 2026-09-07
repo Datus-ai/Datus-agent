@@ -32,11 +32,11 @@ dependencies = [
     "pyyaml==6.0.1",
     "packaging>=21.0",
     "structlog>=23.1.0",
-    # Cap below 2.45.0: openai 2.45.0 made ``InputTokensDetails.cache_write_tokens``
-    # a required field, which openai-agents 0.7.0 does not populate when it default-
-    # constructs ``Usage()`` (agents/usage.py), raising a pydantic "Field required"
-    # error on every model turn. Lift the cap only when bumping openai-agents.
-    "openai>=2.8.0,<2.45.0",
+    # Floor: openai-agents 0.13.x requires openai>=2.26. Cap below 2.45.0: openai
+    # 2.45.0 made ``InputTokensDetails.cache_write_tokens`` a required field and
+    # ``datus/models/claude_model.py`` still constructs ``InputTokensDetails``
+    # without it. Lift the cap together with that code.
+    "openai>=2.26.0,<2.45.0",
     "httpx[socks]==0.27.2",
     "tantivy>=0.22.2",
     "aiohttp>=3.11.16",
@@ -47,7 +47,7 @@ dependencies = [
     # them. xlrd covers legacy .xls, which DuckDB does not support at all.
     "openpyxl>=3.1.5",
     "xlrd>=2.0.1",
-    "openai-agents[litellm]==0.7.0",
+    "openai-agents[litellm]==0.13.4",
     "openinference-instrumentation-openai-agents==1.6.2",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
