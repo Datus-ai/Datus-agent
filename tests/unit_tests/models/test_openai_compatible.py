@@ -1256,6 +1256,24 @@ class TestDetectToolFailure:
 
 
 class TestModelSpecsAndTokenLimits:
+    @pytest.fixture(autouse=True)
+    def _yaml_specs_only(self):
+        """Resolve specs from providers.yml alone.
+
+        ``_load_model_specs`` also merges exact IDs from the user's OpenRouter
+        cache file, so a developer cache could turn a prefix-match assertion
+        into an exact match. Wipe the module-level cache and hide the file.
+        """
+        import datus.models.openai_compatible as oc
+
+        original = oc._MODEL_SPECS_CACHE
+        oc._MODEL_SPECS_CACHE = None
+        try:
+            with patch("datus.cli.provider_model_catalog.load_cached_model_details", return_value={}):
+                yield
+        finally:
+            oc._MODEL_SPECS_CACHE = original
+
     def test_exact_match_max_tokens(self):
         cfg = _make_model_config(model="gpt-4o")
         model = _make_model(cfg)
