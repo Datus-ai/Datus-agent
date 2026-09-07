@@ -1747,8 +1747,11 @@ class TestBuildAgent:
         ms = call_args[1]["model_settings"]
         assert ms.extra_headers == {"X-Custom": "value"}
 
+    # ``configured_base_url`` rather than ``base_url``: the pytest-base-url plugin (pulled in by
+    # pytest-playwright in the nightly environment) owns a session-scoped ``base_url`` fixture, and a
+    # parametrized argument of the same name collides with it.
     @pytest.mark.parametrize(
-        "model_name,provider,base_url,expected_retention,expected_cache_key",
+        "model_name,provider,configured_base_url,expected_retention,expected_cache_key",
         [
             ("gpt-6-astra", "openai", None, "24h", True),
             ("gpt-6-astra", "openai", "https://api.openai.com/v1", "24h", True),
@@ -1762,8 +1765,10 @@ class TestBuildAgent:
             ("openai/gpt-6-astra", "openrouter", None, None, False),
         ],
     )
-    def test_prompt_cache_settings(self, model_name, provider, base_url, expected_retention, expected_cache_key):
-        cfg = _make_model_config(model=model_name, model_type=provider, base_url=base_url)
+    def test_prompt_cache_settings(
+        self, model_name, provider, configured_base_url, expected_retention, expected_cache_key
+    ):
+        cfg = _make_model_config(model=model_name, model_type=provider, base_url=configured_base_url)
         model = _make_model(cfg)
         model.litellm_adapter.provider = provider
         _, call_args = self._call_build_agent(model)
