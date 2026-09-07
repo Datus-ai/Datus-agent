@@ -324,12 +324,13 @@ class OpenAICompatibleModel(LLMBaseModel):
         return is_official_openai_endpoint(self.model_config.type, self.base_url)
 
     def _default_prompt_cache_retention(self) -> Optional[str]:
-        """Choose a safe default prompt cache retention policy for OpenAI."""
+        """Set known OpenAI retention policies; otherwise defer to the API default."""
         if not self._is_official_openai_api():
             return None
-        if self.model_name.startswith("gpt-5"):
+        # GPT-6 Astra rejects in_memory and requires extended prompt caching.
+        if self.model_name.startswith(("gpt-5", "gpt-6-astra")):
             return "24h"
-        return "in_memory"
+        return None
 
     def _model_supports_reasoning(self) -> bool:
         """Decide whether ``/effort`` should inject ``Reasoning(effort=…)``.
@@ -1072,11 +1073,11 @@ class OpenAICompatibleModel(LLMBaseModel):
         prompt_cache_retention = self._default_prompt_cache_retention()
         if prompt_cache_retention:
             model_settings_kwargs["prompt_cache_retention"] = prompt_cache_retention
-            prompt_cache_key = self._default_prompt_cache_key(agent_name)
-            if prompt_cache_key:
-                existing_extra_args = model_settings_kwargs.get("extra_args", {})
-                existing_extra_args["prompt_cache_key"] = prompt_cache_key
-                model_settings_kwargs["extra_args"] = existing_extra_args
+        prompt_cache_key = self._default_prompt_cache_key(agent_name)
+        if prompt_cache_key:
+            existing_extra_args = model_settings_kwargs.get("extra_args", {})
+            existing_extra_args["prompt_cache_key"] = prompt_cache_key
+            model_settings_kwargs["extra_args"] = existing_extra_args
 
         # When the hosted web_search tool is in play, ask the Responses API to
         # echo the per-call source URLs (``action.sources``). They are a fallback
