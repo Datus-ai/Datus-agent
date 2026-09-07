@@ -12,13 +12,15 @@ cutoff resolver.
 """
 
 import json
+from pathlib import Path
 from typing import AsyncGenerator, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.compact_archive import ToolArchive
+from datus.agent.node.context_rewriter import estimate_items_tokens
 from datus.configuration.agent_config import CompactConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.token_usage import TokenUsage
@@ -130,27 +132,54 @@ class TestDecideCompactMode:
                 # Ratio defaults to 0.0 → below major threshold → noop.
                 assert await node._decide_compact_mode() == "noop"
 
-    @pytest.mark.asyncio
-    async def test_mid_turn_skips_minor(self, tmp_path):
-        """Within a turn (``mid_turn=True``) the user-turn-count minor gate is
-        skipped — that count cannot change between tool calls, so minor is left
-        to the turn-start (``pre_user_turn``) check."""
-        node = _build_node(tmp_path)
-        node._compact_cfg.minor.keep_recent_user_turns = 2
-        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.1):
-            with patch.object(_Node, "_user_turn_count_from_session", new=AsyncMock(return_value=99)):
-                # mid-turn: skip minor even though the count is well over the window
-                assert await node._decide_compact_mode(mid_turn=True) == "noop"
-                # turn start (default): the same state does pick minor
-                assert await node._decide_compact_mode() == "minor"
 
-    @pytest.mark.asyncio
-    async def test_mid_turn_still_allows_major(self, tmp_path):
-        """major still fires mid-turn — its token-ratio gate genuinely changes
-        as the turn progresses."""
+class TestDecideMidTurnCompactMode:
+    """Per-model-call dispatcher used by ``MidTurnCompactor`` inside a turn.
+
+    The ratio it receives already folds in the tool outputs appended since the
+    last model call and the output headroom, so the decision is a pure
+    threshold comparison with two independent kill switches.
+    """
+
+    def test_major_at_or_above_major_threshold(self, tmp_path):
         node = _build_node(tmp_path)
-        with patch.object(_Node, "_history_token_ratio_sync", return_value=0.95):
-            assert await node._decide_compact_mode(mid_turn=True) == "major"
+        assert node._decide_mid_turn_compact_mode(0.9) == "major"
+        assert node._decide_mid_turn_compact_mode(0.97) == "major"
+
+    def test_minor_in_the_band_between_the_two_thresholds(self, tmp_path):
+        node = _build_node(tmp_path)
+        assert node._decide_mid_turn_compact_mode(0.75) == "minor"
+        assert node._decide_mid_turn_compact_mode(0.89) == "minor"
+
+    def test_noop_below_minor_threshold(self, tmp_path):
+        node = _build_node(tmp_path)
+        assert node._decide_mid_turn_compact_mode(0.5) == "noop"
+        assert node._decide_mid_turn_compact_mode(0.0) == "noop"
+
+    def test_major_mid_turn_switch_falls_through_to_minor(self, tmp_path):
+        """With ``major.mid_turn_enabled=False`` a 95% ratio still gets the
+        cheap archive stage — the switch disables the LLM summary only."""
+        node = _build_node(tmp_path)
+        node._compact_cfg.major.mid_turn_enabled = False
+        assert node._decide_mid_turn_compact_mode(0.95) == "minor"
+
+    def test_minor_mid_turn_switch_leaves_major_alone(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.mid_turn_enabled = False
+        assert node._decide_mid_turn_compact_mode(0.8) == "noop"
+        assert node._decide_mid_turn_compact_mode(0.95) == "major"
+
+    def test_disabled_passes_still_respect_enabled_flags(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._compact_cfg.major.enabled = False
+        node._compact_cfg.minor.enabled = False
+        assert node._decide_mid_turn_compact_mode(0.99) == "noop"
+
+    def test_custom_minor_threshold_is_honoured(self, tmp_path):
+        node = _build_node(tmp_path)
+        node._compact_cfg.minor.mid_turn_token_threshold = 0.5
+        assert node._decide_mid_turn_compact_mode(0.5) == "minor"
+        assert node._decide_mid_turn_compact_mode(0.49) == "noop"
 
 
 class TestUserTurnCountFromSession:
@@ -529,3 +558,264 @@ class TestCompactDisplayInjection:
         node._compact_cfg.minor.enabled = False
         await node.compact(mode="auto", reason="test")
         node.action_bus.put.assert_not_called()
+
+
+class TestCompactMidTurn:
+    """``compact_mid_turn``: two-stage rewrite of the transcript a running turn
+    is about to send. Driven by ``MidTurnCompactor`` before each model call."""
+
+    @staticmethod
+    def _node(tmp_path, *, context_length=1000, max_tokens=100, keep_recent=2):
+        node = _build_node(tmp_path)
+        model = MagicMock()
+        model.context_length.return_value = context_length
+        model.max_tokens.return_value = max_tokens
+        model.summarize_items = AsyncMock(
+            return_value={"content": "## Summary\nprogress", "usage": {"output_tokens": 12}}
+        )
+        node._pinned_model = model
+        node._session = MagicMock(clear_session=AsyncMock(), add_items=AsyncMock())
+        node._session_manager = MagicMock()
+        node._session_manager.checkpoint_turn.return_value = "CHECKPOINT"
+        # ``compact_mid_turn`` falls back to the node's system prompt when the
+        # rewriter passes none; the bypassed-__init__ node cannot render it.
+        node._get_system_prompt = lambda: "SYS"
+        node.action_bus = MagicMock()
+        node.mid_turn_rewrite_checkpoint = None
+        node._compact_cfg.minor.archive_threshold = 100
+        # Short preview so the 300-char fixture outputs really shrink when archived
+        # (``_build_node`` pre-creates the archive, so rebuild it with the new width).
+        node._compact_cfg.minor.archive_preview_chars = 50
+        node._archive = ToolArchive(
+            project_name="proj", session_id="sid_test", base_dir=tmp_path / "data", preview_chars=50
+        )
+        node._compact_cfg.minor.keep_recent_tool_results = keep_recent
+        return node
+
+    @staticmethod
+    def _items(n_outputs=4, size=1200):  # realistic tool outputs: above the archive threshold
+        items = [{"role": "user", "content": "analyse refunds"}]
+        for i in range(n_outputs):
+            items.append({"type": "function_call", "call_id": f"c{i}", "name": "execute_sql", "arguments": "{}"})
+            items.append({"type": "function_call_output", "call_id": f"c{i}", "output": f"{i}:" + "r" * size})
+        return items
+
+    @pytest.mark.asyncio
+    async def test_noop_below_the_minor_threshold(self, tmp_path):
+        node = self._node(tmp_path)
+        items = self._items()
+        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=100, tail_start=len(items))
+        assert result["mode"] == "noop" and result["success"] is True
+        assert result["items"] is items
+        node._session.clear_session.assert_not_awaited()
+        node._pinned_model.summarize_items.assert_not_awaited()
+        node.action_bus.put.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_output_reserve_and_tail_estimate_count_towards_the_ratio(self, tmp_path):
+        """base 500 + reserve 100 = 0.38 of a 1600 window (noop); with the
+        ~670-token tail of appended tool rounds it lands in the archive band.
+        After archiving, the ratio is the measured total minus what the markers
+        saved (not a fresh estimate of the items alone), so it drops but stays
+        well above zero and below the major threshold."""
+        node = self._node(tmp_path, keep_recent=10, context_length=1600)
+        items = self._items(2)
+        noop = await node.compact_mid_turn(items, item_format="responses", base_tokens=500, tail_start=len(items))
+        assert noop["mode"] == "noop"
+        # Same base, but the tool rounds are not yet counted in ``base_tokens``.
+        decided = await node.compact_mid_turn(items, item_format="responses", base_tokens=500, tail_start=1)
+        assert decided["mode"] == "noop"  # in the band, but nothing archivable (keep_recent=10)
+        node._pinned_model.summarize_items.assert_not_awaited()
+        node._compact_cfg.minor.keep_recent_tool_results = 0
+        minor = await node.compact_mid_turn(items, item_format="responses", base_tokens=500, tail_start=1)
+        assert minor["mode"] == "minor"
+
+    @pytest.mark.asyncio
+    async def test_minor_stage_archives_older_outputs_and_persists_the_view(self, tmp_path):
+        node = self._node(tmp_path)
+        node.running_turn_usage = TokenUsage(requests=1, session_total_tokens=700, context_length=1000)
+        items = self._items(4)
+        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=700, tail_start=len(items))
+
+        assert result["mode"] == "minor" and result["success"] is True
+        assert result["archived_count"] == 2
+        view = result["items"]
+        outputs = [it for it in view if it.get("type") == "function_call_output"]
+        assert outputs[0]["output"].startswith("[DATUS_ARCHIVED]")
+        assert outputs[1]["output"].startswith("[DATUS_ARCHIVED]")
+        assert outputs[2] is items[6] and outputs[3] is items[8]
+        # No LLM call, no display panel for the archive stage.
+        node._pinned_model.summarize_items.assert_not_awaited()
+        node.action_bus.put.assert_not_called()
+        # Persisted exactly what is returned.
+        node._session.clear_session.assert_awaited_once()
+        node._session.add_items.assert_awaited_once_with(view)
+        # Live occupancy and rollback boundary follow the rewrite.
+        assert node.running_turn_usage.session_total_tokens == estimate_items_tokens(view)
+        node._session_manager.checkpoint_turn.assert_called_once_with("sid_test")
+        assert node.mid_turn_rewrite_checkpoint == "CHECKPOINT"
+        node._session_manager.delete_system_prompt_snapshot.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_major_stage_summarizes_the_archived_view(self, tmp_path):
+        node = self._node(tmp_path)
+        # The measured input (2400 of 1000) is far over the window; archiving the two
+        # oldest 3000-char outputs saves ~1400 tokens, which still leaves it over.
+        node.running_turn_usage = TokenUsage(requests=1, session_total_tokens=2400, context_length=1000)
+        items = self._items(4, size=3000)
+        request = items[0]
+        result = await node.compact_mid_turn(
+            items,
+            item_format="responses",
+            base_tokens=2400,
+            tail_start=len(items),
+            instruction="SYS",
+            turn_request=request,
+        )
+
+        assert result["mode"] == "major" and result["success"] is True
+        assert result["archived_count"] == 2
+        assert result["summary"] == "## Summary\nprogress"
+        assert result["summary_token"] == 12
+        # The summary call saw the *archived* view, never the raw items or the session.
+        summarized = node._pinned_model.summarize_items.await_args.args[0]
+        assert summarized is not items
+        assert any(
+            it.get("type") == "function_call_output" and it["output"].startswith("[DATUS_ARCHIVED]")
+            for it in summarized
+        )
+        kwargs = node._pinned_model.summarize_items.await_args.kwargs
+        assert kwargs["item_format"] == "responses"
+        assert kwargs["instruction"] == "SYS"
+        assert "in the middle of a task" in kwargs["prompt"]
+        # Rewritten view: this turn's request, the summary, the resume nudge.
+        view = result["items"]
+        assert view[0] is request
+        assert view[1]["role"] == "assistant" and "## Summary" in view[1]["content"][0]["text"]
+        # The JSONL recovery pointer is appended host-side to the summary.
+        assert view[1]["content"][0]["text"].endswith(f"`read_file({result['history_jsonl']!r})`")
+        assert view[2]["role"] == "user" and view[2]["content"][0]["text"].startswith("[DATUS_COMPACT_RESUME]")
+        assert len(view) == 3
+        node._session.add_items.assert_awaited_once_with(view)
+        # Full pre-compaction transcript dumped for recovery, one item per line.
+        assert result["history_jsonl"]
+        dumped = Path(result["history_jsonl"]).read_text(encoding="utf-8").splitlines()
+        assert len(dumped) == len(items)
+        assert json.loads(dumped[2])["output"] == items[2]["output"]  # original, un-archived text
+        # Bookkeeping shared with the turn-start major pass.
+        assert node._compacted_until == 0
+        node._session_manager.delete_system_prompt_snapshot.assert_called_once_with("sid_test")
+        types = [c.args[0].action_type for c in node.action_bus.put.call_args_list]
+        assert types == ["compact_progress", "compact_summary"]
+        assert node.action_bus.put.call_args_list[1].args[0].output["summary"] == "## Summary\nprogress"
+
+    @pytest.mark.asyncio
+    async def test_summary_failure_keeps_the_archive_result_and_reports_the_error(self, tmp_path):
+        node = self._node(tmp_path)
+        node._pinned_model.summarize_items = AsyncMock(side_effect=RuntimeError("llm down"))
+        items = self._items(4, size=3000)
+        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=2400, tail_start=len(items))
+
+        assert result["mode"] == "minor" and result["success"] is True
+        assert result["major_error"] == "llm down"
+        assert result["archived_count"] == 2
+        node._session.add_items.assert_awaited_once_with(result["items"])
+        assert not any(it.get("role") == "assistant" for it in result["items"])
+        # The pinned progress hint is still cleared by a terminal action.
+        types = [c.args[0].action_type for c in node.action_bus.put.call_args_list]
+        assert types == ["compact_progress", "compact_summary"]
+        assert node.action_bus.put.call_args_list[1].args[0].output["summary"] == ""
+
+    @pytest.mark.asyncio
+    async def test_summary_failure_with_nothing_archived_leaves_the_session_alone(self, tmp_path):
+        node = self._node(tmp_path, keep_recent=10)
+        node._pinned_model.summarize_items = AsyncMock(side_effect=RuntimeError("llm down"))
+        items = self._items(4)
+        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=950, tail_start=len(items))
+
+        assert result["mode"] == "noop" and result["success"] is True
+        assert result["major_error"] == "llm down"
+        assert result["items"] is items
+        node._session.clear_session.assert_not_awaited()
+        node._session.add_items.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_returns_the_original_items(self, tmp_path):
+        node = self._node(tmp_path)
+        node._session.add_items = AsyncMock(side_effect=RuntimeError("disk"))
+        items = self._items(4, size=3000)
+        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=950, tail_start=len(items))
+
+        assert result["success"] is False
+        assert result["items"] is items
+        assert node.mid_turn_rewrite_checkpoint is None
+        node._session_manager.delete_system_prompt_snapshot.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_context_window_is_noop(self, tmp_path):
+        node = self._node(tmp_path, context_length=None)
+        items = self._items()
+        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=10_000, tail_start=0)
+        assert result["mode"] == "noop"
+        node._pinned_model.summarize_items.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_mid_turn_switches_disable_each_stage(self, tmp_path):
+        node = self._node(tmp_path)
+        node._compact_cfg.major.mid_turn_enabled = False
+        node._compact_cfg.minor.mid_turn_enabled = False
+        items = self._items(4, size=3000)
+        result = await node.compact_mid_turn(items, item_format="responses", base_tokens=950, tail_start=len(items))
+        assert result["mode"] == "noop"
+        assert result["items"] is items
+
+    @pytest.mark.asyncio
+    async def test_anthropic_transcript_gets_anthropic_view(self, tmp_path):
+        node = self._node(tmp_path, keep_recent=10)
+        request = {"role": "user", "content": [{"type": "text", "text": "analyse refunds"}]}
+        items = [
+            request,
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "execute_sql", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "r" * 300}]},
+        ]
+        result = await node.compact_mid_turn(
+            items, item_format="anthropic", base_tokens=950, tail_start=len(items), turn_request=request
+        )
+        assert result["mode"] == "major"
+        assert node._pinned_model.summarize_items.await_args.kwargs["item_format"] == "anthropic"
+        view = result["items"]
+        assert view[0] is request
+        assert view[1] == {"role": "assistant", "content": [{"type": "text", "text": ANY}]}
+        assert view[2]["role"] == "user" and view[2]["content"][0]["type"] == "text"
+
+    @pytest.mark.asyncio
+    async def test_dump_writes_explicit_items(self, tmp_path):
+        node = _build_node(tmp_path)
+        items = self._items(2)
+        path = await node._dump_session_history_jsonl(items)
+        assert path.parent == node._archive.dir
+        assert path.name.startswith("history_") and path.suffix == ".jsonl"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert [json.loads(line) for line in lines] == items
+
+
+class TestCompactMidTurnWithRealSession:
+    @pytest.mark.asyncio
+    async def test_session_equals_the_returned_view(self, tmp_path):
+        """After the rewrite, SQLite holds exactly the list the model is sent."""
+        from agents.extensions.memory import AdvancedSQLiteSession
+
+        session = AdvancedSQLiteSession(session_id="sid_test", db_path=str(tmp_path / "s.db"), create_tables=True)
+        node = TestCompactMidTurn._node(tmp_path)
+        node._session = session
+        items = TestCompactMidTurn._items(4, size=3000)
+        await session.add_items(items)
+
+        result = await node.compact_mid_turn(
+            items, item_format="responses", base_tokens=950, tail_start=1, instruction="SYS", turn_request=items[0]
+        )
+        assert result["mode"] == "major"
+        stored = await session.get_items()
+        assert stored == result["items"]
+        assert not any(it.get("type") == "function_call" for it in stored)
+        session.close()

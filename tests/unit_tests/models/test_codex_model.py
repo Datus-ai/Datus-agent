@@ -1565,3 +1565,49 @@ class TestCodexMidRunInsert:
 
         assert not stub.saw_on_turn(1, "STOP_AND_CHECK")
         assert queue.snapshot() == ["STOP_AND_CHECK"]
+
+
+class TestCodexContextRewriterPlumbing:
+    """``context_rewriter`` must reach ``_build_run_config`` on the Codex path.
+
+    Compaction is a per-model-call rewrite installed through the SDK
+    ``RunConfig``; a provider that forgets to forward the rewriter silently
+    keeps sending the uncompacted history for the rest of the run.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rewriter_is_forwarded_to_build_run_config(self, model_config, mock_oauth, two_turn_agents_model):
+        from datus.models.codex_model import CodexModel
+
+        model = CodexModel(model_config=model_config)
+        stub = two_turn_agents_model()
+        rewriter = MagicMock()
+        rewriter.rewrite_sdk_input = AsyncMock(side_effect=lambda raw: list(raw))
+        rewriter.pin_insert = MagicMock()
+
+        from agents import function_tool
+
+        @function_tool
+        def probe_tool() -> str:
+            """Probe tool."""
+            return "tool finished"
+
+        with (
+            patch.object(type(model), "_get_responses_model", lambda self: stub),
+            patch.object(type(model), "_refresh_client_token", lambda self: None),
+            patch.object(type(model), "_build_run_config", wraps=model._build_run_config) as build,
+        ):
+            async for _ in model.generate_with_tools_stream(
+                prompt="start",
+                tools=[probe_tool],
+                mcp_servers={},
+                instruction="",
+                max_turns=3,
+                session=None,
+                context_rewriter=rewriter,
+            ):
+                pass
+
+        assert build.call_args.kwargs["context_rewriter"] is rewriter
+        # The rewriter was consulted before every model call of the run.
+        assert rewriter.rewrite_sdk_input.await_count == stub.turn

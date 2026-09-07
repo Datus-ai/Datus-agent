@@ -23,6 +23,7 @@ inverted ``tools -> agent.node`` dependency.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -39,7 +40,15 @@ logger = get_logger(__name__)
 #: real tool output and unlikely to collide with any legitimate JSON payload.
 ARCHIVED_MARKER = "[DATUS_ARCHIVED]"
 
-_ERROR_FALLBACK_MARKERS = ('"success": 0', "'success': 0", '"error":', "'error':", "Traceback")
+# Substring fallback for outputs that are neither JSON nor a Python-repr dict.
+# ``error`` must be followed by a *string* value: a successful FuncToolResult
+# always carries ``"error": null`` / ``'error': None`` and must not match.
+_ERROR_FALLBACK_MARKERS = ('"success": 0', "'success': 0", '"error": "', "'error': '", "'error': \"", "Traceback")
+
+#: Largest text we try to parse as a Python literal before falling back to
+#: substring matching. Tool envelopes are a few KB; this only guards against
+#: pathological multi-megabyte outputs.
+_LITERAL_EVAL_MAX_CHARS = 262_144
 
 #: Error-output preview is widened to this multiple of ``preview_chars`` so the
 #: LLM sees the full traceback / error message inline without needing a
@@ -102,10 +111,11 @@ def is_error_output(output_text: str) -> bool:
     """Detect FuncToolResult-shaped errors so the preview can be widened.
 
     FuncToolResult (datus/tools/func_tool/base.py) wraps every tool return in
-    ``{"success": 0/1, "error": ..., "result": ...}``. We try a JSON parse
-    first because that is the authoritative envelope; only if the payload is
-    not valid JSON do we fall back to substring matching, which catches things
-    like raw tracebacks or partial JSON written by a crashing tool.
+    ``{"success": 0/1, "error": ..., "result": ...}``. The envelope is parsed
+    first (JSON, or the Python repr the SDK stores in the session) because
+    that is the authoritative signal; only if the payload is neither do we
+    fall back to substring matching, which catches things like raw tracebacks
+    or partial JSON written by a crashing tool.
 
     The substring fallback can false-positive on legitimate non-JSON tool
     output that happens to contain ``"Traceback"`` or ``"error":`` as data
@@ -114,17 +124,36 @@ def is_error_output(output_text: str) -> bool:
     archived content is unaffected, so we accept the false positive in
     exchange for not missing real tracebacks emitted by crashing tools.
     """
+    if not isinstance(output_text, str):
+        return False
+    obj = _parse_envelope(output_text)
+    if obj is None:
+        return any(m in output_text for m in _ERROR_FALLBACK_MARKERS)
+    if obj.get("success") == 0:
+        return True
+    err = obj.get("error")
+    return isinstance(err, str) and bool(err)
+
+
+def _parse_envelope(output_text: str) -> Optional[Dict[str, Any]]:
+    """Return the FuncToolResult envelope as a dict, or ``None`` if unparseable.
+
+    Tool outputs reach the session as the ``str()`` of the result dict, i.e. a
+    Python repr with single quotes and ``None`` rather than JSON. ``json.loads``
+    rejects that form, so a repr that looks like a dict is parsed with
+    :func:`ast.literal_eval` (safe: literals only) before giving up.
+    """
     try:
         obj = json.loads(output_text)
     except (json.JSONDecodeError, TypeError, ValueError):
-        return any(m in output_text for m in _ERROR_FALLBACK_MARKERS)
-    if isinstance(obj, dict):
-        if obj.get("success") == 0:
-            return True
-        err = obj.get("error")
-        if isinstance(err, str) and err:
-            return True
-    return False
+        obj = None
+        stripped = output_text.lstrip()
+        if stripped.startswith("{") and len(stripped) <= _LITERAL_EVAL_MAX_CHARS:
+            try:
+                obj = ast.literal_eval(stripped)
+            except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+                obj = None
+    return obj if isinstance(obj, dict) else None
 
 
 def make_single_line_preview(content: str, preview_chars: int) -> str:

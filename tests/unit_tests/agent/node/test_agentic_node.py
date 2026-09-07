@@ -13,7 +13,7 @@ import asyncio
 import os
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -58,6 +58,11 @@ def _make_async_session_mock() -> MagicMock:
     sess = MagicMock()
     sess.clear_session = AsyncMock()
     sess.add_items = AsyncMock()
+    # ``_major_compact`` reads the transcript before summarizing it; a plain
+    # Responses-format user turn keeps ``detect_item_format`` on "responses".
+    sess.get_items = AsyncMock(
+        return_value=[{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+    )
     return sess
 
 
@@ -825,9 +830,10 @@ class TestManualCompact:
         mock_sm = MagicMock()
         node._session_manager = mock_sm
         mock_model = MagicMock()
-        mock_model.generate_with_tools = AsyncMock(
+        mock_model.summarize_items = AsyncMock(
             return_value={"content": "## 1. Primary user request\nMy goal", "usage": {"output_tokens": 100}}
         )
+        mock_model.generate_with_tools = AsyncMock()
         node.model = mock_model
         # Bypass the disk dump so the test stays hermetic; we only care the
         # continuation message gets persisted with the summary embedded.
@@ -839,6 +845,16 @@ class TestManualCompact:
         assert result["success"] is True
         assert result["mode"] == "major"
         assert "Primary user request" in result["summary"]
+        # The summary is generated from the transcript read out of the session,
+        # through the session-less ``summarize_items`` primitive — never by a
+        # nested run on the live session (which used to write the prompt and
+        # summary into SQLite before the clear).
+        mock_model.summarize_items.assert_awaited_once()
+        summarize_kwargs = mock_model.summarize_items.await_args.kwargs
+        assert mock_model.summarize_items.await_args.args[0] == mock_session.get_items.return_value
+        assert summarize_kwargs["item_format"] == "responses"
+        assert summarize_kwargs["instruction"] == "sys"
+        mock_model.generate_with_tools.assert_not_awaited()
         mock_session.clear_session.assert_awaited_once()
         mock_session.add_items.assert_awaited_once()
         items = mock_session.add_items.await_args.args[0]
@@ -866,7 +882,7 @@ class TestManualCompact:
         node.session_id = "resumed_session"
         node._session = None  # Simulate post-resume state
         mock_model = MagicMock()
-        mock_model.generate_with_tools = AsyncMock(
+        mock_model.summarize_items = AsyncMock(
             return_value={"content": "Resumed summary", "usage": {"output_tokens": 50}}
         )
         node.model = mock_model
@@ -891,7 +907,7 @@ class TestManualCompact:
         mock_session.add_items.side_effect = RuntimeError("write failed")
         node._session = mock_session
         mock_model = MagicMock()
-        mock_model.generate_with_tools = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 10}})
+        mock_model.summarize_items = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 10}})
         node.model = mock_model
         with patch.object(_ConcreteAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
             with patch.object(_ConcreteAgenticNode, "_get_archive", return_value=None):
@@ -1470,7 +1486,7 @@ class TestManualCompactExtended:
         node._session = mock_session
         node.session_id = "sess_compact"
 
-        mock_model.generate_with_tools = AsyncMock(
+        mock_model.summarize_items = AsyncMock(
             return_value={"content": "summary text", "usage": {"output_tokens": 100}}
         )
 
@@ -1483,10 +1499,55 @@ class TestManualCompactExtended:
         # Session must be preserved — summary now lives inside the session.
         assert node._session is mock_session
         assert node.session_id == "sess_compact"
-        mock_model.generate_with_tools.assert_awaited_once()
-        assert mock_model.generate_with_tools.await_args.kwargs["agent_name"] == node.get_node_name()
+        mock_model.summarize_items.assert_awaited_once()
+        assert mock_model.summarize_items.await_args.kwargs["agent_name"] == node.get_node_name()
         mock_session.clear_session.assert_awaited_once()
         mock_session.add_items.assert_awaited_once()
+
+    def test_anthropic_transcript_gets_anthropic_continuation(self):
+        """A Claude-native session stores Anthropic messages; the continuation
+        must use a ``text`` block, not the Responses ``output_text`` block that
+        Anthropic rejects on the next replay."""
+        node = _make_simple_node()
+        mock_model = MagicMock()
+        mock_session = _make_async_session_mock()
+        mock_session.get_items = AsyncMock(
+            return_value=[
+                {"role": "user", "content": [{"type": "text", "text": "probe"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        )
+        node.model = mock_model
+        node._session = mock_session
+        node.session_id = "sess_native"
+        mock_model.summarize_items = AsyncMock(
+            return_value={"content": "native summary", "usage": {"output_tokens": 9}}
+        )
+
+        with patch.object(_SimpleAgenticNode, "_dump_session_history_jsonl", new=AsyncMock(return_value=None)):
+            with patch.object(_SimpleAgenticNode, "_get_archive", return_value=None):
+                with patch.object(_SimpleAgenticNode, "_get_system_prompt", return_value="sys"):
+                    result = asyncio.run(node._major_compact(reason="t"))
+        assert result["success"] is True
+        assert mock_model.summarize_items.await_args.kwargs["item_format"] == "anthropic"
+        (continuation,) = mock_session.add_items.await_args.args[0]
+        assert continuation == {"role": "assistant", "content": [{"type": "text", "text": ANY}]}
+        assert "native summary" in continuation["content"][0]["text"]
+
+    def test_unreadable_session_is_never_cleared(self):
+        """If the transcript cannot be read, the pass must fail *before* touching
+        the session — summarizing nothing and then clearing would lose history."""
+        node = _make_simple_node()
+        mock_session = _make_async_session_mock()
+        mock_session.get_items = AsyncMock(side_effect=RuntimeError("db locked"))
+        node.model = MagicMock()
+        node.model.summarize_items = AsyncMock()
+        node._session = mock_session
+        node.session_id = "sess_broken"
+        result = asyncio.run(node._major_compact(reason="t"))
+        assert result["success"] is False
+        node.model.summarize_items.assert_not_awaited()
+        mock_session.clear_session.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1536,7 +1597,7 @@ class TestAutoCompactExtended:
             status=ActionStatus.SUCCESS,
         )
         node.actions.append(action)
-        node._pinned_model.generate_with_tools = AsyncMock(
+        node._pinned_model.summarize_items = AsyncMock(
             return_value={"content": "summary", "usage": {"output_tokens": 50}}
         )
         node.session_id = "sess_auto"

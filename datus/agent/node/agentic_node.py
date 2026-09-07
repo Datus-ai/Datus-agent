@@ -17,14 +17,27 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Set
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 from agents import Tool
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
 
-from datus.agent.node.compact_archive import ToolArchive, maybe_truncate_item
-from datus.agent.node.compact_prompts import build_continuation_message, render_major_compact_prompt
+from datus.agent.node.compact_archive import ToolArchive, archive_old_tool_outputs, maybe_truncate_item
+from datus.agent.node.compact_prompts import (
+    MID_TURN_SUMMARY_INSTRUCTIONS,
+    build_continuation_message,
+    render_major_compact_prompt,
+)
+from datus.agent.node.context_rewriter import (
+    DEFAULT_OUTPUT_RESERVE_TOKENS,
+    MAX_OUTPUT_RESERVE_TOKENS,
+    MidTurnCompactor,
+    build_assistant_item,
+    build_mid_turn_view,
+    detect_item_format,
+    estimate_items_tokens,
+)
 from datus.agent.node.node import Node
 from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController, PendingInputQueue
 from datus.configuration.agent_config import AgentConfig, CompactConfig
@@ -289,6 +302,11 @@ class AgenticNode(Node):
         self._compacted_until: int = 0
         self._archive: Optional[ToolArchive] = None
         self._compact_lock: Optional[asyncio.Lock] = None
+        # SQLite boundary captured right after a mid-turn rewrite. The CLI's
+        # ESC rollback prefers it over the checkpoint taken before the turn:
+        # a rewrite replaces every row, so the pre-turn boundary would delete
+        # the whole session. Reset at the start of every turn.
+        self.mid_turn_rewrite_checkpoint: Optional[Any] = None
 
         # ── Mid-turn token-usage streaming ─────────────────────────────
         # Populated by :class:`TokenUsageHook` after every LLM call so the
@@ -1704,9 +1722,11 @@ class AgenticNode(Node):
             self._archive = None
         if not hasattr(self, "_compact_lock"):
             self._compact_lock = None
+        if not hasattr(self, "mid_turn_rewrite_checkpoint"):
+            self.mid_turn_rewrite_checkpoint = None
 
-    async def _decide_compact_mode(self, mid_turn: bool = False) -> Literal["major", "minor", "noop"]:
-        """Choose major / minor / noop from token-ratio + session item counts.
+    async def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
+        """Choose major / minor / noop at the start of a user turn.
 
         Priority order:
         1. Token usage above ``major.token_threshold`` → major. The session
@@ -1721,12 +1741,10 @@ class AgenticNode(Node):
            still be in the model's cache).
         3. Otherwise → noop.
 
-        ``mid_turn`` skips the minor branch. The minor gate is the user-turn
-        count, which cannot change within a single user turn (a new ``user``
-        message only arrives on the next turn), so re-evaluating it after every
-        tool call is redundant — minor is decided once at turn start
-        (``pre_user_turn``). Only major, whose token ratio grows as the turn
-        progresses, needs the per-tool-call check that ``CompactHook`` provides.
+        Only the turn-start trigger (``pre_user_turn``) uses this dispatcher.
+        Inside a turn the per-model-call decision is
+        :meth:`_decide_mid_turn_compact_mode`, driven by the
+        :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`.
 
         The user-turn count is read from session items (the same source
         ``_resolve_user_turn_cutoff`` uses) rather than ``self.actions``, so a
@@ -1742,12 +1760,27 @@ class AgenticNode(Node):
             ratio = 0.0
         if cfg.major.enabled and ratio >= cfg.major.token_threshold:
             return "major"
-        if mid_turn:
-            return "noop"
         if cfg.minor.enabled:
             count = await self._user_turn_count_from_session()
             if count > cfg.minor.keep_recent_user_turns:
                 return "minor"
+        return "noop"
+
+    def _decide_mid_turn_compact_mode(self, ratio: float) -> Literal["major", "minor", "noop"]:
+        """Choose the mid-turn pass from the estimated context occupancy.
+
+        ``ratio`` already includes the tool outputs appended since the last
+        model call and the output headroom (see :meth:`compact_mid_turn`).
+        Major wins when it is enabled for mid-turn and the ratio reaches
+        ``major.token_threshold``; otherwise the cheaper archive stage runs at
+        ``minor.mid_turn_token_threshold``. Either stage can be switched off
+        independently with its ``mid_turn_enabled`` flag.
+        """
+        cfg = self._compact_cfg
+        if cfg.major.enabled and cfg.major.mid_turn_enabled and ratio >= cfg.major.token_threshold:
+            return "major"
+        if cfg.minor.enabled and cfg.minor.mid_turn_enabled and ratio >= cfg.minor.mid_turn_token_threshold:
+            return "minor"
         return "noop"
 
     async def _user_turn_count_from_session(self) -> int:
@@ -1782,13 +1815,12 @@ class AgenticNode(Node):
 
         Prefers the in-memory ``running_turn_usage`` snapshot, which
         :class:`TokenUsageHook` refreshes after every LLM call (``on_llm_end``
-        / native ``emit_manual``). The only caller is ``_decide_compact_mode``
-        via ``CompactHook.on_tool_end``, and any ``on_tool_end`` fires after at
-        least one LLM call in the current turn, so the snapshot reflects the
-        **live** context occupancy of the turn in progress — the same value the
-        CLI status bar renders (``running_turn_usage.session_total_tokens``),
-        keeping the compact trigger and the status bar in agreement. This is
-        what lets a major compact fire mid-turn instead of one turn late.
+        / native ``emit_manual``) — the same value the CLI status bar renders
+        (``running_turn_usage.session_total_tokens``), keeping the turn-start
+        compact trigger and the status bar in agreement. The mid-turn trigger
+        (:class:`~datus.agent.node.context_rewriter.MidTurnCompactor`) reads
+        the same snapshot but adds an estimate of the items appended since the
+        last call, see :meth:`compact_mid_turn`.
 
         When no live snapshot exists, falls back to the restored context state
         (``_restored_context_used`` / ``_restored_context_length``, populated by
@@ -1893,23 +1925,29 @@ class AgenticNode(Node):
             return -1
         return user_indices[-n]
 
-    async def _dump_session_history_jsonl(self) -> Optional[Path]:
-        """Write the full session history to a JSONL file before major compact.
+    async def _dump_session_history_jsonl(self, items: Optional[List[Dict[str, Any]]] = None) -> Optional[Path]:
+        """Write the full conversation history to a JSONL file before major compact.
 
         One item per line, written verbatim. Lets the LLM ``read_file`` any
         original item by offset after the summary is in place — the structured
         summary covers the common case, the JSONL covers the long tail.
-        Returns ``None`` when the archive directory is unavailable; the major
-        compact still runs but without a recovery pointer.
+        ``items`` is the transcript to dump; when omitted the session is read
+        (turn-start / manual compact). Mid-turn callers pass the in-memory
+        view the model is being sent. Returns ``None`` when the archive
+        directory is unavailable; the compact still runs but without a
+        recovery pointer.
         """
         archive = self._get_archive()
-        if archive is None or self._session is None:
+        if archive is None:
             return None
-        try:
-            items = await self._session.get_items()
-        except Exception as exc:
-            logger.warning("session.get_items() failed during history dump: %s", exc)
-            return None
+        if items is None:
+            if self._session is None:
+                return None
+            try:
+                items = await self._session.get_items()
+            except Exception as exc:
+                logger.warning("session.get_items() failed during history dump: %s", exc)
+                return None
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = archive.dir / f"history_{ts}.jsonl"
         try:
@@ -1949,24 +1987,20 @@ class AgenticNode(Node):
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
 
         logger.info("Starting major compact for session %s (reason=%s)", self.session_id, reason)
-        history_jsonl_path = await self._dump_session_history_jsonl()
-
-        sys_prompt = self._get_system_prompt()
-        summarization_prompt = render_major_compact_prompt(node_role=self.get_node_name())
+        try:
+            items = list(await self._session.get_items())
+        except Exception as exc:
+            # Never summarize (and then clear) a history we could not read.
+            logger.warning("session.get_items() failed during major compact: %s", exc)
+            return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
+        history_jsonl_path = await self._dump_session_history_jsonl(items) if items else None
+        # A Claude-native session stores Anthropic-format messages; the
+        # continuation must be written in the same dialect or the next native
+        # replay sends an ``output_text`` block Anthropic does not accept.
+        item_format = detect_item_format(items)
 
         try:
-            result = await self.model.generate_with_tools(
-                prompt=summarization_prompt,
-                instruction=sys_prompt,
-                session=self._session,
-                max_turns=1,
-                temperature=0.3,
-                max_tokens=4000,
-                agent_name=self.get_node_name(),
-            )
-            summary = result.get("content", "") if isinstance(result, dict) else getattr(result, "content", "") or ""
-            usage = result.get("usage", {}) if isinstance(result, dict) else {}
-            summary_token = usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+            summary, summary_token = await self._summarize_items(items, item_format=item_format)
         except Exception as exc:
             logger.error("Failed to generate major-compact summary: %s", exc)
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
@@ -1976,16 +2010,7 @@ class AgenticNode(Node):
             str(history_jsonl_path) if history_jsonl_path else "",
         )
         try:
-            await self._session.clear_session()
-            await self._session.add_items(
-                [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": continuation}],
-                    },
-                ]
-            )
+            await self._replace_session_items([build_assistant_item(continuation, item_format)])
         except Exception as persist_err:
             logger.error("Failed to persist major-compact continuation: %s", persist_err)
             return {
@@ -2121,6 +2146,291 @@ class AgenticNode(Node):
             "archived_count": archived_count,
             "window": [lo, cutoff],
         }
+
+    # ── Mid-turn compaction (driven by MidTurnCompactor before each model call) ──
+
+    async def _summarize_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        item_format: str,
+        instruction: Optional[str] = None,
+        custom_instructions: Optional[str] = None,
+    ) -> Tuple[str, int]:
+        """One summarization call over an explicit transcript.
+
+        Shared by the turn-start / manual major compact (``items`` read from
+        the session) and the mid-turn compact (``items`` is the in-memory view
+        the model is being sent). Never touches the live session: the model's
+        ``summarize_items`` runs with ``session=None`` and no hooks. Raises on
+        model failure so callers decide how to degrade.
+
+        Returns ``(summary_text, summary_output_tokens)``.
+        """
+        sys_prompt = instruction if instruction is not None else self._get_system_prompt()
+        prompt = render_major_compact_prompt(node_role=self.get_node_name(), custom_instructions=custom_instructions)
+        result = await self.model.summarize_items(
+            items,
+            instruction=sys_prompt,
+            prompt=prompt,
+            item_format=item_format,
+            max_tokens=4000,
+            temperature=0.3,
+            agent_name=self.get_node_name(),
+        )
+        if isinstance(result, dict):
+            summary = result.get("content", "") or ""
+            usage = result.get("usage", {})
+        else:
+            summary = getattr(result, "content", "") or ""
+            usage = {}
+        summary_token = int(usage.get("output_tokens", 0) or 0) if isinstance(usage, dict) else 0
+        return str(summary), summary_token
+
+    async def _replace_session_items(self, items: List[Dict[str, Any]]) -> None:
+        """Replace the persisted session history with ``items`` (clear + add).
+
+        Raises on failure; callers translate that into a ``success=False``
+        result. Runs of the agents SDK keep appending after the replaced
+        history, so the session mirrors the rewritten view from here on.
+        """
+        if self._session is None:
+            raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "session"})
+        await self._session.clear_session()
+        if items:
+            await self._session.add_items(items)
+
+    def _mid_turn_output_reserve(self) -> int:
+        """Output-token headroom reserved when judging mid-turn occupancy.
+
+        A context that still "fits" but leaves no room for the model's reply
+        overflows on the very next call, so the trigger counts the reply
+        budget as already used (Claude Code reserves it the same way).
+        """
+        max_tokens = 0
+        try:
+            model = self.model
+            getter = getattr(model, "max_tokens", None) if model is not None else None
+            if callable(getter):
+                max_tokens = int(getter() or 0)
+        except Exception:  # noqa: BLE001 — headroom is a heuristic
+            max_tokens = 0
+        return min(max_tokens or DEFAULT_OUTPUT_RESERVE_TOKENS, MAX_OUTPUT_RESERVE_TOKENS)
+
+    def _refresh_running_usage_after_rewrite(self, estimated_tokens: int) -> None:
+        """Bring the live occupancy snapshot down to the rewritten view.
+
+        ``running_turn_usage`` still describes the pre-compaction context
+        until the next ``on_llm_end``; refreshing it keeps the status bar and
+        the persisted context state honest right away.
+        """
+        estimated_tokens = max(0, int(estimated_tokens))
+        context_length = int(self.context_length or 0)
+        running = getattr(self, "running_turn_usage", None)
+        try:
+            if running is not None:
+                self.running_turn_usage = running.model_copy(
+                    update={
+                        "session_total_tokens": estimated_tokens,
+                        "context_length": running.context_length or context_length,
+                    }
+                )
+            self.persist_context_state(estimated_tokens, context_length)
+        except Exception:  # noqa: BLE001 — bookkeeping must never break the run loop
+            logger.debug("Failed to refresh running usage after mid-turn compact", exc_info=True)
+        self._notify_status_dirty()
+
+    def _refresh_turn_checkpoint_after_rewrite(self) -> None:
+        """Publish a rollback boundary that sits *after* the rewritten history.
+
+        The CLI captures a SQLite checkpoint before each turn and, on ESC,
+        deletes everything newer. A mid-turn rewrite replaces every row, so
+        that pre-turn boundary would wipe the session; the checkpoint taken
+        here keeps the compacted view and removes only what follows it.
+        """
+        if not self.session_id:
+            return
+        try:
+            self.mid_turn_rewrite_checkpoint = self.session_manager.checkpoint_turn(self.session_id)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to refresh the turn checkpoint after mid-turn compact", exc_info=True)
+
+    async def compact_mid_turn(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        item_format: str,
+        base_tokens: int,
+        tail_start: int,
+        instruction: str = "",
+        turn_request: Optional[Dict[str, Any]] = None,
+        reason: str = "mid_turn",
+    ) -> Dict[str, Any]:
+        """Two-stage compaction of the transcript a running turn is about to send.
+
+        Called by :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`
+        right before a model call with the exact item list the model would
+        receive. Occupancy is estimated as ``base_tokens`` (the last call's
+        real input tokens) plus a chars/4 estimate of ``items[tail_start:]``
+        (everything appended since) plus the output headroom.
+
+        1. **minor** — archive the turn's tool outputs older than the newest
+           ``keep_recent_tool_results`` (lossless, no LLM call); re-estimate.
+        2. **major** — if still at or above ``major.token_threshold``, summarize
+           the (archived) view and rebuild it as
+           ``[this turn's user request(s)] + [assistant summary] + [user resume]``.
+
+        Whatever survives is persisted with ``clear_session + add_items`` so
+        SQLite mirrors the new view; a persistence failure leaves the original
+        ``items`` in force. Returns a dict with ``mode`` (``noop`` / ``minor``
+        / ``major``), ``success``, ``items`` (the list to send), and the major
+        fields (``summary``, ``summary_token``, ``history_jsonl``,
+        ``major_error`` when the summary failed after a successful archive).
+        Never raises.
+        """
+        self._ensure_compact_state()
+        noop: Dict[str, Any] = {"mode": "noop", "reason": reason, "success": True, "items": items}
+        try:
+            lock = self._get_compact_lock()
+            async with lock:
+                context_length = int(self.context_length or 0)
+                if context_length <= 0:
+                    return noop
+                if self._session is None and self.session_id:
+                    self._get_or_create_session()
+                if self._session is None:
+                    return noop
+                cfg = self._compact_cfg
+                output_reserve = self._mid_turn_output_reserve()
+                tail_start = max(0, min(int(tail_start), len(items)))
+                effective = int(base_tokens or 0) + estimate_items_tokens(items[tail_start:]) + output_reserve
+                ratio = effective / float(context_length)
+                mode = self._decide_mid_turn_compact_mode(ratio)
+                if mode == "noop":
+                    return noop
+                logger.debug(
+                    "Mid-turn compact (%s): ratio=%.2f mode=%s items=%d session=%s",
+                    reason,
+                    ratio,
+                    mode,
+                    len(items),
+                    self.session_id,
+                )
+                entry_ratio = ratio
+
+                view: List[Dict[str, Any]] = items
+                archived_count = 0
+                result: Dict[str, Any] = {"mode": "noop", "reason": reason, "success": True, "archived_count": 0}
+
+                # Stage 1: cheap, lossless archive of this turn's older tool outputs.
+                if cfg.minor.enabled and cfg.minor.mid_turn_enabled:
+                    archive = self._get_archive()
+                    if archive is not None:
+                        view, archived_count = archive_old_tool_outputs(
+                            items,
+                            item_format=item_format,
+                            archive=archive,
+                            threshold=cfg.minor.archive_threshold,
+                            keep_recent=cfg.minor.keep_recent_tool_results,
+                        )
+                        if archived_count:
+                            result.update(mode="minor", archived_count=archived_count)
+                            # Subtract what the archive saved from the measured
+                            # occupancy instead of re-estimating the items alone:
+                            # the system prompt and tool schemas still count.
+                            saved = estimate_items_tokens(items) - estimate_items_tokens(view)
+                            ratio = max(0.0, (effective - saved) / float(context_length))
+                        else:
+                            view = items
+
+                # Stage 2: LLM summary when the archive stage was not enough.
+                if cfg.major.enabled and cfg.major.mid_turn_enabled and ratio >= cfg.major.token_threshold:
+                    compact_action_id = f"compact_{uuid.uuid4().hex[:8]}"
+                    self._emit_compact_display_action(compact_action_id, "progress")
+                    major_ok = False
+                    try:
+                        history_jsonl_path = await self._dump_session_history_jsonl(items)
+                        summary, summary_token = await self._summarize_items(
+                            view,
+                            item_format=item_format,
+                            instruction=instruction or None,
+                            custom_instructions=MID_TURN_SUMMARY_INSTRUCTIONS,
+                        )
+                        continuation = build_continuation_message(
+                            summary or "(empty summary)",
+                            str(history_jsonl_path) if history_jsonl_path else "",
+                        )
+                        view = build_mid_turn_view(
+                            view,
+                            continuation,
+                            item_format=item_format,
+                            turn_request=turn_request,
+                        )
+                        result.update(
+                            mode="major",
+                            summary=summary,
+                            summary_token=summary_token,
+                            history_jsonl=str(history_jsonl_path) if history_jsonl_path else "",
+                        )
+                        major_ok = True
+                    except Exception as exc:  # noqa: BLE001 — degrade to the archive result
+                        logger.error("Mid-turn major compact failed to summarize: %s", exc)
+                        result["major_error"] = str(exc)
+                    finally:
+                        self._emit_compact_display_action(compact_action_id, "summary", result if major_ok else None)
+
+                if view is items:
+                    result["items"] = items
+                    return result
+
+                try:
+                    await self._replace_session_items(view)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Failed to persist mid-turn compact rewrite: %s", exc)
+                    return {**result, "success": False, "items": items}
+
+                if result["mode"] == "major":
+                    self._compacted_until = 0
+                    if self.session_id:
+                        try:
+                            self.session_manager.delete_system_prompt_snapshot(self.session_id)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug("Failed to drop system-prompt snapshot after compact: %s", exc)
+                self._refresh_running_usage_after_rewrite(estimate_items_tokens(view))
+                self._refresh_turn_checkpoint_after_rewrite()
+                result["items"] = view
+                logger.info(
+                    "Mid-turn compact done (%s): mode=%s ratio=%.2f archived=%d items %d -> %d session=%s",
+                    reason,
+                    result["mode"],
+                    entry_ratio,
+                    archived_count,
+                    len(items),
+                    len(view),
+                    self.session_id,
+                )
+                return result
+        except Exception:  # noqa: BLE001 — the rewriter must never see an exception from here
+            logger.exception("Mid-turn compact failed unexpectedly")
+            return {"mode": "major", "reason": reason, "success": False, "items": items}
+
+    def _build_context_rewriter(self, ctx: "StreamRunContext") -> Optional[MidTurnCompactor]:
+        """Create the per-run mid-turn compactor, or ``None`` when disabled.
+
+        One instance per ``_stream_once`` call; it also resets itself on the
+        SDK ``on_start`` hook so a retried run never inherits a stale overlay.
+        """
+        self._ensure_compact_state()
+        cfg = self._compact_cfg
+        if not (
+            (cfg.major.enabled and cfg.major.mid_turn_enabled) or (cfg.minor.enabled and cfg.minor.mid_turn_enabled)
+        ):
+            return None
+        return MidTurnCompactor(
+            self,
+            interrupt_controller=getattr(self, "interrupt_controller", None),
+            system_instruction=ctx.system_instruction or "",
+        )
 
     async def _auto_compact(self) -> bool:
         """Backward-compatible wrapper kept for callers outside this class.
@@ -3149,6 +3459,10 @@ class AgenticNode(Node):
             pending_input_queue=getattr(self, "pending_input_queue", None),
         )
 
+        # A fresh turn: any rollback boundary published by a previous turn's
+        # mid-turn rewrite is stale now.
+        self.mid_turn_rewrite_checkpoint = None
+
         node_name = self.get_node_name()
         logger.info(
             "%s execute_stream start: session=%s msg=%r",
@@ -3347,6 +3661,12 @@ class AgenticNode(Node):
         # argument too late and the first run would execute unwrapped tools.
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
+        # Per-run mid-turn compactor. Created before ``_compose_run_hooks`` so
+        # the same instance is both composed into the hooks (its ``on_start``
+        # resets the view per SDK run) and handed to the model layer as the
+        # per-model-call context rewriter.
+        ctx.context_rewriter = self._build_context_rewriter(ctx)
+        self._active_context_rewriter = ctx.context_rewriter
         try:
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=ctx.user_prompt,
@@ -3364,6 +3684,7 @@ class AgenticNode(Node):
                 # Defensive: test doubles that bypass ``AgenticNode.__init__``
                 # may not have a broker; the model layer skips emit when None.
                 interaction_broker=getattr(self, "interaction_broker", None),
+                context_rewriter=ctx.context_rewriter,
             ):
                 rewritten = self._maybe_rewrite_stream_action(stream_action, ctx)
                 action_to_yield = rewritten or stream_action
@@ -3396,6 +3717,7 @@ class AgenticNode(Node):
                 yield action_to_yield
         finally:
             self._current_action_history = None
+            self._active_context_rewriter = None
 
     # ── optional hooks (subclasses override as needed) ──────────────────
 
@@ -4194,12 +4516,12 @@ class AgenticNode(Node):
         none exist. Callers pass the result directly into
         ``generate_with_tools_stream(hooks=...)``.
 
-        Always wires the ``CompactHook`` in so ``on_tool_end`` increments
-        the rolling-window counter and dispatches major / minor compacts
-        from inside the Runner loop. The hook is cheap to construct (just
-        holds a reference to this node) so we always include it — its
-        ``_decide_compact_mode`` will return ``noop`` when no compact is
-        needed, which is the common case.
+        The per-run ``MidTurnCompactor`` (``_stream_once`` stores it on
+        ``_active_context_rewriter`` for the duration of the call) is wired
+        in too, so its ``on_start`` resets the compaction view whenever the
+        model layer starts a new SDK run. Compaction itself is not hook
+        driven: the compactor is consulted by the model layer before every
+        model call (``call_model_input_filter`` / the native loop).
 
         ``TokenUsageHook`` is also wired in so each LLM call's ``on_llm_end``
         publishes a ``token_usage`` action mid-turn (see
@@ -4207,10 +4529,10 @@ class AgenticNode(Node):
         """
         self._ensure_permission_hooks()
         self._ensure_tool_transformers()
-        compact_hook = self._get_or_create_compact_hook()
+        context_rewriter = getattr(self, "_active_context_rewriter", None)
         token_usage_hook = self._get_or_create_token_usage_hook()
 
-        active = [h for h in (extra, self.permission_hooks, compact_hook, token_usage_hook) if h is not None]
+        active = [h for h in (extra, self.permission_hooks, context_rewriter, token_usage_hook) if h is not None]
         if not active:
             return None
         if len(active) == 1:
@@ -4271,29 +4593,3 @@ class AgenticNode(Node):
             callback()
         except Exception:  # noqa: BLE001 — never crash the run loop
             logger.debug("Status dirty callback raised", exc_info=True)
-
-    def _get_or_create_compact_hook(self) -> Any:
-        """Lazily build the ``CompactHook`` for this node.
-
-        Construction is deferred to first SDK call so test harnesses that
-        bypass ``__init__`` don't trip on a missing attribute, and so the
-        hook is only created in the loop where it will actually be used.
-
-        Returns ``None`` when the compact subsystem is disabled in config
-        (both ``major.enabled`` and ``minor.enabled`` off). Enabled for all
-        ``execution_mode`` values: ``cfg.*.enabled`` is the real gate, so
-        workflow callers that span multiple turns (API chat resume, sub-agents
-        with shared session_id) still get rolling-window compaction.
-        """
-        self._ensure_compact_state()
-        cfg = self._compact_cfg
-        if not (cfg.major.enabled or cfg.minor.enabled):
-            return None
-        existing = getattr(self, "_compact_hook_instance", None)
-        if existing is not None:
-            return existing
-        from datus.agent.node.compact_hook import CompactHook
-
-        hook = CompactHook(self)
-        self._compact_hook_instance = hook
-        return hook

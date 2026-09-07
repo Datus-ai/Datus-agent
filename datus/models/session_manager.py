@@ -22,7 +22,7 @@ from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import extract_user_input
+from datus.utils.message_utils import extract_user_input, is_compact_resume_text
 from datus.utils.time_utils import to_utc_iso
 
 logger = get_logger(__name__)
@@ -1420,6 +1420,12 @@ class SessionManager:
 
                             # Add user message (extract original user input from structured content)
                             content = extract_user_input(message_json.get("content", ""))
+                            # A mid-turn compaction leaves a synthetic "resume"
+                            # instruction as a user message so the model keeps
+                            # working. It is not something the user typed — skip
+                            # it so the transcript shows no phantom user bubble.
+                            if is_compact_resume_text(content):
+                                continue
                             user_msg: Dict[str, Any] = {
                                 "role": "user",
                                 "content": content,

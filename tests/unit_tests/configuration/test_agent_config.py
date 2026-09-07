@@ -3358,3 +3358,38 @@ class TestPromptManagerAttribute:
         # A real clone, not a shared reference back into the original config.
         assert cloned.prompt_manager is not cfg.prompt_manager
         assert get_prompt_manager(agent_config=cloned).user_templates_dir == elsewhere.resolve() / "template"
+
+
+class TestCompactConfigMidTurnKeys:
+    """The mid-turn compaction knobs round-trip through ``CompactConfig.from_dict``."""
+
+    def test_defaults(self):
+        from datus.configuration.agent_config import CompactConfig
+
+        cfg = CompactConfig.from_dict(None)
+        assert cfg.major.mid_turn_enabled is True
+        assert cfg.minor.mid_turn_enabled is True
+        assert cfg.minor.mid_turn_token_threshold == 0.75
+        assert cfg.minor.keep_recent_tool_results == 5
+
+    def test_yaml_strings_are_coerced(self):
+        from datus.configuration.agent_config import CompactConfig
+
+        cfg = CompactConfig.from_dict(
+            {
+                "major": {"mid_turn_enabled": "false", "token_threshold": "0.8"},
+                "minor": {"mid_turn_enabled": "no", "mid_turn_token_threshold": "0.6", "keep_recent_tool_results": "3"},
+            }
+        )
+        assert cfg.major.mid_turn_enabled is False
+        assert cfg.major.token_threshold == 0.8
+        assert cfg.minor.mid_turn_enabled is False
+        assert cfg.minor.mid_turn_token_threshold == 0.6
+        assert cfg.minor.keep_recent_tool_results == 3
+
+    def test_unknown_keys_are_ignored_and_existing_keys_unchanged(self):
+        from datus.configuration.agent_config import CompactConfig
+
+        cfg = CompactConfig.from_dict({"major": {"bogus": 1}, "minor": {"keep_recent_user_turns": 2}})
+        assert cfg.minor.keep_recent_user_turns == 2
+        assert cfg.minor.keep_recent_tool_results == 5

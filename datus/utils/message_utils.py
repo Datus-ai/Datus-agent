@@ -19,6 +19,17 @@ logger = logging.getLogger(__name__)
 SYSTEM_REMINDER_OPEN = "<system_reminder>"
 SYSTEM_REMINDER_CLOSE = "</system_reminder>\n"
 
+# Prefix of the synthetic user message a mid-turn compaction leaves in the
+# history to tell the model to resume. Lives here (not in the compact module)
+# so history renderers can recognise and hide it without importing agent code.
+COMPACT_RESUME_MARKER = "[DATUS_COMPACT_RESUME]"
+
+
+def is_compact_resume_text(text: Any) -> bool:
+    """Whether ``text`` is a mid-turn compaction resume instruction."""
+    return isinstance(text, str) and text.lstrip().startswith(COMPACT_RESUME_MARKER)
+
+
 # Anthropic / OpenAI content-block ``type`` values that carry plain text
 # inside ``text`` (Anthropic) or ``text``/``content`` (OpenAI) fields.
 _TEXT_BLOCK_TYPES = ("text", "output_text", "input_text")

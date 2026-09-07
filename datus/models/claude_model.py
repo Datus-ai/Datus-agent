@@ -692,6 +692,7 @@ class ClaudeModel(OpenAICompatibleModel):
         hooks=None,
         pending_input_queue=None,
         interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Async generator: native Anthropic API with real-time tool call ActionHistory.
@@ -852,6 +853,21 @@ class ClaudeModel(OpenAICompatibleModel):
                         raise ExecutionInterrupted("Interrupted by user")
 
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
+
+                    # Mid-turn compaction. This is the native equivalent of the
+                    # SDK's ``call_model_input_filter`` boundary: the previous
+                    # round's tool_results are appended, no tool is running and
+                    # the next model call has not been issued. When the
+                    # compactor rewrites the transcript it has already persisted
+                    # the returned list, so only the bookkeeping moves: the view
+                    # starts with this turn's prompt (``turn_start_index = 0``)
+                    # and every message in it is durable.
+                    if context_rewriter is not None:
+                        rewritten_messages = await context_rewriter.rewrite_native_messages(messages)
+                        if rewritten_messages is not None:
+                            messages = rewritten_messages
+                            turn_start_index = 0
+                            persisted_message_index = len(messages)
 
                     # Mid-run message insertion. The native loop is not driven by
                     # the SDK Runner, so ``call_model_input_filter`` never fires
@@ -1947,6 +1963,133 @@ class ClaudeModel(OpenAICompatibleModel):
                 self._diagnose_oauth_401(e)
             raise
 
+    async def summarize_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        instruction: str,
+        prompt: str,
+        item_format: str = "responses",
+        max_tokens: int = 4000,
+        temperature: float = 0.3,
+        agent_name: str = "",
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Summarize a transcript for compaction.
+
+        Anthropic-format transcripts (the native loop's ``messages``) are
+        summarized with one direct Messages API call: the summarization prompt
+        is appended as the closing user text, no session is touched and no
+        hooks fire. The history still contains ``tool_use`` / ``tool_result``
+        blocks, and Anthropic rejects such requests unless tools are defined,
+        so minimal stub definitions for the tools seen in the transcript are
+        sent with ``tool_choice: none`` — the model can only answer in text.
+
+        Responses-format transcripts go through the LiteLLM path unless this
+        model is OAuth-only, in which case there is no valid route.
+        """
+        if item_format != "anthropic":
+            if self.use_native_api and self._is_oauth_token:
+                raise DatusException(
+                    ErrorCode.COMMON_UNSUPPORTED,
+                    message_args={"field_name": "item_format", "your_value": item_format},
+                )
+            self._inject_oauth_headers(kwargs)
+            return await super().summarize_items(
+                items,
+                instruction=instruction,
+                prompt=prompt,
+                item_format=item_format,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                agent_name=agent_name,
+                **kwargs,
+            )
+
+        messages: List[Dict[str, Any]] = [dict(m) for m in items if isinstance(m, dict)]
+        prompt_block = {"type": "text", "text": prompt}
+        if messages and messages[-1].get("role") == "user" and isinstance(messages[-1].get("content"), list):
+            # Keep strict user/assistant alternation: fold the prompt into the
+            # trailing user message instead of adding a second user turn.
+            messages[-1] = {**messages[-1], "content": [*messages[-1]["content"], prompt_block]}
+        else:
+            messages.append({"role": "user", "content": [prompt_block]})
+
+        request_kwargs: Dict[str, Any] = dict(
+            model=self.model_name,
+            system=self._build_system_param(instruction),
+            messages=wrap_prompt_cache(messages),
+            max_tokens=max_tokens,
+        )
+        tool_stubs = self._tool_stubs_for_transcript(messages)
+        if tool_stubs:
+            request_kwargs["tools"] = tool_stubs
+            request_kwargs["tool_choice"] = {"type": "none"}
+
+        if self.async_anthropic_client is not None:
+            async with self._anthropic_messages_stream(**request_kwargs) as stream:
+                response = await stream.get_final_message()
+        else:
+            response = self._anthropic_messages_create(**request_kwargs)
+
+        text = "\n".join(
+            block.text
+            for block in (getattr(response, "content", None) or [])
+            if getattr(block, "type", None) == "text" and getattr(block, "text", "")
+        )
+        usage = getattr(response, "usage", None)
+        input_tokens = (
+            int(getattr(usage, "input_tokens", 0) or 0)
+            + int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+            + int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        )
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        return {
+            "content": text,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+            },
+            "model": self.model_name,
+        }
+
+    @staticmethod
+    def _tool_stubs_for_transcript(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Minimal tool definitions covering every ``tool_use`` in ``messages``.
+
+        Returns an empty list when the transcript carries no tool blocks, so a
+        plain text-only history is sent without any ``tools`` parameter.
+        """
+        names: List[str] = []
+        has_tool_blocks = False
+        for message in messages:
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type in ("tool_use", "tool_result"):
+                    has_tool_blocks = True
+                if block_type == "tool_use":
+                    name = block.get("name")
+                    if isinstance(name, str) and name and name not in names:
+                        names.append(name)
+        if not has_tool_blocks:
+            return []
+        if not names:
+            names.append("tool")
+        return [
+            {
+                "name": name,
+                "description": "Tool referenced by the transcript being summarized; not callable here.",
+                "input_schema": {"type": "object"},
+            }
+            for name in names
+        ]
+
     async def generate_with_tools_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -1962,6 +2105,7 @@ class ClaudeModel(OpenAICompatibleModel):
         interrupt_controller=None,
         pending_input_queue=None,
         interaction_broker=None,
+        context_rewriter=None,
         **kwargs,
     ) -> AsyncGenerator[ActionHistory, None]:
         """Generate response with streaming and tool support.
@@ -2002,6 +2146,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 hooks=hooks,
                 pending_input_queue=pending_input_queue,
                 interaction_broker=interaction_broker,
+                context_rewriter=context_rewriter,
                 **kwargs,
             ):
                 yield action
@@ -2023,6 +2168,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 interrupt_controller=interrupt_controller,
                 pending_input_queue=pending_input_queue,
                 interaction_broker=interaction_broker,
+                context_rewriter=context_rewriter,
                 **kwargs,
             ):
                 yield action

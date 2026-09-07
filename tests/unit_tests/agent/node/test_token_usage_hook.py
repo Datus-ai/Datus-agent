@@ -244,3 +244,31 @@ async def test_on_llm_end_skips_when_no_action_history_bound():
     assert snapshot.input_tokens == 7
     # Persistence still happens — resume should see the data.
     sm.upsert_running_turn_usage.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_occupancy_never_falls_back_to_cumulative_input_tokens():
+    """Without a per-request usage entry the snapshot must use this call's
+    input delta, not the run-cumulative ``input_tokens``. The cumulative
+    figure grows with every call and would push the compaction trigger over
+    its threshold long before the context is actually full."""
+    node, _manager, _bus, _sm, _notify = _fake_node(
+        [
+            {"requests": 1, "input_tokens": 800, "output_tokens": 10, "total_tokens": 810, "last_call_input_tokens": 0},
+            {
+                "requests": 2,
+                "input_tokens": 1700,
+                "output_tokens": 20,
+                "total_tokens": 1720,
+                "last_call_input_tokens": 0,
+            },
+        ]
+    )
+    hook = TokenUsageHook(node)
+    await hook.on_start(None, None)
+    await hook.on_llm_end(SimpleNamespace(usage=object()), None, None)
+    assert node.running_turn_usage.session_total_tokens == 800
+    await hook.on_llm_end(SimpleNamespace(usage=object()), None, None)
+    # Second call: cumulative input is 1700, but this call consumed 900.
+    assert node.running_turn_usage.session_total_tokens == 900
+    assert node.running_turn_usage.session_total_tokens < 1700

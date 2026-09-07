@@ -263,6 +263,55 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                     logger.exception("Failed to emit user_insert ActionHistory; model still sees the text.")
         return pending
 
+    async def summarize_items(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        instruction: str,
+        prompt: str,
+        item_format: str = "responses",
+        max_tokens: int = 4000,
+        temperature: float = 0.3,
+        agent_name: str = "",
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Single-shot, tool-less, session-less completion over an explicit transcript.
+
+        Used by context compaction to summarize the conversation the model is
+        *currently* being sent — an in-memory item list that may differ from
+        the persisted session mid-run. ``session=None`` guarantees the live
+        session is never written by the summary call, and no hooks are wired so
+        the summary's own (large) input never pollutes the node's running usage
+        snapshot.
+
+        The default implementation speaks Responses-API items and appends the
+        summarization ``prompt`` as a trailing user message. Providers whose
+        transcripts use another wire format (Claude native) override this.
+
+        Returns the same ``{"content", "usage", "model", ...}`` dict as
+        :meth:`generate_with_tools`.
+        """
+        if item_format != "responses":
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                ErrorCode.COMMON_UNSUPPORTED,
+                message_args={"field_name": "item_format", "your_value": item_format},
+            )
+        user_item = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}
+        return await self.generate_with_tools(
+            prompt=[*items, user_item],
+            tools=None,
+            mcp_servers=None,
+            instruction=instruction,
+            session=None,
+            max_turns=1,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            agent_name=agent_name,
+            **kwargs,
+        )
+
     def _build_run_config(
         self,
         pending_input_queue=None,
@@ -270,24 +319,31 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         interrupt_controller=None,
         interaction_broker=None,
         agent_name: Optional[str] = None,
+        context_rewriter=None,
     ) -> Optional[RunConfig]:
-        """Build a :class:`RunConfig` carrying our mid-run input filter.
+        """Build a :class:`RunConfig` carrying our per-model-call input filter.
 
         Lives on the base class because every agents-SDK-driven provider needs
         the same filter: ``OpenAICompatibleModel`` and ``CodexModel`` build
         their own ``Runner.run_streamed`` calls, and a provider that quietly
-        omits the filter silently loses mid-run insertion (the queue then only
-        drains at the run boundary, via the chat layer's auto-continuation).
+        omits the filter silently loses mid-run insertion and mid-turn
+        compaction.
 
-        Returns ``None`` when neither tracing context nor ``pending_input_queue``
-        is wired in — the SDK then runs with its default config and behavior is
-        unchanged.
+        Returns ``None`` when neither tracing context, ``pending_input_queue``
+        nor ``context_rewriter`` is wired in — the SDK then runs with its
+        default config and behavior is unchanged.
 
         The filter is invoked by the SDK before every LLM turn within a
-        ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). It drains
-        the queue (every queued item, FIFO) and appends each as a structured
-        Responses-API user message, also persisting them onto the session so
-        future runs see them.
+        ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). In order:
+
+        1. ``context_rewriter.rewrite_sdk_input(raw)`` — the
+           :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`
+           overlays any compaction already installed for this run and may
+           compact right now. The SDK never writes the filter's result back,
+           so the rewriter re-applies its view on every call.
+        2. Drain ``pending_input_queue`` (FIFO) and append each item as a
+           Responses-API user message, persisting it to the session and
+           pinning it on the rewriter so it stays visible on later calls.
 
         All exceptions in the filter body are swallowed: the SDK re-raises
         uncaught filter errors and aborts the entire run, which we must never
@@ -296,37 +352,45 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         from datus.utils.trace_context import build_agents_run_config_kwargs
 
         trace_kwargs = build_agents_run_config_kwargs(agent_name=agent_name)
-        if pending_input_queue is None and not trace_kwargs:
+        if pending_input_queue is None and context_rewriter is None and not trace_kwargs:
             return None
 
         async def _filter(data: CallModelData) -> ModelInputData:
+            raw = list(data.model_data.input)
+            view = raw
             try:
+                if context_rewriter is not None:
+                    view = await context_rewriter.rewrite_sdk_input(raw)
                 pending = LLMBaseModel.drain_pending_user_inserts(
                     pending_input_queue,
                     interrupt_controller=interrupt_controller,
                     interaction_broker=interaction_broker,
                 )
-                if not pending:
+                if context_rewriter is None and not pending:
                     return data.model_data
-                new_items = list(data.model_data.input)
                 for text in pending:
                     user_item = {
                         "type": "message",
                         "role": "user",
                         "content": [{"type": "input_text", "text": text}],
                     }
-                    new_items.append(user_item)
+                    view.append(user_item)
+                    if context_rewriter is not None:
+                        try:
+                            context_rewriter.pin_insert(len(raw), user_item)
+                        except Exception:  # noqa: BLE001 — pinning is best-effort
+                            logger.exception("Failed to pin injected user item on the context rewriter.")
                     if session is not None:
                         try:
                             await session.add_items([user_item])
                         except Exception:  # noqa: BLE001 — never abort the run on a session write
                             logger.exception("Failed to persist injected user item; in-memory only.")
-                return ModelInputData(input=new_items, instructions=data.model_data.instructions)
+                return ModelInputData(input=view, instructions=data.model_data.instructions)
             except Exception:  # noqa: BLE001 — filter exceptions abort the SDK run
-                logger.exception("call_model_input_filter raised; returning original input unchanged.")
-                return data.model_data
+                logger.exception("call_model_input_filter raised; returning the current input view.")
+                return ModelInputData(input=view, instructions=data.model_data.instructions)
 
-        if pending_input_queue is None:
+        if pending_input_queue is None and context_rewriter is None:
             return RunConfig(**trace_kwargs)
 
         return RunConfig(call_model_input_filter=_filter, **trace_kwargs)
