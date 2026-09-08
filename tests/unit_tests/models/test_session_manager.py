@@ -2470,8 +2470,8 @@ class TestContextStatePersistence:
     """save/load_context_state: the durable occupancy measurement."""
 
     def _enable_state_table(self, sm_custom, session_id):
-        """Materialise ``context_occupancy`` through the public writer."""
-        sm_custom.save_context_state(session_id, ContextState(500, 1000, True))
+        """Materialise ``session_meta`` through the public writer."""
+        sm_custom.save_context_state(session_id, ContextState(500))
 
     def test_writing_a_state_never_creates_the_session_database(self, sm_custom):
         """No occupancy write may invent a session that ``list_sessions`` reports.
@@ -2480,7 +2480,7 @@ class TestContextStatePersistence:
         purely ``*.db`` filenames — so writing state for an absent session
         would conjure a session out of nothing.
         """
-        sm_custom.save_context_state("state_ghost", ContextState(400, 1000, True))
+        sm_custom.save_context_state("state_ghost", ContextState(400))
 
         assert "state_ghost" not in sm_custom.list_sessions()
         assert not os.path.exists(os.path.join(sm_custom.session_dir, "state_ghost.db"))
@@ -2506,13 +2506,13 @@ class TestContextStatePersistence:
         db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
-                "CREATE TRIGGER reject_state BEFORE INSERT ON context_occupancy "
+                "CREATE TRIGGER reject_state BEFORE INSERT ON session_meta "
                 "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
             )
 
-        sm_custom.save_context_state(session_id, ContextState(0, 1000, False))
+        sm_custom.save_context_state(session_id, ContextState(0))
 
-        assert sm_custom.load_context_state(session_id) == ContextState(500, 1000, True)
+        assert sm_custom.load_context_state(session_id) == ContextState(500)
 
     def test_clear_session_does_not_surface_a_rejected_state_write(self, sm_custom):
         """History clearing completes even when the occupancy reset fails."""
@@ -2523,7 +2523,7 @@ class TestContextStatePersistence:
         db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
-                "CREATE TRIGGER reject_state_clear BEFORE INSERT ON context_occupancy "
+                "CREATE TRIGGER reject_state_clear BEFORE INSERT ON session_meta "
                 "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
             )
 

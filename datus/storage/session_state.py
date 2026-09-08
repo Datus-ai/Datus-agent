@@ -167,47 +167,43 @@ class PlanModeState:
 
 @dataclass
 class ContextState:
-    """Measured context occupancy with an explicit unknown state.
+    """Context-window occupancy measured on the last model call.
 
-    Persisted separately from the SQLite usage tables: ``turn_usage`` has no
-    per-call occupancy column, and ``running_turn_usage`` is cleared at turn
-    end (to avoid double-counting cumulative totals). A rewrite invalidates
-    this measurement until another model response arrives. Legacy JSON without
-    an explicit validity flag is unknown because it may contain an estimate.
+    Persisted separately from the usage tables: ``turn_usage`` records billed
+    consumption, which occupancy is not (cache reads cost little but fill the
+    window just the same), and ``running_turn_usage`` is cleared at turn end to
+    avoid double-counting cumulative totals.
 
-    ``last_call_input_tokens`` is the real context-window usage of the last
-    call (input + cache_read + cache_creation); ``context_length`` is the
-    model's maximum context (the bar's denominator).
+    Zero means "no measurement": a history rewrite invalidates the reading
+    until another model response arrives, and a session that has not called the
+    model yet has nothing to report. Both cases render as an empty bar and hold
+    compaction off, which is the intended behaviour for an unknown occupancy.
+
+    The denominator is not stored — ``AgenticNode.context_length`` resolves the
+    active model's window on every access.
     """
 
     last_call_input_tokens: int = 0
-    context_length: int = 0
-    valid: Optional[bool] = None
-
-    def __post_init__(self) -> None:
-        if self.valid is None:
-            self.valid = self.last_call_input_tokens > 0
-        if not self.valid:
-            self.last_call_input_tokens = 0
 
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ContextState":
-        """Build from a dict, coercing non-int fields to the safe default."""
+        """Build from a dict, coercing anything unusable to zero.
+
+        A pre-migration payload carrying ``valid: false`` reads as zero. Those
+        records were written when an explicit flag was the only way to mark a
+        reading stale, and their token count may be a text estimate rather than
+        a measurement. Nothing writes that flag any more.
+        """
         if not isinstance(data, dict):
             return cls()
-
-        def _as_int(value: Any) -> int:
-            # ``bool`` is an ``int`` subclass but is never a valid token count;
-            # reject it (and any non-int) so corrupted payloads fall back to 0.
-            if isinstance(value, bool) or not isinstance(value, int):
-                return 0
-            return max(0, value)
-
-        return cls(
-            last_call_input_tokens=_as_int(data.get("last_call_input_tokens", 0)),
-            context_length=_as_int(data.get("context_length", 0)),
-            valid=data.get("valid") is True,
-        )
+        if data.get("valid") is False:
+            return cls()
+        value = data.get("last_call_input_tokens", 0)
+        # ``bool`` is an ``int`` subclass but is never a valid token count;
+        # reject it (and any non-int) so corrupted payloads fall back to 0.
+        if isinstance(value, bool) or not isinstance(value, int):
+            return cls()
+        return cls(max(0, value))
 
     @classmethod
     def load(cls, path: Path) -> "ContextState":
@@ -227,24 +223,16 @@ class ContextState:
 
 
 def read_context_state(node: Any) -> ContextState:
-    """Read one node's measured occupancy without consulting billing history."""
+    """Read one node's measured occupancy without consulting billing history.
+
+    ``running_turn_usage.session_total_tokens`` is already zeroed by
+    :class:`~datus.schemas.token_usage.TokenUsage` whenever that snapshot is
+    marked invalid, so a stale reading never reaches here as a live one.
+    """
     state = getattr(node, "_context_state", None)
     if isinstance(state, ContextState):
         return state
     running = getattr(node, "running_turn_usage", None)
     if running is not None:
-        used = getattr(running, "session_total_tokens", 0)
-        return ContextState.from_dict(
-            {
-                "last_call_input_tokens": used,
-                "context_length": getattr(running, "context_length", 0),
-                "valid": getattr(running, "context_usage_valid", isinstance(used, int) and used > 0),
-            }
-        )
-    return ContextState.from_dict(
-        {
-            "last_call_input_tokens": getattr(node, "_restored_context_used", 0),
-            "context_length": getattr(node, "_restored_context_length", 0),
-            "valid": isinstance(getattr(node, "_restored_context_used", None), int) and node._restored_context_used > 0,
-        }
-    )
+        return ContextState.from_dict({"last_call_input_tokens": getattr(running, "session_total_tokens", 0)})
+    return ContextState.from_dict({"last_call_input_tokens": getattr(node, "_restored_context_used", 0)})

@@ -280,7 +280,6 @@ class AgenticNode(Node):
         # the restore call so the restored values are not clobbered.
         self._context_state: Optional["ContextState"] = None
         self._restored_context_used: int = 0
-        self._restored_context_length: int = 0
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — restore must never crash construction
@@ -629,24 +628,19 @@ class AgenticNode(Node):
             self.workflow_prompt_sent,
         )
 
-    def persist_context_state(
-        self, last_call_input_tokens: int, context_length: int, *, valid: Optional[bool] = None
-    ) -> None:
-        """Publish a measured occupancy or invalidation, then persist it.
+    def persist_context_state(self, last_call_input_tokens: int) -> None:
+        """Publish a measured occupancy, then persist it. Zero invalidates.
 
-        Memory is authoritative for the running node even when persistence fails.
-        SQLite stores the durable state atomically invalidated by history rewrites;
-        the JSON section remains a compatibility mirror for existing sessions.
+        Memory is authoritative for the running node even when persistence
+        fails. The session db holds the durable value, zeroed by any history
+        rewrite in the same transaction; the JSON section remains a
+        compatibility mirror for sessions that predate the move.
         """
         from datus.storage.session_state import ContextState
 
-        used = max(0, int(last_call_input_tokens or 0))
-        length = max(0, int(context_length or 0))
-        known = used > 0 if valid is None else valid
-        state = ContextState(used if known else 0, length, known)
+        state = ContextState(max(0, int(last_call_input_tokens or 0)))
         self._context_state = state
         self._restored_context_used = state.last_call_input_tokens
-        self._restored_context_length = length
         if self.session_id:
             try:
                 self.session_manager.save_context_state(self.session_id, state)
@@ -660,7 +654,7 @@ class AgenticNode(Node):
             logger.debug("Failed to persist JSON context state", exc_info=True)
 
     def restore_context_state(self) -> None:
-        """Restore SQLite's state, falling back to legacy JSON when absent."""
+        """Restore the durable measurement, falling back to legacy JSON."""
         from datus.storage.session_state import ContextState
 
         loaded = None
@@ -668,7 +662,7 @@ class AgenticNode(Node):
             try:
                 loaded = self.session_manager.load_context_state(self.session_id)
             except Exception:
-                # An unreadable durable invalidation must not revive an old JSON value.
+                # An unreadable durable zero must not revive an old JSON value.
                 loaded = ContextState()
                 logger.debug("Failed to restore SQLite context state", exc_info=True)
         if not isinstance(loaded, ContextState):
@@ -677,8 +671,7 @@ class AgenticNode(Node):
                 return
             loaded = ContextState.load(state_path)
         self._context_state = loaded
-        self._restored_context_used = loaded.last_call_input_tokens if loaded.valid else 0
-        self._restored_context_length = loaded.context_length
+        self._restored_context_used = loaded.last_call_input_tokens
 
     def get_context_usage(self) -> "ContextState":
         """Return the latest measured input occupancy; never substitute spend."""
@@ -1596,7 +1589,7 @@ class AgenticNode(Node):
     async def _count_session_tokens(self) -> int:
         """Return measured input occupancy, or zero when it is unknown."""
         state = self.get_context_usage()
-        return state.last_call_input_tokens if state.valid else 0
+        return state.last_call_input_tokens
 
     # ── Compact subsystem ──────────────────────────────────────────────
     # Public entry: ``compact(mode, reason)``. CLI, RunHooks, and model-layer
@@ -1818,8 +1811,8 @@ class AgenticNode(Node):
     def _history_token_ratio_sync(self) -> float:
         """Return measured occupancy for explicit compact(auto) callers."""
         state = self.get_context_usage()
-        length = self.context_length or state.context_length
-        return state.last_call_input_tokens / length if state.valid and length else 0.0
+        length = self.context_length
+        return state.last_call_input_tokens / length if length else 0.0
 
     def _get_compact_lock(self) -> asyncio.Lock:
         """Lazily allocate the per-node compact lock.
@@ -2207,12 +2200,7 @@ class AgenticNode(Node):
                     "context_usage_valid": False,
                 }
             )
-        length = getattr(self, "_restored_context_length", 0) or 0
-        try:
-            length = int(self.context_length or length)
-        except Exception:
-            logger.debug("Cannot resolve context length after rewrite", exc_info=True)
-        self.persist_context_state(0, length, valid=False)
+        self.persist_context_state(0)
         self._notify_status_dirty()
 
     def _refresh_turn_checkpoint_after_rewrite(self) -> None:
@@ -3907,7 +3895,6 @@ class AgenticNode(Node):
         self.running_turn_usage = None
         self._context_state = None
         self._restored_context_used = 0
-        self._restored_context_length = 0
         if not self.session_id:
             return
         try:
@@ -3970,7 +3957,7 @@ class AgenticNode(Node):
             "context_usage_ratio": current_tokens / self.context_length if self.context_length else 0,
             "context_remaining": (
                 max(0, self.context_length - current_tokens)
-                if self.context_length and self.get_context_usage().valid
+                if self.context_length and self.get_context_usage().last_call_input_tokens
                 else 0
             ),
             "context_length": self.context_length,
@@ -4004,7 +3991,7 @@ class AgenticNode(Node):
                 return _TokenUsage.from_usage_dict(
                     usage_dict,
                     session_total_tokens=self.get_context_usage().last_call_input_tokens,
-                    context_usage_valid=self.get_context_usage().valid,
+                    context_usage_valid=self.get_context_usage().last_call_input_tokens > 0,
                     context_length=self.context_length or 0,
                 )
         return None

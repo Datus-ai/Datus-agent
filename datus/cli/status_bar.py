@@ -359,8 +359,7 @@ class StatusBarProvider:
             return 0
         from datus.storage.session_state import read_context_state
 
-        state = read_context_state(node)
-        return state.last_call_input_tokens if state.valid else 0
+        return read_context_state(node).last_call_input_tokens
 
     def _resolve_context_total(self) -> int:
         node = self._current_node()
@@ -382,13 +381,4 @@ class StatusBarProvider:
                         return fallback
                 except (TypeError, ValueError):
                     pass
-            # Resume fallback: the context length re-hydrated from disk so the
-            # bar's denominator is correct before the node populates it on the
-            # first call of the resumed session.
-            try:
-                restored = int(getattr(node, "_restored_context_length", 0) or 0)
-                if restored > 0:
-                    return restored
-            except (TypeError, ValueError):
-                pass
         return 0

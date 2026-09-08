@@ -101,23 +101,19 @@ class TestPlanModeStateRoundTrip:
 class TestContextStateRoundTrip:
     def test_save_and_load_round_trip(self, tmp_path):
         path = tmp_path / "state" / "ctx.json"
-        ContextState(last_call_input_tokens=52_499, context_length=1_000_000).save(path)
+        ContextState(52_499).save(path)
         assert path.exists()
 
-        loaded = ContextState.load(path)
-        assert loaded.last_call_input_tokens == 52_499
-        assert loaded.context_length == 1_000_000
+        assert ContextState.load(path).last_call_input_tokens == 52_499
 
     def test_on_disk_layout_is_nested_under_context_state(self, tmp_path):
         path = tmp_path / "ctx.json"
-        ContextState(last_call_input_tokens=10, context_length=200).save(path)
+        ContextState(10).save(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {"context_state": {"last_call_input_tokens": 10, "context_length": 200, "valid": True}}
+        assert data == {"context_state": {"last_call_input_tokens": 10}}
 
     def test_load_missing_file_returns_default(self, tmp_path):
-        loaded = ContextState.load(tmp_path / "absent.json")
-        assert loaded.last_call_input_tokens == 0
-        assert loaded.context_length == 0
+        assert ContextState.load(tmp_path / "absent.json").last_call_input_tokens == 0
 
     def test_load_corrupted_json_falls_back_to_default(self, tmp_path):
         path = tmp_path / "bad.json"
@@ -128,22 +124,35 @@ class TestContextStateRoundTrip:
         "raw,expected",
         [
             # Non-int (str / float / bool) coerces to the safe 0 default.
-            ({"last_call_input_tokens": "500", "context_length": 1000}, (0, 1000)),
-            ({"last_call_input_tokens": 12.5, "context_length": 1000}, (0, 1000)),
-            ({"last_call_input_tokens": True, "context_length": 1000}, (0, 1000)),
+            ({"last_call_input_tokens": "500"}, 0),
+            ({"last_call_input_tokens": 12.5}, 0),
+            ({"last_call_input_tokens": True}, 0),
             # Negative values are clamped to 0.
-            ({"last_call_input_tokens": -5, "context_length": -1}, (0, 0)),
+            ({"last_call_input_tokens": -5}, 0),
             # Valid ints preserved.
-            ({"last_call_input_tokens": 800, "context_length": 128_000}, (0, 128_000)),
-            ({"last_call_input_tokens": 800, "context_length": 128_000, "valid": True}, (800, 128_000)),
-            ({}, (0, 0)),
+            ({"last_call_input_tokens": 800}, 800),
+            ({}, 0),
+            # Fields the record no longer carries are ignored, not rejected.
+            ({"last_call_input_tokens": 800, "context_length": 128_000}, 800),
         ],
     )
     def test_load_coerces_invalid_fields(self, tmp_path, raw, expected):
         path = tmp_path / "coerce.json"
         path.write_text(json.dumps({"context_state": raw}), encoding="utf-8")
-        loaded = ContextState.load(path)
-        assert (loaded.last_call_input_tokens, loaded.context_length) == expected
+        assert ContextState.load(path).last_call_input_tokens == expected
+
+    def test_a_record_marked_invalid_before_the_flag_was_dropped_reads_as_zero(self, tmp_path):
+        """Those records may hold a text estimate rather than a measurement.
+
+        The flag is no longer written, but honouring it on read keeps a session
+        from resuming onto a number that was never a real reading.
+        """
+        path = tmp_path / "legacy_invalid.json"
+        path.write_text(
+            json.dumps({"context_state": {"last_call_input_tokens": 9_000, "valid": False}}),
+            encoding="utf-8",
+        )
+        assert ContextState.load(path).last_call_input_tokens == 0
 
 
 class TestSaveSectionErrors:
@@ -155,7 +164,7 @@ class TestSaveSectionErrors:
         # ``state`` would have to live *under* a regular file → mkdir raises
         # NotADirectoryError (an OSError), which save() must absorb.
         path = blocker / "state" / "s.json"
-        ContextState(last_call_input_tokens=1, context_length=2).save(path)
+        ContextState(1).save(path)
         assert not path.exists()
 
 
@@ -169,7 +178,7 @@ class TestSectionsCoexist:
         path = tmp_path / "state" / "s.json"
         _write_plan_mode_section(path, plan_mode_active=True, plan_file_path="p.md", workflow_prompt_sent=True)
 
-        ContextState(last_call_input_tokens=42, context_length=1000).save(path)
+        ContextState(42).save(path)
 
         plan = PlanModeState.load(path)
         ctx = ContextState.load(path)
@@ -177,12 +186,11 @@ class TestSectionsCoexist:
         assert plan.plan_file_path == "p.md"
         assert plan.workflow_prompt_sent is True
         assert ctx.last_call_input_tokens == 42
-        assert ctx.context_length == 1000
 
     def test_both_sections_present_in_file(self, tmp_path):
         path = tmp_path / "s.json"
         _write_plan_mode_section(path, plan_mode_active=True)
-        ContextState(last_call_input_tokens=7, context_length=99).save(path)
+        ContextState(7).save(path)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert set(data.keys()) == {"plan_mode", "context_state"}
 
@@ -194,17 +202,16 @@ class TestContextStateClear:
 
     def test_clear_removes_context_state_section(self, tmp_path):
         path = tmp_path / "state" / "s.json"
-        ContextState(last_call_input_tokens=42, context_length=1000).save(path)
+        ContextState(42).save(path)
         ContextState.clear(path)
         # The section is gone — a subsequent load returns defaults.
-        loaded = ContextState.load(path)
-        assert (loaded.last_call_input_tokens, loaded.context_length) == (0, 0)
+        assert ContextState.load(path).last_call_input_tokens == 0
         assert "context_state" not in json.loads(path.read_text(encoding="utf-8"))
 
     def test_clear_preserves_sibling_plan_mode_section(self, tmp_path):
         path = tmp_path / "state" / "s.json"
         _write_plan_mode_section(path, plan_mode_active=True, plan_file_path="p.md")
-        ContextState(last_call_input_tokens=7, context_length=99).save(path)
+        ContextState(7).save(path)
         ContextState.clear(path)
         plan = PlanModeState.load(path)
         assert plan.plan_mode_active is True
@@ -267,7 +274,7 @@ class TestLegacyCompactSectionIgnored:
             encoding="utf-8",
         )
 
-        ContextState(last_call_input_tokens=5, context_length=100).save(path)
+        ContextState(5).save(path)
 
         data = json.loads(path.read_text(encoding="utf-8"))
         assert "compact" not in data

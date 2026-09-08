@@ -20,7 +20,7 @@ async def test_failed_metadata_insert_keeps_history_and_measurement(tmp_path):
     session = manager.get_session("atomic")
     original = [{"role": "user", "content": "keep"}, {"role": "assistant", "content": "history"}]
     await session.add_items(original)
-    manager.save_context_state("atomic", ContextState(700, 1000, True))
+    manager.save_context_state("atomic", ContextState(700))
     with sqlite3.connect(tmp_path / "atomic.db") as conn:
         conn.execute(
             "CREATE TRIGGER reject_rewrite BEFORE INSERT ON message_structure "
@@ -29,7 +29,7 @@ async def test_failed_metadata_insert_keeps_history_and_measurement(tmp_path):
     with pytest.raises(sqlite3.IntegrityError, match="metadata rejected"):
         await session.replace_items([{"role": "assistant", "content": "replacement"}])
     assert await session.get_items() == original
-    assert manager.load_context_state("atomic") == ContextState(700, 1000, True)
+    assert manager.load_context_state("atomic") == ContextState(700)
     session.close()
 
 
@@ -46,9 +46,9 @@ async def test_rewrite_preserves_billing_and_monotonic_turns(tmp_path):
             )
         )
     )
-    manager.save_context_state("billing", ContextState(100, 1000, True))
+    manager.save_context_state("billing", ContextState(100))
     await session.replace_items([{"role": "assistant", "content": "recap"}])
-    assert manager.load_context_state("billing") == ContextState(0, 1000, False)
+    assert manager.load_context_state("billing") == ContextState(0)
     await session.add_items([{"role": "user", "content": "second"}])
     await session.store_run_usage(
         SimpleNamespace(

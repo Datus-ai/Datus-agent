@@ -139,7 +139,7 @@ class TokenUsageHook(RunHooks):
         self._update_node_snapshot(cumulative, context_length, last_call_input_tokens, delta)
         persist = getattr(self._node, "persist_context_state", None)
         if callable(persist):
-            persist(last_call_input_tokens, context_length)
+            persist(last_call_input_tokens)
         self._persist_snapshot(cumulative, context_length)
         self._enqueue_action(cumulative, delta, context_length, last_call_input_tokens)
         self._notify_status_dirty()

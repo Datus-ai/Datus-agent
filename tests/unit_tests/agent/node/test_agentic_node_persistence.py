@@ -224,44 +224,36 @@ class TestContextStatePersistence:
     def test_persist_writes_context_state_section(self, chdir_tmp, real_agent_config):
         node = _make_chat_node(real_agent_config, session_id="chat_session_ctx1")
 
-        node.persist_context_state(last_call_input_tokens=52_499, context_length=1_000_000)
+        node.persist_context_state(52_499)
 
         state_path = _state_path(node, "chat_session_ctx1")
         assert state_path.exists()
         data = json.loads(state_path.read_text(encoding="utf-8"))
-        assert data["context_state"] == {
-            "last_call_input_tokens": 52_499,
-            "context_length": 1_000_000,
-            "valid": True,
-        }
+        assert data["context_state"] == {"last_call_input_tokens": 52_499}
         # In-memory mirror updated so a same-process status-bar read is correct.
         assert node._restored_context_used == 52_499
-        assert node._restored_context_length == 1_000_000
 
     def test_rebuilt_node_restores_context_state(self, chdir_tmp, real_agent_config):
         node = _make_chat_node(real_agent_config, session_id="chat_session_ctx2")
-        node.persist_context_state(last_call_input_tokens=12_004, context_length=200_000)
+        node.persist_context_state(12_004)
 
         rebuilt = _make_chat_node(real_agent_config, session_id="chat_session_ctx2")
         assert rebuilt._restored_context_used == 12_004
-        assert rebuilt._restored_context_length == 200_000
 
     def test_fresh_session_restores_zero(self, chdir_tmp, real_agent_config):
         node = _make_chat_node(real_agent_config, session_id="chat_session_ctx_fresh")
         assert node._restored_context_used == 0
-        assert node._restored_context_length == 0
 
     def test_persist_preserves_plan_mode_state(self, chdir_tmp, real_agent_config):
         """Writing occupancy must not disturb the session's plan-mode flags."""
         node = _make_chat_node(real_agent_config, session_id="chat_session_ctx3")
         _materialize_session(node)
         node.activate_plan_mode()
-        node.persist_context_state(last_call_input_tokens=7, context_length=99)
+        node.persist_context_state(7)
 
         rebuilt = _make_chat_node(real_agent_config, session_id="chat_session_ctx3")
         assert rebuilt.plan_mode_active is True  # survived the context-state write
         assert rebuilt._restored_context_used == 7
-        assert rebuilt._restored_context_length == 99
 
 
 class TestResetUsageCaches:
@@ -271,7 +263,7 @@ class TestResetUsageCaches:
 
     def test_reset_zeros_in_memory_and_removes_context_state(self, chdir_tmp, real_agent_config):
         node = _make_chat_node(real_agent_config, session_id="chat_session_reset1")
-        node.persist_context_state(last_call_input_tokens=52_499, context_length=1_000_000)
+        node.persist_context_state(52_499)
         node.running_turn_usage = object()  # stand-in for a TokenUsage snapshot
 
         node._reset_usage_caches()
@@ -279,18 +271,16 @@ class TestResetUsageCaches:
         # In-memory mirrors zeroed.
         assert node.running_turn_usage is None
         assert node._restored_context_used == 0
-        assert node._restored_context_length == 0
         # Persisted ContextState mirror removed — a rebuilt node restores zero.
         rebuilt = _make_chat_node(real_agent_config, session_id="chat_session_reset1")
         assert rebuilt._restored_context_used == 0
-        assert rebuilt._restored_context_length == 0
 
     def test_reset_preserves_plan_mode_state(self, chdir_tmp, real_agent_config):
         """Only the usage mirror is dropped — plan mode is not usage state."""
         node = _make_chat_node(real_agent_config, session_id="chat_session_reset2")
         _materialize_session(node)
         node.activate_plan_mode()
-        node.persist_context_state(last_call_input_tokens=7, context_length=99)
+        node.persist_context_state(7)
 
         node._reset_usage_caches()
 

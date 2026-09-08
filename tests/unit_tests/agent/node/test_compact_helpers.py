@@ -940,8 +940,6 @@ class TestOccupancyAfterSessionRewrite:
 
         on_disk = ContextState.load(state_path)
         assert on_disk.last_call_input_tokens == 0
-        assert on_disk.valid is False
-        assert on_disk.context_length == self.WINDOW
         # The in-memory mirror agrees, so a between-turns status-bar read and a
         # post-restart read cannot disagree.
         assert node._restored_context_used == on_disk.last_call_input_tokens
@@ -1000,7 +998,7 @@ class TestMeasuredContextContracts:
 
         node = self._node(tmp_path)
         await node._session.add_items(TestOccupancyAfterSessionRewrite._history())
-        node.persist_context_state(95_000, 100_000)
+        node.persist_context_state(95_000)
         result = await node.compact(mode="major")
         assert result["success"] is True
         assert node.running_turn_usage.session_total_tokens == 0
@@ -1022,7 +1020,7 @@ class TestMeasuredContextContracts:
     async def test_rewrite_updates_memory_without_a_state_file(self, tmp_path):
         """A missing state path must not leave pre-rewrite occupancy in memory."""
         node = self._node(tmp_path)
-        node.persist_context_state(95_000, 100_000)
+        node.persist_context_state(95_000)
         node._agent_state_file = lambda: None
         node.running_turn_usage = None
         await node._replace_session_items([{"role": "assistant", "content": "recap"}])
@@ -1121,7 +1119,7 @@ async def test_cancelled_rewrite_finishes_bookkeeping_before_esc_rollback(tmp_pa
     with pytest.raises(asyncio.CancelledError):
         await task
     assert node._session_rewritten_this_turn is True
-    assert node.get_context_usage().valid is False
+    assert node.get_context_usage().last_call_input_tokens == 0
     node.session_manager.rollback_turn(node.session_id, node.mid_turn_rewrite_checkpoint)
     assert await node._session.get_items() == rewritten
     node._session.close()

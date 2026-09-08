@@ -14,18 +14,9 @@ from datus.utils.message_utils import extract_user_input, is_compact_resume_text
 
 logger = get_logger(__name__)
 
-CONTEXT_STATE_TABLE = """
-CREATE TABLE IF NOT EXISTS context_occupancy (
-    session_id TEXT PRIMARY KEY,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    context_length INTEGER NOT NULL DEFAULT 0,
-    valid INTEGER NOT NULL DEFAULT 0
-)
-"""
-
-# Sparse, write-once metadata that must outlive a history rewrite. Kept apart
-# from ``context_occupancy``: that table exists to be zeroed by every rewrite,
-# which is the opposite of what these rows need.
+# One row per (session, key), holding everything about a session that is not
+# a message or a usage record. Values are text; each key documents its own
+# shape below.
 SESSION_META_TABLE = """
 CREATE TABLE IF NOT EXISTS session_meta (
     session_id TEXT NOT NULL,
@@ -41,6 +32,12 @@ SESSION_TITLE_KEY = "title"
 #: Plan-mode flags, stored as one JSON object so the three fields that are
 #: always written together cannot land out of step with each other.
 SESSION_PLAN_MODE_KEY = "plan_mode"
+
+#: Context-window occupancy of the last model call, as a decimal integer.
+#: Unlike its neighbours this one is rewritten on every model response and
+#: reset to ``"0"`` by any history rewrite — the reading describes the history
+#: that was just deleted, so it cannot outlive it.
+SESSION_CONTEXT_USED_KEY = "context_used"
 
 #: Cap on the stored title. It labels a list row, it is not a document.
 MAX_SESSION_TITLE_CHARS = 500
@@ -154,7 +151,7 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
             with self._lock:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
-                    conn.execute(CONTEXT_STATE_TABLE)
+                    conn.execute(SESSION_META_TABLE)
                     seq, turn, branch_turn = conn.execute(
                         "SELECT COALESCE(MAX(sequence_number), 0), COALESCE(MAX(user_turn_number), 0), "
                         "COALESCE(MAX(branch_turn_number), 0) FROM message_structure WHERE session_id = ?",
@@ -195,10 +192,13 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
                                 tool,
                             ),
                         )
+                    # The occupancy reading describes the history just deleted.
+                    # Zeroed in this same transaction so the compaction gate
+                    # and the status bar can never see it outlive its subject.
                     conn.execute(
-                        "INSERT INTO context_occupancy (session_id) VALUES (?) "
-                        "ON CONFLICT(session_id) DO UPDATE SET input_tokens = 0, valid = 0",
-                        (self.session_id,),
+                        "INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, '0') "
+                        "ON CONFLICT(session_id, key) DO UPDATE SET value = '0'",
+                        (self.session_id, SESSION_CONTEXT_USED_KEY),
                     )
                     if conn.execute(
                         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'running_turn_usage'"

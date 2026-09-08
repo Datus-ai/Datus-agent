@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from agents.extensions.memory import AdvancedSQLiteSession
 
 from datus.models.sqlite_session import (
-    CONTEXT_STATE_TABLE,
+    SESSION_CONTEXT_USED_KEY,
     SESSION_META_TABLE,
     SESSION_TITLE_KEY,
     DatusSQLiteSession,
@@ -230,35 +230,23 @@ class SessionManager:
         failures are logged rather than raised so history clearing and the
         post-response bookkeeping stay unaffected by a locked database.
         """
-        self._validate_session_id(session_id)
-        db_path = os.path.join(self.session_dir, f"{session_id}.db")
-        if not os.path.exists(db_path):
-            return
-        try:
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
-                conn.execute(CONTEXT_STATE_TABLE)
-                conn.execute(
-                    "INSERT OR REPLACE INTO context_occupancy "
-                    "(session_id, input_tokens, context_length, valid) VALUES (?, ?, ?, ?)",
-                    (session_id, state.last_call_input_tokens, state.context_length, int(state.valid)),
-                )
-        except sqlite3.Error as exc:
-            logger.warning("Failed to save context state for session %s: %s", session_id, exc)
+        self.save_session_meta(session_id, SESSION_CONTEXT_USED_KEY, str(state.last_call_input_tokens))
 
     def load_context_state(self, session_id: str) -> Optional[ContextState]:
-        """Read the durable measurement, including an explicit invalidation."""
-        self._validate_session_id(session_id)
-        db_path = os.path.join(self.session_dir, f"{session_id}.db")
-        if not os.path.exists(db_path):
+        """Read the durable measurement, or ``None`` when none was recorded.
+
+        ``None`` and a recorded zero are different answers: the first lets the
+        caller fall through to the legacy JSON mirror, the second is a session
+        whose reading a rewrite has invalidated.
+        """
+        raw = self.load_session_meta(session_id, SESSION_CONTEXT_USED_KEY)
+        if raw is None:
             return None
-        with sqlite3.connect(db_path, timeout=5.0) as conn:
-            if not self._table_exists(conn, "context_occupancy"):
-                return None
-            row = conn.execute(
-                "SELECT input_tokens, context_length, valid FROM context_occupancy WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
-            return ContextState(row[0], row[1], bool(row[2])) if row else None
+        try:
+            return ContextState(max(0, int(raw)))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring unreadable occupancy %r for session %s", raw, session_id)
+            return ContextState()
 
     def checkpoint_turn(self, session_id: str) -> Optional[SessionTurnCheckpoint]:
         """Capture the SQLite boundary before dispatching a model turn.
@@ -354,11 +342,11 @@ class SessionManager:
                     )
                 if self._table_exists(conn, "running_turn_usage"):
                     conn.execute("DELETE FROM running_turn_usage WHERE session_id = ?", (session_id,))
-                conn.execute(CONTEXT_STATE_TABLE)
+                conn.execute(SESSION_META_TABLE)
                 conn.execute(
-                    "INSERT INTO context_occupancy (session_id) VALUES (?) "
-                    "ON CONFLICT(session_id) DO UPDATE SET input_tokens = 0, valid = 0",
-                    (session_id,),
+                    "INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, '0') "
+                    "ON CONFLICT(session_id, key) DO UPDATE SET value = '0'",
+                    (session_id, SESSION_CONTEXT_USED_KEY),
                 )
                 conn.commit()
         except sqlite3.Error as exc:
