@@ -93,6 +93,41 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "active contract explicitly permits" in prompt
 
 
+def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
+    real_agent_config, mock_llm_create, tmp_path, monkeypatch
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.models.session_manager import SessionManager
+
+    _set_adapter(real_agent_config, "dosi")
+    monkeypatch.setattr(
+        semantic_authoring,
+        "authoring_prompt_snapshot_meta",
+        lambda *_args: {"datus_extension_version": "1.5", "datus_authoring_contract_digest": "sha256:unchanged"},
+    )
+    node = SemanticModelingAgenticNode(
+        agent_config=real_agent_config, execution_mode="workflow", session_id="semantic_session"
+    )
+    node.input = SemanticNodeInput(user_message="Update the order dataset")
+    node._session_manager = SessionManager(session_dir=str(tmp_path))
+    old_meta = node._system_prompt_snapshot_meta(None)
+    old_meta["semantic_target_scope"] = "agent_bound_v3"
+    node.session_manager.save_system_prompt_snapshot(
+        node.session_id, "Declare a new key only after full-table validation.", old_meta
+    )
+
+    context = node._prepare_template_context(node.input)
+    with patch.object(node, "_get_system_prompt", wraps=node._get_system_prompt) as build_prompt:
+        prompt = node._get_session_system_prompt(template_context=context)
+
+        assert '<required_skill name="dosi-semantic-authoring">' in prompt
+        assert "Use source DDL as the only evidence for new key declarations" in prompt
+        assert "Do not execute data queries to discover or verify keys" in prompt
+        assert node.session_manager.load_system_prompt_snapshot(node.session_id)["prompt"] == prompt
+        assert node._get_session_system_prompt(template_context=context) == prompt
+        build_prompt.assert_called_once()
+
+
 def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 

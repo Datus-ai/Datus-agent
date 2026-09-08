@@ -386,11 +386,12 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         return super()._build_enhanced_message(user_input, parts)
 
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
-        """Invalidate snapshots created before semantic targets became request-scoped."""
+        """Invalidate snapshots when semantic authoring policies or engine contracts change."""
         from datus.agent.node.semantic_authoring import authoring_prompt_snapshot_meta
 
         meta = super()._system_prompt_snapshot_meta(prompt_version)
-        meta["semantic_target_scope"] = "agent_bound_v3"
+        # Earlier snapshots still instruct the model to validate keys against table data.
+        meta["semantic_target_scope"] = "agent_bound_v4"
         meta.update(authoring_prompt_snapshot_meta(self.agent_config, self.NODE_NAME))
         return meta
 
