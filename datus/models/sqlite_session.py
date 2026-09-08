@@ -9,7 +9,10 @@ from typing import Any
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
+from datus.utils.loggings import get_logger
 from datus.utils.message_utils import extract_user_input, is_compact_resume_text
+
+logger = get_logger(__name__)
 
 CONTEXT_STATE_TABLE = """
 CREATE TABLE IF NOT EXISTS context_occupancy (
@@ -19,6 +22,24 @@ CREATE TABLE IF NOT EXISTS context_occupancy (
     valid INTEGER NOT NULL DEFAULT 0
 )
 """
+
+# Sparse, write-once metadata that must outlive a history rewrite. Kept apart
+# from ``context_occupancy``: that table exists to be zeroed by every rewrite,
+# which is the opposite of what these rows need.
+SESSION_META_TABLE = """
+CREATE TABLE IF NOT EXISTS session_meta (
+    session_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT,
+    PRIMARY KEY (session_id, key)
+)
+"""
+
+#: Label a session is listed under. Holds the first user message.
+SESSION_TITLE_KEY = "title"
+
+#: Cap on the stored title. It labels a list row, it is not a document.
+MAX_SESSION_TITLE_CHARS = 500
 
 
 class DatusSQLiteSession(AdvancedSQLiteSession):
@@ -47,9 +68,63 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
     async def add_items(self, items: list[dict[str, Any]]) -> None:
         persisted = getattr(self, "_persisted_input", [])
         self._persisted_input = []
+        appended = items
         if persisted and items[: len(persisted)] == persisted:
-            items = items[len(persisted) :]
-        await super().add_items(items)
+            appended = items[len(persisted) :]
+        await super().add_items(appended)
+        # Title from the unfiltered batch: when compaction ran on the very
+        # first request, the opening message is the part skipped here, and it
+        # would otherwise never be seen by the recorder.
+        await self._record_title_once(items)
+
+    async def _record_title_once(self, items: list[dict[str, Any]]) -> None:
+        """Persist the first user message as the session's durable title.
+
+        Recorded as messages arrive rather than salvaged before a compact: the
+        row lives in ``session_meta``, which a history rewrite never touches,
+        so the label survives any number of compacts without a caller having to
+        race the clear. ``INSERT OR IGNORE`` makes only the first user message
+        of a session ever win, so a later batch cannot retitle the chat.
+
+        Best-effort — a title is a list label, and losing one must never fail
+        the message write that just succeeded.
+        """
+        if getattr(self, "_title_recorded", False):
+            return
+        title = ""
+        for item in items:
+            if self._is_user_message(item):
+                title = extract_user_input(item.get("content", "")).strip()
+                if title:
+                    break
+        if not title:
+            return
+
+        def record() -> None:
+            conn = self._get_connection()
+            with self._lock:
+                conn.execute(SESSION_META_TABLE)
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_meta (session_id, key, value) VALUES (?, ?, ?)",
+                    (self.session_id, SESSION_TITLE_KEY, title[:MAX_SESSION_TITLE_CHARS]),
+                )
+                conn.commit()
+
+        try:
+            await asyncio.to_thread(record)
+        except Exception as exc:  # noqa: BLE001 — see docstring
+            logger.warning("Could not record the title of session %s: %s", self.session_id, exc)
+            return
+        self._title_recorded = True
+
+    def forget_recorded_title(self) -> None:
+        """Let the next user message name the session again.
+
+        Called when the stored title is dropped (``/clear``). Without it the
+        write-once guard above would keep short-circuiting and the restarted
+        conversation would stay unnamed.
+        """
+        self._title_recorded = False
 
     async def replace_items(self, items: list[dict[str, Any]], *, pending_user_turns: int = 0) -> None:
         """Replace history and invalidate its measurement in one transaction.

@@ -2561,3 +2561,63 @@ def test_get_session_messages_hides_the_mid_turn_resume_instruction(sm):
     user_texts = [m["content"] for m in messages if m["role"] == "user"]
     assert user_texts == ["analyse refunds"]
     assert not any("DATUS_COMPACT_RESUME" in json.dumps(m, default=str) for m in messages)
+
+
+class TestSessionTitleAcrossSessionRewrites:
+    """The recorded title outlives a compact, follows a copy, and resets on ``/clear``.
+
+    Listing a session shows its first user message. A major compact deletes the
+    history that message lived in, so the title is recorded when it arrives and
+    read back from ``session_meta``. Every path that builds a new session from
+    an old one has to carry that row, or the bug reappears one step later.
+    """
+
+    def _compacted_session(self, sm, session_id, opening_message):
+        """A session a major compact reduced to a single assistant recap."""
+        import asyncio
+
+        session = sm.get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": opening_message}]))
+        asyncio.run(session.replace_items([{"role": "assistant", "content": "Recap of the conversation."}]))
+        return session
+
+    def test_clearing_history_lets_the_next_message_rename_the_session(self, sm_custom):
+        """``/clear`` restarts the conversation, so the old opening no longer describes it."""
+        import asyncio
+
+        session_id = "chat_session_cleared"
+        session = sm_custom.get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "How many buses ran today?"}]))
+
+        sm_custom.clear_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "Unrelated new topic"}]))
+
+        assert sm_custom.get_session_info(session_id)["first_user_message"] == "Unrelated new topic"
+
+    def test_copying_a_compacted_session_carries_its_title(self, sm_custom):
+        """Switching node type copies a session whose user rows a compact removed."""
+        source_id = "chat_session_tocopy"
+        self._compacted_session(sm_custom, source_id, "How many buses ran today?")
+
+        new_id = sm_custom.copy_session(source_id, "gen_sql")
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+    def test_rewinding_a_compacted_session_carries_its_title(self, sm_custom):
+        """A rewind keeps the conversation's opening turn, so it keeps its name."""
+        source_id = "chat_session_torewind"
+        self._compacted_session(sm_custom, source_id, "How many buses ran today?")
+
+        new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+    def test_copying_a_session_that_never_recorded_a_title_still_works(self, sm_custom):
+        """Sessions older than ``session_meta`` have no row to carry."""
+        source_id = "chat_session_legacycopy"
+        sm_custom.get_session(source_id)
+        _insert_messages(sm_custom.session_dir, source_id, [{"role": "user", "content": "What is SQL?"}])
+
+        new_id = sm_custom.copy_session(source_id, "gen_sql")
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "What is SQL?"
