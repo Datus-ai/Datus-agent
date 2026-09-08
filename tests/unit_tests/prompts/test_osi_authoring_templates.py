@@ -207,22 +207,6 @@ def test_metrics_template_osi_mode_contract():
     assert "explicitly requires a query behavior" in text
 
 
-def test_semantic_model_template_includes_profiler_gate_both_formats():
-    for authoring_format in ("metricflow", "osi"):
-        text = _render("gen_semantic_model_system", authoring_format)
-        assert "Optional SQL History & Distribution Profiling" in text, authoring_format
-        assert 'load_skill("semantic-sql-history-profiler")' in text, authoring_format
-        # Explicit-ask trigger: providing SQL alone must not trigger profiling.
-        assert "Providing SQL alone is NOT a trigger" in text, authoring_format
-        assert "still use it directly as modeling context" in text, authoring_format
-
-
-def test_metrics_template_has_no_profiler_gate():
-    for authoring_format in ("metricflow", "osi"):
-        text = _render("gen_metrics_system", authoring_format)
-        assert "semantic-sql-history-profiler" not in text, authoring_format
-
-
 def test_latest_versions_resolve_to_shared_templates():
     pm = get_prompt_manager()
     assert pm.get_latest_version("gen_semantic_model_system") == "2.0"

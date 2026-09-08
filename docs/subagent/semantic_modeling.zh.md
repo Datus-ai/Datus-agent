@@ -122,6 +122,8 @@ datus --datasource duckdb_demo
 
 最终结果会报告 `generated`、`skipped` 或 `blocked`。如果结果为 blocked，会说明缺少 schema 证据、目标不明确、定义无效或其他无法安全写入的原因。
 
+键声明只以源 DDL 为准：物理主键写入 `primary_key`，唯一约束或覆盖整表的普通列唯一索引写入 `unique_keys`，保留复合键的列顺序。语义建模不会扫描表数据来发现或验证键。DDL 未提供可用键时，省略该键及依赖它的新关系或指标，说明省略原因，并继续完成其余建模。最终模型仍执行 `validate_semantic` 校验。
+
 ## 生成文件的位置和组织方式
 
 新文件写入当前项目和 datasource 对应的目录：

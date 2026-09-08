@@ -6,7 +6,7 @@ tags:
   - metrics
   - osi
   - dosi
-version: "1.1.0"
+version: "1.2.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -24,10 +24,12 @@ Author the active Dosi semantic model as strict OSI core YAML. Use this skill fo
 - Keep one `semantic_model` per file and stable `snake_case` names. Preserve unrelated content; an upsert replaces the complete same-named object.
 - Bind a dataset to a qualified physical table or a complete reusable SELECT. Declare every referenced physical column as a field with the active OSI dialect.
 - Mark time fields with `dimension: {is_time: true}`. Keep other fields available as dimensions.
-- For a dataset bound to a physical table, use `primary_key` to transcribe a source-declared physical primary key, and `unique_keys` to transcribe source-declared unique constraints and indexes. For a query-backed dataset, a source key holds only if the query preserves it: a one-to-many join repeats it, so validate against the result, not the base table. Declare a key the source does not declare only after full-table validation shows those columns are non-null and duplicate-free; a stated grain, a query pattern, or one partition is not evidence.
+- Use source DDL as the only evidence for new key declarations. For a physical table, transcribe its declared physical primary key into `primary_key` and its declared unique constraints or whole-table unique indexes on plain columns into `unique_keys`. Preserve each complete composite key and its declared column order. Partial or expression indexes do not establish a whole-table key on their named columns. ClickHouse `PRIMARY KEY`/`ORDER BY` and StarRocks/Doris `DUPLICATE KEY` are sort keys, not uniqueness declarations.
+- Do not execute data queries to discover or verify keys, including full-table NULL/duplicate checks. Samples, approximate distinct counts, column names, SQL JOINs, and stated grain are not substitutes for DDL key declarations.
+- If the DDL is unavailable or declares no usable key, leave the key undeclared and continue modeling fields, datasets, and independent metrics. Do not block the whole request or ask to scan the table to fill the gap. For a query-backed dataset, retain a DDL-declared source key only when the query provably preserves it; a one-to-many join can repeat it. Otherwise leave the key undeclared without scanning the source or query result.
 - Give a field a `label` when its column name is not what a reader would call it.
 - Give a dataset `ai_context.instructions` when its grain or intended use does not follow from the description, and give a field `ai_context.synonyms` when users ask for it by a name the column does not carry. Leave both out otherwise: restating the description dilutes what a reader can act on.
-- Define model-level relationships with aligned `from_columns` and `to_columns`; bind the target columns to one complete verified key.
+- Define model-level relationships with aligned `from_columns` and `to_columns`; bind the target columns to one complete DDL-declared key that holds at the target dataset's grain. If no such key is available, omit the new relationship and any metrics that cannot be faithfully modeled without it, explain the omission, and continue with the remaining assets. Do not invent a key to make a relationship or metric compile.
 
 ## Choose DATUS metric capabilities
 

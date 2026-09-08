@@ -555,21 +555,6 @@ class TestGenerationFormatters:
         )
         assert out == "2 tables, 1 rels"
 
-    def test_validate_semantic_key_candidates(self):
-        out = _summarize(
-            "validate_semantic_key_candidates",
-            {
-                "success": 1,
-                "result": {
-                    "validations": [
-                        {"is_valid_logical_key": True},
-                        {"is_valid_logical_key": False},
-                    ]
-                },
-            },
-        )
-        assert out == "1/2 keys verified"
-
     def test_profile_semantic_model_evidence(self):
         out = _summarize(
             "profile_semantic_model_evidence",
@@ -978,11 +963,6 @@ def test_failure_path_uniform(tool: str):
         ("publish_metrics", {"metric_file": "m.yml"}, "metric generated"),
         ("inspect_semantic_sources", {"tables": [{}, {}], "relationships": [{}, {}, {}]}, "2 tables, 3 rels"),
         (
-            "validate_semantic_key_candidates",
-            {"validations": [{"is_valid_logical_key": True}, {"is_valid_logical_key": False}]},
-            "1/2 keys verified",
-        ),
-        (
             "profile_semantic_model_evidence",
             {"data_profiled": False, "tables": {"orders": {}}},
             "1 table profiled",
@@ -1095,7 +1075,6 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("publish_metrics", {"sync": {"success": True}}),
     ("generate_sql_summary_id", "very_long_summary_id_12345"),
     ("inspect_semantic_sources", {"tables": [{}] * 99, "relationships": [{}] * 99}),
-    ("validate_semantic_key_candidates", {"validations": [{"is_valid_logical_key": True}] * 99}),
     ("profile_semantic_model_evidence", {"data_profiled": True, "tables": {str(i): {} for i in range(99)}}),
     # scheduler
     ("submit_sql_job", {"job_id": "very_long_job_id_here"}),

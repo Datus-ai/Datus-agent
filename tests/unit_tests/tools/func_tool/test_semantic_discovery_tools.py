@@ -47,17 +47,30 @@ def _make_tools(
 
 
 class TestInspectSemanticSources:
-    def test_returns_compact_schema_and_relationship_evidence(self):
+    @pytest.mark.parametrize("enable_profiler", [False, True])
+    def test_exposes_source_inspection_and_optional_profiling(self, enable_profiler):
+        tools = _make_tools(enable_semantic_model_profiler=enable_profiler)
+
+        expected = {"inspect_semantic_sources"}
+        if enable_profiler:
+            expected.add("profile_semantic_model_evidence")
+        assert {tool.name for tool in tools.available_tools()} == expected
+
+    def test_compact_result_preserves_ddl_keys_schema_and_relationship_evidence(self):
         db_tool = _make_db_tool()
+        definitions = {
+            "orders": (
+                "CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT, amount DECIMAL, "
+                "FOREIGN KEY (customer_id) REFERENCES customers(id))"
+            ),
+            "customers": (
+                "CREATE TABLE customers (id INT PRIMARY KEY, region VARCHAR, UNIQUE (region, id));\n"
+                "CREATE UNIQUE INDEX customer_region ON customers (region) WHERE region IS NOT NULL;\n"
+                "CREATE UNIQUE INDEX customer_region_lower ON customers (lower(region));"
+            ),
+        }
 
         def ddl(table, *_args):
-            definitions = {
-                "orders": (
-                    "CREATE TABLE orders (id INT, customer_id INT, amount DECIMAL, "
-                    "FOREIGN KEY (customer_id) REFERENCES customers(id))"
-                ),
-                "customers": "CREATE TABLE customers (id INT, region VARCHAR)",
-            }
             return FuncToolResult(success=1, result={"definition": definitions[table]})
 
         def schema(table, *_args):
@@ -102,7 +115,8 @@ class TestInspectSemanticSources:
         customers = result.result["tables"][1]
         assert orders["schema"]["columns"][2] == {"name": "amount", "type": "DECIMAL"}
         assert customers["schema"]["columns"][1] == {"name": "region", "type": "VARCHAR"}
-        assert "ddl" not in orders
+        assert orders["ddl"] == {"definition": definitions["orders"]}
+        assert customers["ddl"] == {"definition": definitions["customers"]}
         assert "sql_usage" not in orders
         assert db_tool.get_table_ddl.call_count == 2
         assert db_tool.describe_table.call_count == 2
@@ -110,6 +124,7 @@ class TestInspectSemanticSources:
         repeated = tools.inspect_semantic_sources(["orders", "customers"])
 
         assert repeated.success == 1
+        assert repeated.result["tables"] == result.result["tables"]
         assert db_tool.get_table_ddl.call_count == 2
         assert db_tool.describe_table.call_count == 2
 
@@ -119,6 +134,7 @@ class TestInspectSemanticSources:
         assert refreshed.success == 1
         assert db_tool.get_table_ddl.call_count == 4
         assert db_tool.describe_table.call_count == 4
+        db_tool.read_query.assert_not_called()
 
     def test_reports_partial_table_inspection_without_repeating_calls(self):
         db_tool = _make_db_tool()
@@ -133,10 +149,12 @@ class TestInspectSemanticSources:
         assert result.success == 1
         assert len(result.result["tables"]) == 1
         assert result.result["tables"][0]["ddl_error"] == "DDL unavailable"
+        assert result.result["tables"][0]["schema"]["columns"] == [{"name": "id", "type": "INT"}]
         db_tool.get_table_ddl.assert_called_once()
         db_tool.describe_table.assert_called_once()
+        db_tool.read_query.assert_not_called()
 
-    def test_returns_ddl_only_as_schema_fallback(self):
+    def test_retains_ddl_when_schema_is_unavailable(self):
         db_tool = _make_db_tool()
         db_tool.get_table_ddl.return_value = FuncToolResult(
             success=1,
@@ -181,63 +199,6 @@ class TestInspectSemanticSources:
         assert result.success == 1
         assert result.result["tables"][0]["ddl"] == {"definition": "CREATE TABLE orders (amount DECIMAL)"}
         assert result.result["tables"][0]["sql_usage"]["field_usage_statistics"]["amount"]["aggregate_count"] == 1
-
-
-class TestValidateSemanticKeyCandidatesBatch:
-    def test_verifies_multiple_candidates_in_one_tool_call(self):
-        db_tool = _make_db_tool()
-        db_tool.read_query.side_effect = [
-            FuncToolResult(success=1, result={"compressed_data": "row_count,null_key_rows\n12,0\n"}),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "duplicate_group_count,duplicate_row_count\n0,0\n"},
-            ),
-            FuncToolResult(success=1, result={"compressed_data": "row_count,null_key_rows\n8,1\n"}),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "duplicate_group_count,duplicate_row_count\n0,0\n"},
-            ),
-        ]
-
-        result = _make_tools(db_tool).validate_semantic_key_candidates(
-            [
-                {"table_name": "customers", "columns": ["customer_id"]},
-                {"table_name": "stores", "columns": ["tenant_id", "store_id"]},
-            ]
-        )
-
-        assert result.success == 1
-        assert len(result.result["validations"]) == 2
-        assert result.result["validations"][0]["is_valid_logical_key"] is True
-        assert result.result["validations"][1]["is_valid_logical_key"] is False
-        assert db_tool.read_query.call_count == 4
-
-    def test_deduplicates_identical_candidates(self):
-        db_tool = _make_db_tool()
-        db_tool.read_query.side_effect = [
-            FuncToolResult(success=1, result={"compressed_data": "row_count,null_key_rows\n12,0\n"}),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "duplicate_group_count,duplicate_row_count\n0,0\n"},
-            ),
-        ]
-
-        result = _make_tools(db_tool).validate_semantic_key_candidates(
-            [
-                {"table_name": "customers", "columns": ["customer_id"]},
-                {"table_name": "CUSTOMERS", "columns": ["CUSTOMER_ID"]},
-            ]
-        )
-
-        assert result.success == 1
-        assert len(result.result["validations"]) == 1
-        assert db_tool.read_query.call_count == 2
-
-    def test_requires_at_least_one_candidate(self):
-        result = _make_tools().validate_semantic_key_candidates([])
-
-        assert result.success == 0
-        assert "Provide every" in result.error
 
 
 # ---------------------------------------------------------------------------
@@ -296,50 +257,11 @@ class TestGetMultipleTablesDDL:
 
 
 # ---------------------------------------------------------------------------
-# validate_semantic_key_candidate
+# Shared profiling SQL identifiers
 # ---------------------------------------------------------------------------
 
 
-class TestValidateSemanticKeyCandidate:
-    @pytest.mark.parametrize(
-        "table_name",
-        [
-            "example-analytics-12345.main.customers",
-            "`example-analytics-12345.main.customers`",
-        ],
-    )
-    def test_quotes_non_simple_table_parts_with_the_selected_connector(self, table_name):
-        db_tool = _make_db_tool()
-        db_tool.quote_sql_identifier.side_effect = lambda name, database="": f"`{name}`"
-        db_tool.read_query.side_effect = [
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "index,row_count,null_key_rows\n0,12,0\n"},
-            ),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,0,0\n")},
-            ),
-        ]
-        tools = _make_tools(db_tool)
-
-        result = tools.validate_semantic_key_candidate(
-            table_name,
-            ["customer_id"],
-        )
-
-        assert result.success == 1
-        summary_sql = db_tool.read_query.call_args_list[0].args[0]
-        duplicate_sql = db_tool.read_query.call_args_list[1].args[0]
-        expected_table = "`example-analytics-12345`.main.customers"
-        assert f"FROM {expected_table}" in summary_sql
-        assert f"FROM {expected_table}" in duplicate_sql
-        assert '"example-analytics-12345"' not in summary_sql
-        db_tool.quote_sql_identifier.assert_called_once_with(
-            "example-analytics-12345",
-            database="",
-        )
-
+class TestProfileSQLIdentifiers:
     def test_keeps_simple_identifiers_unquoted(self):
         db_tool = _make_db_tool()
         tools = _make_tools(db_tool)
@@ -351,106 +273,6 @@ class TestValidateSemanticKeyCandidate:
         tools = SemanticDiscoveryTools(db_tool=SimpleNamespace())
 
         assert tools._quote_sql_identifier("order-detail") == '"order-detail"'
-
-    def test_accepts_full_table_non_null_unique_composite_key(self):
-        db_tool = _make_db_tool()
-        db_tool.read_query.side_effect = [
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "index,row_count,null_key_rows\n0,12,0\n"},
-            ),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,0,0\n")},
-            ),
-        ]
-        tools = _make_tools(db_tool)
-
-        result = tools.validate_semantic_key_candidate(
-            "customers",
-            ["tenant_id", "customer_id"],
-            schema_name="analytics",
-        )
-
-        assert result.success == 1
-        assert result.result["is_valid_logical_key"] is True
-        assert result.result["recommended_osi_declaration"] == "unique_keys"
-        assert result.result["primary_key_inferred"] is False
-        assert result.result["verification_scope"] == "full_table"
-        assert "GROUP BY tenant_id, customer_id" in db_tool.read_query.call_args_list[1].args[0]
-        assert "FROM analytics.customers" in db_tool.read_query.call_args_list[0].args[0]
-
-    def test_accepts_case_insensitive_profile_column_names(self):
-        db_tool = _make_db_tool()
-        db_tool.read_query.side_effect = [
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "index,ROW_COUNT,NULL_KEY_ROWS\n0,12,0\n"},
-            ),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": ("index,DUPLICATE_GROUP_COUNT,DUPLICATE_ROW_COUNT\n0,0,0\n")},
-            ),
-        ]
-
-        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["tenant_id", "customer_id"])
-
-        assert result.success == 1
-        assert result.result["is_valid_logical_key"] is True
-
-    def test_rejects_candidate_with_nulls_or_duplicates(self):
-        db_tool = _make_db_tool()
-        db_tool.read_query.side_effect = [
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "index,row_count,null_key_rows\n0,20,2\n"},
-            ),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,3,4\n")},
-            ),
-        ]
-        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["tenant_id", "customer_id"])
-
-        assert result.success == 1
-        assert result.result["is_non_null"] is False
-        assert result.result["is_unique"] is False
-        assert result.result["is_valid_logical_key"] is False
-        assert result.result["recommended_osi_declaration"] == "none"
-
-    def test_empty_table_is_not_supporting_key_evidence(self):
-        db_tool = _make_db_tool()
-        db_tool.read_query.side_effect = [
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": "index,row_count,null_key_rows\n0,0,\n"},
-            ),
-            FuncToolResult(
-                success=1,
-                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,0,0\n")},
-            ),
-        ]
-        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["customer_id"])
-
-        assert result.success == 1
-        assert result.result["is_valid_logical_key"] is False
-        assert "empty" in result.result["reason"]
-
-    def test_query_failure_is_not_reported_as_verification(self):
-        db_tool = _make_db_tool()
-        db_tool.read_query.return_value = FuncToolResult(success=0, error="permission denied")
-        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["customer_id"])
-
-        assert result.success == 0
-        assert "permission denied" in result.error
-
-    def test_rejects_empty_or_duplicate_column_list(self):
-        tools = _make_tools()
-        empty = tools.validate_semantic_key_candidate("customers", [])
-        duplicate = tools.validate_semantic_key_candidate("customers", ["customer_id", "CUSTOMER_ID"])
-
-        assert empty.success == 0
-        assert duplicate.success == 0
 
 
 # ---------------------------------------------------------------------------

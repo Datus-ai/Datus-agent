@@ -51,7 +51,7 @@
     <line x1="52" y1="194" x2="708" y2="194" stroke="#343a4c" stroke-width="1"/>
     <text x="52" y="222"><tspan class="k">Datasets</tspan><tspan class="v" x="248">frpm &#183; satscores &#183; schools</tspan></text>
     <text x="52" y="250"><tspan class="k">Metrics</tspan><tspan class="v" x="248">average_sat_score &#183; excellence_rate &#183; free_meal_rate</tspan></text>
-    <text x="52" y="278"><tspan class="k">Validation</tspan><tspan class="hl" x="248">keys verified &#10003;</tspan><tspan class="v" x="440">OSI format</tspan></text>
+    <text x="52" y="278"><tspan class="k">Validation</tspan><tspan class="hl" x="248">model valid &#10003;</tspan><tspan class="v" x="440">OSI format</tspan></text>
     <text class="ttl" x="52" y="306">compiled to SQL for 13+ dialects by the Dosi engine</text>
   </g>
 

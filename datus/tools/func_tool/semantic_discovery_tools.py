@@ -13,12 +13,11 @@ import json
 import re
 import time
 from collections import Counter, defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from agents import Tool
-from pydantic import BaseModel, Field
 
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.loggings import get_logger
@@ -29,13 +28,6 @@ if TYPE_CHECKING:
     from datus.tools.func_tool.database import DBFuncTool
 
 logger = get_logger(__name__)
-
-
-class SemanticKeyCandidate(BaseModel):
-    """One ordered logical-key candidate to verify against the full table."""
-
-    table_name: str = Field(..., description="Table containing the candidate key")
-    columns: List[str] = Field(..., description="Complete ordered candidate key columns")
 
 
 class SemanticDiscoveryTools:
@@ -95,18 +87,13 @@ class SemanticDiscoveryTools:
 
         methods_to_convert = []
         if self.db_tool is not None:
-            methods_to_convert.extend(
-                [
-                    self.inspect_semantic_sources,
-                    self.validate_semantic_key_candidates,
-                ]
-            )
+            methods_to_convert.append(self.inspect_semantic_sources)
             if self.enable_semantic_model_profiler:
                 methods_to_convert.append(self.profile_semantic_model_evidence)
         return [trans_to_function_tool(bound_method) for bound_method in methods_to_convert]
 
     # These compatibility methods remain callable by Python integrations while
-    # the LLM tool surface above exposes only the two batched operations.
+    # the LLM tool surface above exposes batched source inspection and optional profiling.
     def get_multiple_tables_ddl(
         self,
         tables: List[str],
@@ -159,26 +146,6 @@ class SemanticDiscoveryTools:
                     "relationships": relationships,
                     "summary": f"Found {len(relationships)} relationships across {len(tables)} tables",
                 }
-            )
-        except Exception as exc:
-            return FuncToolResult(success=0, error=str(exc))
-
-    def validate_semantic_key_candidate(
-        self,
-        table_name: str,
-        columns: List[str],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-    ) -> FuncToolResult:
-        """Verify one legacy key candidate; not an exposed LLM tool."""
-        try:
-            return self._validate_semantic_key_candidate(
-                table_name=table_name,
-                columns=columns,
-                catalog=catalog or "",
-                database=database or "",
-                schema_name=schema_name or "",
             )
         except Exception as exc:
             return FuncToolResult(success=0, error=str(exc))
@@ -260,9 +227,9 @@ class SemanticDiscoveryTools:
         This tool batches schema and relationship discovery. It reads each
         table's DDL and enriched schema once per request, uses DDL for declared
         foreign keys, and mines JOIN evidence from the structured SQL supplied
-        with the current request. Unified semantic modeling receives a compact
-        schema-first result with raw DDL only as fallback; compatibility callers
-        retain detailed DDL and SQL-usage evidence. It never searches unrelated
+        with the current request. Every result retains raw DDL so declared keys,
+        composite-column order, and index conditions remain available alongside
+        enriched schema. Compact results omit SQL-usage statistics. It never searches unrelated
         reference SQL; historical profiling remains a separate opt-in workflow.
         """
         try:
@@ -327,14 +294,12 @@ class SemanticDiscoveryTools:
             public_tables = []
             for inspected in inspected_tables:
                 public_table = {"table_name": inspected["table_name"]}
-                if not self.compact_source_inspection and inspected.get("ddl") is not None:
+                if inspected.get("ddl") is not None:
                     public_table["ddl"] = inspected["ddl"]
                 if inspected.get("schema") is not None:
                     public_table["schema"] = inspected["schema"]
                 else:
                     public_table["schema_error"] = inspected.get("schema_error") or "Schema unavailable"
-                    if inspected.get("ddl") is not None:
-                        public_table["ddl"] = inspected["ddl"]
                 if inspected.get("ddl_error"):
                     public_table["ddl_error"] = inspected["ddl_error"]
                 if not self.compact_source_inspection:
@@ -365,179 +330,6 @@ class SemanticDiscoveryTools:
             )
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
-
-    def validate_semantic_key_candidates(
-        self,
-        candidates: List[SemanticKeyCandidate],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-    ) -> FuncToolResult:
-        """Verify all intended logical-key candidates in one read-only call.
-
-        Historical JOINs and column names can suggest key columns, but they do
-        not prove uniqueness. Each candidate is checked over all rows visible
-        under the current policy context for NULL components and duplicate
-        ordered key groups. A passing result may be authored as one OSI
-        ``unique_keys`` entry. This tool never infers a physical
-        ``primary_key``.
-
-        Args:
-            candidates: Complete ordered key candidates that the model intends
-                to use. Submit all candidates in one call.
-            catalog: Optional catalog override.
-            database: Optional database override.
-            schema_name: Optional schema override.
-        """
-        try:
-            parsed_candidates = [SemanticKeyCandidate.model_validate(candidate) for candidate in candidates or []]
-            if not parsed_candidates:
-                return FuncToolResult(
-                    success=0,
-                    error="Provide every logical-key candidate that must be verified.",
-                )
-
-            validations = []
-            errors = []
-            seen = set()
-            for candidate in parsed_candidates:
-                normalized_columns = self._validate_key_candidate_columns(candidate.columns)
-                identity = (
-                    self._normalize_identifier(candidate.table_name),
-                    tuple(self._normalize_identifier(column) for column in normalized_columns),
-                )
-                if identity in seen:
-                    continue
-                seen.add(identity)
-                validation = self._validate_semantic_key_candidate(
-                    table_name=candidate.table_name,
-                    columns=normalized_columns,
-                    catalog=catalog or "",
-                    database=database or "",
-                    schema_name=schema_name or "",
-                )
-                if validation.success:
-                    validations.append(validation.result)
-                else:
-                    error = {
-                        "table": candidate.table_name,
-                        "columns": normalized_columns,
-                        "error": validation.error or "Candidate key verification failed",
-                    }
-                    validations.append(error)
-                    errors.append(error)
-
-            result = {
-                "validations": validations,
-                "all_checks_completed": not errors,
-                "summary": (
-                    f"Verified {len(validations) - len(errors)} of {len(validations)} logical-key candidate(s)"
-                ),
-            }
-            if errors:
-                return FuncToolResult(
-                    success=0,
-                    error="One or more logical-key candidates could not be verified.",
-                    result=result,
-                )
-            return FuncToolResult(result=result)
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
-
-    def _validate_semantic_key_candidate(
-        self,
-        *,
-        table_name: str,
-        columns: List[str],
-        catalog: str,
-        database: str,
-        schema_name: str,
-    ) -> FuncToolResult:
-        """Run exact full-table checks for one ordered logical-key candidate."""
-        normalized_columns = self._validate_key_candidate_columns(columns)
-        table_ref = self._key_validation_table_reference(
-            table_name=table_name,
-            catalog=catalog,
-            database=database,
-            schema_name=schema_name,
-        )
-        column_refs = [self._quote_sql_identifier(column, database) for column in normalized_columns]
-        null_predicate = " OR ".join(f"{column_ref} IS NULL" for column_ref in column_refs)
-        non_null_predicate = " AND ".join(f"{column_ref} IS NOT NULL" for column_ref in column_refs)
-        grouped_columns = ", ".join(column_refs)
-
-        summary_sql = (
-            "SELECT COUNT(*) AS row_count, "
-            f"SUM(CASE WHEN {null_predicate} THEN 1 ELSE 0 END) "
-            f"AS null_key_rows FROM {table_ref}"
-        )
-        summary = self._run_profile_scalar_query(summary_sql, database)
-        if summary.get("error"):
-            return FuncToolResult(
-                success=0,
-                error=f"Candidate key summary check failed: {summary['error']}",
-            )
-
-        duplicate_sql = (
-            "SELECT COUNT(*) AS duplicate_group_count, "
-            "COALESCE(SUM(duplicate_count - 1), 0) AS duplicate_row_count "
-            "FROM ("
-            "SELECT COUNT(*) AS duplicate_count "
-            f"FROM {table_ref} WHERE {non_null_predicate} "
-            f"GROUP BY {grouped_columns} HAVING COUNT(*) > 1"
-            ") duplicate_keys"
-        )
-        duplicate_stats = self._run_profile_scalar_query(duplicate_sql, database)
-        if duplicate_stats.get("error"):
-            return FuncToolResult(
-                success=0,
-                error=f"Candidate key duplicate check failed: {duplicate_stats['error']}",
-            )
-
-        row_count = self._required_profile_count(summary, "row_count")
-        null_key_rows = self._optional_profile_count(summary, "null_key_rows", default=0)
-        duplicate_group_count = self._required_profile_count(duplicate_stats, "duplicate_group_count")
-        duplicate_row_count = self._optional_profile_count(duplicate_stats, "duplicate_row_count", default=0)
-        is_non_null = null_key_rows == 0
-        is_unique = duplicate_group_count == 0
-        is_valid_logical_key = row_count > 0 and is_non_null and is_unique
-
-        if row_count == 0:
-            recommendation = "none"
-            reason = "The table is empty, so the candidate has no supporting data."
-        elif not is_non_null:
-            recommendation = "none"
-            reason = f"{null_key_rows} rows contain NULL in at least one key component."
-        elif not is_unique:
-            recommendation = "none"
-            reason = f"{duplicate_group_count} duplicate key groups contain {duplicate_row_count} excess rows."
-        else:
-            recommendation = "unique_keys"
-            reason = "The ordered columns are non-NULL and unique across the full table."
-
-        return FuncToolResult(
-            result={
-                "table": table_name,
-                "columns": normalized_columns,
-                "verification_scope": "full_table",
-                "access_scope": "rows visible under the current policy context",
-                "verified_at_utc": datetime.now(timezone.utc).isoformat(),
-                "row_count": row_count,
-                "null_key_rows": null_key_rows,
-                "duplicate_group_count": duplicate_group_count,
-                "duplicate_row_count": duplicate_row_count,
-                "is_non_null": is_non_null,
-                "is_unique": is_unique,
-                "is_valid_logical_key": is_valid_logical_key,
-                "recommended_osi_declaration": recommendation,
-                "primary_key_inferred": False,
-                "reason": reason,
-                "verification_sql": {
-                    "summary": summary_sql,
-                    "duplicates": duplicate_sql,
-                },
-            }
-        )
 
     def _normalize_semantic_source_tables(self, tables: List[str]) -> List[str]:
         """Return non-empty source table names without case-insensitive duplicates."""
@@ -665,10 +457,10 @@ class SemanticDiscoveryTools:
         """
         Build semantic-model evidence from historical SQL and optional table profiling.
 
-        This read-only tool is intended for semantic model generation when the
-        `semantic-sql-history-profiler` skill is loaded. It mines the provided
-        SQL for joins, filters, grouping fields, and aggregate candidates, then
-        optionally samples bounded column distributions from the connected DB.
+        Used by the CLI/API refresh-profile workflow for existing Dosi models.
+        It mines the provided SQL for joins, filters, grouping fields, and
+        aggregate candidates, then optionally samples bounded column
+        distributions from the connected DB. Profiling does not establish keys.
 
         Args:
             sql_queries: Raw historical SQL statements to analyze.
@@ -730,8 +522,9 @@ class SemanticDiscoveryTools:
                     "yaml_guidance": (
                         "Keep generated YAML concise: use profiling evidence to choose relationship "
                         "candidates, measures, dimensions, and time columns; historical joins do not "
-                        "prove keys, so verify complete target column lists with "
-                        "one validate_semantic_key_candidates call before adding unique_keys. Include compact distribution notes "
+                        "prove keys. Declare keys only from source DDL and omit relationships whose "
+                        "target has no DDL-declared key; do not query table data to discover keys. "
+                        "Include compact distribution notes "
                         "in descriptions when useful, such as observed min/max, percentiles, "
                         "null rate, date span/freshness/duration, low-cardinality distinct counts, "
                         "stable enum mappings, referential coverage, and common business filter "
@@ -1870,60 +1663,6 @@ class SemanticDiscoveryTools:
             return table_name
         parts = [part for part in (catalog, database, schema_name, table_name) if part]
         return ".".join(self._quote_sql_identifier(part, database) for part in parts)
-
-    def _validate_key_candidate_columns(self, columns: List[str]) -> List[str]:
-        if not isinstance(columns, list) or not columns:
-            raise ValueError("columns must contain at least one candidate key column")
-        normalized = [str(column or "").strip() for column in columns]
-        if any(not column for column in normalized):
-            raise ValueError("candidate key columns must not be empty")
-        comparable = [self._normalize_identifier(column) for column in normalized]
-        if len(set(comparable)) != len(comparable):
-            raise ValueError("candidate key columns must not contain duplicates")
-        return normalized
-
-    def _key_validation_table_reference(
-        self,
-        table_name: str,
-        catalog: str,
-        database: str,
-        schema_name: str,
-    ) -> str:
-        table_name = str(table_name or "").strip()
-        if not table_name:
-            raise ValueError("table_name is required")
-        if "." in table_name:
-            parts = [part.strip() for part in table_name.split(".")]
-        else:
-            parts = [
-                str(part).strip() for part in (catalog, database, schema_name, table_name) if str(part or "").strip()
-            ]
-        if not parts or any(not part for part in parts):
-            raise ValueError("table_name contains an empty qualified-name component")
-        return ".".join(self._quote_sql_identifier(part, database) for part in parts)
-
-    def _required_profile_count(self, stats: Dict[str, Any], key: str) -> int:
-        value = self._profile_number(self._profile_stat_value(stats, key))
-        if value is None or value < 0:
-            raise ValueError(f"Candidate key verification did not return `{key}`")
-        return int(value)
-
-    def _optional_profile_count(self, stats: Dict[str, Any], key: str, default: int) -> int:
-        value = self._profile_number(self._profile_stat_value(stats, key))
-        if value is None:
-            return default
-        if value < 0:
-            raise ValueError(f"Candidate key verification returned invalid `{key}`")
-        return int(value)
-
-    def _profile_stat_value(self, stats: Dict[str, Any], key: str) -> Any:
-        if key in stats:
-            return stats[key]
-        normalized_key = self._normalize_identifier(key)
-        for candidate, value in stats.items():
-            if self._normalize_identifier(str(candidate)) == normalized_key:
-                return value
-        return None
 
     def _dialect_operations(self, database: str = "") -> Optional[Any]:
         resolver = getattr(self.db_tool, "dialect_operations", None)
