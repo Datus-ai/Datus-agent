@@ -85,3 +85,28 @@ async def test_rewrite_invalidates_live_measurement_without_refunding_spend(tmp_
     assert cumulative["context_usage_ratio"] == 0
     assert cumulative["total_tokens"] == 1300
     session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot", [None, "{not json", '["a", "list"]', '"a string"', "17"])
+async def test_an_unreadable_usage_snapshot_never_blocks_the_rewrite(tmp_path, snapshot):
+    """No shape of ``cumulative_json`` may abort the compaction transaction.
+
+    The rewrite rolls back on any exception, so a snapshot the reader cannot
+    interpret would keep the oversized history that compaction exists to
+    remove. An uninterpretable snapshot is treated as absent instead.
+    """
+    manager = SessionManager(session_dir=str(tmp_path))
+    session = manager.get_session("unreadable")
+    await session.add_items([{"role": "user", "content": "oversized"}])
+    manager.upsert_running_turn_usage("unreadable", 1, {"total_tokens": 1300}, 1000)
+    with sqlite3.connect(tmp_path / "unreadable.db") as conn:
+        conn.execute("UPDATE running_turn_usage SET cumulative_json = ?", (snapshot,))
+
+    await session.replace_items([{"role": "assistant", "content": "recap"}])
+
+    assert await session.get_items() == [{"role": "assistant", "content": "recap"}]
+    cumulative = manager.get_running_turn_usage("unreadable")["cumulative"]
+    assert cumulative["last_call_input_tokens"] == 0
+    assert cumulative["context_usage_valid"] is False
+    session.close()

@@ -190,16 +190,28 @@ class SessionManager:
         self.save_context_state(session_id, ContextState())
 
     def save_context_state(self, session_id: str, state: ContextState) -> None:
-        """Store the measured occupancy beside the transactional history."""
+        """Store the measured occupancy beside the transactional history.
+
+        Never creates the database: ``sqlite3.connect`` would materialise an
+        empty file that ``list_sessions`` then reports as a session. A missing
+        file also means there is no stale measurement to overwrite. Write
+        failures are logged rather than raised so history clearing and the
+        post-response bookkeeping stay unaffected by a locked database.
+        """
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
-        with sqlite3.connect(db_path, timeout=5.0) as conn:
-            conn.execute(CONTEXT_STATE_TABLE)
-            conn.execute(
-                "INSERT OR REPLACE INTO context_occupancy "
-                "(session_id, input_tokens, context_length, valid) VALUES (?, ?, ?, ?)",
-                (session_id, state.last_call_input_tokens, state.context_length, int(state.valid)),
-            )
+        if not os.path.exists(db_path):
+            return
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(CONTEXT_STATE_TABLE)
+                conn.execute(
+                    "INSERT OR REPLACE INTO context_occupancy "
+                    "(session_id, input_tokens, context_length, valid) VALUES (?, ?, ?, ?)",
+                    (session_id, state.last_call_input_tokens, state.context_length, int(state.valid)),
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Failed to save context state for session %s: %s", session_id, exc)
 
     def load_context_state(self, session_id: str) -> Optional[ContextState]:
         """Read the durable measurement, including an explicit invalidation."""

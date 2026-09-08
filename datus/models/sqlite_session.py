@@ -129,7 +129,17 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
                             (self.session_id,),
                         ).fetchone()
                         if row:
-                            cumulative = json.loads(row[0])
+                            # An unreadable snapshot must not abort the rewrite:
+                            # the ``except BaseException`` below would roll the
+                            # message replacement back too and leave the
+                            # oversized history in place. Treat it as absent,
+                            # matching ``SessionManager._read_running_turn_usage``.
+                            try:
+                                cumulative = json.loads(row[0]) if row[0] else {}
+                            except (json.JSONDecodeError, TypeError):
+                                cumulative = {}
+                            if not isinstance(cumulative, dict):
+                                cumulative = {}
                             cumulative.update(
                                 last_call_input_tokens=0, context_usage_ratio=0.0, context_usage_valid=False
                             )

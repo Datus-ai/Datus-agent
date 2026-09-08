@@ -309,7 +309,17 @@ class MidTurnCompactor(AgentHooks):
     # ------------------------------------------------------------------
 
     def reset(self) -> None:
-        """Forget the overlay and counters; called at the start of every run."""
+        """Forget the overlay and counters; called at the start of every run.
+
+        ``_instruction_rebuilt`` deliberately survives: it lives in
+        ``__init__`` because the model layer rebuilds the SDK ``Agent`` from
+        the instruction string captured when the stream call started, so a
+        retried run still supplies the pre-compaction system prompt while the
+        session already holds the compacted history (and a major pass has
+        dropped the frozen prompt snapshot). Clearing the flag here would let
+        ``set_request_context`` overwrite the refreshed instruction with that
+        stale one.
+        """
         self._prefix_len = 0
         self._replacement: List[Dict[str, Any]] = []
         self._boundary_item: Any = None

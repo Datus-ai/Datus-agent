@@ -494,7 +494,7 @@ class TestBuildRunConfigCompactsMidRun:
         from datus.agent.node.compact_prompts import MID_TURN_RESUME_PREFIX
 
         model = scripted_agents_model(["tool", "tool", "final"])
-        node = _CompactingFakeNode(budget_tokens=150)  # anything crosses the line
+        node = _CompactingFakeNode(budget_tokens=150)  # a tool round crosses the line
         await self._run(model, self._rewriter(node))
 
         assert model.turn == 3
@@ -537,7 +537,10 @@ class TestBuildRunConfigCompactsMidRun:
         await self._run(model, self._rewriter(node))
 
         assert node.calls[1]["base_tokens"] == 120
-        assert node.calls[0]["tail_start"] == 1
+        # The tail boundary of the *second* request is what the reported usage
+        # buys: everything up to the previous view is already counted in the
+        # 120 input tokens, so only what was appended after it is estimated.
+        assert node.calls[1]["tail_start"] == 1
         assert "call_1" not in self._call_ids(model.inputs[1])
 
     @pytest.mark.asyncio
@@ -671,6 +674,53 @@ class TestUnifiedRequestCompaction:
             )
         assert following.input == first.input + tail
         assert following.instructions == "FRESH_SYSTEM"
+        node._session.close()
+
+    @pytest.mark.asyncio
+    async def test_a_retried_run_keeps_the_refreshed_instruction(self, tmp_path):
+        """A per-run reset must not restore the pre-compaction system prompt.
+
+        ``generate_with_tools_stream`` rebuilds the SDK ``Agent`` from the
+        instruction string captured when the stream call started, so every
+        retry attempt re-supplies the prompt frozen before compaction — while
+        the session already holds the compacted history and a major pass has
+        dropped the prompt snapshot. The refresh therefore has to outlive the
+        ``on_start`` reset that clears the per-run overlay.
+        """
+        from agents import Agent
+        from agents.run import CallModelData, ModelInputData
+
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+        from tests.unit_tests.agent.node.test_compact_helpers import TestMeasuredContextContracts
+
+        node = TestMeasuredContextContracts._node(tmp_path)
+        raw = [
+            {"role": "user", "content": "old question"},
+            {"role": "assistant", "content": "OLD_HISTORY " * 40000},
+            {"role": "user", "content": "current request"},
+        ]
+        await node._session.add_items(raw)
+        rewriter = MidTurnCompactor(node, refresh_instruction=lambda: "FRESH_SYSTEM")
+        config = LLMBaseModel._build_run_config(MagicMock(), context_rewriter=rewriter, session=node._session)
+        agent = Agent(name="test", instructions="OLD_SYSTEM")
+        with patch.object(Agent, "get_all_tools", new=AsyncMock(return_value=[])):
+            compacted = await config.call_model_input_filter(
+                CallModelData(ModelInputData(input=raw, instructions="OLD_SYSTEM"), agent, None)
+            )
+            assert compacted.instructions == "FRESH_SYSTEM"
+
+            # The transport error retry: the SDK starts a fresh run, so the
+            # hook resets the overlay and the rebuilt agent hands the stale
+            # instruction back to the filter.
+            await rewriter.on_start(None, agent)
+            retried = await config.call_model_input_filter(
+                CallModelData(
+                    ModelInputData(input=await node._session.get_items(), instructions="OLD_SYSTEM"), agent, None
+                )
+            )
+
+        assert retried.instructions == "FRESH_SYSTEM"
+        assert "OLD_HISTORY" not in json.dumps(retried.input)
         node._session.close()
 
     @pytest.mark.asyncio
