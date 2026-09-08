@@ -74,7 +74,9 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert node.semantic_discovery_tools.compact_source_inspection is True
     assert {tool.name for tool in node.semantic_discovery_tools.available_tools()} == {"inspect_semantic_sources"}
 
-    prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+    with patch("datus.storage.metric.store.MetricStorage.get_subject_tree_flat") as subject_tree_lookup:
+        prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+    subject_tree_lookup.assert_not_called()
     assert "Select one target" in prompt
     assert "compact dataset, table, relationship, and metric coverage" in prompt
     assert "use the returned authoring outline" in prompt

@@ -29,7 +29,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
     - Hooks support for custom behavior
     - Semantic adapter integration
     - Session-based conversation management
-    - Subject tree management (predefined or learning mode)
     """
 
     NODE_NAME = "semantic_authoring"
@@ -40,7 +39,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         self,
         agent_config: AgentConfig,
         execution_mode: Literal["interactive", "workflow"] = "interactive",
-        subject_tree: Optional[list] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
         session_id: Optional[str] = None,
@@ -51,10 +49,8 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         Args:
             agent_config: Agent configuration
             execution_mode: Execution mode - "interactive" (default) or "workflow"
-            subject_tree: Optional predefined subject tree categories
         """
         self.execution_mode = execution_mode
-        self.subject_tree = subject_tree
 
         # Get max_turns from agentic_nodes configuration, default to 50
         self.max_turns = 50
@@ -83,11 +79,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             is_subagent=is_subagent,
             session_id=session_id,
         )
-
-        # Initialize metrics storage for context queries
-        from datus.storage.metric.store import MetricRAG
-
-        self.metrics_rag = MetricRAG(agent_config)
 
         # Setup tools
         self.db_func_tool = None
@@ -338,30 +329,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             for source in sources
         ]
 
-    def _get_existing_subject_trees(self) -> list:
-        """
-        Query existing subject_tree values from metrics storage.
-
-        Returns:
-            List of unique subject_path values as strings (e.g., ["Finance/Revenue/Q1", ...])
-        """
-        try:
-            # Check if storage is available
-            if not getattr(self.metrics_rag, "storage", None):
-                return []
-
-            # Get all subject paths using the flat tree structure
-            subject_paths = sorted(self.metrics_rag.storage.get_subject_tree_flat())
-            logger.debug(f"Found {len(subject_paths)} unique metric subject_paths")
-            return subject_paths
-
-        except Exception as e:
-            logger.error(f"Error getting existing metric subject_trees: {e}")
-            return []
-
     def _prepare_template_context(self, user_input: SemanticNodeInput) -> dict:
         """
-        Prepare template context variables for the metrics generation template.
+        Prepare template context variables for semantic authoring.
 
         Args:
             user_input: User input
@@ -387,16 +357,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import resolve_authoring_format
 
         context["authoring_format"] = resolve_authoring_format(self.agent_config)
-
-        # Handle subject_tree context based on whether predefined or query from storage
-        if self.subject_tree:
-            # Predefined mode: use provided subject_tree
-            context["has_subject_tree"] = True
-            context["subject_tree"] = self.subject_tree
-        else:
-            # Learning mode: query existing subject_trees from vector store
-            context["has_subject_tree"] = False
-            context["existing_subject_trees"] = self._get_existing_subject_trees()
 
         logger.debug(f"Prepared template context: {context}")
         return context
