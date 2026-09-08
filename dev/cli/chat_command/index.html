@@ -4771,7 +4771,7 @@
 <li><code>/clear</code>: Clear the current session context and start fresh</li>
 <li><code>/compact</code>: Compress previous turns to reduce memory usage while preserving context</li>
 <li>Runs a <strong>major compact</strong>: the whole session is summarized by the model into a single recap, with the full history saved to a JSONL file for recovery</li>
-<li>Auto-trigger: a major compact also runs automatically when the model context usage exceeds 90% (configurable); separately, a lighter <strong>minor compact</strong> automatically archives old tool I/O after tool calls as the session grows</li>
+<li>Auto-trigger: a major compact also runs automatically when the model context usage exceeds 90% (configurable); separately, a lighter <strong>minor compact</strong> archives eligible old tool output during the same check before each model request, including the first request</li>
 <li>See <a href="../../configuration/compact/">Context Compaction</a> for the major/minor difference and tunable parameters</li>
 <li><code>/chat_info</code>: Show the current active context (messages, tables, metrics)</li>
 <li><code>/resume [session_id]</code>: Resume a previous chat session</li>

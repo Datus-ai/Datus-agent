@@ -5491,6 +5491,7 @@ else returns the standard <a href="../introduction/#response-envelope"><code>Res
 <p>Summarize and compress a session's conversation history.</p>
 <p><strong>Response</strong>: <code>Result[CompactSessionData]</code> containing <code>success</code>, <code>new_token_count</code>, <code>tokens_saved</code>,
 <code>compression_ratio</code>.</p>
+<p>The three compaction metrics are <code>null</code> until a reliable comparable measurement is available. Summary output tokens are not a measurement of the rewritten request.</p>
 <h3 id="get-apiv1chatsessions"><code>GET /api/v1/chat/sessions</code><a class="headerlink" href="#get-apiv1chatsessions" title="Permanent link">&para;</a></h3>
 <p>List chat sessions for the current user.</p>
 <p><strong>Query parameters</strong>:</p>
