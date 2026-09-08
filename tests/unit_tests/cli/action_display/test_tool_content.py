@@ -54,7 +54,6 @@ from datus.cli.action_display.tool_content import (
     _build_todo_update,
     _build_todo_write,
     _build_validate_semantic,
-    _build_validate_semantic_key_candidates,
     _build_web_fetch,
     _build_web_search,
     _build_write_file,
@@ -1713,20 +1712,6 @@ class TestBuildInspectSemanticSources:
         assert tc.output_lines
 
 
-@pytest.mark.ci
-class TestBuildValidateSemanticKeyCandidates:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "validate_semantic_key_candidates"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"validations": ['
-                '{"is_valid_logical_key": true}, {"is_valid_logical_key": false}]}}'
-            },
-        )
-        tc = _build_validate_semantic_key_candidates(a, verbose=False)
-        assert tc.compact_result == "1/2 logical keys verified"
-
-
 class TestBuildProfileSemanticModelEvidence:
     def test_compact(self):
         payload = {
@@ -1978,7 +1963,6 @@ class TestAllToolsRegistered:
         "parse_temporal_expressions",
         # Semantic discovery
         "inspect_semantic_sources",
-        "validate_semantic_key_candidates",
         "profile_semantic_model_evidence",
         # Skill
         "bash",

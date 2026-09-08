@@ -666,22 +666,6 @@ def _fmt_inspect_semantic_sources(result: Any) -> str:
     return ""
 
 
-def _fmt_validate_semantic_key_candidates(result: Any) -> str:
-    if isinstance(result, dict):
-        validations = result.get("validations")
-        if isinstance(validations, list):
-            verified = sum(
-                1
-                for validation in validations
-                if isinstance(validation, dict) and validation.get("is_valid_logical_key") is True
-            )
-            return f"{verified}/{len(validations)} keys verified"
-        summary = result.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
-    return ""
-
-
 def _fmt_profile_semantic_model_evidence(result: Any) -> str:
     if isinstance(result, dict):
         tables = result.get("tables")
@@ -1272,7 +1256,6 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "publish_metrics": _fmt_publish_metrics,
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
         "inspect_semantic_sources": _fmt_inspect_semantic_sources,
-        "validate_semantic_key_candidates": _fmt_validate_semantic_key_candidates,
         "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
         # Scheduler tools
         "submit_sql_job": _fmt_submit_sql_job,

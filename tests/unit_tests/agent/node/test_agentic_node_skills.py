@@ -971,23 +971,6 @@ class TestSkillAllowedAgentsConsistency:
             allowed = fm.get("allowed_agents") or []
             assert node_name in allowed, f"Skill '{skill}' must list '{node_name}' in allowed_agents — got {allowed}"
 
-    def test_semantic_sql_history_profiler_is_optional_and_scoped(self):
-        import pathlib
-
-        project_root = pathlib.Path(__file__).resolve().parents[4]
-        skills_dir = project_root / "datus" / "resources" / "skills"
-        manager = SkillManager(config=SkillConfig(directories=[str(skills_dir)]))
-
-        semantic_names = {
-            skill.name
-            for skill in manager.get_available_skills(
-                "semantic_modeling",
-                patterns=["semantic-sql-history-profiler"],
-            )
-        }
-
-        assert semantic_names == {"semantic-sql-history-profiler"}
-
     def test_dashboard_router_skill_is_not_exposed_to_chat(self):
         """Dashboard routing is handled by task(type="gen_dashboard"), not a chat-visible skill."""
         import pathlib

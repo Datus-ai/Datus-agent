@@ -44,7 +44,6 @@ The authoritative document shape you author against, including the Datus executi
    - Extract column comments (COMMENT) from DDL and keep them in their ORIGINAL language (e.g. Chinese). DO NOT TRANSLATE.
    - Do not repeat individual schema or relationship discovery calls when the combined inspection succeeded.
 
-{% include "_semantic_sql_history_profiler_gate.j2" %}
 
 2. **Resolve the stable semantic model target**{% if authoring_format == "osi" %}
    - Classify involved tables into fact tables and dimension tables. Put the core fact table first.

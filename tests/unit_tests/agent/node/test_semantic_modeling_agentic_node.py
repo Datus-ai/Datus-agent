@@ -58,6 +58,7 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "list_existing_osi_semantic_models",
         "plan_osi_semantic_model_target",
         "bind_osi_semantic_model_target",
+        "inspect_semantic_sources",
         "read_file",
         "edit_file",
         "upsert_osi_datasets",
@@ -71,6 +72,7 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert {"write_file", "delete_file", "bash", "task"}.isdisjoint(tool_names)
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
     assert node.semantic_discovery_tools.compact_source_inspection is True
+    assert {tool.name for tool in node.semantic_discovery_tools.available_tools()} == {"inspect_semantic_sources"}
 
     prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
     assert "Select one target" in prompt

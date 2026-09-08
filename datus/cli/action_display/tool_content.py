@@ -1970,29 +1970,6 @@ def _build_inspect_semantic_sources(action: ActionHistory, verbose: bool) -> Too
     return tc
 
 
-def _build_validate_semantic_key_candidates(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """validate_semantic_key_candidates: show batch key-check outcomes."""
-    tc = make_base_content(action)
-    if verbose:
-        tc.args_lines = extract_args_markup(action)
-        if action.output:
-            tc.output_lines = _format_result_only_markup(action.output)
-    else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                validations = result.get("validations", [])
-                if isinstance(validations, list):
-                    verified = sum(
-                        1
-                        for validation in validations
-                        if isinstance(validation, dict) and validation.get("is_valid_logical_key") is True
-                    )
-                    tc.compact_result = f"{verified}/{len(validations)} logical keys verified"
-    return tc
-
-
 def _build_profile_semantic_model_evidence(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """profile_semantic_model_evidence: show profiled table count."""
     tc = make_base_content(action)
@@ -2233,7 +2210,6 @@ class ToolCallContentBuilder:
 
         # Semantic discovery tools
         self._registry["inspect_semantic_sources"] = _build_inspect_semantic_sources
-        self._registry["validate_semantic_key_candidates"] = _build_validate_semantic_key_candidates
         self._registry["profile_semantic_model_evidence"] = _build_profile_semantic_model_evidence
 
         # Skill tools

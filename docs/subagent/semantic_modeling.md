@@ -122,6 +122,8 @@ It edits exactly one semantic model per run. If no existing model fits, it creat
 
 The result reports `generated`, `skipped`, or `blocked`. A blocked result explains the missing schema evidence, ambiguous target, invalid definition, or other condition that prevented a safe update.
 
+Key declarations come only from source DDL: physical primary keys become `primary_key`, and unique constraints or whole-table unique indexes on plain columns become `unique_keys`, preserving composite-column order. Semantic modeling does not scan table data to discover or verify keys. When DDL provides no usable key, it omits that key and dependent new relationships or metrics, explains the omissions, and continues the remaining modeling work. The final model still undergoes `validate_semantic` validation.
+
 ## Generated files and organization
 
 New files are written under the active project and datasource:
