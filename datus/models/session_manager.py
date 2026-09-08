@@ -1089,6 +1089,50 @@ class SessionManager:
             [(session_id, *row) for row in rows],
         )
 
+    def save_session_meta(self, session_id: str, key: str, value: str) -> None:
+        """Upsert one metadata value beside the session's history.
+
+        Never creates the database, matching :meth:`save_context_state`:
+        ``sqlite3.connect`` would materialise an empty file that
+        ``list_sessions`` then reports as a session. A caller writing before
+        the first message is expected to write again once the session exists.
+        Write failures are logged rather than raised — metadata is auxiliary
+        to whatever the caller was actually doing.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(SESSION_META_TABLE)
+                conn.execute(
+                    "INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, ?) "
+                    "ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value",
+                    (session_id, key, value),
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Failed to save session meta %r for %s: %s", key, session_id, exc)
+
+    def load_session_meta(self, session_id: str, key: str) -> Optional[str]:
+        """Read one metadata value, or ``None`` when it was never written."""
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return None
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                if not self._table_exists(conn, "session_meta"):
+                    return None
+                row = conn.execute(
+                    "SELECT value FROM session_meta WHERE session_id = ? AND key = ?",
+                    (session_id, key),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            logger.warning("Failed to read session meta %r for %s: %s", key, session_id, exc)
+            return None
+        return row[0] if row else None
+
     def get_detailed_usage(self, session_id: str) -> Dict[str, Any]:
         """Query turn_usage table and return aggregated + per-turn token usage.
 

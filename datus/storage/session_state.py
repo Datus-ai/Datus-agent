@@ -138,14 +138,31 @@ class PlanModeState:
         # Legacy flat layout — read the plan-mode keys at top level.
         return cls.from_dict(data)
 
-    def save(self, path: Path) -> None:
-        """Write the plan-mode section under the nested ``plan_mode`` key.
+    def to_json(self) -> str:
+        """Serialize for the session database's metadata row.
 
-        Merges into the file via :func:`_save_section` so sibling sections
-        (e.g. ``context_state``) survive, while the legacy flat layout and
-        retired sections are dropped.
+        The three fields are always written together, so they travel as one
+        JSON value rather than three rows that could land out of step.
         """
-        _save_section(path, "plan_mode", asdict(self))
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, payload: Optional[str]) -> Optional["PlanModeState"]:
+        """Parse a stored payload; ``None`` means "nothing recorded".
+
+        Distinct from :meth:`from_dict`, which defaults a malformed field but
+        still returns a state. Here the caller needs to tell "no plan-mode row"
+        from "plan mode is off", because only the former should fall through to
+        the legacy JSON file.
+        """
+        if not payload:
+            return None
+        try:
+            data = json.loads(payload)
+        except (TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Ignoring unreadable plan-mode payload: %s", exc)
+            return None
+        return cls.from_dict(data) if isinstance(data, dict) else None
 
 
 @dataclass

@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS session_meta (
 #: Label a session is listed under. Holds the first user message.
 SESSION_TITLE_KEY = "title"
 
+#: Plan-mode flags, stored as one JSON object so the three fields that are
+#: always written together cannot land out of step with each other.
+SESSION_PLAN_MODE_KEY = "plan_mode"
+
 #: Cap on the stored title. It labels a list row, it is not a document.
 MAX_SESSION_TITLE_CHARS = 500
 

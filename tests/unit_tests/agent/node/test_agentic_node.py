@@ -1105,6 +1105,12 @@ def _make_simple_node(context_length=_UNSET, **overrides):
     node.dependencies = []
     node.input = None
 
+    # Set by the real ``__init__``; creating a session flushes them to the
+    # session db, so the stand-in has to carry them too.
+    node.plan_mode_active = False
+    node.plan_file_path = None
+    node.workflow_prompt_sent = False
+
     from datus.cli.execution_state import InteractionBroker, InterruptController
     from datus.schemas.action_bus import ActionBus
 

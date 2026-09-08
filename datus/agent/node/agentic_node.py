@@ -550,17 +550,53 @@ class AgenticNode(Node):
             return None
 
     def _persist_plan_mode_state(self) -> None:
-        """Flush current plan-mode fields to disk. No-op without session_id."""
-        state_path = self._agent_state_file()
-        if state_path is None:
+        """Flush current plan-mode fields to the session db. No-op without session_id.
+
+        Plan mode can be toggled before the first message, when the database
+        does not exist yet; ``save_session_meta`` skips that write rather than
+        materialising an empty file that would list as a session, and
+        ``_get_or_create_session`` repeats the call once the session is real.
+        Nothing is lost in that window: a session with no database cannot be
+        resumed, so there is no reader for the state it would have stored.
+        """
+        if not self.session_id:
             return
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
         from datus.storage.session_state import PlanModeState
 
-        PlanModeState(
-            plan_mode_active=self.plan_mode_active,
-            plan_file_path=self.plan_file_path,
-            workflow_prompt_sent=self.workflow_prompt_sent,
-        ).save(state_path)
+        try:
+            payload = PlanModeState(
+                plan_mode_active=self.plan_mode_active,
+                plan_file_path=self.plan_file_path,
+                workflow_prompt_sent=self.workflow_prompt_sent,
+            ).to_json()
+            self.session_manager.save_session_meta(self.session_id, SESSION_PLAN_MODE_KEY, payload)
+        except Exception:  # noqa: BLE001 — session creation must not fail over a flag
+            logger.debug("Failed to persist plan-mode state", exc_info=True)
+
+    def _load_plan_mode_state(self) -> Optional["PlanModeState"]:  # noqa: F821 — forward-ref
+        """Read plan-mode state, preferring the session db over legacy JSON.
+
+        Sessions that predate the move still carry a ``plan_mode`` section in
+        ``{project_data_dir}/state/{session_id}.json``; they keep working and
+        migrate to the database on their next toggle.
+        """
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
+        from datus.storage.session_state import PlanModeState
+
+        if self.session_id:
+            try:
+                payload = self.session_manager.load_session_meta(self.session_id, SESSION_PLAN_MODE_KEY)
+            except Exception:  # noqa: BLE001
+                payload = None
+                logger.debug("Failed to read plan-mode state from the session db", exc_info=True)
+            state = PlanModeState.from_json(payload)
+            if state is not None:
+                return state
+        state_path = self._agent_state_file()
+        if state_path is None or not state_path.exists():
+            return None
+        return PlanModeState.load(state_path)
 
     def restore_plan_mode_state(self) -> None:
         """Re-hydrate plan-mode fields from disk into this node.
@@ -578,12 +614,9 @@ class AgenticNode(Node):
         ``_plan_just_confirmed`` is intentionally NOT restored — it is a
         turn-local one-shot flag and should always start False on resume.
         """
-        state_path = self._agent_state_file()
-        if state_path is None or not state_path.exists():
+        loaded = self._load_plan_mode_state()
+        if loaded is None:
             return
-        from datus.storage.session_state import PlanModeState
-
-        loaded = PlanModeState.load(state_path)
         self.plan_mode_active = loaded.plan_mode_active
         self.plan_file_path = loaded.plan_file_path
         self.workflow_prompt_sent = loaded.workflow_prompt_sent
@@ -1553,6 +1586,10 @@ class AgenticNode(Node):
         if self._session is None:
             self._session = self.session_manager.create_session(self.session_id)
             logger.debug(f"Created session: {self.session_id}")
+            # Plan mode may have been toggled before the database existed, in
+            # which case that write was skipped. There is somewhere to put it
+            # now, and a resumable session must carry its plan-mode flags.
+            self._persist_plan_mode_state()
 
         return self._session
 
