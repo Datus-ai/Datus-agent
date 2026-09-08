@@ -183,6 +183,19 @@ def check_requirements_match_pyproject(repo_root: Path) -> list[str]:
                 f"{expected.name} extras mismatch: pyproject.toml has "
                 f"{sorted(expected.extras)}, requirements.txt has {sorted(actual.extras)}"
             )
+        # A marker or a direct-reference URL decides whether a dependency is
+        # installed at all, and from where, while leaving the specifier and
+        # extras identical — so neither is covered by the comparisons above.
+        if expected.marker != actual.marker:
+            errors.append(
+                f"{expected.name} marker mismatch: pyproject.toml has "
+                f"'{expected.marker}', requirements.txt has '{actual.marker}'"
+            )
+        if expected.url != actual.url:
+            errors.append(
+                f"{expected.name} URL mismatch: pyproject.toml has "
+                f"'{expected.url}', requirements.txt has '{actual.url}'"
+            )
 
     return errors
 
