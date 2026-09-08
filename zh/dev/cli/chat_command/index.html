@@ -4771,7 +4771,7 @@
 <li><code>/clear</code>：清空当前会话上下文，从头开始</li>
 <li><code>/compact</code>：压缩历史对话，减少上下文占用同时保留关键信息</li>
 <li>执行 <strong>major compact</strong>：由模型把整个会话总结成一段摘要，完整历史会保存为 JSONL 文件以便找回</li>
-<li>自动触发：当模型上下文使用率超过 90%（可配置）时也会自动执行 major compact；此外随着会话变长，更轻量的 <strong>minor compact</strong> 会在工具调用后自动归档较早的工具 I/O</li>
+<li>自动触发：当模型上下文使用率超过 90%（可配置）时也会自动执行 major compact；此外随着会话变长，更轻量的 <strong>minor compact</strong> 会在每次模型请求前的统一检查中归档符合条件的旧工具输出，第一次请求也会检查</li>
 <li>major/minor 的区别与可调参数见<a href="../../configuration/compact/">上下文压缩</a></li>
 <li><code>/chat_info</code>：查看当前激活的上下文（消息、数据表、指标）</li>
 <li><code>/resume [session_id]</code>：恢复之前的聊天会话</li>

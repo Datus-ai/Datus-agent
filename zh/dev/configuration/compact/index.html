@@ -4584,7 +4584,7 @@
 
 
 <h1 id="context-compaction">上下文压缩（Context Compaction）<a class="headerlink" href="#context-compaction" title="Permanent link">&para;</a></h1>
-<p>随着对话变长，历史最终会逼近模型的上下文窗口上限。Datus 通过 <code>agent.compact</code> 下的两种互补压缩自动管理上下文，让你在一个长会话里持续工作，而无需手动清空、也不会撞上 token 上限。</p>
+<p>随着对话变长，历史最终会逼近模型的上下文窗口上限。Datus 通过 <code>agent.compact</code> 下的两种互补压缩自动管理上下文，让你在一个长会话里持续工作，减少需要手动清空会话的情况。</p>
 <table>
 <thead>
 <tr>
@@ -4621,7 +4621,7 @@
 </tr>
 </tbody>
 </table>
-<p>两种压缩都会在两个时机运行：<strong>每个 user 轮次开始时</strong>（调用模型之前），以及<strong>轮次中途</strong>（agent 循环还在跑工具时，在下一次模型调用之前）。轮次中途的变体见下文单独一节。</p>
+<p>自动压缩统一在<strong>每次模型请求发送前</strong>检查，包括本轮第一次请求和重试。检查前先合并用户中途补充的消息。第一次请求可以按历史用户轮次归档，后续请求可以按工具输出的新旧归档；<code>mid_turn_enabled</code> 只控制后续请求。</p>
 <h2 id="minor-compact">Minor compact<a class="headerlink" href="#minor-compact" title="Permanent link">&para;</a></h2>
 <p><strong>触发条件</strong> —— 在每个 user 轮次开始时，如果会话的 user 轮次超过 <code>keep_recent_user_turns</code>（默认 4），就会运行 minor compact。它的判据——user 轮次计数——只在轮次之间变化，因此每个轮次只判断一次。它是同步的，但由于只是纯本地的、基于规则的归档（无 LLM 调用），很快就能完成，几乎不会拖慢 agent。</p>
 <p><strong>做什么</strong> —— 对于保留窗口之外的<em>较早</em>轮次，任何长度超过 <code>archive_threshold</code> 字符（默认 1000）的工具输出都会被移出实时对话并写入磁盘归档；原处留下一段简短的内联预览（<code>archive_preview_chars</code>，默认 1000；错误输出为 2×）并带上 <code>[DATUS_ARCHIVED]</code> 标记。</p>
@@ -4632,7 +4632,7 @@
 <li>由于它只归档（不做摘要），不会丢失任何信息，也不消耗 LLM 调用。开销低、速度快、触发频繁。</li>
 </ul>
 <h2 id="major-compact">Major compact<a class="headerlink" href="#major-compact" title="Permanent link">&para;</a></h2>
-<p><strong>触发条件</strong> —— 当上下文占用达到上下文窗口的 <code>token_threshold</code>（默认 <code>0.9</code>，即 90%）时，会执行 major compact。轮次开始时，占用取最近一次模型调用的输入 token 数。轮次中途则在每次模型调用之前估算：<em>上一次调用的真实输入 token + 此后新增内容（模型回复与工具输出）的估算 + 为下一次回复预留的输出空间</em>，因此它会在那次可能溢出的请求<strong>发出之前</strong>触发，而不是等请求失败之后。<code>/compact</code> 可随时手动触发。</p>
+<p><strong>触发条件</strong> —— 每次请求前，Datus 估算即将发送的输入大小，并预留回复空间。达到 <code>major.token_threshold</code>（默认 <code>0.9</code>）时，先尝试适用的归档策略，再判断是否需要摘要。有本轮最近一次调用的有效统计时，在它的基础上加上新增消息的估算；否则估算完整消息、系统指令和工具定义。手动 <code>/compact</code> 不受这个阈值限制。</p>
 <p><strong>做什么</strong> —— 由模型把<strong>整个</strong>对话记录总结成一段摘要；随后用该摘要替换历史作为新的起点，对话由此继续。压缩前的完整历史会被转存为一个 JSONL 文件，并在摘要末尾附上指向它的指针，使 agent 能通过 <code>read_file</code> 找回任意具体细节。</p>
 <p><strong>产生的行为</strong></p>
 <ul>
@@ -4656,7 +4656,7 @@
 <p>改写后的历史以你的请求开头、以一条指令结尾，因此模型会接着做任务，而不是去回应摘要。这条指令是合成的，不会出现在 CLI 与 API 展示的对话历史里。</p>
 <p><strong>你会看到什么</strong></p>
 <ul>
-<li>改写后状态栏的上下文占用立即回落，<code>Compacting context…</code> 提示与摘要面板会在轮次中途出现。</li>
+<li>改写后状态栏的上下文占用显示为 0，直到下一次模型响应提供实际输入 token 数；<code>Compacting context…</code> 提示与摘要面板会在轮次中途出现。</li>
 <li>本轮之后的调用都沿用压缩后的视图，并在其后追加新的工具回合。压缩前的工具输出不会再次发送，但完整记录保存在 JSONL 转存里，归档的输出保存在归档目录里。</li>
 <li>轮次中途压缩之后按 ESC 取消，会话会回滚到压缩后的视图（请求加摘要），而不是被清空。</li>
 <li>会话文件会被改写成与压缩后视图一致，因此之后的 <code>resume</code> 从它开始。</li>
@@ -4758,10 +4758,13 @@
 <p>如需完全关闭自动压缩，将 <code>major.enabled</code> 与 <code>minor.enabled</code> 都设为 <code>false</code>。即使 <code>major.enabled</code> 为 <code>false</code>，仍可手动运行 <code>/compact</code>。</p>
 <h2 id="_3">注意事项<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <ul>
-<li>轮次开始时的 major 触发读取上一次模型调用的<strong>实时</strong> token 用量（与 CLI 状态栏显示的是同一数值）。在全新会话或刚 <code>resume</code> 后，该信号从零开始，因此在第一次模型调用之前不会触发 major compact。轮次中途，本轮的第一次模型调用永不压缩；检查从第二次调用开始，那时已有真实用量可用。</li>
-<li>轮次中途的占用估算把新增内容按大约每 4 个字符一个 token 计算，并额外预留模型的回复预算。密集的代码或中日韩文本会被这条规则低估；默认阈值为此留有余量。</li>
-<li>每次改写都会让服务商的 prompt cache 在下一次调用时失效一次。这就是归档阶段等到 75% 才运行、而不是持续运行的原因。</li>
-<li>Datus 不知道上下文窗口大小的模型不会自动触发压缩；<code>/compact</code> 仍然可用。</li>
+<li>旧占用量记录没有有效性标记，可能包含升级前的估算值，因此升级后按未知处理，等待下一次模型响应刷新。</li>
+<li>显示的上下文占用来自最近一次模型响应的输入 token 数，包含缓存输入。<code>context_usage_ratio</code> 是该数值除以当前模型的上下文窗口。累计输入、输出用量单独统计，不会因压缩而减少。</li>
+<li>会话改写会同时使内存和持久化记录中的旧占用量失效。恢复会话后也显示 0，等待下一次实际统计。自动检查使用的估算只用于内部判断，不会作为实际占用量显示或落盘。</li>
+<li>压缩 API 的 <code>new_token_count</code>、<code>tokens_saved</code>、<code>compression_ratio</code> 返回 <code>null</code>。摘要输出的 token 数不能代表压缩后的请求大小；摘要面板中的 token 数仅表示摘要调用的输出量。</li>
+<li>当前容量估算约按每 4 个字符一个 token 计算，并包含系统指令、工具定义和回复预留。这只是估算，不能保证所有请求都不会超限；仍无法容纳的请求由服务商错误处理路径处理。</li>
+<li>改写缓存前缀可能降低下一次请求的缓存复用率。这就是归档阶段等到 75% 才运行、而不是持续运行的原因。</li>
+<li>上下文窗口大小未知时，跳过基于 token 的判断；第一次请求前的历史归档和手动 <code>/compact</code> 仍然可用。</li>
 <li>Minor compact 依据会话的 user 轮次计数判断轮次开始时是否触发，因此在 resume 之后仍能正确工作。</li>
 <li>归档的工具 I/O 与全历史 JSONL 存放在会话的数据目录下；路径见 <a href="../storage/">存储（Storage）</a>。</li>
 </ul>
