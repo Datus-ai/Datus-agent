@@ -959,8 +959,8 @@ class CodexModel(LLMBaseModel):
 
         context_usage_ratio = 0
         max_context = self.context_length()
-        if max_context and total_tokens > 0:
-            context_usage_ratio = round(total_tokens / max_context, 3)
+        if max_context:
+            context_usage_ratio = round(last_call_input_tokens / max_context, 3)
 
         return {
             "requests": _int(getattr(usage, "requests", 0)),

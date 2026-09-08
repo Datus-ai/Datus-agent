@@ -188,6 +188,7 @@ class TestContextStatePersistence:
         assert data["context_state"] == {
             "last_call_input_tokens": 52_499,
             "context_length": 1_000_000,
+            "valid": True,
         }
         # In-memory mirror updated so a same-process status-bar read is correct.
         assert node._restored_context_used == 52_499

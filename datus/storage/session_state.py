@@ -150,13 +150,13 @@ class PlanModeState:
 
 @dataclass
 class ContextState:
-    """Most recent LLM call's context-window occupancy, for resume.
+    """Measured context occupancy with an explicit unknown state.
 
     Persisted separately from the SQLite usage tables: ``turn_usage`` has no
     per-call occupancy column, and ``running_turn_usage`` is cleared at turn
-    end (to avoid double-counting cumulative totals). This section is never
-    cleared, so a freshly resumed process can render the context-window bar
-    before the next LLM call repopulates it.
+    end (to avoid double-counting cumulative totals). A rewrite invalidates
+    this measurement until another model response arrives. Legacy JSON without
+    an explicit validity flag is unknown because it may contain an estimate.
 
     ``last_call_input_tokens`` is the real context-window usage of the last
     call (input + cache_read + cache_creation); ``context_length`` is the
@@ -165,6 +165,13 @@ class ContextState:
 
     last_call_input_tokens: int = 0
     context_length: int = 0
+    valid: Optional[bool] = None
+
+    def __post_init__(self) -> None:
+        if self.valid is None:
+            self.valid = self.last_call_input_tokens > 0
+        if not self.valid:
+            self.last_call_input_tokens = 0
 
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ContextState":
@@ -182,6 +189,7 @@ class ContextState:
         return cls(
             last_call_input_tokens=_as_int(data.get("last_call_input_tokens", 0)),
             context_length=_as_int(data.get("context_length", 0)),
+            valid=data.get("valid") is True,
         )
 
     @classmethod
@@ -199,3 +207,27 @@ class ContextState:
     def clear(cls, path: Path) -> None:
         """Remove the persisted context-state mirror (session reset/delete)."""
         _remove_section(path, "context_state")
+
+
+def read_context_state(node: Any) -> ContextState:
+    """Read one node's measured occupancy without consulting billing history."""
+    state = getattr(node, "_context_state", None)
+    if isinstance(state, ContextState):
+        return state
+    running = getattr(node, "running_turn_usage", None)
+    if running is not None:
+        used = getattr(running, "session_total_tokens", 0)
+        return ContextState.from_dict(
+            {
+                "last_call_input_tokens": used,
+                "context_length": getattr(running, "context_length", 0),
+                "valid": getattr(running, "context_usage_valid", isinstance(used, int) and used > 0),
+            }
+        )
+    return ContextState.from_dict(
+        {
+            "last_call_input_tokens": getattr(node, "_restored_context_used", 0),
+            "context_length": getattr(node, "_restored_context_length", 0),
+            "valid": isinstance(getattr(node, "_restored_context_used", None), int) and node._restored_context_used > 0,
+        }
+    )

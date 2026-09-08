@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Mid-turn context rewriter: compaction that the *next* model call actually sees.
+"""Per-request context rewriter, including the first model call of each run.
 
 Why this exists
 ---------------
@@ -24,8 +24,9 @@ be a **stateful view** that is re-applied on every call.
   messages) does the same in place — the native loop owns its own list.
 
 The safe boundary is the moment the filter fires: every ``function_call`` of
-the previous round already has its ``function_call_output``, no tool is
-running, and the session mirrors the in-memory list.
+the previous round already has its ``function_call_output`` and no tool is
+running. On the first call, the SDK may not have persisted its new input yet;
+the model adapter acknowledges that input if compaction persists it first.
 
 The compactor never raises into the SDK loop: any failure keeps the current
 view and, after ``max_failures`` consecutive failures, disables itself for the
@@ -35,7 +36,7 @@ rest of the run.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from agents import AgentHooks
 
@@ -90,9 +91,8 @@ _ANTHROPIC_BLOCK_TYPES = frozenset(
 def estimate_items_tokens(items: List[Any]) -> int:
     """Rough token estimate: serialized JSON length / 4.
 
-    Same heuristic Codex and Claude Code use for the items appended since the
-    last usage report. Never raises — unserializable items fall back to
-    ``str()``.
+    Used only for internal capacity checks, never as measured usage.
+    Unserializable items fall back to ``str()``.
     """
     total = 0
     for item in items:
@@ -289,10 +289,17 @@ class MidTurnCompactor(AgentHooks):
         interrupt_controller: Any = None,
         system_instruction: str = "",
         max_failures: int = 3,
+        refresh_instruction: Optional[Callable[[], str]] = None,
+        turn_state: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._node = node
         self._interrupt_controller = interrupt_controller
         self._system_instruction = system_instruction or ""
+        self._refresh_instruction = refresh_instruction
+        self._turn_state = turn_state if turn_state is not None else {}
+        self._request_tools: List[Any] = []
+        self._instruction_rebuilt = False
+        self.pending_user_turns = 0
         self._max_failures = max(1, int(max_failures))
         self._warned_no_context_length = False
         self.reset()
@@ -302,7 +309,17 @@ class MidTurnCompactor(AgentHooks):
     # ------------------------------------------------------------------
 
     def reset(self) -> None:
-        """Forget the overlay and counters; called at the start of every run."""
+        """Forget the overlay and counters; called at the start of every run.
+
+        ``_instruction_rebuilt`` deliberately survives: it lives in
+        ``__init__`` because the model layer rebuilds the SDK ``Agent`` from
+        the instruction string captured when the stream call started, so a
+        retried run still supplies the pre-compaction system prompt while the
+        session already holds the compacted history (and a major pass has
+        dropped the frozen prompt snapshot). Clearing the flag here would let
+        ``set_request_context`` overwrite the refreshed instruction with that
+        stale one.
+        """
         self._prefix_len = 0
         self._replacement: List[Dict[str, Any]] = []
         self._boundary_item: Any = None
@@ -317,6 +334,23 @@ class MidTurnCompactor(AgentHooks):
 
     async def on_start(self, context: Any, agent: Any) -> None:  # noqa: D401
         self.reset()
+
+    @property
+    def system_instruction(self) -> str:
+        return self._system_instruction
+
+    def set_request_context(self, instruction: str, tools: Optional[List[Any]]) -> None:
+        if not self._instruction_rebuilt:
+            self._system_instruction = instruction or ""
+        if tools is not None:
+            self._request_tools = tools
+
+    def anchor_turn(self, items: List[Any]) -> None:
+        if self._turn_request is None:
+            self._turn_request = find_turn_request(items)
+
+    def _overhead_tokens(self) -> int:
+        return estimate_items_tokens([{"instructions": self._system_instruction, "tools": self._request_tools}])
 
     @property
     def compactions(self) -> int:
@@ -345,7 +379,6 @@ class MidTurnCompactor(AgentHooks):
     def pin_insert(self, raw_len: int, item: Dict[str, Any]) -> None:
         """Keep a drained mid-run insert visible on every later call of this run."""
         self._pins.append((max(raw_len, self._prefix_len), item))
-        self._prev_view_len += 1
 
     def _overlay_is_stale(self, raw: List[Any]) -> bool:
         if self._prefix_len == 0:
@@ -362,6 +395,7 @@ class MidTurnCompactor(AgentHooks):
             if self._overlay_is_stale(raw):
                 logger.warning("Mid-turn compaction overlay no longer matches the run input; resetting it.")
                 self.reset()
+            self.anchor_turn(raw)
             view = self.view_of(raw)
             try:
                 new_view = await self._maybe_compact(view, item_format="responses")
@@ -428,20 +462,20 @@ class MidTurnCompactor(AgentHooks):
         """
         running = getattr(self._node, "running_turn_usage", None)
         requests = int(getattr(running, "requests", 0) or 0) if running is not None else 0
-        fresh = running is not None and (self._requests_fence is None or requests > self._requests_fence)
+        fresh = (
+            self._prev_view_len > 0
+            and running is not None
+            and getattr(running, "context_usage_valid", False)
+            and (self._requests_fence is None or requests > self._requests_fence)
+        )
         tokens = 0
         if running is not None:
-            tokens = int(getattr(running, "session_total_tokens", 0) or getattr(running, "input_tokens", 0) or 0)
+            tokens = int(getattr(running, "session_total_tokens", 0) or 0)
         if fresh and tokens > 0:
             return tokens, min(self._prev_view_len, len(view))
-        return estimate_items_tokens(view), len(view)
+        return estimate_items_tokens(view) + self._overhead_tokens(), len(view)
 
     async def _maybe_compact(self, view: List[Any], *, item_format: ItemFormat) -> Optional[List[Any]]:
-        if self._calls == 0:
-            # First call of the run: the turn-start compact just ran and there
-            # is no previous call to measure against. Anchor the turn instead.
-            self._turn_request = find_turn_request(view)
-            return None
         if self._disabled:
             return None
         controller = self._interrupt_controller
@@ -451,10 +485,10 @@ class MidTurnCompactor(AgentHooks):
         if context_length <= 0:
             if not self._warned_no_context_length:
                 self._warned_no_context_length = True
-                logger.info("Mid-turn compaction inactive: the model's context window is unknown.")
-            return None
-        if self._turn_request is None:
-            self._turn_request = find_turn_request(view)
+                logger.info("Token-based compaction inactive: the model's context window is unknown.")
+            if self._calls > 0:
+                return None
+        self.anchor_turn(view)
 
         base_tokens, tail_start = self._base_tokens(view)
         result = await self._node.compact_mid_turn(
@@ -464,8 +498,13 @@ class MidTurnCompactor(AgentHooks):
             tail_start=tail_start,
             instruction=self._system_instruction,
             turn_request=self._turn_request,
-            reason=f"mid_turn_{item_format}",
+            reason=f"before_model_call_{item_format}",
+            first_call=self._calls == 0,
+            archive_history=self._calls == 0 and not self._turn_state.get("history_archived", False),
+            pending_user_turns=self.pending_user_turns,
         )
+        if self._calls == 0 and isinstance(result, dict) and result.get("success"):
+            self._turn_state["history_archived"] = True
         if not isinstance(result, dict):
             return None
         mode = result.get("mode", "noop")
@@ -485,8 +524,19 @@ class MidTurnCompactor(AgentHooks):
         running = getattr(self._node, "running_turn_usage", None)
         self._requests_fence = int(getattr(running, "requests", 0) or 0) if running is not None else None
         self._compactions += 1
+        if mode == "major" and self._refresh_instruction is not None:
+            try:
+                self._system_instruction = self._refresh_instruction()
+                self._instruction_rebuilt = True
+            except Exception:
+                logger.exception("Failed to refresh system instructions after compaction")
         threshold = float(getattr(getattr(self._node._compact_cfg, "major", None), "token_threshold", 0.9) or 0.9)
-        if (estimate_items_tokens(new_items) + self._node._mid_turn_output_reserve()) / context_length >= threshold:
+        if (
+            context_length > 0
+            and (estimate_items_tokens(new_items) + self._overhead_tokens() + self._node._mid_turn_output_reserve())
+            / context_length
+            >= threshold
+        ):
             self._disabled = True
             logger.warning("Mid-turn compaction cannot bring the context under the threshold; disabled for this run.")
         return new_items

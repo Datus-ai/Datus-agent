@@ -357,39 +357,10 @@ class StatusBarProvider:
         node = self._current_node()
         if node is None:
             return 0
-        # Prefer the live ``running_turn_usage`` updated per-LLM-call so
-        # multi-step turns see the context-window bar tick up between tool
-        # calls instead of jumping only at turn end.
-        running = getattr(node, "running_turn_usage", None)
-        if running is not None:
-            try:
-                used = int(getattr(running, "session_total_tokens", 0) or 0)
-                if used > 0:
-                    return used
-            except (TypeError, ValueError):
-                pass
-        for action in reversed(getattr(node, "actions", []) or []):
-            output = getattr(action, "output", None)
-            if not isinstance(output, dict):
-                continue
-            usage = output.get("usage")
-            if not isinstance(usage, dict):
-                continue
-            used = usage.get("last_call_input_tokens") or usage.get("input_tokens") or 0
-            try:
-                return int(used)
-            except (TypeError, ValueError):
-                return 0
-        # Resume fallback: a freshly resumed process has no in-memory snapshot
-        # or live actions yet, so use the occupancy re-hydrated from the
-        # on-disk ``context_state`` section by ``AgenticNode.restore_context_state``.
-        try:
-            restored = int(getattr(node, "_restored_context_used", 0) or 0)
-            if restored > 0:
-                return restored
-        except (TypeError, ValueError):
-            pass
-        return 0
+        from datus.storage.session_state import read_context_state
+
+        state = read_context_state(node)
+        return state.last_call_input_tokens if state.valid else 0
 
     def _resolve_context_total(self) -> int:
         node = self._current_node()

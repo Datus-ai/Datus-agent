@@ -1042,7 +1042,11 @@ class ChatCommands:
         # would empty the session; the node publishes a fresh checkpoint right
         # after each rewrite, and that one is the safe boundary.
         rewrite_checkpoint = getattr(current_node, "mid_turn_rewrite_checkpoint", None)
-        effective_checkpoint = rewrite_checkpoint if rewrite_checkpoint is not None else session_checkpoint
+        effective_checkpoint = (
+            rewrite_checkpoint
+            if getattr(current_node, "_session_rewritten_this_turn", False) or rewrite_checkpoint is not None
+            else session_checkpoint
+        )
         try:
             session_manager.rollback_turn(current_node.session_id, effective_checkpoint)
         except Exception:  # pragma: no cover - rollback remains best-effort on damaged DBs
@@ -1054,6 +1058,7 @@ class ChatCommands:
             del node_actions[node_action_checkpoint:]
         incremental_actions.clear()
         current_node.running_turn_usage = None
+        current_node._invalidate_context_usage()
         pending_queue = getattr(current_node, "pending_input_queue", None)
         if pending_queue is not None:
             pending_queue.clear()
@@ -1618,8 +1623,7 @@ class ChatCommands:
                     self.console.print(f"  Token Count: {token_count}")
 
                 ctx_length = session_info.get("context_length", 0)
-                last_turn_usage = asyncio.run(self.current_node.get_last_turn_usage())
-                ctx_tokens = last_turn_usage.session_total_tokens if last_turn_usage else 0
+                ctx_tokens = self.current_node.get_context_usage().last_call_input_tokens
                 if ctx_length and ctx_tokens:
                     ratio = ctx_tokens / ctx_length * 100
                     self.console.print(f"  Context: {ctx_tokens:,}/{ctx_length:,} ({ratio:.1f}%)")

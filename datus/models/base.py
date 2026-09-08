@@ -336,14 +336,12 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         The filter is invoked by the SDK before every LLM turn within a
         ``Runner.run_streamed`` invocation (``agents/run.py`` ~1483). In order:
 
-        1. ``context_rewriter.rewrite_sdk_input(raw)`` — the
-           :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`
-           overlays any compaction already installed for this run and may
-           compact right now. The SDK never writes the filter's result back,
-           so the rewriter re-applies its view on every call.
-        2. Drain ``pending_input_queue`` (FIFO) and append each item as a
-           Responses-API user message, persisting it to the session and
-           pinning it on the rewriter so it stays visible on later calls.
+        1. Anchor the original request, drain queued user inserts, and include
+           them in the view that will be checked.
+        2. Check capacity on every request (including the first), install any
+           rewritten view, and return its current system instructions.
+        3. Acknowledge original SDK input already persisted by a first-request
+           rewrite so the SDK's subsequent input append cannot duplicate it.
 
         All exceptions in the filter body are swallowed: the SDK re-raises
         uncaught filter errors and aborts the entire run, which we must never
@@ -355,12 +353,24 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         if pending_input_queue is None and context_rewriter is None and not trace_kwargs:
             return None
 
+        pending_original_input: List[Any] = []
+
+        def merge_session_input(history, new_input):
+            nonlocal pending_original_input
+            pending_original_input = list(new_input)
+            from datus.models.sqlite_session import DatusSQLiteSession
+
+            if isinstance(session, DatusSQLiteSession):
+                session.skip_persisted_input_once([])
+            return history + new_input
+
         async def _filter(data: CallModelData) -> ModelInputData:
+            nonlocal pending_original_input
             raw = list(data.model_data.input)
-            view = raw
+            view = list(raw)
             try:
                 if context_rewriter is not None:
-                    view = await context_rewriter.rewrite_sdk_input(raw)
+                    context_rewriter.anchor_turn(raw)
                 pending = LLMBaseModel.drain_pending_user_inserts(
                     pending_input_queue,
                     interrupt_controller=interrupt_controller,
@@ -385,7 +395,43 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                             await session.add_items([user_item])
                         except Exception:  # noqa: BLE001 — never abort the run on a session write
                             logger.exception("Failed to persist injected user item; in-memory only.")
-                return ModelInputData(input=view, instructions=data.model_data.instructions)
+                instructions = data.model_data.instructions
+                if context_rewriter is not None:
+                    from agents import RunContextWrapper
+
+                    tool_schemas = None
+                    try:
+                        all_tools = await data.agent.get_all_tools(RunContextWrapper(context=data.context))
+                        tool_schemas = [
+                            {
+                                "name": getattr(tool, "name", ""),
+                                "description": getattr(tool, "description", ""),
+                                "parameters": getattr(tool, "params_json_schema", {}),
+                            }
+                            for tool in all_tools
+                        ]
+                    except Exception:
+                        # Discovery is only needed for the capacity estimate.
+                        # Keep the last schemas and still replay the compacted view.
+                        logger.warning(
+                            "Cannot refresh compaction tool schemas; retaining previous schemas", exc_info=True
+                        )
+                    context_rewriter.set_request_context(instructions, tool_schemas)
+                    # Inserts are already pinned. Pass the original SDK list so
+                    # the overlay remains aligned across subsequent calls.
+                    from datus.agent.node.context_rewriter import extract_user_text
+                    from datus.models.sqlite_session import DatusSQLiteSession
+
+                    context_rewriter.pending_user_turns = sum(
+                        extract_user_text(item) is not None for item in pending_original_input
+                    )
+                    before = context_rewriter.compactions
+                    view = await context_rewriter.rewrite_sdk_input(list(data.model_data.input))
+                    if context_rewriter.compactions > before and isinstance(session, DatusSQLiteSession):
+                        session.skip_persisted_input_once(pending_original_input)
+                    pending_original_input = []
+                    instructions = context_rewriter.system_instruction
+                return ModelInputData(input=view, instructions=instructions)
             except Exception:  # noqa: BLE001 — filter exceptions abort the SDK run
                 logger.exception("call_model_input_filter raised; returning the current input view.")
                 return ModelInputData(input=view, instructions=data.model_data.instructions)
@@ -393,7 +439,11 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         if pending_input_queue is None and context_rewriter is None:
             return RunConfig(**trace_kwargs)
 
-        return RunConfig(call_model_input_filter=_filter, **trace_kwargs)
+        return RunConfig(
+            call_model_input_filter=_filter,
+            session_input_callback=merge_session_input if context_rewriter is not None else None,
+            **trace_kwargs,
+        )
 
     def supports_builtin_web_search(self) -> bool:
         """Whether this provider serves web search through a vendor-native tool.

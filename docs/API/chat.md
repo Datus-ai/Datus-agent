@@ -59,6 +59,8 @@ Summarize and compress a session's conversation history.
 **Response**: `Result[CompactSessionData]` containing `success`, `new_token_count`, `tokens_saved`,
 `compression_ratio`.
 
+The three compaction metrics are `null` until a reliable comparable measurement is available. Summary output tokens are not a measurement of the rewritten request.
+
 ### `GET /api/v1/chat/sessions`
 
 List chat sessions for the current user.

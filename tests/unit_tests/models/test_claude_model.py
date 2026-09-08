@@ -2334,69 +2334,6 @@ class TestGenerateWithToolsRouting:
 # ---------------------------------------------------------------------------
 
 
-class TestCountSessionTokensFallback:
-    @pytest.mark.asyncio
-    async def test_uses_last_call_input_tokens_from_latest_action(self):
-        """Primary: uses last_call_input_tokens from the most recent action with usage."""
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-
-        mock_node = MagicMock()
-        mock_node._session = MagicMock()
-        mock_node.actions = [
-            ActionHistory(
-                action_id="a1",
-                role=ActionRole.ASSISTANT,
-                messages="ok",
-                action_type="final_response",
-                status=ActionStatus.SUCCESS,
-                output={
-                    "raw_output": "answer",
-                    "usage": {"last_call_input_tokens": 500, "input_tokens": 800, "total_tokens": 1200},
-                },
-            ),
-            ActionHistory(
-                action_id="a2",
-                role=ActionRole.ASSISTANT,
-                messages="ok2",
-                action_type="final_response",
-                status=ActionStatus.SUCCESS,
-                output={
-                    "raw_output": "answer2",
-                    "usage": {"last_call_input_tokens": 900, "input_tokens": 1500, "total_tokens": 2000},
-                },
-            ),
-        ]
-
-        from datus.agent.node.agentic_node import AgenticNode
-
-        result = await AgenticNode._count_session_tokens(mock_node)
-        # Should return last_call_input_tokens from the LAST action (900), not sum
-        assert result == 900
-
-    @pytest.mark.asyncio
-    async def test_falls_back_to_input_tokens_when_no_last_call(self):
-        """When last_call_input_tokens is 0, fall back to input_tokens."""
-        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-
-        mock_node = MagicMock()
-        mock_node._session = MagicMock()
-        mock_node.actions = [
-            ActionHistory(
-                action_id="a1",
-                role=ActionRole.ASSISTANT,
-                messages="ok",
-                action_type="final_response",
-                status=ActionStatus.SUCCESS,
-                output={"usage": {"last_call_input_tokens": 0, "input_tokens": 999, "total_tokens": 1500}},
-            ),
-        ]
-
-        from datus.agent.node.agentic_node import AgenticNode
-
-        result = await AgenticNode._count_session_tokens(mock_node)
-        assert result == 999
-
-
 class TestInjectOAuthHeaders:
     def test_injects_headers_when_oauth(self):
         """_inject_oauth_headers should add bearer + client headers for OAuth tokens."""
@@ -3525,7 +3462,7 @@ class TestNativeMidTurnCompaction:
             {"role": "user", "content": [{"type": "text", "text": "[DATUS_COMPACT_RESUME] continue"}]},
         ]
 
-    async def _run(self, model, rewriter, session):
+    async def _run(self, model, rewriter, session, queue=None, inserted_text=None):
         from unittest.mock import AsyncMock
 
         from datus.schemas.action_history import ActionHistoryManager
@@ -3546,6 +3483,8 @@ class TestNativeMidTurnCompaction:
         func_tool.params_json_schema = {"type": "object"}
 
         async def _invoke(ctx, input_json):
+            if queue is not None and inserted_text:
+                queue.push(inserted_text)
             return "tool finished " + "x" * 200
 
         func_tool.on_invoke_tool = _invoke
@@ -3565,6 +3504,7 @@ class TestNativeMidTurnCompaction:
                 action_history_manager=ActionHistoryManager(),
                 session=session,
                 context_rewriter=rewriter,
+                pending_input_queue=queue,
             ):
                 pass
         return seen_messages
@@ -3759,3 +3699,38 @@ class TestClaudeSummarizeItems:
         model._is_oauth_token = True
         with pytest.raises(DatusException):
             await model.summarize_items([{"role": "user", "content": "hi"}], instruction="", prompt="P")
+
+
+@pytest.mark.asyncio
+async def test_native_first_request_and_inserts_use_unified_compaction(tmp_path):
+    """Native requests compact before the first call and include inserts before checking."""
+    from datus.agent.node.context_rewriter import MidTurnCompactor
+    from datus.cli.execution_state import PendingInputQueue
+    from tests.unit_tests.agent.node.test_compact_helpers import TestMeasuredContextContracts
+
+    node = TestMeasuredContextContracts._node(tmp_path)
+    await node._session.add_items(
+        [
+            {"role": "user", "content": [{"type": "text", "text": "old"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "OLD_HISTORY " * 40000}]},
+        ]
+    )
+    queue = PendingInputQueue()
+    queue.push("FIRST_INSERT")
+    rewriter = MidTurnCompactor(node, refresh_instruction=lambda: "FRESH_SYSTEM")
+    seen = await TestNativeMidTurnCompaction()._run(
+        _make_claude_model(),
+        rewriter,
+        node._session,
+        queue=queue,
+        inserted_text="LATER_INSERT",
+    )
+    assert all("OLD_HISTORY" not in json.dumps(items) for items in seen)
+    assert "start" in json.dumps(seen[0][0])
+    assert "FIRST_INSERT" in json.dumps(seen[0])
+    assert "LATER_INSERT" in json.dumps(seen[1])
+    stored = await node._session.get_items()
+    assert sum("start" in json.dumps(item) for item in stored) == 1
+    assert "LATER_INSERT" in json.dumps(stored)
+    assert rewriter.system_instruction == "FRESH_SYSTEM"
+    node._session.close()

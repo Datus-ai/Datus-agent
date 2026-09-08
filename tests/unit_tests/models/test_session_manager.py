@@ -16,6 +16,7 @@ Tests cover:
 - SessionManager.session_exists: existence check against SQLite data
 - SessionManager.get_session_info: detailed session info retrieval
 - SessionManager.close_all_sessions: cache cleanup
+- SessionManager.save/load_context_state: durable occupancy measurement
 
 NO MOCK EXCEPT LLM. All objects are real backed by real SQLite in tmp_path.
 """
@@ -36,6 +37,8 @@ from datus.models.session_manager import (
     session_matches_agent,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.storage.session_state import ContextState
+from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException
 from datus.utils.path_manager import DatusPathManager
 
@@ -2461,6 +2464,72 @@ class TestSystemPromptSnapshot:
         sm_custom.save_system_prompt_snapshot("chat_session_tmp", "P", dict(self.META))
         leftovers = [f for f in os.listdir(sm_custom.session_dir) if f.endswith(".tmp")]
         assert leftovers == []
+
+
+class TestContextStatePersistence:
+    """save/load_context_state: the durable occupancy measurement."""
+
+    def _enable_state_table(self, sm_custom, session_id):
+        """Materialise ``context_occupancy`` through the public writer."""
+        sm_custom.save_context_state(session_id, ContextState(500, 1000, True))
+
+    def test_writing_a_state_never_creates_the_session_database(self, sm_custom):
+        """No occupancy write may invent a session that ``list_sessions`` reports.
+
+        ``sqlite3.connect`` creates a missing file, and session discovery is
+        purely ``*.db`` filenames — so writing state for an absent session
+        would conjure a session out of nothing.
+        """
+        sm_custom.save_context_state("state_ghost", ContextState(400, 1000, True))
+
+        assert "state_ghost" not in sm_custom.list_sessions()
+        assert not os.path.exists(os.path.join(sm_custom.session_dir, "state_ghost.db"))
+        assert sm_custom.load_context_state("state_ghost") is None
+
+    def test_clearing_an_unknown_session_creates_nothing(self, sm_custom):
+        """``clear_session`` resets occupancy, which must stay a no-op here."""
+        sm_custom.clear_session("state_absent")
+
+        assert sm_custom.list_sessions() == []
+        assert not os.path.exists(os.path.join(sm_custom.session_dir, "state_absent.db"))
+
+    def test_a_rejected_write_is_logged_and_keeps_the_stored_state(self, sm_custom):
+        """A failing write must not propagate through the callers' bookkeeping.
+
+        ``AgenticNode.clear_session`` and the post-response persistence both
+        call through here; a locked or read-only database is an operational
+        condition, not a reason to abort the turn.
+        """
+        session_id = "state_rejected"
+        sm_custom.get_session(session_id)
+        self._enable_state_table(sm_custom, session_id)
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TRIGGER reject_state BEFORE INSERT ON context_occupancy "
+                "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
+            )
+
+        sm_custom.save_context_state(session_id, ContextState(0, 1000, False))
+
+        assert sm_custom.load_context_state(session_id) == ContextState(500, 1000, True)
+
+    def test_clear_session_does_not_surface_a_rejected_state_write(self, sm_custom):
+        """History clearing completes even when the occupancy reset fails."""
+        session_id = "state_reject_clear"
+        session = sm_custom.get_session(session_id)
+        run_async(session.add_items([{"role": "user", "content": "hello"}]))
+        self._enable_state_table(sm_custom, session_id)
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TRIGGER reject_state_clear BEFORE INSERT ON context_occupancy "
+                "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
+            )
+
+        sm_custom.clear_session(session_id)
+
+        assert _count_messages(sm_custom.session_dir, session_id) == 0
 
 
 def test_get_session_messages_hides_the_mid_turn_resume_instruction(sm):

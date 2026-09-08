@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from datus.agent.node.stream_run_context import StreamRunContext
     from datus.agent.workflow import Workflow
     from datus.schemas.token_usage import TokenUsage
+    from datus.storage.session_state import ContextState
     from datus.tools.func_tool.fs_path_policy import PathAllowlist
     from datus.tools.permission.permission_manager import PermissionManager
     from datus.tools.skill_tools.skill_manager import SkillManager
@@ -277,6 +278,7 @@ class AgenticNode(Node):
         # session); ``restore_context_state`` below overwrites them when an
         # on-disk ``context_state`` section exists. These MUST be set before
         # the restore call so the restored values are not clobbered.
+        self._context_state: Optional["ContextState"] = None
         self._restored_context_used: int = 0
         self._restored_context_length: int = 0
         try:
@@ -594,51 +596,62 @@ class AgenticNode(Node):
             self.workflow_prompt_sent,
         )
 
-    def persist_context_state(self, last_call_input_tokens: int, context_length: int) -> None:
-        """Persist the latest LLM call's context-window occupancy to disk.
+    def persist_context_state(
+        self, last_call_input_tokens: int, context_length: int, *, valid: Optional[bool] = None
+    ) -> None:
+        """Publish a measured occupancy or invalidation, then persist it.
 
-        Called by :class:`TokenUsageHook` after every LLM call. Unlike the
-        SQLite ``running_turn_usage`` snapshot (cleared at turn end), this
-        survives so a resumed process can render the context bar immediately.
-        No-op without a session_id / resolvable state path.
+        Memory is authoritative for the running node even when persistence fails.
+        SQLite stores the durable state atomically invalidated by history rewrites;
+        the JSON section remains a compatibility mirror for existing sessions.
         """
-        state_path = self._agent_state_file()
-        if state_path is None:
-            return
-        try:
-            from datus.storage.session_state import ContextState
-
-            used = max(0, int(last_call_input_tokens or 0))
-            length = max(0, int(context_length or 0))
-            ContextState(last_call_input_tokens=used, context_length=length).save(state_path)
-            # Keep the in-memory mirror in sync so a status-bar read in the
-            # same process does not have to round-trip through disk.
-            self._restored_context_used = used
-            self._restored_context_length = length
-        except Exception as exc:  # noqa: BLE001 — persistence must never crash the run loop
-            logger.debug("Failed to persist context state for %s: %s", self.session_id, exc)
-
-    def restore_context_state(self) -> None:
-        """Re-hydrate the last persisted context occupancy into this node.
-
-        Idempotent; invoked from ``__init__``. When no state file exists yet
-        (fresh session) the restored values stay at their 0 defaults.
-        """
-        state_path = self._agent_state_file()
-        if state_path is None or not state_path.exists():
-            return
         from datus.storage.session_state import ContextState
 
-        loaded = ContextState.load(state_path)
-        self._restored_context_used = loaded.last_call_input_tokens
+        used = max(0, int(last_call_input_tokens or 0))
+        length = max(0, int(context_length or 0))
+        known = used > 0 if valid is None else valid
+        state = ContextState(used if known else 0, length, known)
+        self._context_state = state
+        self._restored_context_used = state.last_call_input_tokens
+        self._restored_context_length = length
+        if self.session_id:
+            try:
+                self.session_manager.save_context_state(self.session_id, state)
+            except Exception:
+                logger.debug("Failed to persist SQLite context state", exc_info=True)
+        try:
+            state_path = self._agent_state_file()
+            if state_path is not None:
+                state.save(state_path)
+        except Exception:
+            logger.debug("Failed to persist JSON context state", exc_info=True)
+
+    def restore_context_state(self) -> None:
+        """Restore SQLite's state, falling back to legacy JSON when absent."""
+        from datus.storage.session_state import ContextState
+
+        loaded = None
+        if self.session_id:
+            try:
+                loaded = self.session_manager.load_context_state(self.session_id)
+            except Exception:
+                # An unreadable durable invalidation must not revive an old JSON value.
+                loaded = ContextState()
+                logger.debug("Failed to restore SQLite context state", exc_info=True)
+        if not isinstance(loaded, ContextState):
+            state_path = self._agent_state_file()
+            if state_path is None or not state_path.exists():
+                return
+            loaded = ContextState.load(state_path)
+        self._context_state = loaded
+        self._restored_context_used = loaded.last_call_input_tokens if loaded.valid else 0
         self._restored_context_length = loaded.context_length
-        if loaded.last_call_input_tokens or loaded.context_length:
-            logger.info(
-                "Context state restored for session %s: used=%s length=%s",
-                self.session_id,
-                loaded.last_call_input_tokens,
-                loaded.context_length,
-            )
+
+    def get_context_usage(self) -> "ContextState":
+        """Return the latest measured input occupancy; never substitute spend."""
+        from datus.storage.session_state import read_context_state
+
+        return read_context_state(self)
 
     def _get_plan_mode_tools(self) -> List[Tool]:
         """Build the plan-mode func tools (``confirm_plan`` + ``todo_*``).
@@ -1544,52 +1557,9 @@ class AgenticNode(Node):
         return self._session
 
     async def _count_session_tokens(self) -> int:
-        """
-        Estimate current context window usage in tokens.
-
-        Returns the last API call's input_tokens from the most recent execute,
-        which represents the actual conversation size in the context window.
-        Falls back to the last turn's total_tokens from turn_usage table.
-
-        Returns:
-            Estimated context window token usage
-        """
-        # Primary: get last_call_input_tokens from the most recent root assistant action.
-        # Scope to root-level actions (depth == 0) so child/tool usage from sub-agents
-        # doesn't leak into the parent session's context estimate.
-        for action in reversed(self.actions):
-            # Stop at the last root-level user message to scope to the current turn
-            if action.role == ActionRole.USER and action.depth == 0:
-                break
-            if (
-                action.role == ActionRole.ASSISTANT
-                and action.depth == 0
-                and isinstance(action.output, dict)
-                and isinstance(action.output.get("usage"), dict)
-            ):
-                usage = action.output["usage"]
-                last_call = usage.get("last_call_input_tokens", 0)
-                if last_call > 0:
-                    return last_call
-                # Fallback within action: use input_tokens (still per-turn, not cumulative sum)
-                input_tokens = usage.get("input_tokens", 0)
-                if input_tokens > 0:
-                    return input_tokens
-                break
-
-        # Fallback: get the latest turn's total_tokens from turn_usage table
-        if self._session and hasattr(self._session, "get_turn_usage"):
-            try:
-                turn_usage = await self._session.get_turn_usage()
-                if turn_usage:
-                    # turn_usage is a list of per-turn records; use the last one
-                    last_turn = turn_usage[-1] if isinstance(turn_usage, list) else turn_usage
-                    if isinstance(last_turn, dict):
-                        return last_turn.get("total_tokens", 0)
-            except Exception as e:
-                logger.debug(f"Failed to get turn usage for token counting: {e}")
-
-        return 0
+        """Return measured input occupancy, or zero when it is unknown."""
+        state = self.get_context_usage()
+        return state.last_call_input_tokens if state.valid else 0
 
     # ── Compact subsystem ──────────────────────────────────────────────
     # Public entry: ``compact(mode, reason)``. CLI, RunHooks, and model-layer
@@ -1640,14 +1610,6 @@ class AgenticNode(Node):
                 compact_action_id = f"compact_{uuid.uuid4().hex[:8]}"
                 self._emit_compact_display_action(compact_action_id, "progress")
                 result = await self._major_compact(reason=reason)
-                # A major compact is a session rebuild: drop the frozen system
-                # prompt so the next turn re-bakes it (fresh date, AGENTS.md,
-                # memory, skills) instead of replaying the pre-compact snapshot.
-                if result.get("success") and self.session_id:
-                    try:
-                        self.session_manager.delete_system_prompt_snapshot(self.session_id)
-                    except Exception as exc:
-                        logger.debug("Failed to drop system-prompt snapshot after compact: %s", exc)
                 # Always emit the terminal action — even on failure — so the
                 # pinned hint is cleared; the renderer only draws the panel when
                 # a summary is actually present.
@@ -1726,7 +1688,7 @@ class AgenticNode(Node):
             self.mid_turn_rewrite_checkpoint = None
 
     async def _decide_compact_mode(self) -> Literal["major", "minor", "noop"]:
-        """Choose major / minor / noop at the start of a user turn.
+        """Choose a mode for an explicit ``compact(mode="auto")`` call.
 
         Priority order:
         1. Token usage above ``major.token_threshold`` → major. The session
@@ -1741,8 +1703,8 @@ class AgenticNode(Node):
            still be in the model's cache).
         3. Otherwise → noop.
 
-        Only the turn-start trigger (``pre_user_turn``) uses this dispatcher.
-        Inside a turn the per-model-call decision is
+        The streaming loop does not use this compatibility dispatcher.
+        Its unified per-model-call decision is
         :meth:`_decide_mid_turn_compact_mode`, driven by the
         :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`.
 
@@ -1766,8 +1728,10 @@ class AgenticNode(Node):
                 return "minor"
         return "noop"
 
-    def _decide_mid_turn_compact_mode(self, ratio: float) -> Literal["major", "minor", "noop"]:
-        """Choose the mid-turn pass from the estimated context occupancy.
+    def _decide_mid_turn_compact_mode(
+        self, ratio: float, *, first_call: bool = False
+    ) -> Literal["major", "minor", "noop"]:
+        """Choose the automatic pass before any model request.
 
         ``ratio`` already includes the tool outputs appended since the last
         model call and the output headroom (see :meth:`compact_mid_turn`).
@@ -1777,9 +1741,13 @@ class AgenticNode(Node):
         independently with its ``mid_turn_enabled`` flag.
         """
         cfg = self._compact_cfg
-        if cfg.major.enabled and cfg.major.mid_turn_enabled and ratio >= cfg.major.token_threshold:
+        if cfg.major.enabled and (first_call or cfg.major.mid_turn_enabled) and ratio >= cfg.major.token_threshold:
             return "major"
-        if cfg.minor.enabled and cfg.minor.mid_turn_enabled and ratio >= cfg.minor.mid_turn_token_threshold:
+        if (
+            cfg.minor.enabled
+            and (first_call or cfg.minor.mid_turn_enabled)
+            and ratio >= cfg.minor.mid_turn_token_threshold
+        ):
             return "minor"
         return "noop"
 
@@ -1811,59 +1779,10 @@ class AgenticNode(Node):
         return sum(1 for it in items if isinstance(it, dict) and it.get("role") == "user")
 
     def _history_token_ratio_sync(self) -> float:
-        """Synchronous estimate of context window usage as a fraction.
-
-        Prefers the in-memory ``running_turn_usage`` snapshot, which
-        :class:`TokenUsageHook` refreshes after every LLM call (``on_llm_end``
-        / native ``emit_manual``) — the same value the CLI status bar renders
-        (``running_turn_usage.session_total_tokens``), keeping the turn-start
-        compact trigger and the status bar in agreement. The mid-turn trigger
-        (:class:`~datus.agent.node.context_rewriter.MidTurnCompactor`) reads
-        the same snapshot but adds an estimate of the items appended since the
-        last call, see :meth:`compact_mid_turn`.
-
-        When no live snapshot exists, falls back to the restored context state
-        (``_restored_context_used`` / ``_restored_context_length``, populated by
-        ``restore_context_state()``) so a resumed node still reflects an
-        already-full session before its first LLM call, then to walking
-        ``self.actions`` — only populated once the turn ends
-        (``self.actions.extend(...)`` after the stream loop). We avoid awaiting
-        the session here because the trigger check has to be cheap enough to call
-        from ``on_tool_end`` without stalling the run loop. Returns 0.0 when no
-        source yields a positive token count or no ``context_length`` is known.
-        """
-        running = getattr(self, "running_turn_usage", None)
-        if running is not None:
-            tok = running.session_total_tokens or running.input_tokens or 0
-            ctx = running.context_length or self.context_length or 0
-            if ctx > 0 and tok > 0:
-                return tok / float(ctx)
-        # Resumed node: ``running_turn_usage`` and ``self.actions`` are both empty
-        # before the first LLM call of the turn, but ``restore_context_state()``
-        # has already re-hydrated the last persisted occupancy. Honour it so the
-        # pre-user-turn major trigger does not miss an already-full session for a
-        # whole model call.
-        restored_tok = getattr(self, "_restored_context_used", 0) or 0
-        restored_ctx = getattr(self, "_restored_context_length", 0) or self.context_length or 0
-        if restored_ctx > 0 and restored_tok > 0:
-            return restored_tok / float(restored_ctx)
-        if not self.context_length:
-            return 0.0
-        for action in reversed(self.actions):
-            if action.role == ActionRole.USER and action.depth == 0:
-                break
-            if (
-                action.role == ActionRole.ASSISTANT
-                and action.depth == 0
-                and isinstance(action.output, dict)
-                and isinstance(action.output.get("usage"), dict)
-            ):
-                usage = action.output["usage"]
-                tok = usage.get("last_call_input_tokens") or usage.get("input_tokens") or 0
-                if tok > 0:
-                    return tok / float(self.context_length)
-                break
-        return 0.0
+        """Return measured occupancy for explicit compact(auto) callers."""
+        state = self.get_context_usage()
+        length = self.context_length or state.context_length
+        return state.last_call_input_tokens / length if state.valid and length else 0.0
 
     def _get_compact_lock(self) -> asyncio.Lock:
         """Lazily allocate the per-node compact lock.
@@ -2010,7 +1929,7 @@ class AgenticNode(Node):
             str(history_jsonl_path) if history_jsonl_path else "",
         )
         try:
-            await self._replace_session_items([build_assistant_item(continuation, item_format)])
+            await self._replace_session_items([build_assistant_item(continuation, item_format)], mode="major")
         except Exception as persist_err:
             logger.error("Failed to persist major-compact continuation: %s", persist_err)
             return {
@@ -2040,6 +1959,23 @@ class AgenticNode(Node):
             "summary_token": summary_token,
             "history_jsonl": str(history_jsonl_path) if history_jsonl_path else "",
         }
+
+    def _archive_history_view(
+        self, items: List[Dict[str, Any]], *, history_end: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], int, int]:
+        history = items if history_end is None else items[:history_end]
+        cutoff = self._resolve_user_turn_cutoff(history)
+        archive = self._get_archive()
+        if cutoff <= 0 or archive is None:
+            return items, 0, cutoff
+        rewritten = list(items)
+        count = 0
+        for idx in range(cutoff):
+            item = maybe_truncate_item(items[idx], archive, self._compact_cfg.minor.archive_threshold, idx)
+            if item is not items[idx]:
+                count += 1
+                rewritten[idx] = item
+        return (rewritten if count else items), count, cutoff
 
     async def _minor_compact(self, *, reason: str) -> Dict[str, Any]:
         """Rule-based user-turn-bounded compact pass.
@@ -2095,16 +2031,7 @@ class AgenticNode(Node):
                 "window": [lo, cutoff],
             }
 
-        rewritten: List[Dict[str, Any]] = []
-        archived_count = 0
-        for idx, it in enumerate(items):
-            if lo <= idx < cutoff:
-                new_it = maybe_truncate_item(it, archive, cfg.archive_threshold, idx)
-                if new_it is not it:
-                    archived_count += 1
-                rewritten.append(new_it)
-            else:
-                rewritten.append(it)
+        rewritten, archived_count, cutoff = self._archive_history_view(items)
         if archived_count == 0:
             # Nothing crossed the threshold or everything was already archived
             # — advance the high-water mark anyway so we don't keep re-scanning
@@ -2119,8 +2046,7 @@ class AgenticNode(Node):
             }
 
         try:
-            await self._session.clear_session()
-            await self._session.add_items(rewritten)
+            await self._replace_session_items(rewritten)
         except Exception as exc:
             logger.error("Failed to persist minor-compact rewrite: %s", exc)
             return {
@@ -2159,8 +2085,8 @@ class AgenticNode(Node):
     ) -> Tuple[str, int]:
         """One summarization call over an explicit transcript.
 
-        Shared by the turn-start / manual major compact (``items`` read from
-        the session) and the mid-turn compact (``items`` is the in-memory view
+        Shared by manual major compact (``items`` read from the session)
+        and automatic compact (``items`` is the in-memory view
         the model is being sent). Never touches the live session: the model's
         ``summarize_items`` runs with ``session=None`` and no hooks. Raises on
         model failure so callers decide how to degrade.
@@ -2187,25 +2113,41 @@ class AgenticNode(Node):
         summary_token = int(usage.get("output_tokens", 0) or 0) if isinstance(usage, dict) else 0
         return str(summary), summary_token
 
-    async def _replace_session_items(self, items: List[Dict[str, Any]]) -> None:
-        """Replace the persisted session history with ``items`` (clear + add).
-
-        Raises on failure; callers translate that into a ``success=False``
-        result. Runs of the agents SDK keep appending after the replaced
-        history, so the session mirrors the rewritten view from here on.
-        """
+    async def _replace_session_items(
+        self, items: List[Dict[str, Any]], *, mode: str = "minor", pending_user_turns: int = 0
+    ) -> None:
+        """Atomically replace history and complete rewrite bookkeeping before cancellation."""
         if self._session is None:
             raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "session"})
-        await self._session.clear_session()
-        if items:
-            await self._session.add_items(items)
+
+        async def replace() -> None:
+            if pending_user_turns:
+                await self._session.replace_items(items, pending_user_turns=pending_user_turns)
+            else:
+                await self._session.replace_items(items)
+            self._invalidate_context_usage()
+            self._refresh_turn_checkpoint_after_rewrite()
+            if mode == "major":
+                self._compacted_until = 0
+                if self.session_id:
+                    try:
+                        self.session_manager.delete_system_prompt_snapshot(self.session_id)
+                    except Exception:
+                        logger.debug("Failed to invalidate system prompt after rewrite", exc_info=True)
+
+        task = asyncio.create_task(replace())
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
 
     def _mid_turn_output_reserve(self) -> int:
-        """Output-token headroom reserved when judging mid-turn occupancy.
+        """Output-token headroom reserved when checking request capacity.
 
         A context that still "fits" but leaves no room for the model's reply
         overflows on the very next call, so the trigger counts the reply
-        budget as already used (Claude Code reserves it the same way).
+        budget as already used.
         """
         max_tokens = 0
         try:
@@ -2217,27 +2159,23 @@ class AgenticNode(Node):
             max_tokens = 0
         return min(max_tokens or DEFAULT_OUTPUT_RESERVE_TOKENS, MAX_OUTPUT_RESERVE_TOKENS)
 
-    def _refresh_running_usage_after_rewrite(self, estimated_tokens: int) -> None:
-        """Bring the live occupancy snapshot down to the rewritten view.
-
-        ``running_turn_usage`` still describes the pre-compaction context
-        until the next ``on_llm_end``; refreshing it keeps the status bar and
-        the persisted context state honest right away.
-        """
-        estimated_tokens = max(0, int(estimated_tokens))
-        context_length = int(self.context_length or 0)
+    def _invalidate_context_usage(self) -> None:
+        """Discard the old measurement without changing cumulative consumption."""
         running = getattr(self, "running_turn_usage", None)
+        if running is not None:
+            self.running_turn_usage = running.model_copy(
+                update={
+                    "session_total_tokens": 0,
+                    "context_usage_ratio": 0.0,
+                    "context_usage_valid": False,
+                }
+            )
+        length = getattr(self, "_restored_context_length", 0) or 0
         try:
-            if running is not None:
-                self.running_turn_usage = running.model_copy(
-                    update={
-                        "session_total_tokens": estimated_tokens,
-                        "context_length": running.context_length or context_length,
-                    }
-                )
-            self.persist_context_state(estimated_tokens, context_length)
-        except Exception:  # noqa: BLE001 — bookkeeping must never break the run loop
-            logger.debug("Failed to refresh running usage after mid-turn compact", exc_info=True)
+            length = int(self.context_length or length)
+        except Exception:
+            logger.debug("Cannot resolve context length after rewrite", exc_info=True)
+        self.persist_context_state(0, length, valid=False)
         self._notify_status_dirty()
 
     def _refresh_turn_checkpoint_after_rewrite(self) -> None:
@@ -2248,6 +2186,8 @@ class AgenticNode(Node):
         that pre-turn boundary would wipe the session; the checkpoint taken
         here keeps the compacted view and removes only what follows it.
         """
+        self._session_rewritten_this_turn = True
+        self.mid_turn_rewrite_checkpoint = None
         if not self.session_id:
             return
         try:
@@ -2264,15 +2204,21 @@ class AgenticNode(Node):
         tail_start: int,
         instruction: str = "",
         turn_request: Optional[Dict[str, Any]] = None,
-        reason: str = "mid_turn",
+        reason: str = "before_model_call",
+        first_call: bool = False,
+        archive_history: bool = False,
+        pending_user_turns: int = 0,
     ) -> Dict[str, Any]:
         """Two-stage compaction of the transcript a running turn is about to send.
 
         Called by :class:`~datus.agent.node.context_rewriter.MidTurnCompactor`
-        right before a model call with the exact item list the model would
+        before every model call, including the first, with the exact item list the model would
         receive. Occupancy is estimated as ``base_tokens`` (the last call's
         real input tokens) plus a chars/4 estimate of ``items[tail_start:]``
         (everything appended since) plus the output headroom.
+
+        On the first request, archive eligible historical user turns once.
+        On subsequent requests:
 
         1. **minor** — archive the turn's tool outputs older than the newest
            ``keep_recent_tool_results`` (lossless, no LLM call); re-estimate.
@@ -2280,7 +2226,7 @@ class AgenticNode(Node):
            the (archived) view and rebuild it as
            ``[this turn's user request(s)] + [assistant summary] + [user resume]``.
 
-        Whatever survives is persisted with ``clear_session + add_items`` so
+        Whatever survives is persisted with an atomic history replacement so
         SQLite mirrors the new view; a persistence failure leaves the original
         ``items`` in force. Returns a dict with ``mode`` (``noop`` / ``minor``
         / ``major``), ``success``, ``items`` (the list to send), and the major
@@ -2294,7 +2240,7 @@ class AgenticNode(Node):
             lock = self._get_compact_lock()
             async with lock:
                 context_length = int(self.context_length or 0)
-                if context_length <= 0:
+                if context_length <= 0 and not archive_history:
                     return noop
                 if self._session is None and self.session_id:
                     self._get_or_create_session()
@@ -2304,9 +2250,9 @@ class AgenticNode(Node):
                 output_reserve = self._mid_turn_output_reserve()
                 tail_start = max(0, min(int(tail_start), len(items)))
                 effective = int(base_tokens or 0) + estimate_items_tokens(items[tail_start:]) + output_reserve
-                ratio = effective / float(context_length)
-                mode = self._decide_mid_turn_compact_mode(ratio)
-                if mode == "noop":
+                ratio = effective / float(context_length) if context_length > 0 else 0.0
+                mode = self._decide_mid_turn_compact_mode(ratio, first_call=first_call)
+                if mode == "noop" and not archive_history:
                     return noop
                 logger.debug(
                     "Mid-turn compact (%s): ratio=%.2f mode=%s items=%d session=%s",
@@ -2323,28 +2269,36 @@ class AgenticNode(Node):
                 result: Dict[str, Any] = {"mode": "noop", "reason": reason, "success": True, "archived_count": 0}
 
                 # Stage 1: cheap, lossless archive of this turn's older tool outputs.
-                if cfg.minor.enabled and cfg.minor.mid_turn_enabled:
+                if cfg.minor.enabled and (first_call or cfg.minor.mid_turn_enabled):
                     archive = self._get_archive()
                     if archive is not None:
-                        view, archived_count = archive_old_tool_outputs(
-                            items,
-                            item_format=item_format,
-                            archive=archive,
-                            threshold=cfg.minor.archive_threshold,
-                            keep_recent=cfg.minor.keep_recent_tool_results,
-                        )
+                        if archive_history:
+                            history_end = next((i for i, item in enumerate(items) if item is turn_request), len(items))
+                            view, archived_count, _ = self._archive_history_view(items, history_end=history_end)
+                        elif not first_call:
+                            view, archived_count = archive_old_tool_outputs(
+                                items,
+                                item_format=item_format,
+                                archive=archive,
+                                threshold=cfg.minor.archive_threshold,
+                                keep_recent=cfg.minor.keep_recent_tool_results,
+                            )
                         if archived_count:
                             result.update(mode="minor", archived_count=archived_count)
                             # Subtract what the archive saved from the measured
                             # occupancy instead of re-estimating the items alone:
                             # the system prompt and tool schemas still count.
                             saved = estimate_items_tokens(items) - estimate_items_tokens(view)
-                            ratio = max(0.0, (effective - saved) / float(context_length))
+                            ratio = max(0.0, (effective - saved) / float(context_length)) if context_length > 0 else 0.0
                         else:
                             view = items
 
                 # Stage 2: LLM summary when the archive stage was not enough.
-                if cfg.major.enabled and cfg.major.mid_turn_enabled and ratio >= cfg.major.token_threshold:
+                if (
+                    cfg.major.enabled
+                    and (first_call or cfg.major.mid_turn_enabled)
+                    and ratio >= cfg.major.token_threshold
+                ):
                     compact_action_id = f"compact_{uuid.uuid4().hex[:8]}"
                     self._emit_compact_display_action(compact_action_id, "progress")
                     major_ok = False
@@ -2384,20 +2338,11 @@ class AgenticNode(Node):
                     return result
 
                 try:
-                    await self._replace_session_items(view)
+                    await self._replace_session_items(view, mode=result["mode"], pending_user_turns=pending_user_turns)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to persist mid-turn compact rewrite: %s", exc)
                     return {**result, "success": False, "items": items}
 
-                if result["mode"] == "major":
-                    self._compacted_until = 0
-                    if self.session_id:
-                        try:
-                            self.session_manager.delete_system_prompt_snapshot(self.session_id)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.debug("Failed to drop system-prompt snapshot after compact: %s", exc)
-                self._refresh_running_usage_after_rewrite(estimate_items_tokens(view))
-                self._refresh_turn_checkpoint_after_rewrite()
                 result["items"] = view
                 logger.info(
                     "Mid-turn compact done (%s): mode=%s ratio=%.2f archived=%d items %d -> %d session=%s",
@@ -2415,21 +2360,29 @@ class AgenticNode(Node):
             return {"mode": "major", "reason": reason, "success": False, "items": items}
 
     def _build_context_rewriter(self, ctx: "StreamRunContext") -> Optional[MidTurnCompactor]:
-        """Create the per-run mid-turn compactor, or ``None`` when disabled.
+        """Create the unified per-request compactor, or ``None`` when disabled.
 
         One instance per ``_stream_once`` call; it also resets itself on the
         SDK ``on_start`` hook so a retried run never inherits a stale overlay.
         """
         self._ensure_compact_state()
         cfg = self._compact_cfg
-        if not (
-            (cfg.major.enabled and cfg.major.mid_turn_enabled) or (cfg.minor.enabled and cfg.minor.mid_turn_enabled)
-        ):
+        if not (cfg.major.enabled or cfg.minor.enabled):
             return None
+
+        def refresh_instruction() -> str:
+            ctx.system_instruction = self._get_session_system_prompt(
+                prompt_version=getattr(ctx.user_input, "prompt_version", None),
+                template_context=self._build_template_context(ctx),
+            )
+            return ctx.system_instruction
+
         return MidTurnCompactor(
             self,
             interrupt_controller=getattr(self, "interrupt_controller", None),
             system_instruction=ctx.system_instruction or "",
+            refresh_instruction=refresh_instruction,
+            turn_state=ctx.extras,
         )
 
     async def _auto_compact(self) -> bool:
@@ -3462,6 +3415,7 @@ class AgenticNode(Node):
         # A fresh turn: any rollback boundary published by a previous turn's
         # mid-turn rewrite is stale now.
         self.mid_turn_rewrite_checkpoint = None
+        self._session_rewritten_this_turn = False
 
         node_name = self.get_node_name()
         logger.info(
@@ -3487,7 +3441,6 @@ class AgenticNode(Node):
             # callers (print mode ``--resume``, API chat with ``interactive=False``,
             # sub-agents continuing a parent session) all want SDK to see prior
             # items. ``execution_mode`` controls human-in-the-loop, not history.
-            await self._auto_compact()
             ctx.session = self._get_or_create_session()
 
             template_context = self._build_template_context(ctx)
@@ -3915,6 +3868,7 @@ class AgenticNode(Node):
         call overwrites it.
         """
         self.running_turn_usage = None
+        self._context_state = None
         self._restored_context_used = 0
         self._restored_context_length = 0
         if not self.session_id:
@@ -3923,6 +3877,9 @@ class AgenticNode(Node):
             sm = getattr(self, "session_manager", None)
             if sm is not None and hasattr(sm, "clear_running_turn_usage"):
                 sm.clear_running_turn_usage(self.session_id)
+                from datus.storage.session_state import ContextState
+
+                sm.save_context_state(self.session_id, ContextState())
         except Exception:  # noqa: BLE001 — cleanup must never crash node logic
             logger.debug("Failed to clear running_turn_usage for %s", self.session_id, exc_info=True)
         try:
@@ -3974,7 +3931,11 @@ class AgenticNode(Node):
             "token_count": current_tokens,
             "action_count": len(self.actions),
             "context_usage_ratio": current_tokens / self.context_length if self.context_length else 0,
-            "context_remaining": self.context_length - current_tokens if self.context_length else 0,
+            "context_remaining": (
+                max(0, self.context_length - current_tokens)
+                if self.context_length and self.get_context_usage().valid
+                else 0
+            ),
             "context_length": self.context_length,
         }
 
@@ -4005,8 +3966,8 @@ class AgenticNode(Node):
                 usage_dict = action.output["usage"]
                 return _TokenUsage.from_usage_dict(
                     usage_dict,
-                    session_total_tokens=usage_dict.get("last_call_input_tokens", 0)
-                    or usage_dict.get("input_tokens", 0),
+                    session_total_tokens=self.get_context_usage().last_call_input_tokens,
+                    context_usage_valid=self.get_context_usage().valid,
                     context_length=self.context_length or 0,
                 )
         return None

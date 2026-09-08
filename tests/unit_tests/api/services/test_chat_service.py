@@ -567,6 +567,10 @@ class TestChatServiceCompactSession:
         assert result.success is True
         assert result.data.success is True
 
+        assert result.data.new_token_count is None
+        assert result.data.tokens_saved is None
+        assert result.data.compression_ratio is None
+
         # The .db file must still exist — compact no longer deletes it.
         import os
 

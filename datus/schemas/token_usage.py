@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class TokenUsage(BaseModel):
@@ -26,6 +26,21 @@ class TokenUsage(BaseModel):
     # Session-level context information (optionally populated)
     context_length: int = 0
     session_total_tokens: int = 0  # Current context window usage (last model call's input_tokens)
+    context_usage_valid: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_context_usage(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        values = dict(values)
+        used = max(0, int(values.get("session_total_tokens", values.get("last_call_input_tokens", 0)) or 0))
+        length = max(0, int(values.get("context_length", 0) or 0))
+        valid = values.get("context_usage_valid", used > 0)
+        values["context_usage_valid"] = valid
+        values["session_total_tokens"] = used if valid else 0
+        values["context_usage_ratio"] = round(used / length, 3) if valid and length else 0.0
+        return values
 
     @classmethod
     def from_usage_dict(cls, d: Dict[str, Any], **overrides) -> "TokenUsage":

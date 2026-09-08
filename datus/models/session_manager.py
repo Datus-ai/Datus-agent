@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
+from datus.models.sqlite_session import CONTEXT_STATE_TABLE, DatusSQLiteSession
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.storage.session_state import ContextState
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json
@@ -146,7 +148,7 @@ class SessionManager:
         self._validate_session_id(session_id)
         if session_id not in self._sessions:
             db_path = os.path.join(self.session_dir, f"{session_id}.db")
-            session = AdvancedSQLiteSession(
+            session = DatusSQLiteSession(
                 session_id=session_id,
                 db_path=db_path,
                 create_tables=True,
@@ -185,6 +187,46 @@ class SessionManager:
         # Clearing history is a session rebuild: drop the frozen system prompt
         # so the next turn re-bakes it instead of replaying pre-clear context.
         self.delete_system_prompt_snapshot(session_id)
+        self.save_context_state(session_id, ContextState())
+
+    def save_context_state(self, session_id: str, state: ContextState) -> None:
+        """Store the measured occupancy beside the transactional history.
+
+        Never creates the database: ``sqlite3.connect`` would materialise an
+        empty file that ``list_sessions`` then reports as a session. A missing
+        file also means there is no stale measurement to overwrite. Write
+        failures are logged rather than raised so history clearing and the
+        post-response bookkeeping stay unaffected by a locked database.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(CONTEXT_STATE_TABLE)
+                conn.execute(
+                    "INSERT OR REPLACE INTO context_occupancy "
+                    "(session_id, input_tokens, context_length, valid) VALUES (?, ?, ?, ?)",
+                    (session_id, state.last_call_input_tokens, state.context_length, int(state.valid)),
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Failed to save context state for session %s: %s", session_id, exc)
+
+    def load_context_state(self, session_id: str) -> Optional[ContextState]:
+        """Read the durable measurement, including an explicit invalidation."""
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return None
+        with sqlite3.connect(db_path, timeout=5.0) as conn:
+            if not self._table_exists(conn, "context_occupancy"):
+                return None
+            row = conn.execute(
+                "SELECT input_tokens, context_length, valid FROM context_occupancy WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            return ContextState(row[0], row[1], bool(row[2])) if row else None
 
     def checkpoint_turn(self, session_id: str) -> Optional[SessionTurnCheckpoint]:
         """Capture the SQLite boundary before dispatching a model turn.
@@ -280,6 +322,12 @@ class SessionManager:
                     )
                 if self._table_exists(conn, "running_turn_usage"):
                     conn.execute("DELETE FROM running_turn_usage WHERE session_id = ?", (session_id,))
+                conn.execute(CONTEXT_STATE_TABLE)
+                conn.execute(
+                    "INSERT INTO context_occupancy (session_id) VALUES (?) "
+                    "ON CONFLICT(session_id) DO UPDATE SET input_tokens = 0, valid = 0",
+                    (session_id,),
+                )
                 conn.commit()
         except sqlite3.Error as exc:
             logger.warning("Failed to roll back unanswered turn for session %s: %s", session_id, exc)

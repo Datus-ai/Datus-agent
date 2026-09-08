@@ -1,6 +1,6 @@
 # Context Compaction
 
-As a chat session grows, its history eventually approaches the model's context window limit. Datus manages this automatically with two complementary compaction passes configured under `agent.compact`, so you can keep working in one long session without manually clearing it or hitting token limits.
+As a chat session grows, its history eventually approaches the model's context window limit. Datus manages this automatically with two complementary compaction passes configured under `agent.compact`, so you can keep working in one long session without manually clearing it as often.
 
 | | Minor compact | Major compact |
 |---|---|---|
@@ -10,7 +10,7 @@ As a chat session grows, its history eventually approaches the model's context w
 | Touches recent turns | No (turn start) / only this turn's older tool outputs (mid-turn) | Yes — replaces all history |
 | Recoverable | Yes (archive files) | Yes (full-history JSONL) |
 
-Both passes run at two points: **at the start of a user turn**, before the model is called, and **in the middle of a turn**, right before the next model call of an agent loop that is still running tools. The mid-turn variant is described in its own section below.
+Automatic compaction uses one check **before every model request**, including the first request of a turn and retries. The check includes queued user messages before deciding whether to archive or summarize. The first request can archive older user turns; later requests can archive older tool results. The `mid_turn_enabled` switches control later requests only.
 
 ## Minor compact
 
@@ -26,7 +26,7 @@ Both passes run at two points: **at the start of a user turn**, before the model
 
 ## Major compact
 
-**What triggers it** — When the context occupancy reaches `token_threshold` of the context window (default `0.9`, i.e. 90%), a major compact runs. At turn start the occupancy is the input-token count of the most recent model call. Mid-turn it is estimated before each model call as *last call's real input tokens + an estimate of the items appended since (the model's reply and the tool outputs) + the output headroom reserved for the next reply*, so the pass fires **before** the request that would overflow, not after it fails. `/compact` triggers it manually at any time.
+**What triggers it** — Before each request, Datus estimates its input size and reserves room for the reply. When that budget reaches `major.token_threshold` of the context window (default `0.9`), Datus first tries any eligible archive pass, then summarizes if needed. With a fresh per-call measurement, the estimate adds newly appended messages to that measurement. Otherwise it estimates the full messages, system instruction and tool definitions. `/compact` triggers summarization manually regardless of the estimate.
 
 **What it does** — The model is asked to summarize the **entire** transcript into a single recap. The history is then replaced by that summary as the new starting point, and the conversation continues from there. The complete pre-compact history is dumped to a JSONL file, and a pointer to it is appended to the summary so the agent can `read_file` it to recover any specific detail.
 
@@ -57,7 +57,7 @@ A single user request can drive dozens of tool calls, and the context can fill u
 
 **What you will notice**
 
-- The status bar's context usage drops right after the rewrite, and the `Compacting context…` hint / summary panel appear mid-turn.
+- The status bar shows zero context usage immediately after the rewrite until the next model response supplies an actual input-token count, and the `Compacting context…` hint / summary panel appear mid-turn.
 - Later calls of the same turn keep the compacted view and append new tool rounds after it. The pre-compaction tool outputs are never sent again, but the full transcript is in the JSONL dump and archived outputs are in the archive directory.
 - Pressing ESC to cancel after a mid-turn compaction rolls the session back to the compacted view (the request plus summary), not to an empty session.
 - The session file is rewritten to match the compacted view, so a later `resume` starts from it.
@@ -105,9 +105,12 @@ To disable automatic compaction entirely, set both `major.enabled` and `minor.en
 
 ## Notes
 
-- The turn-start major trigger reads the **live** token usage of the previous model call (the same figure shown in the CLI status bar). On a brand-new session or right after `resume`, that signal starts at zero, so a major compact won't fire before the first model call. Mid-turn, the first model call of a turn is never compacted; the check starts from the second call, once real usage is available.
-- Mid-turn occupancy estimates the newly appended items at roughly four characters per token, and reserves the model's reply budget on top. Dense code or CJK text is under-estimated by that rule; the default thresholds leave room for it.
-- Every rewrite cools the provider's prompt cache for one call. This is why the archive stage waits for 75% rather than running continuously.
-- Models whose context window is unknown to Datus never trigger compaction automatically; `/compact` still works.
+- Legacy snapshots without an explicit measurement-validity flag are treated as unknown after upgrade; they may contain pre-upgrade estimates.
+- Displayed context usage is the latest model response's input-token count, including cached input. `context_usage_ratio` is that count divided by the model's current context window. Cumulative input/output consumption is separate and is not reduced by compaction.
+- A rewrite invalidates the old measurement in memory and durable session state. Resume also shows zero until another model response supplies a measurement. Request-size estimates are internal to the automatic check and are never displayed or stored as measured occupancy.
+- The compact API returns `null` for `new_token_count`, `tokens_saved` and `compression_ratio`: a summary's output-token count does not measure the rewritten request. The summary panel's token count describes only the summarization output.
+- Input estimation currently uses approximately four characters per token; it is a heuristic, not a guarantee against context overflow. It includes system instructions, tool definitions and output headroom. If a request still cannot fit, provider error handling remains applicable.
+- Rewriting a cached prefix can reduce cache reuse on the next request. This is why the archive stage waits for 75% rather than running continuously.
+- Models whose context window is unknown skip token-based triggers. First-request history archiving and manual `/compact` remain available.
 - Minor compact reads its turn-start eligibility from the session's user-turn count, so it keeps working correctly after a resume.
 - Archived tool I/O and the full-history JSONL live under the session's data directory; see [Storage](storage.md) for paths.
