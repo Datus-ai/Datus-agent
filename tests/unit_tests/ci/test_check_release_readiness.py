@@ -112,6 +112,59 @@ def test_console_script_versions_reports_missing_command(check_release_readiness
     assert errors == ["datus --version failed to execute: missing datus"]
 
 
+def test_requirements_match_pyproject_accepts_identical_lists(tmp_path, check_release_readiness):
+    repo_root = _write_release_repo(tmp_path)
+
+    assert check_release_readiness.check_requirements_match_pyproject(repo_root) == []
+
+
+def test_requirements_match_pyproject_rejects_a_stale_pin(tmp_path, check_release_readiness):
+    """The exact drift this check was added for: a pin left behind in one file."""
+    repo_root = _write_release_repo(tmp_path)
+    pyproject = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    (repo_root / "pyproject.toml").write_text(
+        pyproject.replace('"datus-db-core>=0.1.3"', '"datus-db-core>=0.9.9"'),
+        encoding="utf-8",
+    )
+
+    errors = check_release_readiness.check_requirements_match_pyproject(repo_root)
+
+    assert errors == ["datus-db-core version mismatch: pyproject.toml has '>=0.9.9', requirements.txt has '>=0.1.3'"]
+
+
+def test_requirements_match_pyproject_reports_dependencies_missing_from_either_side(tmp_path, check_release_readiness):
+    repo_root = _write_release_repo(tmp_path)
+    requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8")
+    (repo_root / "requirements.txt").write_text(
+        requirements.replace("datus-bi-core>=0.1.2\n", "") + "\nleftover-package>=1.0\n",
+        encoding="utf-8",
+    )
+
+    errors = check_release_readiness.check_requirements_match_pyproject(repo_root)
+
+    assert errors == [
+        "datus-bi-core is in pyproject.toml but missing from requirements.txt",
+        "leftover-package is in requirements.txt but missing from pyproject.toml",
+    ]
+
+
+def test_requirements_match_pyproject_rejects_dropped_extras(tmp_path, check_release_readiness):
+    """Extras carry real installs — `openai-agents[litellm]` pulls in litellm."""
+    repo_root = _write_release_repo(tmp_path)
+    for name, replacement in (
+        ("pyproject.toml", '"datus-db-core[extra]>=0.1.3"'),
+        ("requirements.txt", None),
+    ):
+        if replacement is None:
+            continue
+        content = (repo_root / name).read_text(encoding="utf-8")
+        (repo_root / name).write_text(content.replace('"datus-db-core>=0.1.3"', replacement), encoding="utf-8")
+
+    errors = check_release_readiness.check_requirements_match_pyproject(repo_root)
+
+    assert errors == ["datus-db-core extras mismatch: pyproject.toml has ['extra'], requirements.txt has []"]
+
+
 def test_adapter_dependency_consistency_accepts_matching_lower_bounds(tmp_path, check_release_readiness):
     repo_root = _write_release_repo(tmp_path)
 

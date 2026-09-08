@@ -146,6 +146,47 @@ def check_console_script_versions(
     return errors
 
 
+def check_requirements_match_pyproject(repo_root: Path) -> list[str]:
+    """Require requirements.txt to restate ``project.dependencies`` exactly.
+
+    Both lists are maintained by hand — nothing regenerates ``requirements.txt``
+    — so they drift silently, and the drift is not cosmetic. Consumers install
+    ``-r requirements.txt`` before ``pip install -e .``, and only the second
+    command reads pyproject, so a stale pin here decides what actually gets
+    installed until some later command happens to override it. That is how
+    ``openai-agents`` sat at 0.7.0 here for a release after pyproject moved to
+    0.13.4, and how ``jsonschema``/``jinja2`` — required by the plugin manifest
+    loader — were missing from this file entirely.
+
+    ``check_adapter_dependency_consistency`` below covers only the four adapter
+    packages, and only their lower bounds, which is why none of that was caught.
+    """
+    pyproject_deps = read_pyproject_dependencies(repo_root)
+    requirements_deps = read_requirements_dependencies(repo_root)
+    errors: list[str] = []
+
+    for name in sorted(set(pyproject_deps) - set(requirements_deps)):
+        errors.append(f"{pyproject_deps[name].name} is in pyproject.toml but missing from requirements.txt")
+    for name in sorted(set(requirements_deps) - set(pyproject_deps)):
+        errors.append(f"{requirements_deps[name].name} is in requirements.txt but missing from pyproject.toml")
+
+    for name in sorted(set(pyproject_deps) & set(requirements_deps)):
+        expected = pyproject_deps[name]
+        actual = requirements_deps[name]
+        if expected.specifier != actual.specifier:
+            errors.append(
+                f"{expected.name} version mismatch: pyproject.toml has "
+                f"'{expected.specifier}', requirements.txt has '{actual.specifier}'"
+            )
+        if expected.extras != actual.extras:
+            errors.append(
+                f"{expected.name} extras mismatch: pyproject.toml has "
+                f"{sorted(expected.extras)}, requirements.txt has {sorted(actual.extras)}"
+            )
+
+    return errors
+
+
 def check_adapter_dependency_consistency(
     repo_root: Path,
     package_names: Iterable[str] = ADAPTER_CORE_PACKAGES,
@@ -284,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(check_installed_distribution_version(version))
     if args.check_console_versions:
         errors.extend(check_console_script_versions(version))
+
+    errors.extend(check_requirements_match_pyproject(repo_root))
 
     dependency_checks, dependency_errors = check_adapter_dependency_consistency(repo_root)
     errors.extend(dependency_errors)

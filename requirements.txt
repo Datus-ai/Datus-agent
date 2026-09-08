@@ -1,20 +1,28 @@
+# Runtime dependencies, mirroring `project.dependencies` in pyproject.toml.
+# `ci/check_release_readiness.py` compares the two and fails on any drift, so
+# every edit here needs the matching edit there (and vice versa).
 python-dotenv==1.0.0
 pandas==2.1.4
 sqlalchemy==2.0.23
 sqlglot>=26.12.0,<31
 pyyaml==6.0.1
-lancedb==0.18.0
+packaging>=21.0
+lancedb==0.34.0
 fastembed==0.4.2
 structlog>=23.1.0
-openai>=2.8.0
+# Floor: openai-agents 0.13.x requires openai>=2.26. Cap below 2.45.0: openai
+# 2.45.0 made ``InputTokensDetails.cache_write_tokens`` a required field and
+# ``datus/models/claude_model.py`` still constructs ``InputTokensDetails``
+# without it. Lift the cap together with that code.
+openai>=2.26.0,<2.45.0
 httpx[socks]==0.27.2
 tantivy>=0.22.2
 aiohttp>=3.11.16
 xlsxwriter>=3.2.2
 openpyxl>=3.1.5
 xlrd>=2.0.1
-openai-agents[litellm]==0.7.0
-openinference-instrumentation-openai-agents>=1.0.0
+openai-agents[litellm]==0.13.4
+openinference-instrumentation-openai-agents==1.6.2
 opentelemetry-api>=1.20.0
 opentelemetry-sdk>=1.20.0
 opentelemetry-exporter-otlp>=1.20.0
@@ -43,7 +51,10 @@ beautifulsoup4>=4.12.0
 lxml>=5.0.0
 markdown-it-py>=3.0.0
 tabulate>=0.9.0
-datus-storage-base==0.1.5
+# Plugin manifest: config-schema validation and system-prompt templates
+jsonschema>=4.17,<5
+jinja2>=3.1,<4
+datus-storage-base>=0.1.5,<0.2.0
 datus-db-core>=0.1.6
 datus-semantic-core>=0.2.3
 datus-bi-core>=0.1.2
