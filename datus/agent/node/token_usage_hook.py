@@ -122,13 +122,24 @@ class TokenUsageHook(RunHooks):
         self._publish(dict(cumulative))
 
     def _publish(self, cumulative: Dict[str, Any]) -> None:
-        delta = _delta(cumulative, self._last_cumulative)
-        self._last_cumulative = cumulative
-
+        previous = self._last_cumulative
+        delta = _delta(cumulative, previous)
+        self._last_cumulative = dict(cumulative)
         context_length = self._resolve_context_length()
         last_call_input_tokens = int(cumulative.get("last_call_input_tokens", 0) or 0)
+        # A delta is a per-call measurement only if exactly one request arrived.
+        if not last_call_input_tokens and delta["requests"] == 1:
+            last_call_input_tokens = delta["input_tokens"]
+        cumulative = {
+            **cumulative,
+            "last_call_input_tokens": last_call_input_tokens,
+            "context_usage_ratio": round(last_call_input_tokens / context_length, 3) if context_length else 0.0,
+        }
 
         self._update_node_snapshot(cumulative, context_length, last_call_input_tokens, delta)
+        persist = getattr(self._node, "persist_context_state", None)
+        if callable(persist):
+            persist(last_call_input_tokens, context_length)
         self._persist_snapshot(cumulative, context_length)
         self._enqueue_action(cumulative, delta, context_length, last_call_input_tokens)
         self._notify_status_dirty()
@@ -156,10 +167,6 @@ class TokenUsageHook(RunHooks):
             # ``input_tokens``, which grows with every call and would make the
             # compaction trigger fire far too early.
             occupancy = last_call_input_tokens
-            if not occupancy and delta is not None:
-                occupancy = int(delta.get("input_tokens", 0) or 0)
-            if not occupancy:
-                occupancy = int(cumulative.get("input_tokens", 0) or 0)
             self._node.running_turn_usage = TokenUsage.from_usage_dict(
                 cumulative,
                 session_total_tokens=occupancy,
@@ -188,21 +195,6 @@ class TokenUsageHook(RunHooks):
             )
         except Exception:  # noqa: BLE001
             logger.debug("TokenUsageHook: upsert_running_turn_usage failed", exc_info=True)
-
-        # Persist the context-window occupancy to the on-disk session_state so
-        # a resume of an already-completed turn (when the running snapshot
-        # above has been cleared at turn end) can still render the context
-        # bar. ``last_call_input_tokens`` is the real context-window usage of
-        # the most recent LLM call. Decoupled from SQLite on purpose — see
-        # ``AgenticNode.persist_context_state`` / ``datus.storage.session_state``.
-        persist = getattr(self._node, "persist_context_state", None)
-        if not callable(persist):
-            return
-        last_call_input_tokens = int(cumulative.get("last_call_input_tokens", 0) or 0)
-        try:
-            persist(last_call_input_tokens, context_length)
-        except Exception:  # noqa: BLE001
-            logger.debug("TokenUsageHook: persist_context_state failed", exc_info=True)
 
     def _current_turn_number(self) -> int:
         # Best-effort: count root-level USER actions on the node. This matches

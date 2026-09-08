@@ -2022,7 +2022,7 @@ class TestExtractUsageInfo:
         assert info["cached_tokens"] == 20
         assert info["reasoning_tokens"] == 10
         assert info["cache_hit_rate"] == round(20 / 100, 3)
-        assert info["context_usage_ratio"] == round(150 / 128000, 3)
+        assert info["context_usage_ratio"] == 0
         assert info["last_call_input_tokens"] == 0
 
     def test_zero_input_tokens_no_division_error(self):

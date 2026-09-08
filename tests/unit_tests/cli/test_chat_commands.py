@@ -3538,6 +3538,7 @@ def test_rollback_unanswered_turn_cleans_all_in_memory_and_output_state(chat_cmd
     node.actions = [kept, cancelled]
     node.running_turn_usage = object()
     node.mid_turn_rewrite_checkpoint = None
+    node._session_rewritten_this_turn = False
     session_manager = MagicMock()
     output_buffer = MagicMock()
     checkpoint = object()

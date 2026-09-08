@@ -261,7 +261,21 @@ class _FakeNode:
     def script_major(self, summary: str = "SUMMARY") -> None:
         """Make ``compact_mid_turn`` rebuild the view like the real node does."""
 
-        async def _compact(items, *, item_format, base_tokens, tail_start, instruction, turn_request, reason):
+        async def _compact(
+            items,
+            *,
+            item_format,
+            base_tokens,
+            tail_start,
+            instruction,
+            turn_request,
+            reason,
+            first_call=False,
+            archive_history=False,
+            pending_user_turns=0,
+        ):
+            if first_call and estimate_items_tokens(items) < self.context_length * 0.9:
+                return {"mode": "noop", "success": True}
             view = build_mid_turn_view(items, summary, item_format=item_format, turn_request=turn_request)
             return {"mode": "major", "success": True, "items": view, "summary": summary}
 
@@ -304,12 +318,13 @@ class TestViewOf:
 
 class TestRewriteSdkInput:
     @pytest.mark.asyncio
-    async def test_first_call_only_anchors_the_turn_request(self):
+    async def test_first_call_checks_capacity_and_anchors_the_turn_request(self):
         node = _FakeNode()
         compactor = MidTurnCompactor(node)
         raw = [_user("old"), _assistant("a"), _plain_user("current")]
         assert await compactor.rewrite_sdk_input(raw) == raw
-        node.compact_mid_turn.assert_not_awaited()
+        node.compact_mid_turn.assert_awaited_once()
+        assert node.compact_mid_turn.await_args.kwargs["first_call"] is True
         assert compactor._turn_request is raw[2]
 
     @pytest.mark.asyncio
@@ -363,7 +378,7 @@ class TestRewriteSdkInput:
         raw3 = raw2 + [_call("c2"), _out("c2")]
         view3 = await compactor.rewrite_sdk_input(raw3)  # usage NOT refreshed yet
         kwargs = node.compact_mid_turn.await_args.kwargs
-        assert kwargs["base_tokens"] == estimate_items_tokens(view3)
+        assert kwargs["base_tokens"] == estimate_items_tokens(view3) + compactor._overhead_tokens()
         assert kwargs["tail_start"] == len(view3)
 
     @pytest.mark.asyncio
@@ -415,7 +430,7 @@ class TestRewriteSdkInput:
         await compactor.rewrite_sdk_input(raw1)
         view = await compactor.rewrite_sdk_input(raw1 + [_call("c1"), _out("c1", "x" * 500)])
         assert view == archived
-        assert compactor._failures == 1
+        assert compactor._failures == 2
 
     @pytest.mark.asyncio
     async def test_success_resets_the_failure_counter(self):
@@ -425,7 +440,7 @@ class TestRewriteSdkInput:
         raw = [_plain_user("current")]
         await compactor.rewrite_sdk_input(raw)
         await compactor.rewrite_sdk_input(raw + [_call("c"), _out("c")])
-        assert compactor._failures == 1
+        assert compactor._failures == 2
         node.script_major()
         await compactor.rewrite_sdk_input(raw + [_call("c"), _out("c")])
         assert compactor._failures == 0
@@ -441,13 +456,14 @@ class TestRewriteSdkInput:
         node.compact_mid_turn.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_unknown_context_window_is_inert(self):
+    async def test_unknown_window_only_checks_history_on_first_call(self):
         node = _FakeNode(context_length=0)
         compactor = MidTurnCompactor(node)
         raw = [_plain_user("current")]
         await compactor.rewrite_sdk_input(raw)
         await compactor.rewrite_sdk_input(raw + [_call("c"), _out("c")])
-        node.compact_mid_turn.assert_not_awaited()
+        node.compact_mid_turn.assert_awaited_once()
+        assert node.compact_mid_turn.await_args.kwargs["archive_history"] is True
 
     @pytest.mark.asyncio
     async def test_stale_overlay_is_dropped_when_the_raw_list_no_longer_matches(self):
@@ -495,7 +511,7 @@ class TestRewriteSdkInput:
 
 class TestRewriteNativeMessages:
     @pytest.mark.asyncio
-    async def test_first_call_returns_none_and_anchors(self):
+    async def test_first_call_checks_capacity_without_changing_small_input(self):
         node = _FakeNode()
         compactor = MidTurnCompactor(node)
         messages = [
@@ -505,7 +521,7 @@ class TestRewriteNativeMessages:
         ]
         assert await compactor.rewrite_native_messages(messages) is None
         assert compactor._turn_request is messages[2]
-        node.compact_mid_turn.assert_not_awaited()
+        node.compact_mid_turn.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_second_call_returns_the_node_view(self):

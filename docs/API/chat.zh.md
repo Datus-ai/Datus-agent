@@ -58,6 +58,8 @@ Chat 相关接口驱动 Agent 的对话循环。流式接口以 Server-Sent Even
 
 **响应**:`Result[CompactSessionData]`,含 `success`、`new_token_count`、`tokens_saved`、`compression_ratio`。
 
+压缩后尚无可靠的同口径统计，因此这三个压缩指标返回 `null`；摘要的输出 token 数不能代表改写后的请求大小。
+
 ### `GET /api/v1/chat/sessions`
 
 列出当前用户的会话。

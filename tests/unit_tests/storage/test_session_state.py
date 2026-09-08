@@ -98,7 +98,7 @@ class TestContextStateRoundTrip:
         path = tmp_path / "ctx.json"
         ContextState(last_call_input_tokens=10, context_length=200).save(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {"context_state": {"last_call_input_tokens": 10, "context_length": 200}}
+        assert data == {"context_state": {"last_call_input_tokens": 10, "context_length": 200, "valid": True}}
 
     def test_load_missing_file_returns_default(self, tmp_path):
         loaded = ContextState.load(tmp_path / "absent.json")
@@ -120,7 +120,8 @@ class TestContextStateRoundTrip:
             # Negative values are clamped to 0.
             ({"last_call_input_tokens": -5, "context_length": -1}, (0, 0)),
             # Valid ints preserved.
-            ({"last_call_input_tokens": 800, "context_length": 128_000}, (800, 128_000)),
+            ({"last_call_input_tokens": 800, "context_length": 128_000}, (0, 128_000)),
+            ({"last_call_input_tokens": 800, "context_length": 128_000, "valid": True}, (800, 128_000)),
             ({}, (0, 0)),
         ],
     )

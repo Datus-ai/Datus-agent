@@ -854,20 +854,8 @@ class ClaudeModel(OpenAICompatibleModel):
 
                     logger.debug(f"Turn {turn + 1}/{max_turns}")
 
-                    # Mid-turn compaction. This is the native equivalent of the
-                    # SDK's ``call_model_input_filter`` boundary: the previous
-                    # round's tool_results are appended, no tool is running and
-                    # the next model call has not been issued. When the
-                    # compactor rewrites the transcript it has already persisted
-                    # the returned list, so only the bookkeeping moves: the view
-                    # starts with this turn's prompt (``turn_start_index = 0``)
-                    # and every message in it is durable.
                     if context_rewriter is not None:
-                        rewritten_messages = await context_rewriter.rewrite_native_messages(messages)
-                        if rewritten_messages is not None:
-                            messages = rewritten_messages
-                            turn_start_index = 0
-                            persisted_message_index = len(messages)
+                        context_rewriter.anchor_turn(messages)
 
                     # Mid-run message insertion. The native loop is not driven by
                     # the SDK Runner, so ``call_model_input_filter`` never fires
@@ -893,6 +881,20 @@ class ClaudeModel(OpenAICompatibleModel):
                                 "content": [{"type": "text", "text": inserted_text}],
                             }
                         )
+
+                    if context_rewriter is not None:
+                        from datus.agent.node.context_rewriter import extract_user_text
+
+                        context_rewriter.pending_user_turns = sum(
+                            extract_user_text(item) is not None for item in messages[persisted_message_index:]
+                        )
+                        context_rewriter.set_request_context(instruction, tools)
+                        rewritten_messages = await context_rewriter.rewrite_native_messages(messages)
+                        if rewritten_messages is not None:
+                            messages = rewritten_messages
+                            turn_start_index = 0
+                            persisted_message_index = len(messages)
+                        instruction = context_rewriter.system_instruction
 
                     request_kwargs = dict(
                         model=self.model_name,
@@ -1768,9 +1770,7 @@ class ClaudeModel(OpenAICompatibleModel):
             "cache_creation_tokens": cache_creation_tokens,
             "reasoning_tokens": 0,
             "cache_hit_rate": (round(cached_tokens / cumulative_input_tokens, 3) if cumulative_input_tokens > 0 else 0),
-            "context_usage_ratio": (
-                round(total_tokens / context_length, 3) if context_length and total_tokens > 0 else 0
-            ),
+            "context_usage_ratio": (round(last_call_input_tokens / context_length, 3) if context_length else 0),
             "last_call_input_tokens": last_call_input_tokens,
         }
 

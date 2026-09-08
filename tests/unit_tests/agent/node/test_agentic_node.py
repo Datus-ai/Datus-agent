@@ -57,7 +57,7 @@ def _make_async_session_mock() -> MagicMock:
     """
     sess = MagicMock()
     sess.clear_session = AsyncMock()
-    sess.add_items = AsyncMock()
+    sess.replace_items = AsyncMock()
     # ``_major_compact`` reads the transcript before summarizing it; a plain
     # Responses-format user turn keeps ``detect_item_format`` on "responses".
     sess.get_items = AsyncMock(
@@ -855,9 +855,8 @@ class TestManualCompact:
         assert summarize_kwargs["item_format"] == "responses"
         assert summarize_kwargs["instruction"] == "sys"
         mock_model.generate_with_tools.assert_not_awaited()
-        mock_session.clear_session.assert_awaited_once()
-        mock_session.add_items.assert_awaited_once()
-        items = mock_session.add_items.await_args.args[0]
+        mock_session.replace_items.assert_awaited_once()
+        items = mock_session.replace_items.await_args.args[0]
         assert len(items) == 1
         # Continuation persists as an assistant ``output_text`` block so the
         # next turn sees the summary as a prior assistant utterance — the
@@ -904,7 +903,7 @@ class TestManualCompact:
         node = _make_node()
         node.session_id = "fail_test"
         mock_session = _make_async_session_mock()
-        mock_session.add_items.side_effect = RuntimeError("write failed")
+        mock_session.replace_items.side_effect = RuntimeError("write failed")
         node._session = mock_session
         mock_model = MagicMock()
         mock_model.summarize_items = AsyncMock(return_value={"content": "summary", "usage": {"output_tokens": 10}})
@@ -915,8 +914,7 @@ class TestManualCompact:
                     result = await node._major_compact(reason="fail_test")
         assert result["success"] is False
         assert result["mode"] == "major"
-        mock_session.clear_session.assert_awaited_once()
-        mock_session.add_items.assert_awaited_once()
+        mock_session.replace_items.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -945,11 +943,12 @@ class TestCountSessionTokens:
             status=ActionStatus.SUCCESS,
         )
         node.actions.append(action)
+        node.running_turn_usage = TokenUsage(session_total_tokens=5000)
         result = await node._count_session_tokens()
         assert result == 5000
 
     @pytest.mark.asyncio
-    async def test_count_tokens_falls_back_to_input_tokens(self):
+    async def test_count_tokens_does_not_use_cumulative_input(self):
         """When last_call_input_tokens is 0, fall back to input_tokens."""
         node = _make_node()
         action = ActionHistory.create_action(
@@ -962,10 +961,10 @@ class TestCountSessionTokens:
         )
         node.actions.append(action)
         result = await node._count_session_tokens()
-        assert result == 8000
+        assert result == 0
 
     @pytest.mark.asyncio
-    async def test_count_tokens_falls_back_to_turn_usage(self):
+    async def test_count_tokens_does_not_use_turn_billing(self):
         """When actions have no usage, fall back to last turn in turn_usage table."""
         node = _make_node()
         mock_session = MagicMock()
@@ -977,7 +976,7 @@ class TestCountSessionTokens:
         )
         node._session = mock_session
         result = await node._count_session_tokens()
-        assert result == 1234
+        assert result == 0
 
     @pytest.mark.asyncio
     async def test_count_tokens_empty_actions_empty_turn_usage(self):
@@ -1015,7 +1014,7 @@ class TestCountSessionTokens:
 
         result = await node._count_session_tokens()
         # Must NOT return 99999 from the depth>0 action; fall back to turn_usage's 321.
-        assert result == 321
+        assert result == 0
 
     @pytest.mark.asyncio
     async def test_count_tokens_breaks_at_root_user_message(self):
@@ -1053,7 +1052,7 @@ class TestCountSessionTokens:
 
         result = await node._count_session_tokens()
         # Reverse scan hits latest_user first -> break -> fall back to turn_usage (111).
-        assert result == 111
+        assert result == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1283,6 +1282,19 @@ class TestSessionManagement:
 
 
 class TestGetSessionInfoExtended:
+    def test_unknown_occupancy_does_not_report_available_capacity(self):
+        node = _make_simple_node(context_length=4000)
+        node.session_id = "sess_unknown"
+        node.running_turn_usage = TokenUsage(
+            input_tokens=8000, total_tokens=9000, context_length=4000, context_usage_valid=False
+        )
+
+        result = asyncio.run(node.get_session_info())
+
+        assert result["token_count"] == 0
+        assert result["context_usage_ratio"] == 0
+        assert result["context_remaining"] == 0
+
     def test_no_session_id_returns_inactive(self):
         node = _make_simple_node()
         result = asyncio.run(node.get_session_info())
@@ -1293,7 +1305,7 @@ class TestGetSessionInfoExtended:
         node = _make_simple_node(context_length=4000)
         node.session_id = "sess_x"
         node._session = MagicMock()
-        # Provide usage via actions (primary path for _count_session_tokens)
+        # Billing history must not override the measured context snapshot.
         action = ActionHistory.create_action(
             role=ActionRole.ASSISTANT,
             action_type="chat",
@@ -1304,11 +1316,13 @@ class TestGetSessionInfoExtended:
         )
         node.actions.append(action)
 
+        node.running_turn_usage = TokenUsage(session_total_tokens=500, context_length=4000)
         result = asyncio.run(node.get_session_info())
         assert result["session_id"] == "sess_x"
         assert result["active"] is True
         assert result["token_count"] == 500
         assert result["context_length"] == 4000
+        assert result["context_remaining"] == 3500
 
 
 # ---------------------------------------------------------------------------
@@ -1501,8 +1515,7 @@ class TestManualCompactExtended:
         assert node.session_id == "sess_compact"
         mock_model.summarize_items.assert_awaited_once()
         assert mock_model.summarize_items.await_args.kwargs["agent_name"] == node.get_node_name()
-        mock_session.clear_session.assert_awaited_once()
-        mock_session.add_items.assert_awaited_once()
+        mock_session.replace_items.assert_awaited_once()
 
     def test_anthropic_transcript_gets_anthropic_continuation(self):
         """A Claude-native session stores Anthropic messages; the continuation
@@ -1530,7 +1543,7 @@ class TestManualCompactExtended:
                     result = asyncio.run(node._major_compact(reason="t"))
         assert result["success"] is True
         assert mock_model.summarize_items.await_args.kwargs["item_format"] == "anthropic"
-        (continuation,) = mock_session.add_items.await_args.args[0]
+        (continuation,) = mock_session.replace_items.await_args.args[0]
         assert continuation == {"role": "assistant", "content": [{"type": "text", "text": ANY}]}
         assert "native summary" in continuation["content"][0]["text"]
 
@@ -1597,6 +1610,7 @@ class TestAutoCompactExtended:
             status=ActionStatus.SUCCESS,
         )
         node.actions.append(action)
+        node.running_turn_usage = TokenUsage(session_total_tokens=950, context_length=1000)
         node._pinned_model.summarize_items = AsyncMock(
             return_value={"content": "summary", "usage": {"output_tokens": 50}}
         )
@@ -1655,6 +1669,7 @@ class TestGetLastTurnUsage:
             status=ActionStatus.SUCCESS,
         )
         node.actions = [action]
+        node._restored_context_used = 600
         result = asyncio.run(node.get_last_turn_usage())
         assert isinstance(result, TokenUsage)
         assert result.input_tokens == 1000
@@ -1664,7 +1679,7 @@ class TestGetLastTurnUsage:
         assert result.session_total_tokens == 600
         assert result.context_length == 128000
 
-    def test_session_total_tokens_falls_back_to_input_tokens(self):
+    def test_session_total_tokens_does_not_fall_back_to_spend(self):
         """When last_call_input_tokens is missing/zero, fallback to input_tokens."""
         node = _make_node(context_length=128000)
         usage_dict = {
@@ -1684,7 +1699,7 @@ class TestGetLastTurnUsage:
         node.actions = [action]
         result = asyncio.run(node.get_last_turn_usage())
         assert isinstance(result, TokenUsage)
-        assert result.session_total_tokens == 1000
+        assert result.session_total_tokens == 0
 
     def test_skips_tool_actions(self):
         node = _make_node(context_length=64000)

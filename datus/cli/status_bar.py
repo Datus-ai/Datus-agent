@@ -357,46 +357,10 @@ class StatusBarProvider:
         node = self._current_node()
         if node is None:
             return 0
-        # Prefer the live ``running_turn_usage`` updated per-LLM-call so
-        # multi-step turns see the context-window bar tick up between tool
-        # calls instead of jumping only at turn end.
-        running = getattr(node, "running_turn_usage", None)
-        if running is not None:
-            try:
-                used = int(getattr(running, "session_total_tokens", 0) or 0)
-                if used > 0:
-                    return used
-            except (TypeError, ValueError):
-                pass
-        # Then the ``context_state`` mirror. ``persist_context_state`` keeps it
-        # current after every LLM call *and* after every compact, so it is
-        # never staler than the ``actions`` walk below — and between turns
-        # (``running_turn_usage`` cleared at turn end) it is the only source
-        # that reflects a compact. Checked in this order deliberately:
-        # ``AgenticNode._history_token_ratio_sync`` drives the compact trigger
-        # off the same precedence, and the bar must not contradict the gate.
-        try:
-            restored = int(getattr(node, "_restored_context_used", 0) or 0)
-            if restored > 0:
-                return restored
-        except (TypeError, ValueError):
-            pass
-        # Last resort for nodes where persistence is a no-op (no session_id or
-        # no resolvable state path): the last call's input tokens off the
-        # action history, only populated once the turn ends.
-        for action in reversed(getattr(node, "actions", []) or []):
-            output = getattr(action, "output", None)
-            if not isinstance(output, dict):
-                continue
-            usage = output.get("usage")
-            if not isinstance(usage, dict):
-                continue
-            used = usage.get("last_call_input_tokens") or usage.get("input_tokens") or 0
-            try:
-                return int(used)
-            except (TypeError, ValueError):
-                return 0
-        return 0
+        from datus.storage.session_state import read_context_state
+
+        state = read_context_state(node)
+        return state.last_call_input_tokens if state.valid else 0
 
     def _resolve_context_total(self) -> int:
         node = self._current_node()

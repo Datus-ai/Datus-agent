@@ -409,7 +409,20 @@ class _CompactingFakeNode:
     def _mid_turn_output_reserve(self) -> int:
         return 0
 
-    async def compact_mid_turn(self, items, *, item_format, base_tokens, tail_start, instruction, turn_request, reason):
+    async def compact_mid_turn(
+        self,
+        items,
+        *,
+        item_format,
+        base_tokens,
+        tail_start,
+        instruction,
+        turn_request,
+        reason,
+        first_call=False,
+        archive_history=False,
+        pending_user_turns=0,
+    ):
         from datus.agent.node.context_rewriter import build_mid_turn_view, estimate_items_tokens
 
         self.calls.append({"items": list(items), "base_tokens": base_tokens, "tail_start": tail_start})
@@ -481,7 +494,7 @@ class TestBuildRunConfigCompactsMidRun:
         from datus.agent.node.compact_prompts import MID_TURN_RESUME_PREFIX
 
         model = scripted_agents_model(["tool", "tool", "final"])
-        node = _CompactingFakeNode(budget_tokens=1)  # anything crosses the line
+        node = _CompactingFakeNode(budget_tokens=150)  # anything crosses the line
         await self._run(model, self._rewriter(node))
 
         assert model.turn == 3
@@ -491,7 +504,7 @@ class TestBuildRunConfigCompactsMidRun:
         assert any(item.get("role") == "assistant" and "SUMMARY" in json.dumps(item) for item in turn2)
         assert turn2[-1]["role"] == "user"
         assert turn2[-1]["content"][0]["text"].startswith(MID_TURN_RESUME_PREFIX)
-        # Turn 1 was untouched: the very first call of a run never compacts.
+        # The first input is checked but remains below this test's budget.
         assert model.inputs[0] == [{"role": "user", "content": "start"}]
 
     @pytest.mark.asyncio
@@ -499,7 +512,7 @@ class TestBuildRunConfigCompactsMidRun:
         """The SDK does not write the filter's output back, so turn 3 must be
         the same view plus turn 2's tool round — never the raw history."""
         model = scripted_agents_model(["tool", "tool", "final"])
-        node = _CompactingFakeNode(budget_tokens=1, once=True)
+        node = _CompactingFakeNode(budget_tokens=150, once=True)
         rewriter = self._rewriter(node)
         await self._run(model, rewriter)
 
@@ -523,7 +536,7 @@ class TestBuildRunConfigCompactsMidRun:
         node.running_turn_usage = TokenUsage(requests=1, session_total_tokens=120, context_length=1000)
         await self._run(model, self._rewriter(node))
 
-        assert node.calls[0]["base_tokens"] == 120
+        assert node.calls[1]["base_tokens"] == 120
         assert node.calls[0]["tail_start"] == 1
         assert "call_1" not in self._call_ids(model.inputs[1])
 
@@ -545,7 +558,7 @@ class TestBuildRunConfigCompactsMidRun:
 
         session = AdvancedSQLiteSession(session_id="sid_compact", db_path=str(tmp_path / "s.db"), create_tables=True)
         model = scripted_agents_model(["tool", "tool", "final"])
-        node = _CompactingFakeNode(budget_tokens=1, session=session, once=True)
+        node = _CompactingFakeNode(budget_tokens=150, session=session, once=True)
         await self._run(model, self._rewriter(node), session=session)
 
         stored = await session.get_items()
@@ -567,13 +580,13 @@ class TestBuildRunConfigCompactsMidRun:
         from datus.cli.execution_state import PendingInputQueue
 
         model = scripted_agents_model(["tool", "tool", "final"])
-        node = _CompactingFakeNode(budget_tokens=1, once=True)
+        node = _CompactingFakeNode(budget_tokens=150, once=True)
         queue = PendingInputQueue()
         await self._run(model, self._rewriter(node), queue=queue, tool_pushes="STOP_AND_CHECK")
 
         turn2, turn3 = model.inputs[1], model.inputs[2]
-        assert "STOP_AND_CHECK" in json.dumps(turn2[-1])
-        assert turn2[-2]["content"][0]["text"].startswith("[DATUS_COMPACT_RESUME]")
+        assert "STOP_AND_CHECK" in json.dumps(turn2[1])
+        assert turn2[-1]["content"][0]["text"].startswith("[DATUS_COMPACT_RESUME]")
         assert model.saw_on_turn(2, "STOP_AND_CHECK")
         assert turn3[: len(turn2)] == turn2
         assert len(queue) == 0
@@ -596,7 +609,7 @@ class TestBuildRunConfigCompactsMidRun:
     async def test_failures_trip_the_breaker_and_never_abort_the_run(self, scripted_agents_model):
         model = scripted_agents_model(["tool", "tool", "tool", "tool", "tool", "final"])
         failing = [{"mode": "major", "success": False}] * 10
-        node = _CompactingFakeNode(budget_tokens=1, results=failing)
+        node = _CompactingFakeNode(budget_tokens=150, results=failing)
         await self._run(model, self._rewriter(node))
 
         assert model.turn == 6  # the run completed
@@ -608,19 +621,108 @@ class TestBuildRunConfigCompactsMidRun:
         """``on_start`` resets the compactor, so a retried / follow-up run that
         re-reads the session is never spliced with a stale prefix."""
         model = scripted_agents_model(["tool", "final", "tool", "final"])
-        node = _CompactingFakeNode(budget_tokens=1, once=True)
+        node = _CompactingFakeNode(budget_tokens=150, once=True)
         rewriter = self._rewriter(node)
         await self._run(model, rewriter)
         assert rewriter.compactions == 1
         await self._run(model, rewriter)
-        # Run 2, call 1: plain prompt, no overlay, and no compaction attempt
-        # (the first call of a run never compacts); the per-run counter was
-        # reset by ``on_start``.
+        # Run 2 starts with a fresh overlay and checks the plain prompt again.
+        # This once-only fake reports noop after its earlier compaction.
         assert model.inputs[2] == [{"role": "user", "content": "start"}]
         assert rewriter.compactions == 0
         assert "SUMMARY" not in json.dumps(model.inputs[3])
 
     def test_rewriter_alone_installs_the_filter(self):
-        node = _CompactingFakeNode(budget_tokens=1)
+        node = _CompactingFakeNode(budget_tokens=150)
         rc = LLMBaseModel._build_run_config(MagicMock(), context_rewriter=self._rewriter(node))
         assert rc is not None and rc.call_model_input_filter is not None
+
+
+class TestUnifiedRequestCompaction:
+    @pytest.mark.asyncio
+    async def test_tool_discovery_failure_keeps_compacted_input_and_instructions(self, tmp_path):
+        """An unavailable MCP tool list must not resurrect pre-compaction history."""
+        from agents import Agent
+        from agents.run import CallModelData, ModelInputData
+
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+        from tests.unit_tests.agent.node.test_compact_helpers import TestMeasuredContextContracts
+
+        node = TestMeasuredContextContracts._node(tmp_path)
+        raw = [
+            {"role": "user", "content": "old question"},
+            {"role": "assistant", "content": "OLD_HISTORY " * 40000},
+            {"role": "user", "content": "current request"},
+        ]
+        await node._session.add_items(raw)
+        rewriter = MidTurnCompactor(node, refresh_instruction=lambda: "FRESH_SYSTEM")
+        config = LLMBaseModel._build_run_config(MagicMock(), context_rewriter=rewriter, session=node._session)
+        agent = Agent(name="test", instructions="OLD_SYSTEM")
+        with patch.object(Agent, "get_all_tools", new=AsyncMock(return_value=[])) as discovery:
+            first = await config.call_model_input_filter(
+                CallModelData(ModelInputData(input=raw, instructions="OLD_SYSTEM"), agent, None)
+            )
+            assert first.instructions == "FRESH_SYSTEM"
+            assert "OLD_HISTORY" not in json.dumps(first.input)
+            tail = [{"role": "assistant", "content": "new response"}]
+            discovery.side_effect = RuntimeError("MCP server unavailable")
+            following = await config.call_model_input_filter(
+                CallModelData(ModelInputData(input=raw + tail, instructions="OLD_SYSTEM"), agent, None)
+            )
+        assert following.input == first.input + tail
+        assert following.instructions == "FRESH_SYSTEM"
+        node._session.close()
+
+    @pytest.mark.asyncio
+    async def test_first_request_rewrites_history_and_refreshes_instructions(self, tmp_path, scripted_agents_model):
+        """Both SDK requests use the rewritten history and refreshed system instruction."""
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+        from tests.unit_tests.agent.node.test_compact_helpers import TestMeasuredContextContracts
+
+        class RecordingModel(scripted_agents_model):
+            async def stream_response(self, system_instructions, input, *args, **kwargs):
+                self.instructions.append(system_instructions)
+                async for event in super().stream_response(system_instructions, input, *args, **kwargs):
+                    yield event
+
+        node = TestMeasuredContextContracts._node(tmp_path)
+        await node._session.add_items(
+            [
+                {"role": "user", "content": "old question"},
+                {"role": "assistant", "content": "OLD_HISTORY " * 40000},
+            ]
+        )
+        node._compact_cfg.major.mid_turn_enabled = False
+        node._compact_cfg.minor.mid_turn_enabled = False
+        model = RecordingModel(["tool", "final"])
+        model.instructions = []
+        rewriter = MidTurnCompactor(node, refresh_instruction=lambda: "FRESH_SYSTEM")
+        await TestBuildRunConfigCompactsMidRun._run(model, rewriter, session=node._session)
+        assert model.instructions == ["FRESH_SYSTEM", "FRESH_SYSTEM"]
+        assert all("OLD_HISTORY" not in json.dumps(items) for items in model.inputs)
+        assert all("start" in json.dumps(items) for items in model.inputs)
+        stored = await node._session.get_items()
+        assert stored[: len(model.inputs[-1])] == model.inputs[-1]
+        assert len(stored) == len(model.inputs[-1]) + 1
+        node._session.close()
+
+    @pytest.mark.asyncio
+    async def test_insert_is_included_in_first_request_capacity_check(self, scripted_agents_model):
+        """Queued input is part of the checked view and preserves the original request."""
+        from datus.cli.execution_state import PendingInputQueue
+
+        model = scripted_agents_model(["final"])
+        node = _CompactingFakeNode(budget_tokens=150, once=True)
+        queue = PendingInputQueue()
+        inserted = "USER_INSERT " * 100
+        queue.push(inserted)
+        await TestBuildRunConfigCompactsMidRun._run(
+            model,
+            TestBuildRunConfigCompactsMidRun._rewriter(node),
+            queue=queue,
+        )
+        assert inserted in json.dumps(node.calls[0]["items"])
+        sent = model.inputs[0]
+        assert sent[0] == {"role": "user", "content": "start"}
+        assert inserted in json.dumps(sent[1])
+        assert "SUMMARY" in json.dumps(sent)

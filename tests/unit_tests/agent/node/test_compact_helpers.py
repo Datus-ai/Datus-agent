@@ -264,10 +264,11 @@ class TestHistoryTokenRatioSync:
             status=ActionStatus.SUCCESS,
         )
         node.actions.append(action)
+        node.running_turn_usage = TokenUsage(session_total_tokens=700, context_length=1000)
         # 700/1000 = 0.7 — prefer last_call_input_tokens over input_tokens.
         assert node._history_token_ratio_sync() == 0.7
 
-    def test_falls_back_to_input_tokens(self, tmp_path):
+    def test_cumulative_input_is_not_an_occupancy_fallback(self, tmp_path):
         node = _build_node(tmp_path)
         node._pinned_model = MagicMock()
         node._pinned_model.context_length.return_value = 1000
@@ -280,7 +281,7 @@ class TestHistoryTokenRatioSync:
             status=ActionStatus.SUCCESS,
         )
         node.actions.append(action)
-        assert node._history_token_ratio_sync() == 0.4
+        assert node._history_token_ratio_sync() == 0
 
     def test_stops_at_user_action_boundary(self, tmp_path):
         """The scan walks back from the latest action and stops at the
@@ -340,7 +341,7 @@ class TestHistoryTokenRatioSync:
         node.running_turn_usage = TokenUsage(session_total_tokens=500, context_length=0)
         assert node._history_token_ratio_sync() == 0.25
 
-    def test_running_turn_usage_falls_back_to_input_tokens(self, tmp_path):
+    def test_running_spend_does_not_replace_unknown_occupancy(self, tmp_path):
         """When ``session_total_tokens`` is 0, the snapshot's ``input_tokens``
         is used as the live occupancy signal.
         """
@@ -348,9 +349,9 @@ class TestHistoryTokenRatioSync:
         node._pinned_model = MagicMock()
         node._pinned_model.context_length.return_value = 1000
         node.running_turn_usage = TokenUsage(session_total_tokens=0, input_tokens=600, context_length=1000)
-        assert node._history_token_ratio_sync() == 0.6
+        assert node._history_token_ratio_sync() == 0
 
-    def test_empty_running_turn_usage_does_not_mask_actions_fallback(self, tmp_path):
+    def test_unknown_snapshot_does_not_revive_stale_actions(self, tmp_path):
         """A zero-token snapshot must not short-circuit the actions fallback —
         the scan still surfaces the most recent usable usage record.
         """
@@ -368,7 +369,7 @@ class TestHistoryTokenRatioSync:
                 status=ActionStatus.SUCCESS,
             )
         )
-        assert node._history_token_ratio_sync() == 0.7
+        assert node._history_token_ratio_sync() == 0
 
 
 class TestResolveUserTurnCutoff:
@@ -574,7 +575,7 @@ class TestCompactMidTurn:
             return_value={"content": "## Summary\nprogress", "usage": {"output_tokens": 12}}
         )
         node._pinned_model = model
-        node._session = MagicMock(clear_session=AsyncMock(), add_items=AsyncMock())
+        node._session = MagicMock(replace_items=AsyncMock())
         node._session_manager = MagicMock()
         node._session_manager.checkpoint_turn.return_value = "CHECKPOINT"
         # ``compact_mid_turn`` falls back to the node's system prompt when the
@@ -607,7 +608,7 @@ class TestCompactMidTurn:
         result = await node.compact_mid_turn(items, item_format="responses", base_tokens=100, tail_start=len(items))
         assert result["mode"] == "noop" and result["success"] is True
         assert result["items"] is items
-        node._session.clear_session.assert_not_awaited()
+        node._session.replace_items.assert_not_awaited()
         node._pinned_model.summarize_items.assert_not_awaited()
         node.action_bus.put.assert_not_called()
 
@@ -648,10 +649,9 @@ class TestCompactMidTurn:
         node._pinned_model.summarize_items.assert_not_awaited()
         node.action_bus.put.assert_not_called()
         # Persisted exactly what is returned.
-        node._session.clear_session.assert_awaited_once()
-        node._session.add_items.assert_awaited_once_with(view)
+        node._session.replace_items.assert_awaited_once_with(view)
         # Live occupancy and rollback boundary follow the rewrite.
-        assert node.running_turn_usage.session_total_tokens == estimate_items_tokens(view)
+        assert node.running_turn_usage.session_total_tokens == 0
         node._session_manager.checkpoint_turn.assert_called_once_with("sid_test")
         assert node.mid_turn_rewrite_checkpoint == "CHECKPOINT"
         node._session_manager.delete_system_prompt_snapshot.assert_not_called()
@@ -696,7 +696,7 @@ class TestCompactMidTurn:
         assert view[1]["content"][0]["text"].endswith(f"`read_file({result['history_jsonl']!r})`")
         assert view[2]["role"] == "user" and view[2]["content"][0]["text"].startswith("[DATUS_COMPACT_RESUME]")
         assert len(view) == 3
-        node._session.add_items.assert_awaited_once_with(view)
+        node._session.replace_items.assert_awaited_once_with(view)
         # Full pre-compaction transcript dumped for recovery, one item per line.
         assert result["history_jsonl"]
         dumped = Path(result["history_jsonl"]).read_text(encoding="utf-8").splitlines()
@@ -719,7 +719,7 @@ class TestCompactMidTurn:
         assert result["mode"] == "minor" and result["success"] is True
         assert result["major_error"] == "llm down"
         assert result["archived_count"] == 2
-        node._session.add_items.assert_awaited_once_with(result["items"])
+        node._session.replace_items.assert_awaited_once_with(result["items"])
         assert not any(it.get("role") == "assistant" for it in result["items"])
         # The pinned progress hint is still cleared by a terminal action.
         types = [c.args[0].action_type for c in node.action_bus.put.call_args_list]
@@ -736,13 +736,13 @@ class TestCompactMidTurn:
         assert result["mode"] == "noop" and result["success"] is True
         assert result["major_error"] == "llm down"
         assert result["items"] is items
-        node._session.clear_session.assert_not_awaited()
-        node._session.add_items.assert_not_awaited()
+        node._session.replace_items.assert_not_awaited()
+        node._session.replace_items.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_persistence_failure_returns_the_original_items(self, tmp_path):
         node = self._node(tmp_path)
-        node._session.add_items = AsyncMock(side_effect=RuntimeError("disk"))
+        node._session.replace_items = AsyncMock(side_effect=RuntimeError("disk"))
         items = self._items(4, size=3000)
         result = await node.compact_mid_turn(items, item_format="responses", base_tokens=950, tail_start=len(items))
 
@@ -803,7 +803,7 @@ class TestCompactMidTurnWithRealSession:
     @pytest.mark.asyncio
     async def test_session_equals_the_returned_view(self, tmp_path):
         """After the rewrite, SQLite holds exactly the list the model is sent."""
-        from agents.extensions.memory import AdvancedSQLiteSession
+        from datus.models.sqlite_session import DatusSQLiteSession as AdvancedSQLiteSession
 
         session = AdvancedSQLiteSession(session_id="sid_test", db_path=str(tmp_path / "s.db"), create_tables=True)
         node = TestCompactMidTurn._node(tmp_path)
@@ -846,7 +846,7 @@ class TestOccupancyAfterSessionRewrite:
         model.context_length.return_value = cls.WINDOW
         model.summarize_items = AsyncMock(return_value={"content": "## Summary\nrecap", "usage": {"output_tokens": 40}})
         node._pinned_model = model
-        node._session = MagicMock(clear_session=AsyncMock(), add_items=AsyncMock())
+        node._session = MagicMock(replace_items=AsyncMock())
         node._session_manager = MagicMock()
         node._get_system_prompt = lambda: "SYS"
         node.running_turn_usage = TokenUsage(
@@ -877,8 +877,7 @@ class TestOccupancyAfterSessionRewrite:
         result = await node.compact(mode="major", reason="cli_manual")
 
         assert result["success"] is True
-        persisted = node._session.add_items.await_args.args[0]
-        assert node.running_turn_usage.session_total_tokens == estimate_items_tokens(persisted)
+        assert node.running_turn_usage.session_total_tokens == 0
         assert node.running_turn_usage.session_total_tokens < self.PRE_COMPACT
         assert node._history_token_ratio_sync() < node._compact_cfg.major.token_threshold
 
@@ -895,8 +894,7 @@ class TestOccupancyAfterSessionRewrite:
         result = await node.compact(mode="minor", reason="pre_user_turn")
 
         assert result["success"] is True and result["archived_count"] > 0
-        view = node._session.add_items.await_args.args[0]
-        assert node.running_turn_usage.session_total_tokens == estimate_items_tokens(view)
+        assert node.running_turn_usage.session_total_tokens == 0
         assert node.running_turn_usage.session_total_tokens < self.PRE_COMPACT
 
     @pytest.mark.asyncio
@@ -914,35 +912,13 @@ class TestOccupancyAfterSessionRewrite:
         assert await node._decide_compact_mode() == "noop"
 
     @pytest.mark.asyncio
-    async def test_occupancy_is_reset_when_the_rewrite_fails_after_clearing(self, tmp_path):
-        """``clear_session`` succeeded and ``add_items`` did not: the
-        pre-compact history is gone either way, so keeping its token count
-        re-triggers major on a session that now holds nothing at all."""
+    async def test_failed_atomic_rewrite_preserves_the_measurement(self, tmp_path):
+        """A failed transaction keeps both the history and its old measurement."""
         node = self._node(tmp_path)
         node._session.get_items = AsyncMock(return_value=self._history())
-        node._session.add_items = AsyncMock(side_effect=RuntimeError("disk full"))
-
+        node._session.replace_items = AsyncMock(side_effect=RuntimeError("disk full"))
         result = await node.compact(mode="major", reason="cli_manual")
-
         assert result["success"] is False
-        node._session.clear_session.assert_awaited_once()
-        assert node.running_turn_usage.session_total_tokens < self.PRE_COMPACT
-        assert node._history_token_ratio_sync() < node._compact_cfg.major.token_threshold
-
-    @pytest.mark.asyncio
-    async def test_occupancy_survives_a_failure_to_clear_the_session(self, tmp_path):
-        """The other half of the same branch: ``clear_session`` failed, so the
-        full history is still in place and the pre-compact figure is still the
-        honest one. Lowering it here would let the next call ship the whole
-        history past a gate that believes the session is tiny."""
-        node = self._node(tmp_path)
-        node._session.get_items = AsyncMock(return_value=self._history())
-        node._session.clear_session = AsyncMock(side_effect=RuntimeError("session locked"))
-
-        result = await node.compact(mode="major", reason="cli_manual")
-
-        assert result["success"] is False
-        node._session.add_items.assert_not_awaited()
         assert node.running_turn_usage.session_total_tokens == self.PRE_COMPACT
         assert node._history_token_ratio_sync() >= node._compact_cfg.major.token_threshold
 
@@ -962,9 +938,9 @@ class TestOccupancyAfterSessionRewrite:
         result = await node.compact(mode="major", reason="cli_manual")
         assert result["success"] is True
 
-        persisted = node._session.add_items.await_args.args[0]
         on_disk = ContextState.load(state_path)
-        assert on_disk.last_call_input_tokens == estimate_items_tokens(persisted)
+        assert on_disk.last_call_input_tokens == 0
+        assert on_disk.valid is False
         assert on_disk.context_length == self.WINDOW
         # The in-memory mirror agrees, so a between-turns status-bar read and a
         # post-restart read cannot disagree.
@@ -1002,4 +978,151 @@ class TestOccupancyAfterSessionRewrite:
             result = await node.compact(mode="major", reason="cli_manual")
 
         assert result["success"] is True
-        node._session.add_items.assert_awaited_once()
+        node._session.replace_items.assert_awaited_once()
+
+
+class TestMeasuredContextContracts:
+    @staticmethod
+    def _node(tmp_path):
+        from datus.models.session_manager import SessionManager
+
+        node = TestOccupancyAfterSessionRewrite._node(tmp_path)
+        node._session_manager = SessionManager(session_dir=str(tmp_path / "sessions"))
+        node._session = node.session_manager.get_session(node.session_id)
+        node._agent_state_file = lambda: tmp_path / "state.json"
+        return node
+
+    @pytest.mark.asyncio
+    async def test_compact_invalidates_measured_usage_until_next_response(self, tmp_path):
+        """A rewritten history has no measured occupancy, including after resume."""
+        from datus.agent.node.token_usage_hook import TokenUsageHook
+        from datus.cli.status_bar import StatusBarProvider
+
+        node = self._node(tmp_path)
+        await node._session.add_items(TestOccupancyAfterSessionRewrite._history())
+        node.persist_context_state(95_000, 100_000)
+        result = await node.compact(mode="major")
+        assert result["success"] is True
+        assert node.running_turn_usage.session_total_tokens == 0
+        assert node.running_turn_usage.total_tokens == 97_000
+        bar = StatusBarProvider.__new__(StatusBarProvider)
+        bar._current_node = lambda: node
+        assert bar._resolve_context_used() == 0
+        node.running_turn_usage = None
+        node.restore_context_state()
+        assert await node._count_session_tokens() == 0
+        TokenUsageHook(node)._publish(
+            {"requests": 1, "input_tokens": 1200, "last_call_input_tokens": 1200, "output_tokens": 20}
+        )
+        assert bar._resolve_context_used() == 1200
+        assert node.running_turn_usage.context_usage_ratio == 0.012
+        node._session.close()
+
+    @pytest.mark.asyncio
+    async def test_rewrite_updates_memory_without_a_state_file(self, tmp_path):
+        """A missing state path must not leave pre-rewrite occupancy in memory."""
+        node = self._node(tmp_path)
+        node.persist_context_state(95_000, 100_000)
+        node._agent_state_file = lambda: None
+        node.running_turn_usage = None
+        await node._replace_session_items([{"role": "assistant", "content": "recap"}])
+        assert node._history_token_ratio_sync() == 0
+        node._session.close()
+
+    @pytest.mark.asyncio
+    async def test_rewrite_publishes_a_safe_rollback_boundary(self, tmp_path):
+        """ESC keeps the rewritten history and removes only subsequent messages."""
+        node = self._node(tmp_path)
+        await node._session.add_items(TestOccupancyAfterSessionRewrite._history())
+        old_checkpoint = node.session_manager.checkpoint_turn(node.session_id)
+        result = await node.compact(mode="major", reason="pre_user_turn")
+        assert result["success"] is True
+        rewritten = await node._session.get_items()
+        await node._session.add_items([{"role": "user", "content": "cancel this"}])
+        checkpoint = getattr(node, "mid_turn_rewrite_checkpoint", None) or old_checkpoint
+        node.session_manager.rollback_turn(node.session_id, checkpoint)
+        assert await node._session.get_items() == rewritten
+        node._session.close()
+
+    def test_response_ratio_uses_last_call_instead_of_cumulative_spend(self, tmp_path):
+        """Repeated model calls do not inflate context occupancy with billing totals."""
+        from datus.agent.node.token_usage_hook import TokenUsageHook
+
+        node = self._node(tmp_path)
+        TokenUsageHook(node)._publish(
+            {
+                "requests": 3,
+                "input_tokens": 180000,
+                "last_call_input_tokens": 95000,
+                "total_tokens": 185000,
+                "context_usage_ratio": 1.85,
+            }
+        )
+        assert node.running_turn_usage.context_usage_ratio == 0.95
+        node._session.close()
+
+    @pytest.mark.asyncio
+    async def test_first_request_checks_and_rewrites_large_input(self, tmp_path):
+        """The first call uses the same capacity check as later model calls."""
+        from datus.agent.node.context_rewriter import MidTurnCompactor
+
+        node = self._node(tmp_path)
+        node._compact_cfg.minor.enabled = False
+        items = [
+            {"role": "user", "content": "old"},
+            {"role": "assistant", "content": "x" * 400000},
+            {"role": "user", "content": "current request"},
+        ]
+        await node._session.add_items(items)
+        rewriter = MidTurnCompactor(node)
+        view = await rewriter.rewrite_sdk_input(items)
+        assert estimate_items_tokens(view) < estimate_items_tokens(items)
+        assert any(item.get("content") == "current request" for item in view)
+        node._session.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_rewrite_finishes_bookkeeping_before_esc_rollback(tmp_path):
+    """Cancellation cannot race a background commit with the old ESC checkpoint."""
+    import asyncio
+    import sqlite3
+    import threading
+
+    from datus.models.sqlite_session import DatusSQLiteSession
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def pause_insert():
+        entered.set()
+        release.wait(timeout=2)
+        return 0
+
+    class BlockingSession(DatusSQLiteSession):
+        def _get_connection(self):
+            conn = super()._get_connection()
+            conn.create_function("pause_insert", 0, pause_insert)
+            return conn
+
+    node = TestMeasuredContextContracts._node(tmp_path)
+    await node._session.add_items([{"role": "user", "content": "old"}])
+    original_session = node._session
+    db_path = tmp_path / "sessions" / f"{node.session_id}.db"
+    node._session = BlockingSession(session_id=node.session_id, db_path=db_path, create_tables=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TRIGGER pause_rewrite BEFORE INSERT ON message_structure BEGIN SELECT pause_insert(); END")
+    rewritten = [{"role": "assistant", "content": "preserve this recap"}]
+    task = asyncio.create_task(node._replace_session_items(rewritten))
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert node._session_rewritten_this_turn is True
+    assert node.get_context_usage().valid is False
+    node.session_manager.rollback_turn(node.session_id, node.mid_turn_rewrite_checkpoint)
+    assert await node._session.get_items() == rewritten
+    node._session.close()
+    original_session.close()

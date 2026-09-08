@@ -458,7 +458,7 @@ class TestStatusBarProviderTokens:
         assert state.cumulative_tokens == 0
         assert state.cached_tokens == 0
 
-    def test_context_used_picks_last_call_input_from_latest_assistant_action(self):
+    def test_context_used_ignores_unvalidated_action_history(self):
         actions = [
             SimpleNamespace(output={"usage": {"last_call_input_tokens": 1024}}),
             SimpleNamespace(output={"usage": {"last_call_input_tokens": 8500}}),
@@ -466,14 +466,14 @@ class TestStatusBarProviderTokens:
         node = SimpleNamespace(model=None, session_id=None, actions=actions, context_length=128_000)
         provider = StatusBarProvider(self._make_cli(node))
         state = provider.current_state()
-        assert state.context_used == 8500
+        assert state.context_used == 0
         assert state.context_total == 128_000
 
-    def test_context_used_falls_back_to_input_tokens(self):
+    def test_context_used_does_not_fall_back_to_cumulative_input(self):
         actions = [SimpleNamespace(output={"usage": {"input_tokens": 4200}})]
         node = SimpleNamespace(model=None, session_id=None, actions=actions, context_length=0)
         provider = StatusBarProvider(self._make_cli(node))
-        assert provider.current_state().context_used == 4200
+        assert provider.current_state().context_used == 0
 
     def test_context_used_zero_when_no_usage_data(self):
         node = SimpleNamespace(model=None, session_id=None, actions=[], context_length=None)

@@ -64,7 +64,7 @@ def _mock_session(items):
     session = MagicMock()
     session.get_items = AsyncMock(return_value=items)
     session.clear_session = AsyncMock()
-    session.add_items = AsyncMock()
+    session.replace_items = AsyncMock()
     return session
 
 
@@ -125,7 +125,7 @@ async def test_minor_compact_archives_tool_io_of_older_user_turns(tmp_path):
     assert result["success"]
     # First 2 user turns × 1 tool pair × output only = 2 archives (args never archived).
     assert result["archived_count"] == 2
-    rewritten = node._session.add_items.await_args.args[0]
+    rewritten = node._session.replace_items.await_args.args[0]
     # Turn 0 (items 1-2) and turn 1 (items 4-5): output archived, args preserved.
     assert rewritten[1]["arguments"] == "x" * 500
     assert rewritten[2]["output"].startswith(ARCHIVED_MARKER)
@@ -147,7 +147,7 @@ async def test_minor_compact_preserves_recent_user_turns(tmp_path):
     node._session = _mock_session(items)
 
     await node._minor_compact(reason="t")
-    rewritten = node._session.add_items.await_args.args[0]
+    rewritten = node._session.replace_items.await_args.args[0]
     # User-turn 2 (items 6-8) and user-turn 3 (items 9-11) must remain raw —
     # args were never archive-eligible, and recent output stays verbatim.
     assert rewritten[7]["arguments"] == "x" * 500
@@ -170,7 +170,7 @@ async def test_minor_compact_idempotent_second_pass(tmp_path):
     files_after_first = sorted(p.name for p in node._archive.dir.iterdir())
 
     # Second pass — feed the rewritten items back as if loaded from session.
-    rewritten = node._session.add_items.await_args.args[0]
+    rewritten = node._session.replace_items.await_args.args[0]
     node._session = _mock_session(rewritten)
     # Reset high-water mark so the scan would naively revisit the prefix.
     node._compacted_until = 0
@@ -192,7 +192,7 @@ async def test_minor_compact_correct_when_state_lost(tmp_path):
     items = _build_turns(3, output_long=True)
     node._session = _mock_session(items)
     await node._minor_compact(reason="first")
-    rewritten = node._session.add_items.await_args.args[0]
+    rewritten = node._session.replace_items.await_args.args[0]
 
     # Simulate node rebuild on resume with no state file.
     fresh = _build_node(tmp_path, keep_recent_user_turns=1, archive_threshold=100)
@@ -214,7 +214,7 @@ async def test_minor_compact_noop_when_too_few_user_turns(tmp_path):
 
     result = await node._minor_compact(reason="t")
     assert result["archived_count"] == 0
-    node._session.add_items.assert_not_called()
+    node._session.replace_items.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -245,7 +245,7 @@ async def test_minor_compact_archives_to_disk_byte_equal(tmp_path):
     node._session = _mock_session(items)
 
     await node._minor_compact(reason="t")
-    rewritten = node._session.add_items.await_args.args[0]
+    rewritten = node._session.replace_items.await_args.args[0]
     output_marker = rewritten[2]["output"]
     archived_path = output_marker.split("path=", 1)[1].split(" preview=", 1)[0]
     assert Path(archived_path).read_bytes() == original.encode("utf-8")

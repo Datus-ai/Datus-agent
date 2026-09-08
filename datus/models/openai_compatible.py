@@ -1803,15 +1803,15 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         cache_hit_rate = round(cached_tokens / input_tokens, 3) if input_tokens > 0 else 0
 
-        context_usage_ratio = 0
-        max_context = self.context_length()
-        if max_context and total_tokens > 0:
-            context_usage_ratio = round(total_tokens / max_context, 3)
-
         # Last model call's input_tokens = real context window usage
         last_call_input_tokens = 0
         if hasattr(usage, "request_usage_entries") and usage.request_usage_entries:
             last_call_input_tokens = getattr(usage.request_usage_entries[-1], "input_tokens", 0)
+
+        context_usage_ratio = 0
+        max_context = self.context_length()
+        if max_context:
+            context_usage_ratio = round(last_call_input_tokens / max_context, 3)
 
         return {
             "requests": getattr(usage, "requests", 0),
