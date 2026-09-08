@@ -14,7 +14,7 @@ cutoff resolver.
 import json
 from pathlib import Path
 from typing import AsyncGenerator, Optional
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -819,3 +819,187 @@ class TestCompactMidTurnWithRealSession:
         assert stored == result["items"]
         assert not any(it.get("type") == "function_call" for it in stored)
         session.close()
+
+
+class TestOccupancyAfterSessionRewrite:
+    """Every compact mode shrinks the persisted history, so the occupancy meter
+    has to follow it down.
+
+    ``running_turn_usage`` is only refreshed by ``TokenUsageHook.on_llm_end``,
+    and a compact's own summarization call runs with no hooks — so without an
+    explicit reset the meter keeps describing the pre-compact context. That
+    figure is what ``_history_token_ratio_sync`` reads, so
+    ``_decide_compact_mode`` picks major again on the session that was just
+    compacted, paying for an LLM summarization every turn. The reset lives in
+    ``_replace_session_items``, the single choke point every mode rewrites
+    through, so no mode can skip it.
+    """
+
+    WINDOW = 100_000
+    PRE_COMPACT = 95_000
+    TURN_OUTPUT = 2_000
+
+    @classmethod
+    def _node(cls, tmp_path):
+        node = _build_node(tmp_path)
+        model = MagicMock()
+        model.context_length.return_value = cls.WINDOW
+        model.summarize_items = AsyncMock(return_value={"content": "## Summary\nrecap", "usage": {"output_tokens": 40}})
+        node._pinned_model = model
+        node._session = MagicMock(clear_session=AsyncMock(), add_items=AsyncMock())
+        node._session_manager = MagicMock()
+        node._get_system_prompt = lambda: "SYS"
+        node.running_turn_usage = TokenUsage(
+            requests=3,
+            input_tokens=cls.PRE_COMPACT,
+            output_tokens=cls.TURN_OUTPUT,
+            total_tokens=cls.PRE_COMPACT + cls.TURN_OUTPUT,
+            session_total_tokens=cls.PRE_COMPACT,
+            context_usage_ratio=cls.PRE_COMPACT / cls.WINDOW,
+            context_length=cls.WINDOW,
+        )
+        return node
+
+    @staticmethod
+    def _history(n_turns=6, size=4000):
+        items = []
+        for i in range(n_turns):
+            items.append({"role": "user", "content": f"q{i}"})
+            items.append({"type": "function_call", "call_id": f"c{i}", "name": "execute_sql", "arguments": "{}"})
+            items.append({"type": "function_call_output", "call_id": f"c{i}", "output": "r" * size})
+        return items
+
+    @pytest.mark.asyncio
+    async def test_major_compact_drops_the_occupancy_to_the_rewritten_session(self, tmp_path):
+        node = self._node(tmp_path)
+        node._session.get_items = AsyncMock(return_value=self._history())
+
+        result = await node.compact(mode="major", reason="cli_manual")
+
+        assert result["success"] is True
+        persisted = node._session.add_items.await_args.args[0]
+        assert node.running_turn_usage.session_total_tokens == estimate_items_tokens(persisted)
+        assert node.running_turn_usage.session_total_tokens < self.PRE_COMPACT
+        assert node._history_token_ratio_sync() < node._compact_cfg.major.token_threshold
+
+    @pytest.mark.asyncio
+    async def test_minor_compact_drops_the_occupancy_to_the_archived_view(self, tmp_path):
+        """The archive pass moves tool output to disk, which shrinks the
+        session just as much — the meter must not keep over-reporting the
+        pre-archive size for the rest of the session."""
+        node = self._node(tmp_path)
+        node._compact_cfg.minor.archive_threshold = 100
+        node._compact_cfg.minor.keep_recent_user_turns = 2
+        node._session.get_items = AsyncMock(return_value=self._history())
+
+        result = await node.compact(mode="minor", reason="pre_user_turn")
+
+        assert result["success"] is True and result["archived_count"] > 0
+        view = node._session.add_items.await_args.args[0]
+        assert node.running_turn_usage.session_total_tokens == estimate_items_tokens(view)
+        assert node.running_turn_usage.session_total_tokens < self.PRE_COMPACT
+
+    @pytest.mark.asyncio
+    async def test_a_compacted_session_no_longer_decides_on_major(self, tmp_path):
+        """The loop itself: the same dispatcher that chose major before the
+        compact must not choose it again straight afterwards."""
+        node = self._node(tmp_path)
+        node._compact_cfg.minor.enabled = False  # isolate the token-threshold branch
+        node._session.get_items = AsyncMock(return_value=self._history())
+
+        assert await node._decide_compact_mode() == "major"
+        result = await node.compact(mode="major", reason="pre_user_turn")
+
+        assert result["success"] is True
+        assert await node._decide_compact_mode() == "noop"
+
+    @pytest.mark.asyncio
+    async def test_occupancy_is_reset_when_the_rewrite_fails_after_clearing(self, tmp_path):
+        """``clear_session`` succeeded and ``add_items`` did not: the
+        pre-compact history is gone either way, so keeping its token count
+        re-triggers major on a session that now holds nothing at all."""
+        node = self._node(tmp_path)
+        node._session.get_items = AsyncMock(return_value=self._history())
+        node._session.add_items = AsyncMock(side_effect=RuntimeError("disk full"))
+
+        result = await node.compact(mode="major", reason="cli_manual")
+
+        assert result["success"] is False
+        node._session.clear_session.assert_awaited_once()
+        assert node.running_turn_usage.session_total_tokens < self.PRE_COMPACT
+        assert node._history_token_ratio_sync() < node._compact_cfg.major.token_threshold
+
+    @pytest.mark.asyncio
+    async def test_occupancy_survives_a_failure_to_clear_the_session(self, tmp_path):
+        """The other half of the same branch: ``clear_session`` failed, so the
+        full history is still in place and the pre-compact figure is still the
+        honest one. Lowering it here would let the next call ship the whole
+        history past a gate that believes the session is tiny."""
+        node = self._node(tmp_path)
+        node._session.get_items = AsyncMock(return_value=self._history())
+        node._session.clear_session = AsyncMock(side_effect=RuntimeError("session locked"))
+
+        result = await node.compact(mode="major", reason="cli_manual")
+
+        assert result["success"] is False
+        node._session.add_items.assert_not_awaited()
+        assert node.running_turn_usage.session_total_tokens == self.PRE_COMPACT
+        assert node._history_token_ratio_sync() >= node._compact_cfg.major.token_threshold
+
+    @pytest.mark.asyncio
+    async def test_post_compact_occupancy_is_persisted_for_the_next_process(self, tmp_path):
+        """``restore_context_state`` re-hydrates this file on resume, so a
+        pre-compact figure left on disk outlives the process and fires a major
+        compact before the new one's first LLM call — where the in-memory
+        mirror alone cannot save it."""
+        from datus.storage.session_state import ContextState
+
+        node = self._node(tmp_path)
+        state_path = tmp_path / "agent_state.json"
+        node._agent_state_file = lambda: state_path
+        node._session.get_items = AsyncMock(return_value=self._history())
+
+        result = await node.compact(mode="major", reason="cli_manual")
+        assert result["success"] is True
+
+        persisted = node._session.add_items.await_args.args[0]
+        on_disk = ContextState.load(state_path)
+        assert on_disk.last_call_input_tokens == estimate_items_tokens(persisted)
+        assert on_disk.context_length == self.WINDOW
+        # The in-memory mirror agrees, so a between-turns status-bar read and a
+        # post-restart read cannot disagree.
+        assert node._restored_context_used == on_disk.last_call_input_tokens
+
+    @pytest.mark.asyncio
+    async def test_the_snapshot_ratio_agrees_with_the_new_occupancy(self, tmp_path):
+        """``context_usage_ratio`` describes the same quantity as
+        ``session_total_tokens``; left stale, a reader that picks it (the
+        natural field name for a compact gate) reopens the loop."""
+        node = self._node(tmp_path)
+        node._session.get_items = AsyncMock(return_value=self._history())
+
+        result = await node.compact(mode="major", reason="cli_manual")
+        assert result["success"] is True
+
+        usage = node.running_turn_usage
+        assert usage.context_usage_ratio < self.PRE_COMPACT / self.WINDOW
+        assert usage.context_usage_ratio == pytest.approx(usage.session_total_tokens / usage.context_length, abs=1e-3)
+        # A compact reclaims context, it does not refund the turn's spend.
+        assert usage.total_tokens == self.PRE_COMPACT + self.TURN_OUTPUT
+        assert usage.output_tokens == self.TURN_OUTPUT
+
+    @pytest.mark.asyncio
+    async def test_bookkeeping_failure_does_not_fail_a_successful_rewrite(self, tmp_path):
+        """The refresh runs once the history is already rewritten, so nothing
+        it touches may turn a successful compact into a reported failure.
+        ``self.context_length`` resolves ``self.model``, which raises when
+        model resolution fails."""
+        node = self._node(tmp_path)
+        node._session.get_items = AsyncMock(return_value=self._history())
+
+        with patch.object(type(node), "context_length", new_callable=PropertyMock) as ctx:
+            ctx.side_effect = RuntimeError("model resolution failed")
+            result = await node.compact(mode="major", reason="cli_manual")
+
+        assert result["success"] is True
+        node._session.add_items.assert_awaited_once()

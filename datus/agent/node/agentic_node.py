@@ -2119,8 +2119,7 @@ class AgenticNode(Node):
             }
 
         try:
-            await self._session.clear_session()
-            await self._session.add_items(rewritten)
+            await self._replace_session_items(rewritten)
         except Exception as exc:
             logger.error("Failed to persist minor-compact rewrite: %s", exc)
             return {
@@ -2193,12 +2192,24 @@ class AgenticNode(Node):
         Raises on failure; callers translate that into a ``success=False``
         result. Runs of the agents SDK keep appending after the replaced
         history, so the session mirrors the rewritten view from here on.
+
+        Every rewrite refreshes the occupancy snapshot here rather than in the
+        callers, so no compact path can shrink the history and leave the meter
+        describing the pre-rewrite size — a stale meter makes
+        ``_history_token_ratio_sync`` re-trigger a compact on the session that
+        was just compacted. The refresh sits in a ``finally`` so a failed
+        ``add_items`` (history already cleared, nothing written) is covered
+        too, but *after* ``clear_session``: a failure there leaves the full
+        history in place, and the pre-rewrite figure is still the honest one.
         """
         if self._session is None:
             raise DatusException(ErrorCode.COMMON_FIELD_REQUIRED, message_args={"field_name": "session"})
         await self._session.clear_session()
-        if items:
-            await self._session.add_items(items)
+        try:
+            if items:
+                await self._session.add_items(items)
+        finally:
+            self._refresh_running_usage_after_rewrite(estimate_items_tokens(items))
 
     def _mid_turn_output_reserve(self) -> int:
         """Output-token headroom reserved when judging mid-turn occupancy.
@@ -2222,22 +2233,37 @@ class AgenticNode(Node):
 
         ``running_turn_usage`` still describes the pre-compaction context
         until the next ``on_llm_end``; refreshing it keeps the status bar and
-        the persisted context state honest right away.
+        the persisted context state honest right away. Called from
+        :meth:`_replace_session_items`, so it covers every compact mode.
+
+        Only the occupancy fields are rewritten. ``input_tokens`` /
+        ``output_tokens`` / ``total_tokens`` are the turn's cumulative spend,
+        which a compact does not refund.
         """
-        estimated_tokens = max(0, int(estimated_tokens))
-        context_length = int(self.context_length or 0)
-        running = getattr(self, "running_turn_usage", None)
         try:
+            # Everything here is inside the guard on purpose: the caller is a
+            # session rewrite that has already succeeded, so no bookkeeping
+            # failure may turn it into a reported failure. ``self.context_length``
+            # resolves ``self.model``, which raises when model resolution fails.
+            estimated_tokens = max(0, int(estimated_tokens))
+            context_length = int(self.context_length or 0)
+            running = getattr(self, "running_turn_usage", None)
             if running is not None:
+                effective_length = running.context_length or context_length
                 self.running_turn_usage = running.model_copy(
                     update={
                         "session_total_tokens": estimated_tokens,
-                        "context_length": running.context_length or context_length,
+                        "context_length": effective_length,
+                        # Describes the same quantity as session_total_tokens;
+                        # left stale it contradicts it by orders of magnitude.
+                        "context_usage_ratio": (
+                            round(estimated_tokens / effective_length, 3) if effective_length > 0 else 0.0
+                        ),
                     }
                 )
             self.persist_context_state(estimated_tokens, context_length)
         except Exception:  # noqa: BLE001 — bookkeeping must never break the run loop
-            logger.debug("Failed to refresh running usage after mid-turn compact", exc_info=True)
+            logger.debug("Failed to refresh running usage after a session rewrite", exc_info=True)
         self._notify_status_dirty()
 
     def _refresh_turn_checkpoint_after_rewrite(self) -> None:
@@ -2396,7 +2422,7 @@ class AgenticNode(Node):
                             self.session_manager.delete_system_prompt_snapshot(self.session_id)
                         except Exception as exc:  # noqa: BLE001
                             logger.debug("Failed to drop system-prompt snapshot after compact: %s", exc)
-                self._refresh_running_usage_after_rewrite(estimate_items_tokens(view))
+                # Occupancy is refreshed inside ``_replace_session_items``.
                 self._refresh_turn_checkpoint_after_rewrite()
                 result["items"] = view
                 logger.info(

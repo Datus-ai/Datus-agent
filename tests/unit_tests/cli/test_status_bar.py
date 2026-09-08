@@ -568,6 +568,27 @@ class TestStatusBarProviderTokens:
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 60_000  # live snapshot, not restored 52_499
 
+    def test_context_used_prefers_the_context_state_mirror_over_stale_actions(self):
+        """After a manual ``/compact`` between turns the running snapshot is
+        gone (cleared at turn end) while ``node.actions`` still carries the
+        pre-compact ``last_call_input_tokens``. Every compact mirrors the
+        rewritten occupancy through ``persist_context_state``, so
+        ``_restored_context_used`` is the only source that reflects it — and
+        the one ``AgenticNode._history_token_ratio_sync`` drives the compact
+        gate off, so the bar must not contradict the gate."""
+        actions = [SimpleNamespace(output={"usage": {"last_call_input_tokens": 190_000}})]
+        node = SimpleNamespace(
+            model=None,
+            session_id="sess-compacted",
+            actions=actions,
+            context_length=200_000,
+            running_turn_usage=None,
+            _restored_context_used=1_200,
+            _restored_context_length=200_000,
+        )
+        state = StatusBarProvider(self._make_cli(node)).current_state()
+        assert state.context_used == 1_200
+
     def test_running_snapshot_total_tokens_already_reflected_via_session_manager(self):
         """The status bar reads cumulative totals from
         ``SessionManager.get_detailed_usage`` which now folds the running

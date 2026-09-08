@@ -368,6 +368,22 @@ class StatusBarProvider:
                     return used
             except (TypeError, ValueError):
                 pass
+        # Then the ``context_state`` mirror. ``persist_context_state`` keeps it
+        # current after every LLM call *and* after every compact, so it is
+        # never staler than the ``actions`` walk below — and between turns
+        # (``running_turn_usage`` cleared at turn end) it is the only source
+        # that reflects a compact. Checked in this order deliberately:
+        # ``AgenticNode._history_token_ratio_sync`` drives the compact trigger
+        # off the same precedence, and the bar must not contradict the gate.
+        try:
+            restored = int(getattr(node, "_restored_context_used", 0) or 0)
+            if restored > 0:
+                return restored
+        except (TypeError, ValueError):
+            pass
+        # Last resort for nodes where persistence is a no-op (no session_id or
+        # no resolvable state path): the last call's input tokens off the
+        # action history, only populated once the turn ends.
         for action in reversed(getattr(node, "actions", []) or []):
             output = getattr(action, "output", None)
             if not isinstance(output, dict):
@@ -380,15 +396,6 @@ class StatusBarProvider:
                 return int(used)
             except (TypeError, ValueError):
                 return 0
-        # Resume fallback: a freshly resumed process has no in-memory snapshot
-        # or live actions yet, so use the occupancy re-hydrated from the
-        # on-disk ``context_state`` section by ``AgenticNode.restore_context_state``.
-        try:
-            restored = int(getattr(node, "_restored_context_used", 0) or 0)
-            if restored > 0:
-                return restored
-        except (TypeError, ValueError):
-            pass
         return 0
 
     def _resolve_context_total(self) -> int:
