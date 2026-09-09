@@ -494,7 +494,6 @@ class TestStatusBarProviderTokens:
             context_length=0,
             running_turn_usage=running,
             _restored_context_used=object(),
-            _restored_context_length=object(),
         )
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 0
@@ -538,19 +537,38 @@ class TestStatusBarProviderTokens:
     def test_context_used_falls_back_to_restored_state_on_resume(self):
         """A freshly resumed process has no running snapshot and no live
         actions, so the bar must surface the occupancy re-hydrated from the
-        on-disk ``context_state`` section (``_restored_context_used``)."""
+        session db (``_restored_context_used``). The denominator comes from the
+        model the node resolves, not from anything stored with the reading."""
         node = SimpleNamespace(
             model=None,
             session_id="sess-resume",
             actions=[],
-            context_length=0,
+            context_length=1_000_000,
             running_turn_usage=None,
             _restored_context_used=52_499,
-            _restored_context_length=1_000_000,
         )
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 52_499
         assert state.context_total == 1_000_000
+
+    def test_a_model_that_reports_no_window_leaves_the_bar_without_a_denominator(self):
+        """Occupancy is stored, the window is not — it is resolved per access.
+
+        A resumed session whose model cannot report its window therefore has a
+        reading but no ratio, and the bar shows an empty total rather than
+        dividing by a figure measured against some other model.
+        """
+        node = SimpleNamespace(
+            model=None,
+            session_id="sess-nowindow",
+            actions=[],
+            context_length=0,
+            running_turn_usage=None,
+            _restored_context_used=52_499,
+        )
+        state = StatusBarProvider(self._make_cli(node)).current_state()
+        assert state.context_used == 52_499
+        assert state.context_total == 0
 
     def test_restored_state_yields_to_live_snapshot(self):
         """Once the resumed turn issues its first LLM call the live running
@@ -563,7 +581,6 @@ class TestStatusBarProviderTokens:
             context_length=1_000_000,
             running_turn_usage=running,
             _restored_context_used=52_499,
-            _restored_context_length=1_000_000,
         )
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 60_000  # live snapshot, not restored 52_499
@@ -584,7 +601,6 @@ class TestStatusBarProviderTokens:
             context_length=200_000,
             running_turn_usage=None,
             _restored_context_used=1_200,
-            _restored_context_length=200_000,
         )
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 1_200

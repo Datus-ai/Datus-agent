@@ -520,6 +520,32 @@ class TestSessionManagerExecution:
         assert "file_size" in info
         assert info["file_size"] > 0
 
+    def test_get_session_info_orders_user_messages_within_one_second(self, sm):
+        """Messages of one turn share a timestamp, and the scan still has to order them.
+
+        SQLite's ``CURRENT_TIMESTAMP`` has one-second resolution, so a real
+        turn writes every row with the same value. Ordering on the timestamp
+        alone leaves them tied, and the reverse scan that looks for the opening
+        message walks forwards instead — swapping first and latest.
+        """
+        session_id = "same-second"
+        sm.get_session(session_id)
+        _insert_messages(
+            sm.session_dir,
+            session_id,
+            [
+                {"role": "user", "content": "FIRST", "created_at": "2025-01-01T00:00:00"},
+                {"role": "assistant", "content": "answer one", "created_at": "2025-01-01T00:00:00"},
+                {"role": "user", "content": "SECOND", "created_at": "2025-01-01T00:00:00"},
+                {"role": "assistant", "content": "answer two", "created_at": "2025-01-01T00:00:00"},
+            ],
+        )
+
+        info = sm.get_session_info(session_id)
+
+        assert info["first_user_message"] == "FIRST"
+        assert info["latest_user_message"] == "SECOND"
+
     def test_get_session_info_db_path(self, sm):
         """get_session_info returns the correct db_path."""
         session_id = "path-check"
@@ -2440,6 +2466,30 @@ class TestSystemPromptSnapshot:
         assert not os.path.exists(self._path(sm_custom, session_id))
         assert sm_custom.load_system_prompt_snapshot(session_id) is None
 
+    def test_delete_session_drops_the_legacy_state_file(self, tmp_path):
+        """A deleted conversation must not leave its plan-mode payload on disk.
+
+        Sessions predating ``session_meta`` keep plan-mode state — including
+        ``plan_file_path`` — in ``{project_data_dir}/state/{session_id}.json``,
+        which lives outside ``session_dir`` and so needs deleting by name.
+        """
+        from datus.utils.path_manager import DatusPathManager
+
+        pm = DatusPathManager(datus_home=tmp_path / "home", project_name="proj")
+        manager = SessionManager(path_manager=pm)
+        session_id = "chat_session_legacystate"
+        manager.get_session(session_id)
+        state_path = pm.agent_state_path(session_id)
+        state_path.write_text(
+            json.dumps({"plan_mode": {"plan_mode_active": True, "plan_file_path": "./.datus/plans/ab12.md"}}),
+            encoding="utf-8",
+        )
+
+        manager.delete_session(session_id)
+
+        assert not state_path.exists()
+        manager.close_all_sessions()
+
     def test_clear_session_drops_snapshot(self, sm_custom):
         """Clearing history is a session rebuild: the frozen prompt must go."""
         session_id = "chat_session_clear"
@@ -2470,8 +2520,8 @@ class TestContextStatePersistence:
     """save/load_context_state: the durable occupancy measurement."""
 
     def _enable_state_table(self, sm_custom, session_id):
-        """Materialise ``context_occupancy`` through the public writer."""
-        sm_custom.save_context_state(session_id, ContextState(500, 1000, True))
+        """Materialise ``session_meta`` through the public writer."""
+        sm_custom.save_context_state(session_id, ContextState(500))
 
     def test_writing_a_state_never_creates_the_session_database(self, sm_custom):
         """No occupancy write may invent a session that ``list_sessions`` reports.
@@ -2480,7 +2530,7 @@ class TestContextStatePersistence:
         purely ``*.db`` filenames — so writing state for an absent session
         would conjure a session out of nothing.
         """
-        sm_custom.save_context_state("state_ghost", ContextState(400, 1000, True))
+        sm_custom.save_context_state("state_ghost", ContextState(400))
 
         assert "state_ghost" not in sm_custom.list_sessions()
         assert not os.path.exists(os.path.join(sm_custom.session_dir, "state_ghost.db"))
@@ -2506,13 +2556,13 @@ class TestContextStatePersistence:
         db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
-                "CREATE TRIGGER reject_state BEFORE INSERT ON context_occupancy "
+                "CREATE TRIGGER reject_state BEFORE INSERT ON session_meta "
                 "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
             )
 
-        sm_custom.save_context_state(session_id, ContextState(0, 1000, False))
+        sm_custom.save_context_state(session_id, ContextState(0))
 
-        assert sm_custom.load_context_state(session_id) == ContextState(500, 1000, True)
+        assert sm_custom.load_context_state(session_id) == ContextState(500)
 
     def test_clear_session_does_not_surface_a_rejected_state_write(self, sm_custom):
         """History clearing completes even when the occupancy reset fails."""
@@ -2523,7 +2573,7 @@ class TestContextStatePersistence:
         db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
         with sqlite3.connect(db_path) as conn:
             conn.execute(
-                "CREATE TRIGGER reject_state_clear BEFORE INSERT ON context_occupancy "
+                "CREATE TRIGGER reject_state_clear BEFORE INSERT ON session_meta "
                 "BEGIN SELECT RAISE(ABORT, 'state rejected'); END"
             )
 
@@ -2561,3 +2611,165 @@ def test_get_session_messages_hides_the_mid_turn_resume_instruction(sm):
     user_texts = [m["content"] for m in messages if m["role"] == "user"]
     assert user_texts == ["analyse refunds"]
     assert not any("DATUS_COMPACT_RESUME" in json.dumps(m, default=str) for m in messages)
+
+
+class TestSessionTitleAcrossSessionRewrites:
+    """The recorded title outlives a compact, follows a copy, and resets on ``/clear``.
+
+    Listing a session shows its first user message. A major compact deletes the
+    history that message lived in, so the title is recorded when it arrives and
+    read back from ``session_meta``. Every path that builds a new session from
+    an old one has to carry that row, or the bug reappears one step later.
+    """
+
+    def _compacted_session(self, sm, session_id, opening_message):
+        """A session a major compact reduced to a single assistant recap."""
+        import asyncio
+
+        session = sm.get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": opening_message}]))
+        asyncio.run(session.replace_items([{"role": "assistant", "content": "Recap of the conversation."}]))
+        return session
+
+    def test_clearing_history_lets_the_next_message_rename_the_session(self, sm_custom):
+        """``/clear`` restarts the conversation, so the old opening no longer describes it."""
+        import asyncio
+
+        session_id = "chat_session_cleared"
+        session = sm_custom.get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "How many buses ran today?"}]))
+
+        sm_custom.clear_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "Unrelated new topic"}]))
+
+        assert sm_custom.get_session_info(session_id)["first_user_message"] == "Unrelated new topic"
+
+    def test_copying_a_compacted_session_carries_its_title(self, sm_custom):
+        """Switching node type copies a session whose user rows a compact removed."""
+        source_id = "chat_session_tocopy"
+        self._compacted_session(sm_custom, source_id, "How many buses ran today?")
+
+        new_id = sm_custom.copy_session(source_id, "gen_sql")
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+    def test_rewinding_a_compacted_session_carries_its_title(self, sm_custom):
+        """A rewind keeps the conversation's opening turn, so it keeps its name."""
+        source_id = "chat_session_torewind"
+        self._compacted_session(sm_custom, source_id, "How many buses ran today?")
+
+        new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+    def test_copying_a_session_that_never_recorded_a_title_still_works(self, sm_custom):
+        """Sessions older than ``session_meta`` have no row to carry."""
+        source_id = "chat_session_legacycopy"
+        sm_custom.get_session(source_id)
+        _insert_messages(sm_custom.session_dir, source_id, [{"role": "user", "content": "What is SQL?"}])
+
+        new_id = sm_custom.copy_session(source_id, "gen_sql")
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "What is SQL?"
+
+    def test_a_derived_session_can_still_rewrite_its_history(self, sm_custom):
+        """Whatever ``copy_session``/``rewind_session`` cache has to be a Datus session.
+
+        Every compact path calls ``replace_items`` on the object ``get_session``
+        hands back, and ``/clear`` calls ``forget_recorded_title``; neither
+        exists on the SDK base class, so caching one turns the next compact
+        after an agent switch or a rewind into an ``AttributeError``.
+        """
+        import asyncio
+
+        source_id = "chat_session_derivedrewrite"
+        session = sm_custom.get_session(source_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "How many buses ran today?"}]))
+
+        for derived_id in (
+            sm_custom.copy_session(source_id, "gen_sql"),
+            sm_custom.rewind_session(source_id, up_to_user_turn=1),
+        ):
+            derived = sm_custom.get_session(derived_id)
+            asyncio.run(derived.replace_items([{"role": "assistant", "content": "Recap."}]))
+            assert asyncio.run(derived.get_items()) == [{"role": "assistant", "content": "Recap."}]
+            derived.forget_recorded_title()
+
+
+class TestDerivedSessionsDoNotInheritHistoryReadings:
+    """A copy or a rewind produces different history, so readings of the old one stay behind.
+
+    ``session_meta`` holds the durable title next to state that describes the
+    exact history it was measured against. Only the title survives a rewrite,
+    so only the title travels.
+    """
+
+    def _measured_session(self, sm, session_id):
+        """A session with two turns, a recorded occupancy, and plan mode on."""
+        import asyncio
+
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
+        from datus.storage.session_state import PlanModeState
+
+        session = sm.get_session(session_id)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": "How many buses ran today?"},
+                    {"role": "assistant", "content": "412."},
+                ]
+            )
+        )
+        sm.save_context_state(session_id, ContextState(190_000))
+        sm.save_session_meta(
+            session_id,
+            SESSION_PLAN_MODE_KEY,
+            PlanModeState(plan_mode_active=True, plan_file_path="./.datus/plans/ab12.md").to_json(),
+        )
+        return session
+
+    @pytest.mark.parametrize("derive", ["copy", "rewind"])
+    def test_a_derived_session_reports_an_unknown_occupancy(self, sm_custom, derive):
+        """The reading describes the history the derivation just changed.
+
+        Carrying it over makes the first turn of a two-message session compute a
+        near-full window: the compaction gate fires a major pass immediately and
+        the status bar shows a context that is not there.
+        """
+        source_id = "chat_session_measured_" + derive
+        self._measured_session(sm_custom, source_id)
+
+        if derive == "copy":
+            new_id = sm_custom.copy_session(source_id, "gen_sql")
+        else:
+            new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.load_context_state(new_id) is None
+
+    @pytest.mark.parametrize("derive", ["copy", "rewind"])
+    def test_a_derived_session_does_not_start_in_plan_mode(self, sm_custom, derive):
+        """Plan mode is a live toggle of the source session's user, not a property of its history."""
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
+
+        source_id = "chat_session_planned_" + derive
+        self._measured_session(sm_custom, source_id)
+
+        if derive == "copy":
+            new_id = sm_custom.copy_session(source_id, "gen_sql")
+        else:
+            new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.load_session_meta(new_id, SESSION_PLAN_MODE_KEY) is None
+
+    @pytest.mark.parametrize("derive", ["copy", "rewind"])
+    def test_a_derived_session_still_keeps_the_title(self, sm_custom, derive):
+        """The one reading that outlives a rewrite still has to travel."""
+        source_id = "chat_session_titled_" + derive
+        self._measured_session(sm_custom, source_id)
+
+        if derive == "copy":
+            new_id = sm_custom.copy_session(source_id, "gen_sql")
+        else:
+            new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
+
+        assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"

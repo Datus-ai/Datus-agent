@@ -136,7 +136,7 @@ async def test_on_llm_end_first_call_emits_full_delta_and_persists():
 
     # context-window occupancy persisted to the on-disk session_state via the
     # node, using the call's real context window (``last_call_input_tokens``).
-    node.persist_context_state.assert_called_once_with(800, 200_000)
+    node.persist_context_state.assert_called_once_with(800)
 
     # node snapshot populated so the status bar's next render sees it
     snapshot = node.running_turn_usage

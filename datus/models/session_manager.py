@@ -17,7 +17,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.extensions.memory import AdvancedSQLiteSession
 
-from datus.models.sqlite_session import CONTEXT_STATE_TABLE, DatusSQLiteSession
+from datus.models.sqlite_session import (
+    CONTEXT_USED_RESET_SQL,
+    DERIVED_SESSION_META_KEYS,
+    MAX_SESSION_TITLE_CHARS,
+    SESSION_CONTEXT_USED_KEY,
+    SESSION_META_TABLE,
+    SESSION_TITLE_KEY,
+    DatusSQLiteSession,
+)
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.storage.session_state import ContextState
 from datus.utils.async_utils import run_async
@@ -116,6 +124,13 @@ class SessionManager:
             self.session_dir = os.path.join(self.session_dir, resolved_scope)
         os.makedirs(self.session_dir, exist_ok=True)
         self._sessions: Dict[str, AdvancedSQLiteSession] = {}
+        # Kept for cleanup: the legacy per-session JSON state file lives under
+        # ``{project_data_dir}/state/``, outside ``session_dir``, and
+        # ``delete_session`` has to be able to resolve it — otherwise a deleted
+        # conversation leaves its plan-mode payload (``plan_file_path``
+        # included) behind.
+        self._path_manager = path_manager
+        self._agent_config = agent_config
 
     # Shared pattern for validating session IDs.
     # Allows alphanumerics, hyphens, underscores, and dots.
@@ -188,45 +203,57 @@ class SessionManager:
         # so the next turn re-bakes it instead of replaying pre-clear context.
         self.delete_system_prompt_snapshot(session_id)
         self.save_context_state(session_id, ContextState())
+        self.clear_session_title(session_id)
+
+    def clear_session_title(self, session_id: str) -> None:
+        """Forget the recorded title so the next message renames the session.
+
+        ``/clear`` restarts the conversation, and the old opening message stops
+        describing what follows. Compaction deliberately does *not* come
+        through here: it rewrites history via ``replace_items`` and the same
+        chat continues, so it keeps its title.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if os.path.exists(db_path):
+            try:
+                with sqlite3.connect(db_path, timeout=5.0) as conn:
+                    if self._table_exists(conn, "session_meta"):
+                        conn.execute(
+                            "DELETE FROM session_meta WHERE session_id = ? AND key = ?",
+                            (session_id, SESSION_TITLE_KEY),
+                        )
+            except sqlite3.Error as exc:
+                logger.warning("Failed to clear the title of session %s: %s", session_id, exc)
+        # A cached session stops recording once it has written a title, so the
+        # row alone is not enough — the live object has to be told as well.
+        forget = getattr(self._sessions.get(session_id), "forget_recorded_title", None)
+        if callable(forget):
+            forget()
 
     def save_context_state(self, session_id: str, state: ContextState) -> None:
         """Store the measured occupancy beside the transactional history.
 
-        Never creates the database: ``sqlite3.connect`` would materialise an
-        empty file that ``list_sessions`` then reports as a session. A missing
-        file also means there is no stale measurement to overwrite. Write
-        failures are logged rather than raised so history clearing and the
-        post-response bookkeeping stay unaffected by a locked database.
+        See :meth:`save_session_meta` for the ghost-session and write-failure
+        guarantees this inherits.
         """
-        self._validate_session_id(session_id)
-        db_path = os.path.join(self.session_dir, f"{session_id}.db")
-        if not os.path.exists(db_path):
-            return
-        try:
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
-                conn.execute(CONTEXT_STATE_TABLE)
-                conn.execute(
-                    "INSERT OR REPLACE INTO context_occupancy "
-                    "(session_id, input_tokens, context_length, valid) VALUES (?, ?, ?, ?)",
-                    (session_id, state.last_call_input_tokens, state.context_length, int(state.valid)),
-                )
-        except sqlite3.Error as exc:
-            logger.warning("Failed to save context state for session %s: %s", session_id, exc)
+        self.save_session_meta(session_id, SESSION_CONTEXT_USED_KEY, str(state.last_call_input_tokens))
 
     def load_context_state(self, session_id: str) -> Optional[ContextState]:
-        """Read the durable measurement, including an explicit invalidation."""
-        self._validate_session_id(session_id)
-        db_path = os.path.join(self.session_dir, f"{session_id}.db")
-        if not os.path.exists(db_path):
+        """Read the durable measurement, or ``None`` when none was recorded.
+
+        ``None`` and a recorded zero are different answers: the first lets the
+        caller fall through to the legacy JSON mirror, the second is a session
+        whose reading a rewrite has invalidated.
+        """
+        raw = self.load_session_meta(session_id, SESSION_CONTEXT_USED_KEY)
+        if raw is None:
             return None
-        with sqlite3.connect(db_path, timeout=5.0) as conn:
-            if not self._table_exists(conn, "context_occupancy"):
-                return None
-            row = conn.execute(
-                "SELECT input_tokens, context_length, valid FROM context_occupancy WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
-            return ContextState(row[0], row[1], bool(row[2])) if row else None
+        try:
+            return ContextState(max(0, int(raw)))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring unreadable occupancy %r for session %s", raw, session_id)
+            return ContextState()
 
     def checkpoint_turn(self, session_id: str) -> Optional[SessionTurnCheckpoint]:
         """Capture the SQLite boundary before dispatching a model turn.
@@ -322,12 +349,8 @@ class SessionManager:
                     )
                 if self._table_exists(conn, "running_turn_usage"):
                     conn.execute("DELETE FROM running_turn_usage WHERE session_id = ?", (session_id,))
-                conn.execute(CONTEXT_STATE_TABLE)
-                conn.execute(
-                    "INSERT INTO context_occupancy (session_id) VALUES (?) "
-                    "ON CONFLICT(session_id) DO UPDATE SET input_tokens = 0, valid = 0",
-                    (session_id,),
-                )
+                conn.execute(SESSION_META_TABLE)
+                conn.execute(CONTEXT_USED_RESET_SQL, (session_id, SESSION_CONTEXT_USED_KEY))
                 conn.commit()
         except sqlite3.Error as exc:
             logger.warning("Failed to roll back unanswered turn for session %s: %s", session_id, exc)
@@ -460,6 +483,35 @@ class SessionManager:
         # The frozen system prompt belongs to the deleted conversation.
         self.delete_system_prompt_snapshot(session_id)
 
+        # So does the legacy JSON state mirror, which sessions predating
+        # ``session_meta`` still carry.
+        self._delete_agent_state_file(session_id)
+
+    def _delete_agent_state_file(self, session_id: str) -> None:
+        """Remove a session's legacy JSON state mirror (best-effort, idempotent).
+
+        Sessions created before plan mode and the occupancy reading moved into
+        ``session_meta`` keep a ``{project_data_dir}/state/{session_id}.json``
+        file. It sits outside ``session_dir``, so nothing else in this class
+        reaches it.
+        """
+        try:
+            from datus.utils.path_manager import get_path_manager
+
+            path = get_path_manager(path_manager=self._path_manager, agent_config=self._agent_config).agent_state_path(
+                session_id
+            )
+        except Exception as exc:  # noqa: BLE001 — cleanup must never fail a delete
+            logger.debug("agent_state_path unavailable for session %s: %s", session_id, exc)
+            return
+        try:
+            os.remove(path)
+            logger.debug(f"Deleted legacy session state file: {path}")
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Failed to remove session state file %s: %s", path, exc)
+
     def copy_session(self, source_session_id: str, target_node_name: str) -> str:
         """Copy a session to a new one with a different node-name prefix.
 
@@ -522,12 +574,17 @@ class SessionManager:
             except sqlite3.OperationalError:
                 pass
 
+            # Carry the title over: a compacted source has no user rows left
+            # for the copy's own scan to find, so without this the new session
+            # would list as untitled.
+            meta_rows = self._read_session_meta(cursor, source_session_id)
+
         # Materialize tables in the new DB first (short-lived session is released
         # before bulk inserts), then use a single raw connection with executemany
         # for all writes. Avoids two concurrent connections on the same file and
         # is substantially faster for long histories.
         new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
-        AdvancedSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
+        DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
 
         with sqlite3.connect(new_db_path, timeout=5.0) as new_conn:
             new_conn.execute(
@@ -557,10 +614,14 @@ class SessionManager:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [(new_session_id, *row) for row in turn_usage_rows],
             )
+            self._write_session_meta(new_conn, new_session_id, meta_rows)
             new_conn.commit()
 
-        # Cache a fresh session pointing at the populated DB (tables already exist).
-        self._sessions[new_session_id] = AdvancedSQLiteSession(
+        # Cache a fresh session pointing at the populated DB (tables already
+        # exist). Must be a ``DatusSQLiteSession``: the rest of the process
+        # calls ``replace_items`` / ``forget_recorded_title`` on whatever
+        # ``get_session`` hands back, and the SDK base class has neither.
+        self._sessions[new_session_id] = DatusSQLiteSession(
             session_id=new_session_id, db_path=new_db_path, create_tables=False
         )
 
@@ -652,7 +713,10 @@ class SessionManager:
 
         # Create the new session database
         new_db_path = os.path.join(self.session_dir, f"{new_session_id}.db")
-        new_session = AdvancedSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
+        # ``DatusSQLiteSession`` for the same reason as in ``copy_session``:
+        # the cached object is what every later caller gets from
+        # ``get_session``, and it has to carry the Datus-owned methods.
+        new_session = DatusSQLiteSession(session_id=new_session_id, db_path=new_db_path, create_tables=True)
         # Store in cache
         self._sessions[new_session_id] = new_session
 
@@ -686,6 +750,12 @@ class SessionManager:
                 structure_rows = [row for row in cursor.fetchall() if row[0] in kept_message_ids]
             except sqlite3.OperationalError:
                 pass
+
+            # The recorded title is the conversation's opening message, which a
+            # rewind keeps by definition, so it stays correct for the new
+            # session — and it is the only copy left once the source has been
+            # compacted.
+            meta_rows = self._read_session_meta(cursor, source_session_id)
 
         # Insert session record, messages, message_structure, and turn_usage into the new DB.
         # Preserve agent_messages.id so message_structure.message_id references remain valid.
@@ -735,6 +805,7 @@ class SessionManager:
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (new_session_id, *usage_row),
                 )
+            self._write_session_meta(new_conn, new_session_id, meta_rows)
             new_conn.commit()
 
         logger.info(
@@ -917,12 +988,17 @@ class SessionManager:
                     )
 
                 # Get latest user message (need to check all messages to find the most recent user message)
+                # ``id DESC`` is not cosmetic: SQLite's CURRENT_TIMESTAMP has
+                # one-second resolution and a whole turn lands inside one
+                # second, so ordering on the timestamp alone leaves the rows
+                # tied and the reversed() scan below walks them forwards —
+                # swapping the first and latest user message.
                 cursor.execute(
                     """
                     SELECT message_data, created_at
                     FROM agent_messages
                     WHERE session_id = ?
-                    ORDER BY created_at DESC
+                    ORDER BY created_at DESC, id DESC
                     """,
                     (session_id,),
                 )
@@ -957,7 +1033,10 @@ class SessionManager:
                         role = message_json.get("role", "")
                         if role == "user":
                             content = extract_user_input(message_json.get("content", ""))
-                            first_user_message = content
+                            # Same cap as the stored title, so a session does
+                            # not render at a different length depending on
+                            # which of the two sources answered.
+                            first_user_message = (content or "")[:MAX_SESSION_TITLE_CHARS]
                             first_user_message_at = created_at
                             break
                     except (json.JSONDecodeError, TypeError):
@@ -971,6 +1050,22 @@ class SessionManager:
                         "first_user_message_at": first_user_message_at,
                     }
                 )
+
+                # A major compact clears the history the scan above walks, so
+                # on a compacted session it finds either no user rows at all or
+                # a mid-conversation one that would silently retitle the chat.
+                # The recorded title predates every rewrite and wins. Sessions
+                # older than the table have none and keep the scanned value.
+                # Guarded on its own: the handler below discards the whole
+                # metadata dict, and a title is not worth losing a session's
+                # timestamps and message count over.
+                try:
+                    recorded_title = self._read_session_title(conn, session_id)
+                except sqlite3.Error as exc:
+                    logger.debug("Could not read the title of session %s: %s", session_id, exc)
+                    recorded_title = None
+                if recorded_title:
+                    session_metadata["first_user_message"] = recorded_title
 
         except Exception as e:
             logger.debug(f"Could not get session metadata for {session_id}: {e}")
@@ -995,6 +1090,96 @@ class SessionManager:
             **file_info,
             **session_metadata,
         }
+
+    def _read_session_title(self, conn: sqlite3.Connection, session_id: str) -> Optional[str]:
+        """Return the recorded title, or ``None`` when the session has none.
+
+        Reuses the caller's connection: ``get_session_info`` has the database
+        open already, and listing sessions calls it once per row.
+        """
+        if not self._table_exists(conn, "session_meta"):
+            return None
+        row = conn.execute(
+            "SELECT value FROM session_meta WHERE session_id = ? AND key = ?",
+            (session_id, SESSION_TITLE_KEY),
+        ).fetchone()
+        if not row:
+            return None
+        return (row[0] or "").strip() or None
+
+    @staticmethod
+    def _read_session_meta(cursor: sqlite3.Cursor, session_id: str) -> list:
+        """Read the metadata a derived session may inherit, or none for a database without it.
+
+        Restricted to :data:`DERIVED_SESSION_META_KEYS`: a copy or a rewind
+        produces a session with different history, so every reading that
+        describes the source's history has to be left behind rather than
+        carried over. New keys opt in there deliberately.
+        """
+        try:
+            placeholders = ", ".join("?" * len(DERIVED_SESSION_META_KEYS))
+            cursor.execute(
+                f"SELECT key, value FROM session_meta WHERE session_id = ? AND key IN ({placeholders})",
+                (session_id, *DERIVED_SESSION_META_KEYS),
+            )
+            return cursor.fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    @staticmethod
+    def _write_session_meta(conn: sqlite3.Connection, session_id: str, rows: list) -> None:
+        """Attach metadata rows read from a source session to a derived one."""
+        if not rows:
+            return
+        conn.execute(SESSION_META_TABLE)
+        conn.executemany(
+            "INSERT OR IGNORE INTO session_meta (session_id, key, value) VALUES (?, ?, ?)",
+            [(session_id, *row) for row in rows],
+        )
+
+    def save_session_meta(self, session_id: str, key: str, value: str) -> None:
+        """Upsert one metadata value beside the session's history.
+
+        Never creates the database, matching :meth:`save_context_state`:
+        ``sqlite3.connect`` would materialise an empty file that
+        ``list_sessions`` then reports as a session. A caller writing before
+        the first message is expected to write again once the session exists.
+        Write failures are logged rather than raised — metadata is auxiliary
+        to whatever the caller was actually doing.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute(SESSION_META_TABLE)
+                conn.execute(
+                    "INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, ?) "
+                    "ON CONFLICT(session_id, key) DO UPDATE SET value = excluded.value",
+                    (session_id, key, value),
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Failed to save session meta %r for %s: %s", key, session_id, exc)
+
+    def load_session_meta(self, session_id: str, key: str) -> Optional[str]:
+        """Read one metadata value, or ``None`` when it was never written."""
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return None
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                if not self._table_exists(conn, "session_meta"):
+                    return None
+                row = conn.execute(
+                    "SELECT value FROM session_meta WHERE session_id = ? AND key = ?",
+                    (session_id, key),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            logger.warning("Failed to read session meta %r for %s: %s", key, session_id, exc)
+            return None
+        return row[0] if row else None
 
     def get_detailed_usage(self, session_id: str) -> Dict[str, Any]:
         """Query turn_usage table and return aggregated + per-turn token usage.

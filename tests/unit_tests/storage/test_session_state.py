@@ -10,22 +10,51 @@ import pytest
 from datus.storage.session_state import ContextState, PlanModeState
 
 
-class TestPlanModeStateRoundTrip:
-    def test_save_and_load_round_trip(self, tmp_path):
-        path = tmp_path / "state" / "s1.json"
+def _write_plan_mode_section(path, **fields):
+    """Write the legacy ``plan_mode`` section straight to the file.
+
+    Plan-mode state now lives in the session database, so nothing in
+    production writes this section any more. Files created before the move
+    still carry it and must keep loading, which is what these fixtures set up.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    data["plan_mode"] = {
+        "plan_mode_active": False,
+        "plan_file_path": None,
+        "workflow_prompt_sent": False,
+        **fields,
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+class TestPlanModeStateJsonRoundTrip:
+    """The database stores the three flags as one JSON value."""
+
+    def test_round_trip(self):
         state = PlanModeState(
             plan_mode_active=True,
             plan_file_path="./.datus/plans/abc12345.md",
             workflow_prompt_sent=True,
         )
-        state.save(path)
-        assert path.exists()
 
-        loaded = PlanModeState.load(path)
-        assert loaded.plan_mode_active is True
-        assert loaded.plan_file_path == "./.datus/plans/abc12345.md"
-        assert loaded.workflow_prompt_sent is True
+        assert PlanModeState.from_json(state.to_json()) == state
 
+    @pytest.mark.parametrize("payload", [None, "", "{not json", '["a", "list"]', '"a string"', "17"])
+    def test_an_unusable_payload_reads_as_nothing_recorded(self, payload):
+        """``None`` is what makes the caller fall through to the legacy file.
+
+        Returning a default state instead would mask a session that still has
+        its plan mode recorded in JSON.
+        """
+        assert PlanModeState.from_json(payload) is None
+
+    def test_a_stored_state_with_every_field_false_is_not_nothing(self):
+        """Plan mode being off is a recorded fact, not a missing record."""
+        assert PlanModeState.from_json(PlanModeState().to_json()) == PlanModeState()
+
+
+class TestPlanModeStateRoundTrip:
     def test_load_missing_file_returns_default(self, tmp_path):
         loaded = PlanModeState.load(tmp_path / "absent.json")
         assert loaded.plan_mode_active is False
@@ -37,21 +66,6 @@ class TestPlanModeStateRoundTrip:
         path.write_text("{not valid json", encoding="utf-8")
         loaded = PlanModeState.load(path)
         assert loaded == PlanModeState()
-
-    def test_save_creates_parent_directories(self, tmp_path):
-        path = tmp_path / "a" / "b" / "c" / "state.json"
-        PlanModeState(plan_mode_active=True).save(path)
-        assert path.exists()
-        # On-disk JSON uses the nested ``plan_mode`` layout so future readers
-        # can tell apart a missing section from a falsy-valued one.
-        data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {
-            "plan_mode": {
-                "plan_mode_active": True,
-                "plan_file_path": None,
-                "workflow_prompt_sent": False,
-            }
-        }
 
     def test_default_values(self):
         state = PlanModeState()
@@ -85,25 +99,30 @@ class TestPlanModeStateRoundTrip:
 
 
 class TestContextStateRoundTrip:
+    def test_a_negative_occupancy_is_not_representable(self):
+        """Constructing the state clamps, so no call site has to remember to.
+
+        ``SessionManager.save_context_state`` writes a caller-supplied state
+        through verbatim; a negative reading would render as a negative
+        occupancy in the status bar and a negative ratio in the compaction gate.
+        """
+        assert ContextState(-5).last_call_input_tokens == 0
+
     def test_save_and_load_round_trip(self, tmp_path):
         path = tmp_path / "state" / "ctx.json"
-        ContextState(last_call_input_tokens=52_499, context_length=1_000_000).save(path)
+        ContextState(52_499).save(path)
         assert path.exists()
 
-        loaded = ContextState.load(path)
-        assert loaded.last_call_input_tokens == 52_499
-        assert loaded.context_length == 1_000_000
+        assert ContextState.load(path).last_call_input_tokens == 52_499
 
     def test_on_disk_layout_is_nested_under_context_state(self, tmp_path):
         path = tmp_path / "ctx.json"
-        ContextState(last_call_input_tokens=10, context_length=200).save(path)
+        ContextState(10).save(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data == {"context_state": {"last_call_input_tokens": 10, "context_length": 200, "valid": True}}
+        assert data == {"context_state": {"last_call_input_tokens": 10}}
 
     def test_load_missing_file_returns_default(self, tmp_path):
-        loaded = ContextState.load(tmp_path / "absent.json")
-        assert loaded.last_call_input_tokens == 0
-        assert loaded.context_length == 0
+        assert ContextState.load(tmp_path / "absent.json").last_call_input_tokens == 0
 
     def test_load_corrupted_json_falls_back_to_default(self, tmp_path):
         path = tmp_path / "bad.json"
@@ -114,22 +133,35 @@ class TestContextStateRoundTrip:
         "raw,expected",
         [
             # Non-int (str / float / bool) coerces to the safe 0 default.
-            ({"last_call_input_tokens": "500", "context_length": 1000}, (0, 1000)),
-            ({"last_call_input_tokens": 12.5, "context_length": 1000}, (0, 1000)),
-            ({"last_call_input_tokens": True, "context_length": 1000}, (0, 1000)),
+            ({"last_call_input_tokens": "500"}, 0),
+            ({"last_call_input_tokens": 12.5}, 0),
+            ({"last_call_input_tokens": True}, 0),
             # Negative values are clamped to 0.
-            ({"last_call_input_tokens": -5, "context_length": -1}, (0, 0)),
+            ({"last_call_input_tokens": -5}, 0),
             # Valid ints preserved.
-            ({"last_call_input_tokens": 800, "context_length": 128_000}, (0, 128_000)),
-            ({"last_call_input_tokens": 800, "context_length": 128_000, "valid": True}, (800, 128_000)),
-            ({}, (0, 0)),
+            ({"last_call_input_tokens": 800}, 800),
+            ({}, 0),
+            # Fields the record no longer carries are ignored, not rejected.
+            ({"last_call_input_tokens": 800, "context_length": 128_000}, 800),
         ],
     )
     def test_load_coerces_invalid_fields(self, tmp_path, raw, expected):
         path = tmp_path / "coerce.json"
         path.write_text(json.dumps({"context_state": raw}), encoding="utf-8")
-        loaded = ContextState.load(path)
-        assert (loaded.last_call_input_tokens, loaded.context_length) == expected
+        assert ContextState.load(path).last_call_input_tokens == expected
+
+    def test_a_record_marked_invalid_before_the_flag_was_dropped_reads_as_zero(self, tmp_path):
+        """Those records may hold a text estimate rather than a measurement.
+
+        The flag is no longer written, but honouring it on read keeps a session
+        from resuming onto a number that was never a real reading.
+        """
+        path = tmp_path / "legacy_invalid.json"
+        path.write_text(
+            json.dumps({"context_state": {"last_call_input_tokens": 9_000, "valid": False}}),
+            encoding="utf-8",
+        )
+        assert ContextState.load(path).last_call_input_tokens == 0
 
 
 class TestSaveSectionErrors:
@@ -141,19 +173,21 @@ class TestSaveSectionErrors:
         # ``state`` would have to live *under* a regular file → mkdir raises
         # NotADirectoryError (an OSError), which save() must absorb.
         path = blocker / "state" / "s.json"
-        ContextState(last_call_input_tokens=1, context_length=2).save(path)
+        ContextState(1).save(path)
         assert not path.exists()
 
 
 class TestSectionsCoexist:
-    """``plan_mode`` and ``context_state`` live in the same file and are
-    written by different subsystems at different times — neither save may
-    clobber the other's section."""
+    """A pre-migration file holds both sections, and only ``context_state`` is
+    still written. That write must leave the ``plan_mode`` section alone: it is
+    the last copy for a session that has not toggled plan mode since the move,
+    and losing it would silently drop the user out of plan mode."""
 
     def test_context_save_preserves_plan_mode(self, tmp_path):
         path = tmp_path / "state" / "s.json"
-        PlanModeState(plan_mode_active=True, plan_file_path="p.md", workflow_prompt_sent=True).save(path)
-        ContextState(last_call_input_tokens=42, context_length=1000).save(path)
+        _write_plan_mode_section(path, plan_mode_active=True, plan_file_path="p.md", workflow_prompt_sent=True)
+
+        ContextState(42).save(path)
 
         plan = PlanModeState.load(path)
         ctx = ContextState.load(path)
@@ -161,23 +195,11 @@ class TestSectionsCoexist:
         assert plan.plan_file_path == "p.md"
         assert plan.workflow_prompt_sent is True
         assert ctx.last_call_input_tokens == 42
-        assert ctx.context_length == 1000
-
-    def test_plan_mode_save_preserves_context_state(self, tmp_path):
-        path = tmp_path / "state" / "s.json"
-        ContextState(last_call_input_tokens=42, context_length=1000).save(path)
-        PlanModeState(plan_mode_active=True).save(path)
-
-        ctx = ContextState.load(path)
-        plan = PlanModeState.load(path)
-        assert ctx.last_call_input_tokens == 42  # survived the plan-mode write
-        assert ctx.context_length == 1000
-        assert plan.plan_mode_active is True
 
     def test_both_sections_present_in_file(self, tmp_path):
         path = tmp_path / "s.json"
-        PlanModeState(plan_mode_active=True).save(path)
-        ContextState(last_call_input_tokens=7, context_length=99).save(path)
+        _write_plan_mode_section(path, plan_mode_active=True)
+        ContextState(7).save(path)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert set(data.keys()) == {"plan_mode", "context_state"}
 
@@ -189,17 +211,16 @@ class TestContextStateClear:
 
     def test_clear_removes_context_state_section(self, tmp_path):
         path = tmp_path / "state" / "s.json"
-        ContextState(last_call_input_tokens=42, context_length=1000).save(path)
+        ContextState(42).save(path)
         ContextState.clear(path)
         # The section is gone — a subsequent load returns defaults.
-        loaded = ContextState.load(path)
-        assert (loaded.last_call_input_tokens, loaded.context_length) == (0, 0)
+        assert ContextState.load(path).last_call_input_tokens == 0
         assert "context_state" not in json.loads(path.read_text(encoding="utf-8"))
 
     def test_clear_preserves_sibling_plan_mode_section(self, tmp_path):
         path = tmp_path / "state" / "s.json"
-        PlanModeState(plan_mode_active=True, plan_file_path="p.md").save(path)
-        ContextState(last_call_input_tokens=7, context_length=99).save(path)
+        _write_plan_mode_section(path, plan_mode_active=True, plan_file_path="p.md")
+        ContextState(7).save(path)
         ContextState.clear(path)
         plan = PlanModeState.load(path)
         assert plan.plan_mode_active is True
@@ -213,7 +234,7 @@ class TestContextStateClear:
 
     def test_clear_is_noop_when_section_absent(self, tmp_path):
         path = tmp_path / "state" / "s.json"
-        PlanModeState(plan_mode_active=True).save(path)
+        _write_plan_mode_section(path, plan_mode_active=True)
         ContextState.clear(path)  # context_state never written
         assert PlanModeState.load(path).plan_mode_active is True
 
@@ -247,23 +268,23 @@ class TestLegacyCompactSectionIgnored:
         assert loaded.workflow_prompt_sent is False
 
     def test_save_does_not_emit_compact_key(self, tmp_path):
-        """Even if a legacy file with a ``compact`` section is loaded and
-        re-saved, the new write must NOT round-trip the dropped section —
-        otherwise stale state would linger on disk forever.
+        """Re-saving a legacy file must not round-trip the dropped section —
+        otherwise stale state would linger on disk forever. ``plan_mode`` is a
+        sibling that has to survive; ``compact`` is the one being retired.
         """
         path = tmp_path / "legacy.json"
         path.write_text(
             json.dumps(
                 {
-                    "plan_mode": {"plan_mode_active": False, "plan_file_path": None, "workflow_prompt_sent": False},
+                    "plan_mode": {"plan_mode_active": True, "plan_file_path": None, "workflow_prompt_sent": False},
                     "compact": {"compacted_until": 7},
                 }
             ),
             encoding="utf-8",
         )
-        loaded = PlanModeState.load(path)
-        loaded.plan_mode_active = True
-        loaded.save(path)
+
+        ContextState(5).save(path)
+
         data = json.loads(path.read_text(encoding="utf-8"))
         assert "compact" not in data
-        assert data == {"plan_mode": {"plan_mode_active": True, "plan_file_path": None, "workflow_prompt_sent": False}}
+        assert data["plan_mode"] == {"plan_mode_active": True, "plan_file_path": None, "workflow_prompt_sent": False}

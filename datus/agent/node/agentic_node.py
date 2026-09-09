@@ -280,7 +280,6 @@ class AgenticNode(Node):
         # the restore call so the restored values are not clobbered.
         self._context_state: Optional["ContextState"] = None
         self._restored_context_used: int = 0
-        self._restored_context_length: int = 0
         try:
             self.restore_plan_mode_state()
         except Exception as exc:  # noqa: BLE001 — restore must never crash construction
@@ -549,18 +548,61 @@ class AgenticNode(Node):
             logger.debug("agent_state_path unavailable: %s", exc)
             return None
 
-    def _persist_plan_mode_state(self) -> None:
-        """Flush current plan-mode fields to disk. No-op without session_id."""
-        state_path = self._agent_state_file()
-        if state_path is None:
+    def _persist_plan_mode_state(self, only_if_absent: bool = False) -> None:
+        """Flush current plan-mode fields to the session db. No-op without session_id.
+
+        Plan mode can be toggled before the first message, when the database
+        does not exist yet; ``save_session_meta`` skips that write rather than
+        materialising an empty file that would list as a session, and
+        ``_get_or_create_session`` repeats the call once the session is real.
+        Nothing is lost in that window: a session with no database cannot be
+        resumed, so there is no reader for the state it would have stored.
+
+        ``only_if_absent`` seeds a session that has no plan-mode row yet without
+        overwriting one. Callers that merely materialise the session hold a
+        snapshot taken at construction time, which another process may have
+        moved on from — see :meth:`_get_or_create_session`.
+        """
+        if not self.session_id:
             return
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
         from datus.storage.session_state import PlanModeState
 
-        PlanModeState(
-            plan_mode_active=self.plan_mode_active,
-            plan_file_path=self.plan_file_path,
-            workflow_prompt_sent=self.workflow_prompt_sent,
-        ).save(state_path)
+        try:
+            if only_if_absent and self.session_manager.load_session_meta(self.session_id, SESSION_PLAN_MODE_KEY):
+                return
+            payload = PlanModeState(
+                plan_mode_active=self.plan_mode_active,
+                plan_file_path=self.plan_file_path,
+                workflow_prompt_sent=self.workflow_prompt_sent,
+            ).to_json()
+            self.session_manager.save_session_meta(self.session_id, SESSION_PLAN_MODE_KEY, payload)
+        except Exception:  # noqa: BLE001 — session creation must not fail over a flag
+            logger.debug("Failed to persist plan-mode state", exc_info=True)
+
+    def _load_plan_mode_state(self) -> Optional["PlanModeState"]:  # noqa: F821 — forward-ref
+        """Read plan-mode state, preferring the session db over legacy JSON.
+
+        Sessions that predate the move still carry a ``plan_mode`` section in
+        ``{project_data_dir}/state/{session_id}.json``; they keep working and
+        migrate to the database on their next toggle.
+        """
+        from datus.models.sqlite_session import SESSION_PLAN_MODE_KEY
+        from datus.storage.session_state import PlanModeState
+
+        if self.session_id:
+            try:
+                payload = self.session_manager.load_session_meta(self.session_id, SESSION_PLAN_MODE_KEY)
+            except Exception:  # noqa: BLE001
+                payload = None
+                logger.debug("Failed to read plan-mode state from the session db", exc_info=True)
+            state = PlanModeState.from_json(payload)
+            if state is not None:
+                return state
+        state_path = self._agent_state_file()
+        if state_path is None or not state_path.exists():
+            return None
+        return PlanModeState.load(state_path)
 
     def restore_plan_mode_state(self) -> None:
         """Re-hydrate plan-mode fields from disk into this node.
@@ -578,12 +620,9 @@ class AgenticNode(Node):
         ``_plan_just_confirmed`` is intentionally NOT restored — it is a
         turn-local one-shot flag and should always start False on resume.
         """
-        state_path = self._agent_state_file()
-        if state_path is None or not state_path.exists():
+        loaded = self._load_plan_mode_state()
+        if loaded is None:
             return
-        from datus.storage.session_state import PlanModeState
-
-        loaded = PlanModeState.load(state_path)
         self.plan_mode_active = loaded.plan_mode_active
         self.plan_file_path = loaded.plan_file_path
         self.workflow_prompt_sent = loaded.workflow_prompt_sent
@@ -596,24 +635,22 @@ class AgenticNode(Node):
             self.workflow_prompt_sent,
         )
 
-    def persist_context_state(
-        self, last_call_input_tokens: int, context_length: int, *, valid: Optional[bool] = None
-    ) -> None:
-        """Publish a measured occupancy or invalidation, then persist it.
+    def persist_context_state(self, last_call_input_tokens: int) -> None:
+        """Publish a measured occupancy, then persist it. Zero invalidates.
 
-        Memory is authoritative for the running node even when persistence fails.
-        SQLite stores the durable state atomically invalidated by history rewrites;
-        the JSON section remains a compatibility mirror for existing sessions.
+        Memory is authoritative for the running node even when persistence
+        fails. The session db holds the durable value, zeroed by any history
+        rewrite in the same transaction; the JSON section is only a
+        compatibility mirror for sessions that predate the move, so it is
+        refreshed where it already exists and never created — a new file would
+        be a second storage location ``SessionManager`` has to clean up for no
+        reader's benefit.
         """
         from datus.storage.session_state import ContextState
 
-        used = max(0, int(last_call_input_tokens or 0))
-        length = max(0, int(context_length or 0))
-        known = used > 0 if valid is None else valid
-        state = ContextState(used if known else 0, length, known)
+        state = ContextState(max(0, int(last_call_input_tokens or 0)))
         self._context_state = state
         self._restored_context_used = state.last_call_input_tokens
-        self._restored_context_length = length
         if self.session_id:
             try:
                 self.session_manager.save_context_state(self.session_id, state)
@@ -621,13 +658,13 @@ class AgenticNode(Node):
                 logger.debug("Failed to persist SQLite context state", exc_info=True)
         try:
             state_path = self._agent_state_file()
-            if state_path is not None:
+            if state_path is not None and state_path.exists():
                 state.save(state_path)
         except Exception:
             logger.debug("Failed to persist JSON context state", exc_info=True)
 
     def restore_context_state(self) -> None:
-        """Restore SQLite's state, falling back to legacy JSON when absent."""
+        """Restore the durable measurement, falling back to legacy JSON."""
         from datus.storage.session_state import ContextState
 
         loaded = None
@@ -635,7 +672,7 @@ class AgenticNode(Node):
             try:
                 loaded = self.session_manager.load_context_state(self.session_id)
             except Exception:
-                # An unreadable durable invalidation must not revive an old JSON value.
+                # An unreadable durable zero must not revive an old JSON value.
                 loaded = ContextState()
                 logger.debug("Failed to restore SQLite context state", exc_info=True)
         if not isinstance(loaded, ContextState):
@@ -644,8 +681,7 @@ class AgenticNode(Node):
                 return
             loaded = ContextState.load(state_path)
         self._context_state = loaded
-        self._restored_context_used = loaded.last_call_input_tokens if loaded.valid else 0
-        self._restored_context_length = loaded.context_length
+        self._restored_context_used = loaded.last_call_input_tokens
 
     def get_context_usage(self) -> "ContextState":
         """Return the latest measured input occupancy; never substitute spend."""
@@ -1553,13 +1589,23 @@ class AgenticNode(Node):
         if self._session is None:
             self._session = self.session_manager.create_session(self.session_id)
             logger.debug(f"Created session: {self.session_id}")
+            # Plan mode may have been toggled before the database existed, in
+            # which case that write was skipped. There is somewhere to put it
+            # now, and a resumable session must carry its plan-mode flags.
+            #
+            # Seed only, never overwrite: this method also runs from paths that
+            # only need a session object — turn counting, the API's throwaway
+            # compaction node — whose in-memory flags were restored when the
+            # node was built and may already be stale. Blindly writing them
+            # back would drop a live process out of plan mode.
+            self._persist_plan_mode_state(only_if_absent=True)
 
         return self._session
 
     async def _count_session_tokens(self) -> int:
         """Return measured input occupancy, or zero when it is unknown."""
         state = self.get_context_usage()
-        return state.last_call_input_tokens if state.valid else 0
+        return state.last_call_input_tokens
 
     # ── Compact subsystem ──────────────────────────────────────────────
     # Public entry: ``compact(mode, reason)``. CLI, RunHooks, and model-layer
@@ -1781,8 +1827,8 @@ class AgenticNode(Node):
     def _history_token_ratio_sync(self) -> float:
         """Return measured occupancy for explicit compact(auto) callers."""
         state = self.get_context_usage()
-        length = self.context_length or state.context_length
-        return state.last_call_input_tokens / length if state.valid and length else 0.0
+        length = self.context_length
+        return state.last_call_input_tokens / length if length else 0.0
 
     def _get_compact_lock(self) -> asyncio.Lock:
         """Lazily allocate the per-node compact lock.
@@ -2170,12 +2216,7 @@ class AgenticNode(Node):
                     "context_usage_valid": False,
                 }
             )
-        length = getattr(self, "_restored_context_length", 0) or 0
-        try:
-            length = int(self.context_length or length)
-        except Exception:
-            logger.debug("Cannot resolve context length after rewrite", exc_info=True)
-        self.persist_context_state(0, length, valid=False)
+        self.persist_context_state(0)
         self._notify_status_dirty()
 
     def _refresh_turn_checkpoint_after_rewrite(self) -> None:
@@ -3870,7 +3911,6 @@ class AgenticNode(Node):
         self.running_turn_usage = None
         self._context_state = None
         self._restored_context_used = 0
-        self._restored_context_length = 0
         if not self.session_id:
             return
         try:
@@ -3933,7 +3973,7 @@ class AgenticNode(Node):
             "context_usage_ratio": current_tokens / self.context_length if self.context_length else 0,
             "context_remaining": (
                 max(0, self.context_length - current_tokens)
-                if self.context_length and self.get_context_usage().valid
+                if self.context_length and self.get_context_usage().last_call_input_tokens
                 else 0
             ),
             "context_length": self.context_length,
@@ -3967,7 +4007,7 @@ class AgenticNode(Node):
                 return _TokenUsage.from_usage_dict(
                     usage_dict,
                     session_total_tokens=self.get_context_usage().last_call_input_tokens,
-                    context_usage_valid=self.get_context_usage().valid,
+                    context_usage_valid=self.get_context_usage().last_call_input_tokens > 0,
                     context_length=self.context_length or 0,
                 )
         return None
