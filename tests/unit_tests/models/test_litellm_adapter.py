@@ -178,6 +178,42 @@ class TestOpenRouterModelName:
         assert adapter.litellm_model_name == "openrouter/anthropic/claude-sonnet-4"
 
 
+class TestOrcaRouterModelName:
+    def test_orcarouter_prefixes_vendor_slug(self):
+        """OrcaRouter namespaced models need the openai/ prefix so LiteLLM strips
+        it and routes the full vendor/slug namespace to the OrcaRouter base URL."""
+        adapter = LiteLLMAdapter(provider="orcarouter", model="deepseek/deepseek-chat", api_key="key")
+        assert adapter.litellm_model_name == "openai/deepseek/deepseek-chat"
+
+    def test_orcarouter_prefixes_own_namespace(self):
+        """Models in the orcarouter/ namespace (e.g. orcarouter/auto) keep the
+        namespace behind the openai/ provider prefix."""
+        adapter = LiteLLMAdapter(provider="orcarouter", model="orcarouter/auto", api_key="key")
+        assert adapter.litellm_model_name == "openai/orcarouter/auto"
+
+    def test_orcarouter_keeps_full_namespace_even_when_openai_prefixed(self):
+        """A model that already carries the openai/ namespace must still reach
+        OrcaRouter with its full id, so the provider prefix is added unconditionally."""
+        adapter = LiteLLMAdapter(provider="orcarouter", model="openai/gpt-5.5", api_key="key")
+        assert adapter.litellm_model_name == "openai/openai/gpt-5.5"
+
+    def test_orcarouter_default_base_url(self):
+        """OrcaRouter's OpenAI-compatible base URL is registered as the default."""
+        adapter = LiteLLMAdapter(provider="orcarouter", model="deepseek/deepseek-chat", api_key="key")
+        assert adapter.base_url == "https://api.orcarouter.ai/v1"
+
+    def test_orcarouter_not_autodetected(self):
+        """Namespaced models should NOT be auto-detected away from the gateway."""
+        adapter = LiteLLMAdapter(provider="orcarouter", model="deepseek/deepseek-chat", api_key="key")
+        assert adapter.provider == "orcarouter"
+
+    def test_orcarouter_unprefixed_deepseek_stays_orcarouter(self):
+        """Unprefixed model like deepseek-chat should NOT be auto-detected away."""
+        adapter = LiteLLMAdapter(provider="orcarouter", model="deepseek-chat", api_key="key")
+        assert adapter.provider == "orcarouter"
+        assert adapter.litellm_model_name == "openai/deepseek-chat"
+
+
 class TestGetCompletionKwargs:
     def test_includes_model(self):
         adapter = LiteLLMAdapter(provider="openai", model="gpt-4o", api_key="sk-test")

@@ -70,6 +70,11 @@ PROVIDER_MODELS = {
         "env_var": "CODEX_OAUTH_TOKEN",  # CI gate only; CodexModel uses OAuthManager token storage
         "models": ["o3-codex"],
     },
+    "R08-orcarouter": {
+        "type": "orcarouter",
+        "env_var": "ORCAROUTER_API_KEY",
+        "models": ["deepseek/deepseek-chat", "openai/gpt-4.1-mini"],
+    },
 }
 
 # Models with restricted sampling parameters (reasoning/thinking models)

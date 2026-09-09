@@ -39,6 +39,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         LLMProvider.KIMI: "KimiModel",
         LLMProvider.CODEX: "CodexModel",
         LLMProvider.OPENROUTER: "OpenRouterModel",
+        LLMProvider.ORCAROUTER: "OrcaRouterModel",
         LLMProvider.MINIMAX: "MiniMaxModel",
         LLMProvider.GLM: "GLMModel",
     }
