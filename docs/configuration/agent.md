@@ -200,6 +200,7 @@ Providers are defined in `conf/providers.yml` and activated by adding credential
 |----------|----------------|----------------|------|
 | `openai` | `gpt-5.2`, `gpt-4.1`, `o3` | `openai` | API key |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | `deepseek` | API key |
+| `atlas` | `deepseek-ai/deepseek-v4-flash`, `deepseek-ai/deepseek-v4-pro` | `openai` | API key |
 | `claude` | `claude-sonnet-4-5`, `claude-opus-4-5` | `claude` | API key |
 | `kimi` | `kimi-k3`, `kimi-k2.6` | `kimi` | API key |
 | `qwen` | `qwen3-max`, `qwen3-coder-plus` | `openai` | API key |
@@ -246,7 +247,7 @@ All providers support environment-variable references in `api_key`, for example:
 api_key: ${OPENAI_API_KEY}
 ```
 
-For OpenAI, DeepSeek, Claude, Kimi, Qwen, Gemini, and OpenRouter, the configuration wizard can prompt with provider-specific environment variable hints (e.g. `${OPENROUTER_API_KEY}`). For `minimax`, `glm`, and the `*_coding` providers, you can still enter values such as `${MINIMAX_API_KEY}`, `${GLM_API_KEY}`, `${KIMI_API_KEY}`, or `${DASHSCOPE_API_KEY}` directly.
+For OpenAI, DeepSeek, Atlas Cloud, Claude, Kimi, Qwen, Gemini, and OpenRouter, the configuration wizard can prompt with provider-specific environment variable hints (e.g. `${ATLASCLOUD_API_KEY}`). For `minimax`, `glm`, and the `*_coding` providers, you can still enter values such as `${MINIMAX_API_KEY}`, `${GLM_API_KEY}`, `${KIMI_API_KEY}`, or `${DASHSCOPE_API_KEY}` directly.
 
 The current implementation also auto-applies fixed parameter overrides for a few models:
 
@@ -266,6 +267,8 @@ With the new provider-level configuration, you only need to set credentials. All
           api_key: ${OPENAI_API_KEY}
         deepseek:
           api_key: ${DEEPSEEK_API_KEY}
+        atlas:
+          api_key: ${ATLASCLOUD_API_KEY}
         claude:
           api_key: ${ANTHROPIC_API_KEY}
         gemini:
