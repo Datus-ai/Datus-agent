@@ -42,6 +42,21 @@ SESSION_CONTEXT_USED_KEY = "context_used"
 #: Cap on the stored title. It labels a list row, it is not a document.
 MAX_SESSION_TITLE_CHARS = 500
 
+#: Metadata a derived session (copy / rewind) inherits. Only the title
+#: survives a history rewrite: ``context_used`` describes the exact history the
+#: derivation just changed, and ``plan_mode`` is a live user toggle that the
+#: derived session's own user has not asked for.
+DERIVED_SESSION_META_KEYS = (SESSION_TITLE_KEY,)
+
+#: Invalidate the occupancy reading of a session whose history was rewritten.
+#: Shared by every rewrite path so they cannot drift apart — the atomicity
+#: argument for ``replace_items`` and ``rollback_turn`` rests on them writing
+#: the same row the same way.
+CONTEXT_USED_RESET_SQL = (
+    "INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, '0') "
+    "ON CONFLICT(session_id, key) DO UPDATE SET value = '0'"
+)
+
 
 class DatusSQLiteSession(AdvancedSQLiteSession):
     def _is_user_message(self, item: dict[str, Any]) -> bool:
@@ -73,50 +88,84 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
         if persisted and items[: len(persisted)] == persisted:
             appended = items[len(persisted) :]
         await super().add_items(appended)
-        # Title from the unfiltered batch: when compaction ran on the very
-        # first request, the opening message is the part skipped here, and it
-        # would otherwise never be seen by the recorder.
-        await self._record_title_once(items)
+        # After the write, so the scan below sees this batch too: when
+        # compaction ran on the very first request, the opening message is the
+        # part skipped here and only the stored history still holds it.
+        await self._record_title_once()
 
-    async def _record_title_once(self, items: list[dict[str, Any]]) -> None:
-        """Persist the first user message as the session's durable title.
+    async def _record_title_once(self) -> None:
+        """Persist the session's opening user message as its durable title.
 
         Recorded as messages arrive rather than salvaged before a compact: the
         row lives in ``session_meta``, which a history rewrite never touches,
         so the label survives any number of compacts without a caller having to
-        race the clear. ``INSERT OR IGNORE`` makes only the first user message
-        of a session ever win, so a later batch cannot retitle the chat.
+        race the clear. An existing row always wins, so a later message can
+        never retitle the chat.
 
         Best-effort — a title is a list label, and losing one must never fail
         the message write that just succeeded.
         """
         if getattr(self, "_title_recorded", False):
             return
-        title = ""
-        for item in items:
-            if self._is_user_message(item):
-                title = extract_user_input(item.get("content", "")).strip()
-                if title:
-                    break
-        if not title:
-            return
 
-        def record() -> None:
+        def record() -> bool:
+            """Return whether the session now has a title, so the guard latches.
+
+            A batch of purely assistant messages leaves an untitled session
+            untitled; latching on that would stop the recorder before the
+            opening message ever arrives.
+            """
             conn = self._get_connection()
             with self._lock:
                 conn.execute(SESSION_META_TABLE)
-                conn.execute(
-                    "INSERT OR IGNORE INTO session_meta (session_id, key, value) VALUES (?, ?, ?)",
-                    (self.session_id, SESSION_TITLE_KEY, title[:MAX_SESSION_TITLE_CHARS]),
+                titled = bool(
+                    conn.execute(
+                        "SELECT 1 FROM session_meta WHERE session_id = ? AND key = ?",
+                        (self.session_id, SESSION_TITLE_KEY),
+                    ).fetchone()
                 )
+                if not titled:
+                    title = self._opening_user_message(conn)
+                    if title:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO session_meta (session_id, key, value) VALUES (?, ?, ?)",
+                            (self.session_id, SESSION_TITLE_KEY, title[:MAX_SESSION_TITLE_CHARS]),
+                        )
+                        titled = True
                 conn.commit()
+                return titled
 
         try:
-            await asyncio.to_thread(record)
+            self._title_recorded = await asyncio.to_thread(record)
         except Exception as exc:  # noqa: BLE001 — see docstring
             logger.warning("Could not record the title of session %s: %s", self.session_id, exc)
-            return
-        self._title_recorded = True
+
+    def _opening_user_message(self, conn: Any) -> str:
+        """Return the session's own opening message, not this batch's first one.
+
+        A session that predates ``session_meta`` has no title row but does have
+        history, so naming it from the incoming batch would rename the chat to
+        whatever the user says next — the exact bug the stored title exists to
+        prevent. Reading the earliest stored user message names old and new
+        sessions the same way, and yields what ``get_session_info``'s scan
+        would have shown.
+
+        Runs at most once per session: the caller only reaches here while no
+        title row exists, and the row check short-circuits every later call.
+        """
+        for (data,) in conn.execute(
+            f"SELECT message_data FROM {self.messages_table} WHERE session_id = ? ORDER BY id",
+            (self.session_id,),
+        ):
+            try:
+                item = json.loads(data)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(item, dict) and self._is_user_message(item):
+                title = extract_user_input(item.get("content", "")).strip()
+                if title:
+                    return title
+        return ""
 
     def forget_recorded_title(self) -> None:
         """Let the next user message name the session again.
@@ -195,11 +244,7 @@ class DatusSQLiteSession(AdvancedSQLiteSession):
                     # The occupancy reading describes the history just deleted.
                     # Zeroed in this same transaction so the compaction gate
                     # and the status bar can never see it outlive its subject.
-                    conn.execute(
-                        "INSERT INTO session_meta (session_id, key, value) VALUES (?, ?, '0') "
-                        "ON CONFLICT(session_id, key) DO UPDATE SET value = '0'",
-                        (self.session_id, SESSION_CONTEXT_USED_KEY),
-                    )
+                    conn.execute(CONTEXT_USED_RESET_SQL, (self.session_id, SESSION_CONTEXT_USED_KEY))
                     if conn.execute(
                         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'running_turn_usage'"
                     ).fetchone():

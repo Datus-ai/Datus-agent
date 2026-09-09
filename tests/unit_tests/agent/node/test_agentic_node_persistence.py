@@ -100,6 +100,27 @@ class TestPlanModeStatePersistence:
         assert rebuilt.plan_mode_active is True
         assert rebuilt.plan_file_path == node.plan_file_path
 
+    def test_materializing_a_session_never_overwrites_stored_plan_mode(self, chdir_tmp, real_agent_config):
+        """Getting a session object must not write a stale snapshot back.
+
+        ``_get_or_create_session`` also runs from paths that only need the
+        session — the minor-compact turn count, the API's throwaway compaction
+        node. Those nodes restored plan mode when they were built, so if the
+        live process toggles it afterwards, re-persisting their snapshot
+        silently drops the user out of plan mode.
+        """
+        live = _make_chat_node(real_agent_config, session_id="chat_session_race")
+        _materialize_session(live)
+        # Built before the toggle, so its in-memory flags say plan mode is off.
+        stale = _make_chat_node(real_agent_config, session_id="chat_session_race")
+        live.activate_plan_mode()
+
+        _materialize_session(stale)
+
+        rebuilt = _make_chat_node(real_agent_config, session_id="chat_session_race")
+        assert rebuilt.plan_mode_active is True
+        assert rebuilt.plan_file_path == live.plan_file_path
+
     def test_fresh_node_generates_session_id(self, chdir_tmp, real_agent_config):
         """When caller omits ``session_id``, ``__init__`` allocates one eagerly
         so persistence has a stable key from the very first turn."""
@@ -221,20 +242,44 @@ class TestCompactStateNotPersisted:
 class TestContextStatePersistence:
     """``persist_context_state`` flushes occupancy; a rebuilt node restores it."""
 
-    def test_persist_writes_context_state_section(self, chdir_tmp, real_agent_config):
+    def test_persist_writes_the_measurement_to_the_session_database(self, chdir_tmp, real_agent_config):
         node = _make_chat_node(real_agent_config, session_id="chat_session_ctx1")
+        _materialize_session(node)
 
         node.persist_context_state(52_499)
 
-        state_path = _state_path(node, "chat_session_ctx1")
-        assert state_path.exists()
-        data = json.loads(state_path.read_text(encoding="utf-8"))
-        assert data["context_state"] == {"last_call_input_tokens": 52_499}
+        stored = node.session_manager.load_context_state("chat_session_ctx1")
+        assert stored is not None and stored.last_call_input_tokens == 52_499
         # In-memory mirror updated so a same-process status-bar read is correct.
         assert node._restored_context_used == 52_499
 
+    def test_persist_does_not_create_a_json_mirror_for_a_new_session(self, chdir_tmp, real_agent_config):
+        """The JSON file is a compatibility mirror, not a second store.
+
+        ``SessionManager`` only reaches it by name on delete, so writing one for
+        every session recreates the unreachable location the move to
+        ``session_meta`` removed.
+        """
+        node = _make_chat_node(real_agent_config, session_id="chat_session_ctxnew")
+        _materialize_session(node)
+
+        node.persist_context_state(52_499)
+
+        assert not _state_path(node, "chat_session_ctxnew").exists()
+
+    def test_persist_still_refreshes_an_existing_json_mirror(self, chdir_tmp, real_agent_config):
+        """A session that predates the move keeps its file consistent."""
+        node = _make_chat_node(real_agent_config, session_id="chat_session_ctxlegacy")
+        _write_legacy_plan_mode(_state_path(node, "chat_session_ctxlegacy"), plan_mode_active=False)
+
+        node.persist_context_state(52_499)
+
+        data = json.loads(_state_path(node, "chat_session_ctxlegacy").read_text(encoding="utf-8"))
+        assert data["context_state"] == {"last_call_input_tokens": 52_499}
+
     def test_rebuilt_node_restores_context_state(self, chdir_tmp, real_agent_config):
         node = _make_chat_node(real_agent_config, session_id="chat_session_ctx2")
+        _materialize_session(node)
         node.persist_context_state(12_004)
 
         rebuilt = _make_chat_node(real_agent_config, session_id="chat_session_ctx2")
@@ -263,6 +308,7 @@ class TestResetUsageCaches:
 
     def test_reset_zeros_in_memory_and_removes_context_state(self, chdir_tmp, real_agent_config):
         node = _make_chat_node(real_agent_config, session_id="chat_session_reset1")
+        _materialize_session(node)
         node.persist_context_state(52_499)
         node.running_turn_usage = object()  # stand-in for a TokenUsage snapshot
 

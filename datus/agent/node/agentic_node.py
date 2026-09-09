@@ -548,7 +548,7 @@ class AgenticNode(Node):
             logger.debug("agent_state_path unavailable: %s", exc)
             return None
 
-    def _persist_plan_mode_state(self) -> None:
+    def _persist_plan_mode_state(self, only_if_absent: bool = False) -> None:
         """Flush current plan-mode fields to the session db. No-op without session_id.
 
         Plan mode can be toggled before the first message, when the database
@@ -557,6 +557,11 @@ class AgenticNode(Node):
         ``_get_or_create_session`` repeats the call once the session is real.
         Nothing is lost in that window: a session with no database cannot be
         resumed, so there is no reader for the state it would have stored.
+
+        ``only_if_absent`` seeds a session that has no plan-mode row yet without
+        overwriting one. Callers that merely materialise the session hold a
+        snapshot taken at construction time, which another process may have
+        moved on from — see :meth:`_get_or_create_session`.
         """
         if not self.session_id:
             return
@@ -564,6 +569,8 @@ class AgenticNode(Node):
         from datus.storage.session_state import PlanModeState
 
         try:
+            if only_if_absent and self.session_manager.load_session_meta(self.session_id, SESSION_PLAN_MODE_KEY):
+                return
             payload = PlanModeState(
                 plan_mode_active=self.plan_mode_active,
                 plan_file_path=self.plan_file_path,
@@ -633,8 +640,11 @@ class AgenticNode(Node):
 
         Memory is authoritative for the running node even when persistence
         fails. The session db holds the durable value, zeroed by any history
-        rewrite in the same transaction; the JSON section remains a
-        compatibility mirror for sessions that predate the move.
+        rewrite in the same transaction; the JSON section is only a
+        compatibility mirror for sessions that predate the move, so it is
+        refreshed where it already exists and never created — a new file would
+        be a second storage location ``SessionManager`` has to clean up for no
+        reader's benefit.
         """
         from datus.storage.session_state import ContextState
 
@@ -648,7 +658,7 @@ class AgenticNode(Node):
                 logger.debug("Failed to persist SQLite context state", exc_info=True)
         try:
             state_path = self._agent_state_file()
-            if state_path is not None:
+            if state_path is not None and state_path.exists():
                 state.save(state_path)
         except Exception:
             logger.debug("Failed to persist JSON context state", exc_info=True)
@@ -1582,7 +1592,13 @@ class AgenticNode(Node):
             # Plan mode may have been toggled before the database existed, in
             # which case that write was skipped. There is somewhere to put it
             # now, and a resumable session must carry its plan-mode flags.
-            self._persist_plan_mode_state()
+            #
+            # Seed only, never overwrite: this method also runs from paths that
+            # only need a session object — turn counting, the API's throwaway
+            # compaction node — whose in-memory flags were restored when the
+            # node was built and may already be stale. Blindly writing them
+            # back would drop a live process out of plan mode.
+            self._persist_plan_mode_state(only_if_absent=True)
 
         return self._session
 

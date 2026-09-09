@@ -581,7 +581,6 @@ class TestStatusBarProviderTokens:
             context_length=1_000_000,
             running_turn_usage=running,
             _restored_context_used=52_499,
-            _restored_context_length=1_000_000,
         )
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 60_000  # live snapshot, not restored 52_499
@@ -602,7 +601,6 @@ class TestStatusBarProviderTokens:
             context_length=200_000,
             running_turn_usage=None,
             _restored_context_used=1_200,
-            _restored_context_length=200_000,
         )
         state = StatusBarProvider(self._make_cli(node)).current_state()
         assert state.context_used == 1_200

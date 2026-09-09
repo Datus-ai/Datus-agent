@@ -187,6 +187,34 @@ async def test_a_session_recorded_before_the_title_existed_still_names_itself(tm
 
 
 @pytest.mark.asyncio
+async def test_resuming_a_session_older_than_the_title_does_not_rename_it(tmp_path):
+    """An absent title row means "never recorded", not "no conversation yet".
+
+    Every session created before ``session_meta`` existed has history but no
+    row. Naming such a session from the batch that happens to arrive next
+    renames the whole installed base to whatever its user says after upgrading,
+    and the write-once row makes that permanent.
+    """
+    manager = SessionManager(session_dir=str(tmp_path))
+    session = manager.get_session("upgraded")
+    await session.add_items(
+        [
+            {"role": "user", "content": "How many buses ran today?"},
+            {"role": "assistant", "content": "412."},
+        ]
+    )
+    with sqlite3.connect(tmp_path / "upgraded.db") as conn:
+        conn.execute("DROP TABLE session_meta")
+    manager.close_all_sessions()
+
+    resumed = manager.get_session("upgraded")
+    await resumed.add_items([{"role": "user", "content": "Actually, show me refunds instead"}])
+
+    assert manager.get_session_info("upgraded")["first_user_message"] == "How many buses ran today?"
+    resumed.close()
+
+
+@pytest.mark.asyncio
 async def test_a_first_request_compact_still_names_the_session(tmp_path):
     """Compaction on the very first request persists the input itself.
 
@@ -204,6 +232,23 @@ async def test_a_first_request_compact_still_names_the_session(tmp_path):
     await session.replace_items([{"role": "assistant", "content": "Recap of the conversation."}])
 
     assert manager.get_session_info("firstreq")["first_user_message"] == "How many buses ran today?"
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_an_assistant_only_batch_does_not_stop_the_recorder(tmp_path):
+    """Nothing to record is not the same as recorded.
+
+    A batch that carries no user message leaves the session untitled, so the
+    write-once guard must not latch — the opening message may still be coming.
+    """
+    manager = SessionManager(session_dir=str(tmp_path))
+    session = manager.get_session("assistantfirst")
+
+    await session.add_items([{"role": "assistant", "content": "Ready."}])
+    await session.add_items([{"role": "user", "content": "How many buses ran today?"}])
+
+    assert manager.get_session_info("assistantfirst")["first_user_message"] == "How many buses ran today?"
     session.close()
 
 

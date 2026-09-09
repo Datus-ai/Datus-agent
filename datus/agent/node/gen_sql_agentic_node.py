@@ -374,7 +374,7 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             from datus.tools.func_tool.plan_tools import PlanTool
 
-            session, _ = self._get_or_create_session()
+            session = self._get_or_create_session()
             # Lazy resolver mirrors AgenticNode._get_plan_mode_tools — even
             # though we've already called _get_or_create_session here, future
             # session swaps (rewind / switch) should be picked up too.

@@ -185,6 +185,17 @@ class ContextState:
 
     last_call_input_tokens: int = 0
 
+    def __post_init__(self) -> None:
+        """Keep a negative occupancy unrepresentable.
+
+        ``save_context_state`` takes a caller-supplied state and writes the
+        number through verbatim; a negative value would surface as a negative
+        occupancy in the status bar and a negative ratio in the compaction
+        gate. Clamping here means no call site has to remember to.
+        """
+        if self.last_call_input_tokens < 0:
+            self.last_call_input_tokens = 0
+
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ContextState":
         """Build from a dict, coercing anything unusable to zero.

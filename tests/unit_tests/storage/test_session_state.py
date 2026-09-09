@@ -99,6 +99,15 @@ class TestPlanModeStateRoundTrip:
 
 
 class TestContextStateRoundTrip:
+    def test_a_negative_occupancy_is_not_representable(self):
+        """Constructing the state clamps, so no call site has to remember to.
+
+        ``SessionManager.save_context_state`` writes a caller-supplied state
+        through verbatim; a negative reading would render as a negative
+        occupancy in the status bar and a negative ratio in the compaction gate.
+        """
+        assert ContextState(-5).last_call_input_tokens == 0
+
     def test_save_and_load_round_trip(self, tmp_path):
         path = tmp_path / "state" / "ctx.json"
         ContextState(52_499).save(path)
