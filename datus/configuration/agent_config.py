@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
+from datus.configuration.logging_config import LoggingConfig
 from datus.configuration.project_config import PluginActivation
 from datus.observability.config import ObservabilityConfig
 from datus.schemas.base import BaseInput
@@ -771,6 +772,7 @@ class AgentConfig:
     # to a model without extending the strongly-typed ``ModelConfig``.
     model_extras: Dict[str, Dict[str, Any]]
     knowledge_base: Dict[str, Any]
+    logging: LoggingConfig
     observability: ObservabilityConfig
 
     def __init__(self, nodes: Dict[str, NodeConfig], **kwargs):
@@ -979,6 +981,7 @@ class AgentConfig:
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
         self.api_config: Dict[str, Any] = kwargs.get("api", {}) or {}
+        self.logging = LoggingConfig.from_dict(_resolve_nested_value(kwargs.get("logging")))
         self.observability = ObservabilityConfig.from_dict(_resolve_nested_value(kwargs.get("observability")))
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
         self.dashboard_config: Dict[str, DashboardConfig] = {}

@@ -432,12 +432,12 @@ class TestConfigureLogging:
 class TestAddExcInfo:
     """Tests for add_exc_info processor (line 202-206)."""
 
-    def test_adds_exc_info_for_error(self):
+    def test_error_does_not_force_a_traceback(self):
         from datus.utils.loggings import add_exc_info
 
         event_dict = {}
         result = add_exc_info(None, "error", event_dict)
-        assert result["exc_info"] is True
+        assert "exc_info" not in result
 
     def test_no_exc_info_for_info(self):
         from datus.utils.loggings import add_exc_info

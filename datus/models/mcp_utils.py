@@ -9,6 +9,7 @@ import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Optional
 
+from datus.observability.model_call import capability_event
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -115,17 +116,20 @@ async def _safe_connect_server(
         connect_timeout = connect_timeout_seconds()
 
     last_error: Optional[BaseException] = None
+    started = time.monotonic()
+    attempts = 0
 
     for attempt in range(max_retries):
         attempt_timeout = connect_timeout
         if deadline is not None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                logger.warning(f"MCP server {server_name}: connect budget exhausted, giving up")
+                logger.debug(f"MCP server {server_name}: connect budget exhausted, giving up")
                 break
             attempt_timeout = min(attempt_timeout, remaining)
 
-        logger.info(
+        attempts += 1
+        logger.debug(
             f"Attempting to connect to MCP server {server_name} "
             f"(attempt {attempt + 1}/{max_retries}, timeout {attempt_timeout:.1f}s)"
         )
@@ -141,16 +145,22 @@ async def _safe_connect_server(
             raise
         except TimeoutError as e:
             last_error = e
-            logger.error(
+            logger.warning(
                 f"Timeout connecting to MCP server {server_name} after {attempt_timeout:.1f}s (attempt {attempt + 1})"
             )
             await _close_quietly(server_name, server, timeout=_cleanup_timeout(deadline))
         except Exception as e:
             last_error = e
-            logger.error(f"Failed to connect MCP server {server_name} (attempt {attempt + 1}): {str(e)}")
+            logger.warning(f"Failed to connect MCP server {server_name} (attempt {attempt + 1}): {str(e)}")
             await _close_quietly(server_name, server, timeout=_cleanup_timeout(deadline))
         else:
-            logger.info(f"MCP server {server_name} connected successfully")
+            logger.info(
+                "mcp.connected",
+                server=server_name,
+                attempts=attempts,
+                status="success",
+                duration_ms=round((time.monotonic() - started) * 1000, 2),
+            )
             try:
                 yield server
             except GeneratorExit:
@@ -167,7 +177,7 @@ async def _safe_connect_server(
                 # token out beyond the cap the budget promises.
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    logger.warning(f"MCP server {server_name}: connect budget exhausted, giving up")
+                    logger.debug(f"MCP server {server_name}: connect budget exhausted, giving up")
                     break
                 backoff = min(backoff, remaining)
 
@@ -178,7 +188,17 @@ async def _safe_connect_server(
                     logger.debug(f"MCP server {server_name} retry cancelled")
                     raise
 
-    raise last_error if last_error else TimeoutError(f"Could not connect MCP server {server_name} within budget")
+    failure = last_error or TimeoutError(f"Could not connect MCP server {server_name} within budget")
+    capability_event(
+        "mcp.degraded",
+        reason=type(failure).__name__,
+        server=server_name,
+        attempts=attempts,
+        duration_ms=round((time.monotonic() - started) * 1000, 2),
+        degraded=True,
+        exc_info=(type(failure), failure, failure.__traceback__),
+    )
+    raise failure
 
 
 @asynccontextmanager
@@ -207,21 +227,23 @@ async def multiple_mcp_servers(mcp_servers: Dict[str, Any], connect_budget: Opti
 
     try:
         if mcp_servers:
-            logger.info(
+            logger.debug(
                 f"Attempting to connect {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())} "
                 f"(budget {connect_budget:.1f}s)"
             )
 
         for server_name, server in mcp_servers.items():
             if time.monotonic() >= deadline:
-                logger.warning(
-                    f"Skipping MCP server {server_name}: connect budget of {connect_budget:.1f}s exhausted; "
-                    f"the agent runs without it"
+                capability_event(
+                    "mcp.budget_exhausted",
+                    reason="connect_budget_exhausted",
+                    server=server_name,
+                    attempts=0,
+                    degraded=True,
                 )
                 continue
 
             try:
-                logger.info(f"Connecting MCP server: {server_name}")
                 cm = _safe_connect_server(
                     server_name,
                     server,
@@ -230,11 +252,11 @@ async def multiple_mcp_servers(mcp_servers: Dict[str, Any], connect_budget: Opti
                 )
                 connected_server = await stack.enter_async_context(cm)
                 connected_servers[server_name] = connected_server
-                logger.info(f"Successfully connected MCP server: {server_name}")
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
-                logger.error(f"Failed to start MCP server {server_name}: {str(e)}; continuing without it")
+            except Exception:
+                # The connection boundary already recorded the final cause.
+                continue
 
         if mcp_servers and not connected_servers:
             logger.warning("No MCP servers were successfully connected; the agent runs with built-in tools only")

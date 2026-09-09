@@ -88,11 +88,35 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
             return
 
         super().on_span_start(span)
+        if isinstance(span.span_data, (_oi_processor.GenerationSpanData, _oi_processor.ResponseSpanData)):
+            from datus.observability.model_call import current_model_call
+
+            if call := current_model_call():
+                call.bind_sdk_span(span)
+                call.bind_span(self._otel_spans.get(span.span_id))
 
     def on_span_end(self, span: Any) -> None:
         if span.span_id not in self._merged_root_agent_span_ids:
             self._set_datus_span_attributes(span)
-            super().on_span_end(span)
+            call = getattr(span, "_datus_model_call", None)
+            original_response = None
+            if call is not None:
+                data = span.span_data
+                call.usage(getattr(data, "usage", None))
+                if isinstance(data, _oi_processor.ResponseSpanData) and data.response is not None:
+                    original_response = data.response
+                    # Export definitions once, under the shared content policy.
+                    # The upstream processor otherwise re-exports raw tools from
+                    # response.tools, including inside the full output envelope.
+                    data.response = data.response.model_copy(update={"tools": []})
+                    call.usage(getattr(original_response, "usage", None))
+                if otel_span := self._otel_spans.get(span.span_id):
+                    self._otel_spans[span.span_id] = _ModelCallSpan(otel_span, call)
+            try:
+                super().on_span_end(span)
+            finally:
+                if original_response is not None:
+                    span.span_data.response = original_response
             return
 
         self._merged_root_agent_span_ids.discard(span.span_id)
@@ -174,6 +198,20 @@ def _set_numeric_attribute(span: Any, key: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return
     span.set_attribute(key, value)
+
+
+class _ModelCallSpan:
+    """Apply call evidence immediately before end, after upstream I/O mapping."""
+
+    def __init__(self, span: Any, call: Any):
+        self._span = span
+        self._call = call
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._span, name)
+
+    def end(self, *args: Any, **kwargs: Any) -> None:
+        self._call.end_sdk_span(self._span, *args, **kwargs)
 
 
 def _tool_failure_message(output: Any) -> str:

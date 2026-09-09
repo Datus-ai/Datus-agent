@@ -44,7 +44,7 @@ class OtlpAdapter:
             from opentelemetry import trace
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
             from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace import SpanLimits, TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
             from datus.observability.openai_agents import instrument_openai_agents
@@ -79,7 +79,9 @@ class OtlpAdapter:
             if self._processor is not None and OtlpAdapter._tracer_provider is not None and not OtlpAdapter._shutdown:
                 return
             if OtlpAdapter._tracer_provider is None or OtlpAdapter._shutdown:
-                tracer_provider = TracerProvider(resource=Resource.create(resource_attrs))
+                tracer_provider = TracerProvider(
+                    resource=Resource.create(resource_attrs), span_limits=SpanLimits(max_attributes=4096)
+                )
                 tracer_provider.add_span_processor(_BaggageAttributeSpanProcessor())
                 trace.set_tracer_provider(tracer_provider)
 
@@ -224,8 +226,24 @@ def _build_openinference_trace_config(trace_config_cls: type, tracing_config: Tr
     capture = tracing_config.capture
     hide_inputs = not (capture.prompts or capture.tool_args or capture.sql or capture.artifacts)
     hide_outputs = not (capture.responses or capture.reasoning or capture.tool_results or capture.artifacts)
-    return trace_config_cls(
+
+    class ToolCaptureConfig(trace_config_cls):
+        def mask(self, key, value):
+            # OpenInference's substring match also catches tools_count and
+            # tools_capture_state. These are metadata, not tool definitions.
+            if key.startswith("datus.llm.tools_"):
+                return value() if callable(value) else value
+            # OpenInference normally couples tools to hide_inputs. Datus has an
+            # independent definition switch; preserve masking for all other input.
+            if key.startswith("llm.tools."):
+                if self.hide_llm_tools:
+                    return None
+                return value() if callable(value) else value
+            return super().mask(key, value)
+
+    return ToolCaptureConfig(
         hide_inputs=hide_inputs,
+        hide_llm_tools=not capture.tool_definitions,
         hide_outputs=hide_outputs,
         hide_input_messages=not capture.prompts,
         hide_output_messages=not capture.responses,

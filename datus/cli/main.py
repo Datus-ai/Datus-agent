@@ -11,10 +11,11 @@ Main entry point for the CLI application.
 import argparse
 
 from datus import __version__
+from datus.configuration.logging_config import add_logging_arguments
 from datus.utils.async_utils import setup_windows_policy
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
@@ -65,7 +66,7 @@ class ArgumentParser:
             type=str,
             help="Path to configuration file (default: ./conf/agent.yml > {agent.home}/conf/agent.yml)",
         )
-        self.parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+        add_logging_arguments(self.parser)
         self.parser.add_argument("--no_color", dest="no_color", action="store_true", help="Disable colored output")
         # storage_path parameter deprecated - data path is now fixed at {agent.home}/data
 
@@ -263,7 +264,7 @@ class Application:
     def run(self):
         args = self.arg_parser.parse_args()
 
-        configure_logging(args.debug, console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
 
         # REPL-only: ensure ./.datus/config.yml exists before anything touches
         # agent config. Must run before _resolve_default_datasource so the
@@ -781,7 +782,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "upgrade":
         from datus.cli.upgrade_cli import run_upgrade_command
 
-        configure_logging(False, console_output=False)
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
         sys.exit(run_upgrade_command(sys.argv[2:]))
 
     # Intercept 'plugin' management subcommand (install/uninstall/list/info/
@@ -790,7 +791,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "plugin":
         from datus.cli.plugin_cli import run_plugin_command
 
-        configure_logging(False, console_output=False)
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
         sys.exit(run_plugin_command(sys.argv[2:]))
 
     # Intercept 'package' — export the current project as a self-contained
@@ -798,7 +799,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "package":
         from datus.cli.package_cli import run_package_command
 
-        configure_logging(False, console_output=False)
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
         sys.exit(run_package_command(sys.argv[2:]))
 
     # Intercept 'skill' subcommand and delegate to datus.main's skill handler
@@ -807,7 +808,7 @@ def main():
 
         parser = create_main_parser()
         args = parser.parse_args()
-        configure_logging(getattr(args, "debug", False), console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
         from datus.cli.skill_cli import run_skill_command
 
         sys.exit(run_skill_command(args))
@@ -817,7 +818,7 @@ def main():
     # ``datus.cli_commands`` (``datus mwaa ...``). Plugins win when both claim a
     # name. Falls through to the REPL when nothing claims the token.
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in _RESERVED_SUBCOMMANDS:
-        configure_logging(False, console_output=False)
+        configure_entrypoint_logging(argparse.Namespace(), console_output=False)
         rc = _dispatch_plugin_command(sys.argv[1:])
         if rc is None:
             rc = _dispatch_external_command(sys.argv[1:])

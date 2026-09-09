@@ -19,8 +19,8 @@ import copy
 from typing import Any, List
 
 import litellm
-from agents.extensions.models.litellm_model import LitellmModel
 
+from datus.models.observed_model import ObservedLitellmModel
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -117,7 +117,7 @@ def _install_cache_control_wrapper() -> None:
 _install_cache_control_wrapper()
 
 
-class CacheControlLitellmModel(LitellmModel):
+class CacheControlLitellmModel(ObservedLitellmModel):
     """``LitellmModel`` subclass that injects Anthropic prompt-caching markers.
 
     Sets the per-task ``_apply_cache`` ContextVar so that the globally-installed
@@ -125,6 +125,9 @@ class CacheControlLitellmModel(LitellmModel):
     the last user/tool message, and the last tool definition — but only when the
     configured model routes to the Anthropic provider (``anthropic/*``).
     """
+
+    def _tools_for_observation(self, definitions):
+        return apply_cache_control(None, definitions)[1] if self._is_anthropic() else definitions
 
     def _is_anthropic(self) -> bool:
         return isinstance(self.model, str) and self.model.startswith("anthropic/")

@@ -42,6 +42,7 @@ from datus.agent.node.node import Node
 from datus.cli.execution_state import ExecutionInterrupted, InteractionBroker, InterruptController, PendingInputQueue
 from datus.configuration.agent_config import AgentConfig, CompactConfig
 from datus.models.base import LLMBaseModel
+from datus.observability.compaction import compact_metrics, compact_started, observe_compaction
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
@@ -1617,6 +1618,7 @@ class AgenticNode(Node):
     # the most recent ``keep_recent_user_turns`` user turns) and offloads
     # any arguments/output over ``archive_threshold`` to disk.
 
+    @observe_compaction
     async def compact(
         self,
         mode: Literal["major", "minor", "auto"] = "auto",
@@ -1951,7 +1953,7 @@ class AgenticNode(Node):
             logger.warning("Cannot major-compact: no session available")
             return {"mode": "major", "reason": reason, "success": False, "summary": "", "summary_token": 0}
 
-        logger.info("Starting major compact for session %s (reason=%s)", self.session_id, reason)
+        compact_started(mode="major", trigger=reason)
         try:
             items = list(await self._session.get_items())
         except Exception as exc:
@@ -1991,12 +1993,7 @@ class AgenticNode(Node):
         # starts scanning from the top of the rewritten session.
         self._compacted_until = 0
 
-        logger.info(
-            "Major compact complete: %d chars summary, %d output tokens, history=%s",
-            len(summary),
-            summary_token,
-            history_jsonl_path,
-        )
+        compact_metrics(items_before=len(items), items_after=1, summary_chars=len(summary))
         return {
             "mode": "major",
             "reason": reason,
@@ -2091,6 +2088,7 @@ class AgenticNode(Node):
                 "window": [lo, cutoff],
             }
 
+        compact_started(mode="minor", trigger=reason, items_before=len(items))
         try:
             await self._replace_session_items(rewritten)
         except Exception as exc:
@@ -2104,13 +2102,7 @@ class AgenticNode(Node):
             }
 
         self._compacted_until = cutoff
-        logger.info(
-            "Minor compact done: window=[%d,%d) archived=%d reason=%s",
-            lo,
-            cutoff,
-            archived_count,
-            reason,
-        )
+        compact_metrics(items_before=len(items), items_after=len(rewritten), window=[lo, cutoff])
         return {
             "mode": "minor",
             "reason": reason,
@@ -2236,6 +2228,7 @@ class AgenticNode(Node):
         except Exception:  # noqa: BLE001
             logger.debug("Failed to refresh the turn checkpoint after mid-turn compact", exc_info=True)
 
+    @observe_compaction
     async def compact_mid_turn(
         self,
         items: List[Dict[str, Any]],
@@ -2295,13 +2288,12 @@ class AgenticNode(Node):
                 mode = self._decide_mid_turn_compact_mode(ratio, first_call=first_call)
                 if mode == "noop" and not archive_history:
                     return noop
-                logger.debug(
-                    "Mid-turn compact (%s): ratio=%.2f mode=%s items=%d session=%s",
-                    reason,
-                    ratio,
-                    mode,
-                    len(items),
-                    self.session_id,
+                compact_started(
+                    mode=mode,
+                    trigger=reason,
+                    items_before=len(items),
+                    tokens_before=effective,
+                    token_measurement_source="usage_plus_tail_estimate",
                 )
                 entry_ratio = ratio
 
@@ -2385,15 +2377,11 @@ class AgenticNode(Node):
                     return {**result, "success": False, "items": items}
 
                 result["items"] = view
-                logger.info(
-                    "Mid-turn compact done (%s): mode=%s ratio=%.2f archived=%d items %d -> %d session=%s",
-                    reason,
-                    result["mode"],
-                    entry_ratio,
-                    archived_count,
-                    len(items),
-                    len(view),
-                    self.session_id,
+                compact_metrics(
+                    items_after=len(view),
+                    archived_count=archived_count,
+                    entry_context_ratio=entry_ratio,
+                    context_ratio_after=ratio,
                 )
                 return result
         except Exception:  # noqa: BLE001 — the rewriter must never see an exception from here
@@ -2530,7 +2518,7 @@ class AgenticNode(Node):
                     normalized_rules.append(str(rule))
             config["rules"] = normalized_rules
 
-        logger.info(f"Parsed node configuration for '{node_name}': {config}")
+        logger.debug("node.configured", node_name=node_name, config_keys=sorted(config))
         return config
 
     def _setup_mcp_servers(self) -> Dict[str, Any]:
@@ -3460,10 +3448,10 @@ class AgenticNode(Node):
 
         node_name = self.get_node_name()
         logger.info(
-            "%s execute_stream start: session=%s msg=%r",
-            node_name,
-            getattr(self, "session_id", None),
-            (getattr(self.input, "user_message", "") or "")[:120],
+            "turn.started",
+            node_name=node_name,
+            session_id=getattr(self, "session_id", None),
+            message_chars=len(getattr(self.input, "user_message", "") or ""),
         )
         initial_action = ActionHistory.create_action(
             role=ActionRole.USER,

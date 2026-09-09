@@ -119,7 +119,7 @@ class MCPManager:
         self.externally_managed = servers is not None
         if self.externally_managed:
             self.config = MCPConfig.from_config_format({"mcpServers": servers})
-            logger.info(f"Loaded {len(self.config.servers)} MCP server(s) from the agent config")
+            logger.debug(f"Loaded {len(self.config.servers)} MCP server(s) from the agent config")
         else:
             self.load_config()
 
@@ -156,7 +156,7 @@ class MCPManager:
 
                 if "mcpServers" in data:
                     self.config = MCPConfig.from_config_format(data)
-                    logger.info(f"Loaded MCP config from {self.config_path}")
+                    logger.debug(f"Loaded MCP config from {self.config_path}")
                 else:
                     # Invalid format, use defaults
                     self.config = MCPConfig()
@@ -561,7 +561,7 @@ class MCPManager:
         try:
             # Connect to the server
             await server_instance.connect()
-            logger.info(f"Successfully connected to MCP server '{server_name}' for {operation}")
+            logger.debug(f"Successfully connected to MCP server '{server_name}' for {operation}")
 
             # Create minimal agent and run context
             agent = Agent(name=f"tools-agent-{server_name}")
@@ -622,7 +622,7 @@ class MCPManager:
                     }
                 )
 
-        logger.info(f"Found {len(tools_list)} tools on server '{server_name}'")
+        logger.debug(f"Found {len(tools_list)} tools on server '{server_name}'")
         return True, {"tools": tools_list}
 
     async def _handle_call_tool(self, server_instance, server_name: str, **kwargs):
@@ -645,12 +645,12 @@ class MCPManager:
                     content_dict["data"] = content_item.data
                 result_dict["content"].append(content_dict)
 
-        logger.info(f"Successfully called tool '{tool_name}' on server '{server_name}'")
+        logger.debug(f"Successfully called tool '{tool_name}' on server '{server_name}'")
         return True, result_dict
 
     async def _handle_connectivity_test(self, server_instance, server_name: str, run_context, agent):
         """Handle connectivity_test operation."""
-        logger.info(f"Successfully connected to MCP server '{server_name}'")
+        logger.debug(f"Successfully connected to MCP server '{server_name}'")
         tools_info = {"connected": True}
 
         if hasattr(server_instance, "list_tools"):
@@ -686,4 +686,4 @@ class MCPManager:
 
     def cleanup(self) -> None:
         """Clean up MCP Manager."""
-        logger.info("MCP Manager cleanup complete")
+        logger.debug("MCP Manager cleanup complete")

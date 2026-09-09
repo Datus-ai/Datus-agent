@@ -431,7 +431,7 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
             if tool_name_matches(tool.name, registry, parsed_by_pattern[pattern]):
                 matched.extend(transformers)
         if matched:
-            logger.info("Tool middleware: wrapping '%s' with %d transformer(s)", tool.name, len(matched))
+            logger.debug("Tool middleware: wrapping '%s' with %d transformer(s)", tool.name, len(matched))
             new_tools.append(wrap_tool_with_transformers(tool, matched, context_provider))
             wrapped_count += 1
         else:

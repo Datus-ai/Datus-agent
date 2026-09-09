@@ -10,14 +10,13 @@ import os
 import re
 import time
 import uuid
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
-from agents.models.openai_responses import OpenAIResponsesModel
 from agents.run import RunConfig
 
 from datus.auth.oauth_config import CODEX_API_BASE_URL
@@ -26,7 +25,10 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
+from datus.models.observed_model import ObservedResponsesModel
 from datus.observability.manager import get_observability_manager
+from datus.observability.model_call import current_model_call, native_model_call
+from datus.observability.tool_calls import observe_tool_hooks
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.tool_summary import detect_tool_failure
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -74,7 +76,7 @@ async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
             yield event
 
 
-class _CodexResponsesModel(OpenAIResponsesModel):
+class _CodexResponsesModel(ObservedResponsesModel):
     """OpenAIResponsesModel subclass that fixes Codex returning output:[] in response.completed.
 
     Codex streams correct items via response.output_item.done events but sends an empty
@@ -87,26 +89,31 @@ class _CodexResponsesModel(OpenAIResponsesModel):
     yielding so the SDK run loop can persist them to the session.
     """
 
+    _datus_impl = "codex"
+
     async def stream_response(self, *args, **kwargs):  # type: ignore[override]
         from openai.types.responses import ResponseCompletedEvent, ResponseOutputItemDoneEvent, ResponseReasoningItem
 
         collected: list = []
-        async for event in super().stream_response(*args, **kwargs):
-            if isinstance(event, ResponseOutputItemDoneEvent):
-                # Reasoning items are reference-only ({type, id}) and cannot be replayed
-                # when store=False — the server never persisted them. Exclude from the
-                # injected output so they are not written to the SQLite session, while
-                # still yielding the raw event for streaming display.
-                #
-                # We do NOT request/replay encrypted reasoning here: cache reuse is
-                # driven by an accepted prompt_cache_key (see _codex_model_settings),
-                # and replaying reasoning would only enlarge each resent request.
-                if not isinstance(event.item, ResponseReasoningItem):
-                    collected.append(event.item)
-            elif isinstance(event, ResponseCompletedEvent) and not event.response.output and collected:
-                patched_response = event.response.model_copy(update={"output": list(collected)})
-                event = event.model_copy(update={"response": patched_response})
-            yield event
+        async with aclosing(super().stream_response(*args, **kwargs)) as stream:
+            async for event in stream:
+                if isinstance(event, ResponseOutputItemDoneEvent):
+                    # Reasoning items are reference-only ({type, id}) and cannot be replayed
+                    # when store=False — the server never persisted them. Exclude from the
+                    # injected output so they are not written to the SQLite session, while
+                    # still yielding the raw event for streaming display.
+                    #
+                    # We do NOT request/replay encrypted reasoning here: cache reuse is
+                    # driven by an accepted prompt_cache_key (see _codex_model_settings),
+                    # and replaying reasoning would only enlarge each resent request.
+                    if not isinstance(event.item, ResponseReasoningItem):
+                        collected.append(event.item)
+                elif isinstance(event, ResponseCompletedEvent) and not event.response.output and collected:
+                    patched_response = event.response.model_copy(update={"output": list(collected)})
+                    event = event.model_copy(update={"response": patched_response})
+                    if call := current_model_call():
+                        call.record_tool_calls(patched_response.output)
+                yield event
 
 
 class CodexModel(LLMBaseModel):
@@ -324,6 +331,12 @@ class CodexModel(LLMBaseModel):
         """
         collected = []
         for event in stream:
+            if call := current_model_call():
+                call.stream_event()
+                response = getattr(event, "response", None)
+                if response is not None:
+                    call.usage(getattr(response, "usage", None))
+                    call.record_tool_calls(getattr(response, "output", None))
             event_type = getattr(event, "type", None)
             if event_type == "response.completed":
                 response = getattr(event, "response", None)
@@ -344,6 +357,29 @@ class CodexModel(LLMBaseModel):
             return prompt
         # Wrap string/other types into a user message list
         return [{"role": "user", "content": str(prompt)}]
+
+    def _generate_direct_response(self, create_kwargs, *, json_output=False, retry_of=None):
+        client = self._get_client()
+        with native_model_call(
+            model=self.model_name,
+            model_impl="codex",
+            protocol="responses",
+            endpoint=getattr(client, "base_url", None),
+            params=create_kwargs,
+        ) as call:
+            if retry_of:
+                call.fields["retry_of"] = retry_of
+            stream = client.responses.create(**create_kwargs)
+            call.response(stream, streaming=True)
+            try:
+                text = self._consume_stream_text(stream)
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
+            result = json.loads(text) if json_output else text
+            call.output(result)
+            return result
 
     def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
         """Generate a response via the Codex Responses API.
@@ -370,8 +406,7 @@ class CodexModel(LLMBaseModel):
             create_kwargs["instructions"] = instructions
 
         try:
-            stream = self._get_client().responses.create(**create_kwargs)
-            return self._consume_stream_text(stream)
+            return self._generate_direct_response(create_kwargs)
         except Exception as e:
             from openai import AuthenticationError
 
@@ -380,8 +415,9 @@ class CodexModel(LLMBaseModel):
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
                 try:
-                    stream = self._get_client().responses.create(**create_kwargs)
-                    return self._consume_stream_text(stream)
+                    return self._generate_direct_response(
+                        create_kwargs, retry_of=getattr(e, "_datus_model_call_id", None)
+                    )
                 except AuthenticationError as retry_e:
                     raise DatusException(
                         ErrorCode.MODEL_AUTHENTICATION_ERROR,
@@ -434,8 +470,7 @@ class CodexModel(LLMBaseModel):
             create_kwargs["text"] = {"format": {"type": "json_object"}}
 
         try:
-            stream = self._get_client().responses.create(**create_kwargs)
-            return json.loads(self._consume_stream_text(stream))
+            return self._generate_direct_response(create_kwargs, json_output=True)
         except json.JSONDecodeError as e:
             raise DatusException(
                 ErrorCode.MODEL_INVALID_RESPONSE,
@@ -449,8 +484,9 @@ class CodexModel(LLMBaseModel):
                 self.oauth_manager.refresh_tokens()
                 self._refresh_client_token()
                 try:
-                    stream = self._get_client().responses.create(**create_kwargs)
-                    return json.loads(self._consume_stream_text(stream))
+                    return self._generate_direct_response(
+                        create_kwargs, json_output=True, retry_of=getattr(e, "_datus_model_call_id", None)
+                    )
                 except AuthenticationError as retry_e:
                     raise DatusException(
                         ErrorCode.MODEL_AUTHENTICATION_ERROR,
@@ -496,8 +532,7 @@ class CodexModel(LLMBaseModel):
                 agent_kwargs["tools"] = tools
             if (kwargs.get("builtin_web_tools") or {}).get("web_search") and self.supports_builtin_web_search():
                 agent_kwargs["tools"] = [*(agent_kwargs.get("tools") or []), WebSearchTool()]
-            if kwargs.get("hooks"):
-                agent_kwargs["hooks"] = kwargs["hooks"]
+            agent_kwargs["hooks"] = observe_tool_hooks(kwargs.get("hooks"))
 
             agent = Agent(**agent_kwargs)
 

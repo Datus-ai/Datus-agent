@@ -15,6 +15,7 @@ CONTENT_CAPTURE_FIELDS = (
     "prompts",
     "responses",
     "reasoning",
+    "tool_definitions",
     "tool_args",
     "tool_results",
     "sql",
@@ -29,6 +30,7 @@ class CaptureConfig:
     prompts: bool = True
     responses: bool = True
     reasoning: bool = True
+    tool_definitions: bool = True
     tool_args: bool = True
     tool_results: bool = True
     sql: bool = True
@@ -101,6 +103,7 @@ class TracingConfig:
     redact: RedactConfig = field(default_factory=RedactConfig)
     adapters: list[ObservabilityAdapterConfig] = field(default_factory=list)
     explicit: bool = False
+    remote_id_headers: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> "TracingConfig":
@@ -127,6 +130,7 @@ class TracingConfig:
             redact=RedactConfig.from_dict(raw.get("redact")),
             adapters=adapters,
             explicit=True,
+            remote_id_headers=_parse_remote_id_headers(raw.get("remote_id_headers")),
         )
 
 
@@ -155,6 +159,28 @@ def _coerce_bool(value: Any, default: bool) -> bool:
         if normalized in {"0", "false", "no", "off", ""}:
             return False
     return bool(value)
+
+
+def _parse_remote_id_headers(raw: Any) -> dict[str, dict[str, str]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("remote_id_headers must map endpoint hosts to header mappings")
+    parsed = {}
+    allowed = {"request_id_header", "trace_id_header", "gateway_request_id_header", "issuer"}
+    for host, mapping in raw.items():
+        if not isinstance(mapping, Mapping) or set(mapping) - allowed:
+            raise ValueError(f"Invalid remote ID header mapping for {host}")
+        values = {str(k): str(v).lower() for k, v in mapping.items()}
+        if values.get("issuer", "unknown") not in {"provider", "gateway", "unknown"}:
+            raise ValueError("Remote ID issuer must be provider, gateway or unknown")
+        for key, header in values.items():
+            if key != "issuer" and (
+                not header or any(term in header for term in ("authorization", "cookie", "api-key", "token", "secret"))
+            ):
+                raise ValueError("Remote ID mappings must reference non-credential response headers")
+        parsed[str(host).lower()] = values
+    return parsed
 
 
 def _clean_string(value: Any) -> str | None:

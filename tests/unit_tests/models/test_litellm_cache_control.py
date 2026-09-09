@@ -146,7 +146,7 @@ async def test_fetch_response_sets_flag_for_anthropic():
         return "ret"
 
     with patch(
-        "agents.extensions.models.litellm_model.LitellmModel._fetch_response",
+        "datus.models.observed_model.ObservedLitellmModel._fetch_response",
         new=fake_super_fetch,
     ):
         await model._fetch_response()
@@ -169,7 +169,7 @@ async def test_fetch_response_skips_flag_for_non_anthropic():
         return "ret"
 
     with patch(
-        "agents.extensions.models.litellm_model.LitellmModel._fetch_response",
+        "datus.models.observed_model.ObservedLitellmModel._fetch_response",
         new=fake_super_fetch,
     ):
         await model._fetch_response()

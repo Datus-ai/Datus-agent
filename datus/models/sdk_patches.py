@@ -385,7 +385,7 @@ def apply_sdk_patches() -> None:
         _original_items_to_messages = Converter.items_to_messages.__func__  # type: ignore
 
     Converter.items_to_messages = classmethod(_patched_items_to_messages)  # type: ignore
-    logger.info("Applied SDK patch: Converter.items_to_messages (content-block normalization)")
+    logger.debug("Applied SDK patch: Converter.items_to_messages (content-block normalization)")
 
     # Patch 2: litellm.acompletion reasoning_content placeholders
     if _original_acompletion is None:
@@ -401,7 +401,7 @@ def apply_sdk_patches() -> None:
             return response
 
         litellm.acompletion = _patched_acompletion
-        logger.info("Applied SDK patch: litellm.acompletion (reasoning_content placeholders, Kimi content recovery)")
+        logger.debug("Applied SDK patch: litellm.acompletion (reasoning_content placeholders, Kimi content recovery)")
 
     # Patch 3: litellm.completion reasoning_content placeholders + Kimi empty-content recovery
     if _original_completion is None:
@@ -416,7 +416,7 @@ def apply_sdk_patches() -> None:
             return response
 
         litellm.completion = _patched_completion
-        logger.info("Applied SDK patch: litellm.completion (reasoning_content placeholders, Kimi content recovery)")
+        logger.debug("Applied SDK patch: litellm.completion (reasoning_content placeholders, Kimi content recovery)")
 
 
 def remove_sdk_patches() -> None:
@@ -435,17 +435,17 @@ def remove_sdk_patches() -> None:
     if _original_items_to_messages is not None:
         Converter.items_to_messages = classmethod(_original_items_to_messages)  # type: ignore
         _original_items_to_messages = None
-        logger.info("Removed SDK patch: Converter.items_to_messages")
+        logger.debug("Removed SDK patch: Converter.items_to_messages")
 
     if _original_acompletion is not None:
         litellm.acompletion = _original_acompletion
         _original_acompletion = None
-        logger.info("Removed SDK patch: litellm.acompletion")
+        logger.debug("Removed SDK patch: litellm.acompletion")
 
     if _original_completion is not None:
         litellm.completion = _original_completion
         _original_completion = None
-        logger.info("Removed SDK patch: litellm.completion")
+        logger.debug("Removed SDK patch: litellm.completion")
 
     try:
         from litellm.types.utils import Usage
@@ -453,19 +453,19 @@ def remove_sdk_patches() -> None:
         if _original_usage_init is not None:
             Usage.__init__ = _original_usage_init
             _original_usage_init = None
-            logger.info("Removed SDK patch: LiteLLM Usage.__init__")
+            logger.debug("Removed SDK patch: LiteLLM Usage.__init__")
         if _original_usage_model_dump is not None:
             Usage.model_dump = _original_usage_model_dump
             _original_usage_model_dump = None
-            logger.info("Removed SDK patch: LiteLLM Usage.model_dump")
+            logger.debug("Removed SDK patch: LiteLLM Usage.model_dump")
         if _original_usage_model_dump_json is not None:
             Usage.model_dump_json = _original_usage_model_dump_json
             _original_usage_model_dump_json = None
-            logger.info("Removed SDK patch: LiteLLM Usage.model_dump_json")
+            logger.debug("Removed SDK patch: LiteLLM Usage.model_dump_json")
     except Exception as e:
         logger.debug(f"Failed to remove LiteLLM Usage serialization patch: {e}")
 
     if _original_showwarning is not None:
         warnings.showwarning = _original_showwarning
         _original_showwarning = None
-        logger.info("Removed SDK patch: warnings.showwarning (Pydantic serializer warnings)")
+        logger.debug("Removed SDK patch: warnings.showwarning (Pydantic serializer warnings)")

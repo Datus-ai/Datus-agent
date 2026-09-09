@@ -3096,7 +3096,7 @@ class TestAnthropicMessagesStream:
 
         result = model._anthropic_messages_stream(model="m", messages=[])
 
-        assert result == "beta-stream-ctx"
+        assert hasattr(result, "__aenter__")
         async_client.beta.messages.stream.assert_called_once()
         async_client.messages.stream.assert_not_called()
 
@@ -3114,7 +3114,7 @@ class TestAnthropicMessagesStream:
 
         result = model._anthropic_messages_stream(model="m", messages=[])
 
-        assert result == "standard-stream-ctx"
+        assert hasattr(result, "__aenter__")
         async_client.messages.stream.assert_called_once()
         async_client.beta.messages.stream.assert_not_called()
 

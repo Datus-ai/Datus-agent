@@ -4,6 +4,20 @@ The agent configuration defines the core settings for your Datus Agent, includin
 
 ## Configuration Structure
 
+### Logging
+
+Configure process logging in `agent.yml`:
+
+```yaml
+agent:
+  logging:
+    level: INFO     # DEBUG, INFO, WARNING, ERROR, CRITICAL; case insensitive
+```
+
+The level priority is explicit `--log-level` / `--debug` → `DATUS_LOG_LEVEL` → `agent.logging.level` → `INFO`. `--debug` means `--log-level DEBUG`; specifying both is an error. For example, `datus-api --config conf/agent.yml --log-level WARNING` applies WARNING to both API and Agent business logs. The CLI, API, Gateway, MCP server, web chatbot, and benchmark entrypoints share this resolution. API workers inherit the selected level; rebuilding an Agent does not reset it. Embedded applications can call `configure_logging(agent_config=config)` at startup.
+
+The file handler enforces the selected threshold even for third-party loggers. Existing third-party noise suppression remains. Log files use plain text with event fields rendered as key-value pairs; interactive console output writes to stderr. Logging is independent of tracing. Optional `agent.logging.redact` accepts `enabled`, `fields`, and regex `patterns`, with credential-field redaction enabled by default. See [model-call and tool observability](../develop/observability.md#model-calls-and-available-tools) for the collected events and trace controls.
+
 ### LLM Configuration (Two-Tier Provider Model)
 
 LLM selection uses a two-tier system. Most users only need the provider-level configuration; custom entries are for self-hosted or private endpoints.

@@ -24,7 +24,7 @@ from datus.configuration.agent_config_loader import load_agent_config, parse_con
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SqlTask
 from datus.storage.task import TaskStore
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 
 from ..utils.json_utils import to_str
 from .legacy_auth import auth_service, get_current_client
@@ -58,6 +58,7 @@ class DatusAPIService:
 
     async def initialize(self):
         """Initialize the service with default configurations."""
+        configure_entrypoint_logging(self.args, if_unconfigured=True)
         # Load default agent configuration
         self.agent_config = load_agent_config(**vars(self.args))
         logger.info("Agent configuration loaded successfully")
@@ -608,7 +609,7 @@ except Exception as e:
 
 _datasource = os.getenv("DATUS_DATASOURCE", "default")
 _output_dir = os.getenv("DATUS_OUTPUT_DIR", "./output")
-_log_level = os.getenv("DATUS_LOG_LEVEL", "INFO")
+_log_level = None  # Resolved from environment/config in each worker.
 
 _default_args = argparse.Namespace(
     config=_config_path,

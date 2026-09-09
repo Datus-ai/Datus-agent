@@ -85,11 +85,12 @@ from mcp.server.fastmcp import FastMCP
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import configuration_manager, load_agent_config
+from datus.configuration.logging_config import add_logging_arguments
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
-from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 # Re-export for external use
@@ -1003,7 +1004,13 @@ class DatusMCPServer:
         print(f"  Endpoint:  http://{host}:{port}{path}")
         print(f"{'=' * 60}\n")
 
-        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=logging.getLevelName(logging.getLogger().level).lower(),
+            log_config=None,
+        )
         server = uvicorn.Server(config)
         asyncio.run(server.serve())
 
@@ -1148,7 +1155,8 @@ def run_dynamic_server(
         app,
         host=host,
         port=port,
-        log_level="debug" if debug else "info",
+        log_level=logging.getLevelName(logging.getLogger().level).lower(),
+        log_config=None,
     )
     server = uvicorn.Server(config)
     asyncio.run(server.serve())
@@ -1261,11 +1269,7 @@ HTTP Client Usage:
         default=8000,
         help="Port to bind for HTTP transports (default: 8000)",
     )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging",
-    )
+    add_logging_arguments(parser)
     parser.add_argument(
         "--max-cache-size",
         type=int,
@@ -1277,7 +1281,7 @@ HTTP Client Usage:
 
     # For stdio transport, disable console logging to avoid polluting the
     # JSONRPC channel (stdout must contain only JSONRPC messages).
-    configure_logging(debug=args.debug, console_output=(args.transport != "stdio"))
+    configure_entrypoint_logging(args, console_output=(args.transport != "stdio"))
 
     if args.dynamic:
         # Dynamic mode: run multi-datasource server

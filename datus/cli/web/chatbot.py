@@ -22,7 +22,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from datus.api.service import create_app
-from datus.utils.loggings import get_logger
+from datus.configuration.logging_config import resolve_logging_arguments
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 
 logger = get_logger(__name__)
 
@@ -43,6 +44,7 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
     """Bridge CLI ``datus web`` arguments to the shape expected by
     ``create_app`` / ``DatusAPIService``.
     """
+    resolve_logging_arguments(args)
     agent_args = argparse.Namespace(
         datasource=args.datasource,
         config=getattr(args, "config", None),
@@ -58,7 +60,10 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         source=None,
         interactive=True,
         output_dir=getattr(args, "output_dir", "./output"),
-        log_level="DEBUG" if getattr(args, "debug", False) else "INFO",
+        log_level=getattr(args, "log_level", None),
+        log_level_source=getattr(args, "log_level_source", "default"),
+        log_redact=getattr(args, "log_redact", {}),
+        _logging_resolved=getattr(args, "_logging_resolved", False),
         # Forward the CLI permission override so ``load_agent_config`` applies
         # it for ``datus --web`` the same way it does for REPL / --print.
         permission_mode=getattr(args, "permission_mode", None),
@@ -167,6 +172,7 @@ def run_web_interface(args: argparse.Namespace) -> None:
     from datus.cli.web.config_manager import get_home_from_config
     from datus.utils.path_manager import set_current_path_manager
 
+    configure_entrypoint_logging(args)
     config_path = getattr(args, "config", None) or "conf/agent.yml"
     set_current_path_manager(get_home_from_config(config_path))
 
@@ -192,7 +198,8 @@ def run_web_interface(args: argparse.Namespace) -> None:
             app,
             host=host,
             port=port,
-            log_level="debug" if getattr(args, "debug", False) else "info",
+            log_level=args.log_level.lower(),
+            log_config=None,
         )
         server = uvicorn.Server(config)
         asyncio.run(server.serve())

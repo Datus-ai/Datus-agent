@@ -186,10 +186,17 @@ def trace_context(ctx: Optional[TraceContext], *, replace: bool = False) -> Iter
         yield
         return
 
+    import structlog
+
+    from datus.observability.model_call import observation_run
+
     token = set_trace_context(ctx)
+    log_tokens = structlog.contextvars.bind_contextvars(session_id=ctx.session_id, operation=ctx.name)
     try:
-        yield
+        with observation_run(run_id=ctx.metadata.get("run_id") or ctx.metadata.get("benchmark_run_id")):
+            yield
     finally:
+        structlog.contextvars.reset_contextvars(**log_tokens)
         reset_trace_context(token)
 
 

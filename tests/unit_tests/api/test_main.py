@@ -31,6 +31,13 @@ from datus.api.main import (
 pytestmark = pytest.mark.ci
 
 
+@pytest.fixture(autouse=True)
+def isolate_worker_environment():
+    # main() exports worker configuration; it must not leak into other tests.
+    with patch.dict(os.environ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # argparse
 # ---------------------------------------------------------------------------
@@ -47,11 +54,11 @@ class TestAPIArgumentParser:
         assert args.port == 8000
         assert args.workers == 1
         assert args.reload is False
-        assert args.debug is False
+        assert getattr(args, "debug", False) is False
         assert args.config is None
         assert args.datasource == "default"
         assert args.output_dir == "./output"
-        assert args.log_level == "INFO"
+        assert getattr(args, "log_level", None) is None
         assert args.max_steps == 20
         assert args.workflow == "fixed"
         assert args.load_cp is None
@@ -330,7 +337,7 @@ class TestMainDispatch:
 
         with (
             patch("datus.api.main._default_paths", return_value=(pid_file, log_file)),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch.object(sys, "argv", ["datus-api", "--action", "status"]),
         ):
             from datus.api.main import main
@@ -345,7 +352,7 @@ class TestMainDispatch:
 
         with (
             patch("datus.api.main._default_paths", return_value=(pid_file, log_file)),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch.object(sys, "argv", ["datus-api", "--action", "stop"]),
         ):
             from datus.api.main import main
@@ -359,7 +366,7 @@ class TestMainDispatch:
 
         with (
             patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", side_effect=FileNotFoundError("no such file")),
             patch.object(sys, "argv", ["datus-api", "--config", "/nonexistent/agent.yml"]),
         ):
@@ -380,7 +387,7 @@ class TestMainDispatch:
 
         with (
             patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", return_value="/tmp/agent.yml"),
             patch("datus.api.main._run_server", side_effect=fake_run_server),
             patch.object(
@@ -553,7 +560,7 @@ class TestDaemonWorker:
         with (
             patch("datus.api.main.os.setsid") as mock_setsid,
             patch("datus.api.main.os.umask") as mock_umask,
-            patch("datus.api.main.configure_logging") as mock_conf,
+            patch("datus.api.main.configure_entrypoint_logging") as mock_conf,
             patch("datus.api.main._redirect_stdio") as mock_redir,
             patch("datus.api.main._run_server") as mock_run,
             patch("datus.api.main.atexit.register") as mock_atexit,
@@ -589,7 +596,7 @@ class TestMainExtraBranches:
 
         with (
             patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
             patch("datus.api.main._run_server", side_effect=fake_run_server),
             patch.object(sys, "argv", ["datus-api", "--debug"]),
@@ -603,7 +610,7 @@ class TestMainExtraBranches:
 
         with (
             patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
             patch("datus.api.main._stop") as mock_stop,
             patch("datus.api.main._run_server") as mock_run,
@@ -619,7 +626,7 @@ class TestMainExtraBranches:
 
         with (
             patch("datus.api.main._default_paths", return_value=(tmp_path / "p.pid", tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
             patch.object(sys, "argv", ["datus-api", "--daemon", "--reload"]),
         ):
@@ -636,7 +643,7 @@ class TestMainExtraBranches:
 
         with (
             patch("datus.api.main._default_paths", return_value=(pid_file, tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
             patch("datus.api.main._is_process_running", return_value=True),
             patch("datus.api.main.multiprocessing.Process") as mock_proc,
@@ -668,7 +675,7 @@ class TestMainExtraBranches:
 
         with (
             patch("datus.api.main._default_paths", return_value=(pid_file, tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
             patch("datus.api.main.time.sleep"),
             patch("datus.api.main.multiprocessing.Process", FakeProcess),
@@ -700,7 +707,7 @@ class TestMainExtraBranches:
 
         with (
             patch("datus.api.main._default_paths", return_value=(pid_file, tmp_path / "p.log")),
-            patch("datus.api.main.configure_logging"),
+            patch("datus.api.main.configure_entrypoint_logging"),
             patch("datus.api.main.parse_config_path", return_value="/tmp/a.yml"),
             patch("datus.api.main.time.sleep"),
             patch("datus.api.main.multiprocessing.Process", DeadProcess),

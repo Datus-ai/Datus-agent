@@ -98,6 +98,7 @@ agent:
         prompts: true
         responses: true
         reasoning: true
+        tool_definitions: true
         tool_args: true
         tool_results: true
         sql: true
@@ -281,3 +282,51 @@ Open the configured provider project to view traces. Traces are named by operati
 Tags and metadata include datasource, workflow, benchmark, task id, run id, and `agent.home` when available.
 
 Datus does not persist backend-specific UI URLs in workflow metadata. Use stable metadata fields such as `trace_id`, `trace_span_id`, `trace_run_id`, and `trace_provider` to correlate a workflow checkpoint with the corresponding backend trace.
+
+## Model Calls and Available Tools
+
+Each model invocation gets a local `model_call_id`. Its generation records the tools resolved for that invocation, including their names, descriptions, parameter schemas, `tool_choice`, and `parallel_tool_calls`. Definitions are recorded every generation, without hashes or references to earlier generations. Disabled SDK tools are excluded. A summary request is marked `phase=compact_summary`; its empty tool list does not mean the main task lost its tools.
+
+Datus exports definitions using OpenInference `llm.tools.<index>.tool.json_schema`. Langfuse ingests these into the generation's `input.tools` and its **Available tools** view. Select a generation in the trace, then inspect Available tools or switch Input to JSON. Tool execution spans show what ran; Available tools shows what the model was offered. Anthropic's original `input_schema` is retained and also exposed as `parameters` for this display. The actual model request is unchanged.
+
+`capture.tool_definitions` defaults to the value of `capture_content` (normally true). Set it to false to omit schemas while keeping request IDs, counts, and execution status. Definitions use the tracing redaction policy. `datus.llm.tools_capture_state` distinguishes `complete`, `redacted`, `disabled`, `truncated`, `failed`, and `not_observable`; an observed empty list is complete with count zero. Export is bounded to 1 MiB of definitions and 1,536 tool attributes per generation. Attribute eviction or value truncation is marked incomplete, with a separate captured count. Datus configures an OTel span attribute count limit of 4,096; downstream collectors may impose further limits.
+
+The capture boundary is `sdk_request`: after SDK tool filtering/conversion, before provider-specific LiteLLM or gateway transformations. This proves which definitions Datus offered at that boundary. To verify what a remote model received, correlate the returned request ID with that service's request logs. Tracing never enables or disables runtime tools.
+
+### Request IDs
+
+Each generation's metadata contains `datus.llm.request_id`, its `request_id_source`, `request_id_issuer`, and `request_id_status` when observable. Values are copied verbatim from selected response headers or documented SDK properties. Response-body IDs, LiteLLM completion IDs, and generated local IDs are never substituted. A known provider's ID is also stored as `provider_request_id`; unverified endpoints use `remote_request_id` and issuer `unknown`.
+
+Streaming IDs are captured as soon as response headers are available, so cancellation or parsing errors after that point retain them. Codex direct text/JSON authentication retries produce separate calls linked by `retry_of`. `request_id_coverage=adapter_visible_response` explicitly excludes invisible SDK and gateway retry attempts. Missing headers/properties remain absent or not observable. Errors record `failure_stage=before_response` or `after_response`; a connection failure does not claim response-header latency. No traceparent headers are injected.
+
+For an endpoint whose response-header semantics are known, configure only the relevant ID headers:
+
+```yaml
+agent:
+  observability:
+    tracing:
+      enabled: true
+      remote_id_headers:
+        gateway.example.com:
+          request_id_header: x-upstream-request-id
+          trace_id_header: x-upstream-trace-id
+          gateway_request_id_header: x-gateway-request-id
+          issuer: provider
+```
+
+This example declares that the selected upstream IDs belong to the provider. Use `issuer: gateway` or `unknown` where appropriate. The mapping reads headers exposed by the active SDK; it does not make otherwise hidden headers available. Only selected IDs are recorded, never the entire header set. Mappings also apply to logs when tracing is disabled. Restart the process after configuration changes.
+
+### Lifecycle Logs
+
+| Level | Events and purpose |
+| --- | --- |
+| INFO | `llm.started`, streaming `llm.response_received`, `llm.finished`: model, local/remote IDs, duration, available usage, status. `first_event_ms` means the first SDK event, not necessarily the first text token. |
+| DEBUG | `llm.tools`: each invocation's tool names/count and selection policy, without full definitions. MCP connection attempts and initialization details. |
+| INFO / WARNING | `tools.available` on the first task call; `tools.changed` on additions, schema/policy changes, or removals (WARNING). Comparisons are scoped to one logical operation and agent invocation, including separate parallel runs with the same agent name. |
+| INFO | `tool.finished`: hook-observed tool completion, duration, failure status and model-call correlation where the SDK provides a tool-call ID. Tool arguments/results follow existing trace content controls. An opaque return value without an observable SDK error state is marked `returned`, not confirmed success. |
+| INFO / WARNING | `compact.started` / `compact.finished`: mode, trigger, existing item/token estimates, archive pointer and `compact_id`. Missing `read_file` for major-compact history recovery raises a warning. |
+| WARNING | MCP retry failures, `mcp.degraded`, and `mcp.budget_exhausted`: server, attempts and reason. Tool changes carry nearby capability event IDs; the cause remains `unknown` unless established rather than guessed. |
+
+`run_id`, `model_call_id`, `compact_id`, and available session/trace/span IDs connect these records. Full model definitions live in traces, not ordinary log messages. No-op compact checks emit no lifecycle events. Repetitive configuration/result dumps and initialization notices are reduced; `logger.error` no longer implicitly attaches a traceback. Error-handling boundaries request one explicitly with `logger.exception` or `exc_info`.
+
+Legacy `--save_llm_trace` YAML files retain their existing format; these generation-level fields are added to external tracing and structured logs, not retroactively to older trace files.
