@@ -136,7 +136,7 @@ def test_requirements_match_pyproject_accepts_identical_lists(tmp_path, check_re
         ("version", "datus-db-core>=0.9.9", "datus-db-core>=0.1.3", (">=0.9.9", ">=0.1.3")),
         # Extras decide what else gets installed — `openai-agents[litellm]` is
         # what pulls in litellm — while leaving the specifier identical.
-        ("extras", "datus-db-core[extra]>=0.1.3", "datus-db-core>=0.1.3", ("extra",)),
+        ("extras", "datus-db-core[extra]>=0.1.3", "datus-db-core>=0.1.3", ("['extra']", "[]")),
         # A marker decides whether the dependency is installed at all.
         (
             "marker",
