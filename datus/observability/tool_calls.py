@@ -74,15 +74,15 @@ class ToolObservationHooks(AgentHooks):
         status = getattr(context, "_datus_tool_status", None) or status
         from datus.observability.model_call import consume_tool_call_identity
 
-        logger.info(
-            "tool.finished",
-            tool_name=tool.name,
-            tool_call_id=call_id,
-            status=status,
-            duration_ms=round((time.monotonic() - started) * 1000, 2) if started is not None else None,
-            error_type=type(error).__name__ if error is not None else None,
+        fields = {
+            "tool_name": tool.name,
+            "tool_call_id": call_id,
+            "status": status,
+            "duration_ms": round((time.monotonic() - started) * 1000, 2) if started is not None else None,
+            "error_type": type(error).__name__ if error is not None else None,
             **consume_tool_call_identity(call_id),
-        )
+        }
+        logger.debug("tool.finished", **{key: value for key, value in fields.items() if value is not None})
 
 
 def _result_status(result):

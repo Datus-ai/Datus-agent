@@ -239,7 +239,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             self.tools.extend(semantic_tools)
 
             tool_names = [tool.name for tool in semantic_tools]
-            logger.info(f"Added semantic tools (adapter: {adapter_type}): {', '.join(tool_names)}")
+            logger.debug(f"Added semantic tools (adapter: {adapter_type}): {', '.join(tool_names)}")
 
         except Exception as e:
             logger.error(f"Failed to setup semantic tools: {e}")

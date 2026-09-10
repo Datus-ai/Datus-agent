@@ -800,7 +800,7 @@ class ChatCommands:
                             current_node._drop_running_turn_usage_on_exit = True
                             if current_node.pending_input_queue is not None:
                                 current_node.pending_input_queue.clear()
-                            logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                            logger.debug("ExecutionInterrupted caught, execution stopped gracefully")
                     # A cooperative controller checkpoint can finish the
                     # stream normally before Task.cancel is delivered. The
                     # ESC-time latch, rather than the exception path, is the
@@ -950,7 +950,7 @@ class ChatCommands:
                         current_node._drop_running_turn_usage_on_exit = True
                         if current_node.pending_input_queue is not None:
                             current_node.pending_input_queue.clear()
-                        logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                        logger.debug("ExecutionInterrupted caught, execution stopped gracefully")
                 streamed_body = bool(getattr(ns_streaming_ctx, "has_streamed_response", False))
 
             # Display final response from the node's final action
@@ -2138,10 +2138,7 @@ class ChatCommands:
 
         if last_sql_action is None:
             # No SQL action found, skip adding to context
-            action_types = [
-                (a.action_type, a.role.value if hasattr(a.role, "value") else a.role) for a in incremental_actions
-            ]
-            logger.warning(f"No SQL action found in incremental_actions. Actions: {action_types}")
+            logger.debug("No SQL action found in incremental actions", action_count=len(incremental_actions))
             return
 
         action_output = _maybe_parse_json(last_sql_action.output)

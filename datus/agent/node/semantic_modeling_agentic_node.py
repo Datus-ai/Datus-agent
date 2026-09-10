@@ -115,7 +115,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
-        logger.info("Setup %s tools for %s: %s", len(self.tools), self.NODE_NAME, [tool.name for tool in self.tools])
+        logger.debug("Setup %s tools for %s: %s", len(self.tools), self.NODE_NAME, [tool.name for tool in self.tools])
 
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         await super()._before_stream(ctx)

@@ -161,7 +161,7 @@ def configure_litellm_logging(file_handler: Optional[logging.Handler] = None) ->
         logger = logging.getLogger(logger_name)
         logger.handlers.clear()
         logger.propagate = False
-        logger.setLevel(max(logging.INFO, logging.getLogger().level))
+        logger.setLevel(max(logging.WARNING, logging.getLogger().level))
         logger.addHandler(file_handler if file_handler is not None else logging.NullHandler())
 
 
@@ -192,7 +192,7 @@ def configure_logging(
     _log_redact_config = RedactConfig.from_dict(redact if redact is not None else getattr(config, "redact", None))
     _configure_structlog()
     # Retain targeted noise suppression without bypassing the selected threshold.
-    for name in ("httpx", "httpcore", "openai.agents", "markdown_it"):
+    for name in ("httpx", "httpcore", "openai.agents", "markdown_it", "datus_semantic_core"):
         logging.getLogger(name).setLevel(max(logging.WARNING, numeric_level))
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         named_logger = logging.getLogger(name)

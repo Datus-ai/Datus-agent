@@ -215,10 +215,11 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
     ]
     events = [
         {key: entry.kwargs[key] for key in ("tool_call_id", "remote_correlation_id", "model_call_id", "status")}
-        for entry in tool_logger.info.call_args_list
+        for entry in tool_logger.debug.call_args_list
+        if entry.args[0] == "tool.finished"
     ]
     assert events == expected_events
-    assert [entry.args[0] for entry in tool_logger.info.call_args_list] == ["tool.finished"]
+    assert [entry.args[0] for entry in tool_logger.debug.call_args_list] == ["tool.started", "tool.finished"]
     assert len(spans) == len(requests)
     assert len({span.attributes["datus.llm.model_call_id"] for span in spans}) == len(requests)
     for number, (span, request) in enumerate(zip(spans, requests), 1):
@@ -377,8 +378,8 @@ async def test_sdk_handled_tool_exception_is_not_logged_as_success(
             run_config=RunConfig(tracing_disabled=tracing_disabled),
         )
     assert result.final_output == "done"
-    tool_logger.info.assert_called_once()
-    assert tool_logger.info.call_args.kwargs["status"] == ("returned" if tracing_disabled else "error")
+    finished = next(entry for entry in tool_logger.debug.call_args_list if entry.args[0] == "tool.finished")
+    assert finished.kwargs["status"] == ("returned" if tracing_disabled else "error")
 
 
 @pytest.mark.asyncio

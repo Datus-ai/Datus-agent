@@ -168,9 +168,18 @@ def _agents_trace_baggage(agent_name: Optional[str]):
 
 
 async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
-    with _agents_trace_baggage(agent_name):
-        async for event in result.stream_events():
+    events = result.stream_events().__aiter__()
+    try:
+        while True:
+            with _agents_trace_baggage(agent_name):
+                try:
+                    event = await anext(events)
+                except StopAsyncIteration:
+                    return
             yield event
+    finally:
+        if close := getattr(events, "aclose", None):
+            await close()
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:

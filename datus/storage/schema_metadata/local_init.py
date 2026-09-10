@@ -56,7 +56,7 @@ async def init_local_schema_async(
         emit: Optional callback to stream BatchEvent progress events
     """
     if build_mode == "overwrite":
-        logger.info(
+        logger.debug(
             "[overwrite] Wiping schema metadata rows for datasource '%s' before re-population",
             table_lineage_store.datasource_id,
         )
@@ -102,7 +102,7 @@ def init_local_schema(
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
 
-    logger.info(f"Initializing local schema for datasource: {agent_config.current_datasource}")
+    logger.debug(f"Initializing local schema for datasource: {agent_config.current_datasource}")
     event_helper.task_started(datasource=agent_config.current_datasource, build_mode=build_mode, table_type=table_type)
 
     ds = agent_config.current_datasource
@@ -113,11 +113,11 @@ def init_local_schema(
         default_database = getattr(db_config, "database", "")
         databases = [default_database] if default_database else []
     if not databases:
-        logger.info(f"No databases resolved for datasource {ds} ({db_config.type}); skipping schema init.")
+        logger.debug(f"No databases resolved for datasource {ds} ({db_config.type}); skipping schema init.")
         table_lineage_store.after_init(build_mode=build_mode)
         event_helper.task_completed(total_items=0, completed_items=0)
         return
-    logger.info(f"Processing datasource {ds} ({db_config.type}) databases: {databases}")
+    logger.debug(f"Processing datasource {ds} ({db_config.type}) databases: {databases}")
     for database in databases:
         if init_database_name and init_database_name != database:
             continue
@@ -159,7 +159,7 @@ def init_local_schema(
     # Build new indices for overwrite, or incrementally index changed fragments.
     table_lineage_store.after_init(build_mode=build_mode)
     event_helper.task_completed(total_items=0, completed_items=0)
-    logger.info("Local schema initialization completed")
+    logger.debug("Local schema initialization completed")
 
 
 def init_sqlite_schema(
@@ -180,7 +180,7 @@ def init_sqlite_schema(
         table_type=table_type,
         build_mode=build_mode,
     )
-    logger.info(
+    logger.debug(
         f"Exists data from vector store {database_name}, "
         f"tables={len(all_schema_tables)}, values={len(all_value_tables)}"
     )
@@ -235,7 +235,7 @@ def init_duckdb_schema(
         build_mode=build_mode,
     )
 
-    logger.info(
+    logger.debug(
         f"Exists data from vector store {database_name}, tables={len(all_schema_tables)},values={len(all_value_tables)}"
     )
     sql_connector = db_manager.get_conn(agent_config.current_datasource, database_name)
@@ -246,7 +246,7 @@ def init_duckdb_schema(
             if not table.get("database_name"):
                 table["database_name"] = database_name
 
-        logger.info(f"Found {len(tables)} tables")
+        logger.debug(f"Found {len(tables)} tables")
         store_tables(
             table_lineage_store,
             database_name,
@@ -312,7 +312,7 @@ def init_other_three_level_schema(
         build_mode=build_mode,
     )
 
-    logger.info(
+    logger.debug(
         f"Exists data from vector store {catalog_name or '[no catalog]'}.{database_name}, "
         f"tables={len(all_schema_tables)}, values={len(all_value_tables)}"
     )
@@ -351,7 +351,7 @@ def init_other_three_level_schema(
                 table["schema_name"] = ""
             elif not table.get("schema_name"):
                 table["schema_name"] = schema_name
-        logger.info(f"Found {len(tables)} tables from {database_name}")
+        logger.debug(f"Found {len(tables)} tables from {database_name}")
         store_tables(
             table_lineage_store,
             database_name,
@@ -428,7 +428,7 @@ def store_tables(
         return the new tables.
     """
     if not tables:
-        logger.info(f"No schemas of {table_type} to store for {database_name}")
+        logger.debug(f"No schemas of {table_type} to store for {database_name}")
         return
 
     if event_helper:
@@ -502,9 +502,9 @@ def store_tables(
         for item in new_values:
             item["table_type"] = table_type
         table_lineage_store.store_batch(new_tables, new_values)
-        logger.info(f"Stored {len(new_tables)} {table_type}s and {len(new_values)} values for {database_name}")
+        logger.debug(f"Stored {len(new_tables)} {table_type}s and {len(new_values)} values for {database_name}")
     else:
-        logger.info(f"No new {table_type}s or values to store for {database_name}")
+        logger.debug(f"No new {table_type}s or values to store for {database_name}")
 
     if event_helper:
         event_helper.group_completed(

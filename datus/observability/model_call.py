@@ -298,8 +298,20 @@ class ModelCall:
             )
             self._tool_state = "complete"
             self._compare_tools()
-            logger.info("llm.started", **self._summary())
-            logger.debug("llm.tools", **self.fields)
+            logger.debug(
+                "llm.started",
+                **self._log_fields("model_call_id", "model", "endpoint_host", "tools_count"),
+            )
+            logger.debug(
+                "llm.tools",
+                **self._log_fields(
+                    "model_call_id",
+                    "tools_count",
+                    "tool_names",
+                    "tool_choice",
+                    "parallel_tool_calls",
+                ),
+            )
         except Exception as exc:
             self._tool_state = "failed"
             logger.warning(
@@ -317,7 +329,7 @@ class ModelCall:
         definitions = {_tool_name(tool): tool for tool in self.tools}
         previous = state.tools.get(key)
         if previous is None:
-            logger.info(
+            logger.debug(
                 "tools.available",
                 agent_name=self.fields.get("agent_name", self._agent_name),
                 tools_count=len(definitions),
@@ -341,7 +353,21 @@ class ModelCall:
                 # Nearby events are evidence to inspect, not proof of causality.
                 self.fields["capability_event_ids"] = list(state.capability_events)
                 emit = logger.warning if removed else logger.info
-                emit("tools.changed", **self.fields)
+                emit(
+                    "tools.changed",
+                    **self._log_fields(
+                        "model_call_id",
+                        "previous_model_call_id",
+                        "agent_name",
+                        "tools_count",
+                        "tools_added",
+                        "tools_removed",
+                        "tools_schema_changed",
+                        "tool_choice_changed",
+                        "tools_change_reason",
+                        "capability_event_ids",
+                    ),
+                )
         state.tools[key] = self.model_call_id, definitions, self.fields["tool_choice"]
 
     def response(self, response: Any, *, streaming: bool = False) -> None:
@@ -386,7 +412,16 @@ class ModelCall:
             if has_response and not self._received:
                 self.fields["response_received_ms"] = round((time.monotonic() - self._start) * 1000, 2)
                 if streaming:
-                    logger.info("llm.response_received", **self._summary())
+                    logger.debug(
+                        "llm.response_received",
+                        **self._log_fields(
+                            "model_call_id",
+                            "response_received_ms",
+                            "remote_correlation_id",
+                            "remote_correlation_source",
+                            "remote_correlation_status",
+                        ),
+                    )
                 self._received = True
             self.usage(getattr(response, "usage", None))
             self.export_to(self._span)
@@ -463,7 +498,21 @@ class ModelCall:
             span, args, kwargs = self._pending_span_end
             self._pending_span_end = None
             span.end(*args, **kwargs)
-        logger.info("llm.finished", **self._summary())
+        logger.debug(
+            "llm.finished",
+            **self._log_fields(
+                "model_call_id",
+                "status",
+                "duration_ms",
+                "first_event_ms",
+                "input_tokens",
+                "output_tokens",
+                "total_tokens",
+                "tool_calls_count",
+                "error_type",
+                "failure_stage",
+            ),
+        )
 
     def end_sdk_span(self, span: Any, *args: Any, **kwargs: Any) -> None:
         # The SDK exits its generation before the adapter can catch a stream or
@@ -490,8 +539,9 @@ class ModelCall:
             except Exception:
                 logger.warning("llm.capture_failed", model_call_id=self.model_call_id, field="output")
 
-    def _summary(self) -> dict[str, Any]:
-        return {k: v for k, v in self.fields.items() if k not in {"tool_names", "tool_choice", "parallel_tool_calls"}}
+    def _log_fields(self, *names: str) -> dict[str, Any]:
+        """Return only meaningful fields for one lifecycle event."""
+        return {name: self.fields[name] for name in names if self.fields.get(name) is not None}
 
     def export_to(self, span: Any) -> None:
         if span is None or not span.is_recording():

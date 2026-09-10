@@ -240,7 +240,7 @@ class SkillManager:
         if not content:
             return False, f"Failed to load content for skill '{skill_name}'", None
 
-        logger.info(f"Loaded skill '{skill_name}' for node '{node_name}'")
+        logger.debug(f"Loaded skill '{skill_name}' for node '{node_name}'")
         return True, f"Skill '{skill_name}' loaded successfully", content
 
     def generate_available_skills_xml(
@@ -465,7 +465,7 @@ class SkillManager:
                 skill_meta = self.registry.get_skill(skill_dir)
                 if skill_meta and skill_meta.location and (skill_meta.location / "SKILL.md").exists():
                     path = skill_meta.location
-                    logger.info(f"Resolved skill name '{skill_dir}' to {path}")
+                    logger.debug(f"Resolved skill name '{skill_dir}' to {path}")
 
             client = self._get_marketplace_client()
             result = client.publish_skill(path, owner=owner)
@@ -494,7 +494,7 @@ class SkillManager:
                     ok, _msg = self.install_from_marketplace(name)
                     if ok:
                         synced.append(name)
-                        logger.info(f"Auto-synced promoted skill: {name}")
+                        logger.debug(f"Auto-synced promoted skill: {name}")
         except Exception as e:
             logger.error(f"Failed to sync promoted skills: {e}")
         return synced

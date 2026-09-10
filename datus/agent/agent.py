@@ -171,7 +171,7 @@ class Agent:
             # Initialize document storage
             self.storage_modules["document"] = True
 
-        logger.info(f"Storage modules initialized: {list(self.storage_modules.keys())}")
+        logger.debug(f"Storage modules initialized: {list(self.storage_modules.keys())}")
 
     def create_workflow_runner(self, check_db: bool = True, run_id: Optional[str] = None) -> WorkflowRunner:
         """Create a workflow runner that can safely execute in isolation."""

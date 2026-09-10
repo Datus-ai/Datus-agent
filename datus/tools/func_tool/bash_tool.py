@@ -250,7 +250,7 @@ class BashTool:
         except ValueError as e:
             return FuncToolResult(success=0, error=f"Invalid command syntax: {e}")
 
-        logger.info("Executing command (identity=%s, timeout=%ss): %s", self.identity, effective_timeout, command)
+        logger.debug("Executing command (identity=%s, timeout=%ss): %s", self.identity, effective_timeout, command)
         output_dir = self._resolve_output_dir()
         if sandbox_active:
             policy = bash_sandbox.build_policy(

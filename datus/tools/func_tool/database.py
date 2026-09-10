@@ -664,7 +664,7 @@ class DBFuncTool:
                 "yaml_path",
             ],
         )
-        logger.info(f"list_table_semantic_datasets for {table_name!r}: {len(rows)} dataset(s)")
+        logger.debug(f"list_table_semantic_datasets for {table_name!r}: {len(rows)} dataset(s)")
         return rows
 
     def _table_semantic_model_names(self, coordinate: "TableCoordinate") -> List[str]:
@@ -1603,7 +1603,7 @@ class DBFuncTool:
             except Exception as e:
                 logger.warning(f"Failed to get table semantic profile for {table_name}: {e}")
 
-            logger.info(f"describe_table succeeded for {table_name}, returning {len(columns)} columns")
+            logger.debug(f"describe_table succeeded for {table_name}, returning {len(columns)} columns")
             return FuncToolResult(result=result_data)
 
         except Exception as e:
@@ -2097,7 +2097,7 @@ class DBFuncTool:
             # too, and an operator correlating a session on ``datasource`` cannot
             # do it if the same source appears as "default" on one line and by
             # name on the next.
-            logger.info(
+            logger.debug(
                 "read_query",
                 sql_type=sql_type.value,
                 datasource=self._resolve_effective_datasource(datasource),
@@ -2957,7 +2957,7 @@ class DBFuncTool:
 
         # Handle empty result (after truncate so replace mode still clears old data)
         if row_count == 0:
-            logger.info(f"Source query returned 0 rows, nothing to transfer to {target_table}")
+            logger.debug(f"Source query returned 0 rows, nothing to transfer to {target_table}")
             if target_table_created:
                 message = "Transfer completed (empty result set - target table created)"
             elif mode == "replace":
@@ -3051,7 +3051,7 @@ class DBFuncTool:
                 error=f"Transfer failed after writing {rows_written} rows: {str(e)}",
             )
 
-        logger.info(f"Transferred {rows_written} rows to {target_table} (mode={mode})")
+        logger.debug(f"Transferred {rows_written} rows to {target_table} (mode={mode})")
         if source_row_count is None:
             # Pre-count failed silently (logged at debug above). Do NOT
             # backfill with rows_written — that would make Layer A's

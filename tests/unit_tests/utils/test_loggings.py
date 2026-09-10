@@ -395,7 +395,7 @@ class TestConfigureLogging:
         msg = f"{logger_name} completion() model= test-model; provider = test-provider"
         litellm_logger = logging.getLogger(logger_name)
         capsys.readouterr()
-        litellm_logger.info(msg)
+        litellm_logger.warning(msg)
         for handler in litellm_logger.handlers:
             handler.flush()
 
@@ -418,7 +418,7 @@ class TestConfigureLogging:
 
         msg = f"{logger_name} completion() model= late-import; provider = test-provider"
         capsys.readouterr()
-        litellm_logger.info(msg)
+        litellm_logger.warning(msg)
         for handler in litellm_logger.handlers:
             handler.flush()
 

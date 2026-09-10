@@ -2266,7 +2266,7 @@ class AgentConfig:
     ):
         """Initialize directory-derived paths from the current home."""
         path_manager = self.path_manager
-        logger.info(f"Using datus home directory: {path_manager.datus_home}")
+        logger.debug(f"Using datus home directory: {path_manager.datus_home}")
         # Save directory is now fixed at {agent.home}/save
         self._save_dir = str(path_manager.save_dir)
         # Trajectory directory is now fixed at {agent.home}/trajectory

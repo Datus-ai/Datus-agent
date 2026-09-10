@@ -2715,7 +2715,7 @@ class AgenticNode(Node):
                     config_mutable=self._resolve_config_mutable(),
                     agent_config=self.agent_config,
                 )
-                logger.info(
+                logger.debug(
                     f"Created default SkillManager for node '{self.get_node_name()}' "
                     f"with {self.skill_manager.get_skill_count()} skills"
                 )
@@ -2728,7 +2728,7 @@ class AgenticNode(Node):
                 node_class=self.get_node_class_name(),
                 authoring_mode=self.SKILL_AUTHORING_MODE,
             )
-            logger.info(
+            logger.debug(
                 f"Skill func tools activated for node '{self.get_node_name()}' with pattern '{skill_patterns_str}'"
             )
         except Exception as e:
@@ -2837,7 +2837,7 @@ class AgenticNode(Node):
                 )
             content = self._render_required_skill_content(skill_name, content)
             sections.append(f"<required_skill name={xml_quoteattr(skill_name)}>\n{content}\n</required_skill>")
-            logger.info(f"Injected required skill '{skill_name}' into system prompt for '{self.get_node_name()}'")
+            logger.debug(f"Injected required skill '{skill_name}' into system prompt for '{self.get_node_name()}'")
 
         if not sections:
             return base_prompt
@@ -3004,7 +3004,7 @@ class AgenticNode(Node):
         if self.tools is None:
             self.tools = []
         self.tools.extend(self.skill_func_tool.available_tools())
-        logger.info(
+        logger.debug(
             f"Skill tools injected into node '{self.get_node_name()}': "
             f"{[t.name for t in self.skill_func_tool.available_tools()]}"
         )
@@ -3132,7 +3132,7 @@ class AgenticNode(Node):
         if self.tools is None:
             self.tools = []
         self.tools.extend(self.bash_tool.available_tools())
-        logger.info(
+        logger.debug(
             f"Bash tool injected into node '{self.get_node_name()}': "
             f"{[t.name for t in self.bash_tool.available_tools()]}"
         )
@@ -3179,7 +3179,7 @@ class AgenticNode(Node):
         # never double-transforms the tools carried over above.
         self._tool_transformers_applied = False
         if desired:
-            logger.info(
+            logger.debug(
                 f"Web tools injected into node '{self.get_node_name()}': "
                 f"{[t.name for t in desired]} (builtin={self._builtin_web_tools})"
             )
@@ -3447,10 +3447,9 @@ class AgenticNode(Node):
         self._session_rewritten_this_turn = False
 
         node_name = self.get_node_name()
-        logger.info(
+        logger.debug(
             "turn.started",
             node_name=node_name,
-            session_id=getattr(self, "session_id", None),
             message_chars=len(getattr(self.input, "user_message", "") or ""),
         )
         initial_action = ActionHistory.create_action(

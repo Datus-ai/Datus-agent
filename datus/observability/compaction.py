@@ -42,7 +42,7 @@ def compact_started(**metrics):
         state.started = True
         attrs = {f"datus.compact.{key}": value for key, value in state.metrics.items() if value is not None}
         state.span = state.stack.enter_context(get_observability_manager().span("compact", attrs))
-        logger.info("compact.started", **state.metrics)
+        logger.debug("compact.started", **state.metrics)
 
 
 def compact_metrics(**metrics):
@@ -106,6 +106,6 @@ def observe_compaction(func):
                         for key, value in metrics.items():
                             if value is not None:
                                 state.span.set_attribute(f"datus.compact.{key}", value)
-                    logger.info("compact.finished", **metrics)
+                    logger.debug("compact.finished", **metrics)
 
     return wrapped

@@ -259,7 +259,7 @@ def test_host_run_id_is_shared_by_model_and_capability_logs(tmp_path, isolated_l
     from datus.utils.loggings import configure_logging
     from datus.utils.trace_context import TraceContext, trace_context
 
-    manager = configure_logging(level="INFO", log_dir=tmp_path, console_output=False)
+    manager = configure_logging(level="DEBUG", log_dir=tmp_path, console_output=False)
     with trace_context(TraceContext(name="test", metadata={"run_id": "host-run"}), replace=True):
         capability_event("mcp.degraded", reason="timeout")
         with ModelCall(model="m", model_impl="test", protocol="test") as call:

@@ -55,7 +55,7 @@ class PlatformDocSearchTool:
             tools.append(trans_to_function_tool(self.get_document))
             tools.append(trans_to_function_tool(self.search_document))
         else:
-            logger.info(
+            logger.debug(
                 "Skipping list_document_nav / get_document / search_document: "
                 "no indexed docstore found for the active project."
             )

@@ -99,7 +99,7 @@ class BackgroundSchemaSyncManager:
             self._current_future = future
             self._current_datasource = datasource
             future.add_done_callback(self._on_done)
-            logger.info("background sync scheduled for %s (reason=%s)", datasource, reason)
+            logger.debug("background sync scheduled for %s (reason=%s)", datasource, reason)
 
         self._notify_status_change()
 
@@ -183,7 +183,7 @@ class BackgroundSchemaSyncManager:
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.warning("failed to reload table completer after sync: %s", exc)
 
-            logger.info("background sync finished for %s (reason=%s)", datasource, reason)
+            logger.debug("background sync finished for %s (reason=%s)", datasource, reason)
         except asyncio.CancelledError:
             logger.debug("background sync cancelled for %s", datasource)
             raise

@@ -149,7 +149,7 @@ class SkillRegistry:
                         logger.error(f"Failed to parse skill file {skill_file}: {e}")
 
             self._scanned = True
-            logger.info(f"Skill registry: discovered {len(self._skills)} skills from {total_found} SKILL.md files")
+            logger.debug(f"Skill registry: discovered {len(self._skills)} skills from {total_found} SKILL.md files")
 
     def _parse_skill_file(self, path: Path) -> Optional[SkillMetadata]:
         """Parse a SKILL.md file and extract metadata from frontmatter.
@@ -263,7 +263,7 @@ class SkillRegistry:
             self._scanned = False
 
         self.scan_directories()
-        logger.info(f"Skill registry refreshed: {len(self._skills)} skills")
+        logger.debug(f"Skill registry refreshed: {len(self._skills)} skills")
 
     def skill_exists(self, name: str) -> bool:
         """Check if a skill exists.

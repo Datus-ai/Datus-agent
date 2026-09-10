@@ -385,7 +385,7 @@ class PermissionManager:
         cache_key = f"{tool_category}.{tool_name}"
         with self._state_lock:
             self._session_approvals[cache_key] = True
-        logger.info(f"Session approval granted for {cache_key}")
+        logger.debug(f"Session approval granted for {cache_key}")
 
     def clear_session_approvals(self) -> None:
         """Clear all session approvals (e.g., on session end)."""
