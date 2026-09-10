@@ -123,6 +123,7 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 |---|---|---|---|
 | `openai` | `gpt-5.2`、`gpt-4.1`、`o3` | `openai` | API Key |
 | `deepseek` | `deepseek-v4-pro`、`deepseek-v4-flash` | `deepseek` | API Key |
+| `atlas` | `deepseek-ai/deepseek-v4-flash`、`deepseek-ai/deepseek-v4-pro` | `openai` | API Key |
 | `claude` | `claude-sonnet-4-5`、`claude-opus-4-5` | `claude` | API Key |
 | `kimi` | `kimi-k3`、`kimi-k2.6` | `kimi` | API Key |
 | `qwen` | `qwen3-max`、`qwen3-coder-plus` | `openai` | API Key |
@@ -168,7 +169,7 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 api_key: ${OPENAI_API_KEY}
 ```
 
-对于 OpenAI、DeepSeek、Claude、Kimi、Qwen、Gemini、OpenRouter，配置向导会自动提示对应环境变量（如 `${OPENROUTER_API_KEY}`）。对于 `minimax`、`glm` 和各类 `*_coding` provider，你也可以在输入 API Key 时直接填入 `${MINIMAX_API_KEY}`、`${GLM_API_KEY}`、`${KIMI_API_KEY}`、`${DASHSCOPE_API_KEY}` 这类环境变量引用。
+对于 OpenAI、DeepSeek、Atlas Cloud、Claude、Kimi、Qwen、Gemini、OpenRouter，配置向导会自动提示对应环境变量（如 `${ATLASCLOUD_API_KEY}`）。对于 `minimax`、`glm` 和各类 `*_coding` provider，你也可以在输入 API Key 时直接填入 `${MINIMAX_API_KEY}`、`${GLM_API_KEY}`、`${KIMI_API_KEY}`、`${DASHSCOPE_API_KEY}` 这类环境变量引用。
 
 另外，当前实现会对少数模型自动补充固定参数覆盖：
 
@@ -202,6 +203,15 @@ deepseek:
   base_url: https://api.deepseek.com
   api_key: ${DEEPSEEK_API_KEY}
   model: deepseek-v4-flash
+```
+
+=== "Atlas Cloud"
+```yaml
+atlas:
+  type: openai
+  base_url: https://api.atlascloud.ai/v1
+  api_key: ${ATLASCLOUD_API_KEY}
+  model: deepseek-ai/deepseek-v4-flash
 ```
 
 === "Google Gemini"
