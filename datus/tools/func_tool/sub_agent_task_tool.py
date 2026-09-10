@@ -278,6 +278,7 @@ class SubAgentTaskTool:
             },
             "required": ["type", "prompt", "description"],
         }
+        accepted_args = frozenset(schema["properties"])
 
         async def _invoke(_tool_ctx, args_str) -> dict:
             args, canonical_json, error = parse_tool_args(
@@ -287,6 +288,17 @@ class SubAgentTaskTool:
             write_back_tool_args(_tool_ctx, canonical_json)
             if error:
                 return FuncToolResult(success=0, error=error).model_dump()
+            # ``strict_json_schema=False`` means the provider does not enforce the
+            # schema, so a model can emit keys that are not declared here (garbled
+            # or hallucinated names, or ``call_id`` which this wrapper supplies).
+            # Splatting those into ``task()`` raises TypeError inside the tool
+            # invocation, which aborts the entire streaming run instead of failing
+            # this one call. Drop them; genuinely missing required arguments are
+            # still reported by ``task()`` with a retry hint.
+            unexpected = sorted(set(args) - accepted_args)
+            if unexpected:
+                logger.warning("Ignoring unsupported task() argument(s): %s", ", ".join(unexpected))
+                args = {key: value for key, value in args.items() if key in accepted_args}
             # Resolve parent call_id from SDK ToolContext for action linking
             call_id = getattr(_tool_ctx, "tool_call_id", None) if _tool_ctx else None
             result = await self.task(call_id=call_id, **args)
