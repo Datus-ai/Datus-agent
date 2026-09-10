@@ -192,7 +192,7 @@ def configure_logging(
     _log_redact_config = RedactConfig.from_dict(redact if redact is not None else getattr(config, "redact", None))
     _configure_structlog()
     # Retain targeted noise suppression without bypassing the selected threshold.
-    for name in ("httpx", "httpcore", "openai.agents"):
+    for name in ("httpx", "httpcore", "openai.agents", "markdown_it"):
         logging.getLogger(name).setLevel(max(logging.WARNING, numeric_level))
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         named_logger = logging.getLogger(name)

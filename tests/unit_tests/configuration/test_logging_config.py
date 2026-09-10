@@ -268,3 +268,28 @@ def test_web_logging_uses_configured_home(tmp_path, monkeypatch):
         assert not (tmp_path / "old-home" / "logs").exists()
     finally:
         path_manager.reset_path_manager(token)
+
+
+def test_markdown_rendering_keeps_agent_debug_without_parser_noise(tmp_path):
+    from io import StringIO
+
+    from rich.console import Console
+    from rich.markdown import Markdown
+
+    manager = configure_logging(level="DEBUG", log_dir=tmp_path, console_output=False)
+    rendered = StringIO()
+    Console(file=rendered, color_system=None).print(Markdown("# Heading\n\nVisible **paragraph**."))
+    get_logger("datus.test").debug("agent-debug-preserved")
+    parser_logger = logging.getLogger("markdown_it.rules_block.paragraph")
+    parser_logger.info("parser-info-hidden")
+    parser_logger.warning("parser-warning-preserved")
+    parser_logger.error("parser-error-preserved")
+    manager.file_handler.flush()
+
+    assert "Visible paragraph." in rendered.getvalue()
+    output = Path(manager.file_handler.baseFilename).read_text()
+    assert "agent-debug-preserved" in output
+    parser_records = [line for line in output.splitlines() if "[markdown_it." in line]
+    assert len(parser_records) == 2
+    assert "parser-warning-preserved" in parser_records[0]
+    assert "parser-error-preserved" in parser_records[1]
