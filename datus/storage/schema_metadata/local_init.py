@@ -56,7 +56,7 @@ async def init_local_schema_async(
         emit: Optional callback to stream BatchEvent progress events
     """
     if build_mode == "overwrite":
-        logger.debug(
+        logger.info(
             "[overwrite] Wiping schema metadata rows for datasource '%s' before re-population",
             table_lineage_store.datasource_id,
         )
@@ -102,7 +102,7 @@ def init_local_schema(
     """
     event_helper = BatchEventHelper(BIZ_NAME, emit)
 
-    logger.debug(f"Initializing local schema for datasource: {agent_config.current_datasource}")
+    logger.info(f"Initializing local schema for datasource: {agent_config.current_datasource}")
     event_helper.task_started(datasource=agent_config.current_datasource, build_mode=build_mode, table_type=table_type)
 
     ds = agent_config.current_datasource
@@ -113,7 +113,7 @@ def init_local_schema(
         default_database = getattr(db_config, "database", "")
         databases = [default_database] if default_database else []
     if not databases:
-        logger.debug(f"No databases resolved for datasource {ds} ({db_config.type}); skipping schema init.")
+        logger.info(f"No databases resolved for datasource {ds} ({db_config.type}); skipping schema init.")
         table_lineage_store.after_init(build_mode=build_mode)
         event_helper.task_completed(total_items=0, completed_items=0)
         return
@@ -159,7 +159,7 @@ def init_local_schema(
     # Build new indices for overwrite, or incrementally index changed fragments.
     table_lineage_store.after_init(build_mode=build_mode)
     event_helper.task_completed(total_items=0, completed_items=0)
-    logger.debug("Local schema initialization completed")
+    logger.info("Local schema initialization completed")
 
 
 def init_sqlite_schema(

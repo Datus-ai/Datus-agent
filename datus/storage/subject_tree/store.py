@@ -145,7 +145,7 @@ class SubjectTreeStore:
         self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
 
-        logger.debug("SubjectTreeStore initialized")
+        logger.info("SubjectTreeStore initialized")
 
     def _migrate_null_parents(self):
         """Migrate existing NULL parent_id values to ROOT_PARENT_ID (-1).

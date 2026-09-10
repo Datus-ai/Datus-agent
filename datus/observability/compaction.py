@@ -106,6 +106,6 @@ def observe_compaction(func):
                         for key, value in metrics.items():
                             if value is not None:
                                 state.span.set_attribute(f"datus.compact.{key}", value)
-                    logger.debug("compact.finished", **metrics)
+                    logger.info("compact.finished", **metrics)
 
     return wrapped

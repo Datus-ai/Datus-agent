@@ -240,7 +240,7 @@ class SkillManager:
         if not content:
             return False, f"Failed to load content for skill '{skill_name}'", None
 
-        logger.debug(f"Loaded skill '{skill_name}' for node '{node_name}'")
+        logger.info(f"Loaded skill '{skill_name}' for node '{node_name}'")
         return True, f"Skill '{skill_name}' loaded successfully", content
 
     def generate_available_skills_xml(
@@ -494,7 +494,7 @@ class SkillManager:
                     ok, _msg = self.install_from_marketplace(name)
                     if ok:
                         synced.append(name)
-                        logger.debug(f"Auto-synced promoted skill: {name}")
+                        logger.info(f"Auto-synced promoted skill: {name}")
         except Exception as e:
             logger.error(f"Failed to sync promoted skills: {e}")
         return synced

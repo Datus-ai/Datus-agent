@@ -742,7 +742,7 @@ class SemanticTools:
             self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
             self._adapter_context_key = context_key
             self._adapter_load_error = None
-            logger.debug(f"Loaded semantic adapter: {resolved_adapter}")
+            logger.info(f"Loaded semantic adapter: {resolved_adapter}")
         except Exception as e:
             logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
             self._adapter_load_error = str(e)
@@ -802,7 +802,7 @@ class SemanticTools:
 
             # Force reload by accessing the property
             if self.adapter is not None:
-                logger.debug(f"Successfully reloaded semantic adapter: {self.adapter_type}")
+                logger.info(f"Successfully reloaded semantic adapter: {self.adapter_type}")
                 return True
             else:
                 logger.error("Failed to reload semantic adapter")

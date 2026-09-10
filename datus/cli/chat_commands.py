@@ -800,7 +800,7 @@ class ChatCommands:
                             current_node._drop_running_turn_usage_on_exit = True
                             if current_node.pending_input_queue is not None:
                                 current_node.pending_input_queue.clear()
-                            logger.debug("ExecutionInterrupted caught, execution stopped gracefully")
+                            logger.info("ExecutionInterrupted caught, execution stopped gracefully")
                     # A cooperative controller checkpoint can finish the
                     # stream normally before Task.cancel is delivered. The
                     # ESC-time latch, rather than the exception path, is the
@@ -950,7 +950,7 @@ class ChatCommands:
                         current_node._drop_running_turn_usage_on_exit = True
                         if current_node.pending_input_queue is not None:
                             current_node.pending_input_queue.clear()
-                        logger.debug("ExecutionInterrupted caught, execution stopped gracefully")
+                        logger.info("ExecutionInterrupted caught, execution stopped gracefully")
                 streamed_body = bool(getattr(ns_streaming_ctx, "has_streamed_response", False))
 
             # Display final response from the node's final action

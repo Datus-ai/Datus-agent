@@ -119,7 +119,7 @@ class MCPManager:
         self.externally_managed = servers is not None
         if self.externally_managed:
             self.config = MCPConfig.from_config_format({"mcpServers": servers})
-            logger.debug(f"Loaded {len(self.config.servers)} MCP server(s) from the agent config")
+            logger.info(f"Loaded {len(self.config.servers)} MCP server(s) from the agent config")
         else:
             self.load_config()
 
@@ -156,7 +156,7 @@ class MCPManager:
 
                 if "mcpServers" in data:
                     self.config = MCPConfig.from_config_format(data)
-                    logger.debug(f"Loaded MCP config from {self.config_path}")
+                    logger.info(f"Loaded MCP config from {self.config_path}")
                 else:
                     # Invalid format, use defaults
                     self.config = MCPConfig()
