@@ -149,6 +149,69 @@ class TestAvailableTools:
             description="sales query",
         )
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"laceholder": "x"},
+            {"call_id": "model-supplied"},
+            {"unknown_a": 1, "unknown_b": {"nested": True}},
+        ],
+        ids=["garbled-key", "wrapper-owned-key", "multiple-unknown-keys"],
+    )
+    async def test_unsupported_arguments_are_dropped_instead_of_raising(self, task_tool, extra):
+        """Undeclared keys must never reach ``task()``.
+
+        ``strict_json_schema=False`` lets a provider forward keys the schema
+        never declared; splatting them raised TypeError out of ``on_invoke_tool``
+        and killed the whole streaming run.
+        """
+        tool = task_tool.available_tools()[0]
+        task_tool.task = AsyncMock(return_value=FuncToolResult(result={"session_id": "child-1"}))
+        payload = {"type": "gen_sql", "prompt": "show sales", "description": "sales query", **extra}
+        raw_args = json.dumps(payload)
+        tool_ctx = SimpleNamespace(
+            tool_call_id="call_task_extra",
+            tool_arguments=raw_args,
+            tool_call=ResponseFunctionToolCall(
+                arguments=raw_args,
+                call_id="call_task_extra",
+                name="task",
+                type="function_call",
+            ),
+        )
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 1
+        task_tool.task.assert_awaited_once_with(
+            call_id="call_task_extra",
+            type="gen_sql",
+            prompt="show sales",
+            description="sales query",
+        )
+
+    @pytest.mark.asyncio
+    async def test_unsupported_arguments_still_surface_missing_required_ones(self, task_tool):
+        """Dropping unknown keys must not mask a genuinely missing required argument."""
+        tool = task_tool.available_tools()[0]
+        raw_args = json.dumps({"laceholder": "x", "prompt": "show sales"})
+        tool_ctx = SimpleNamespace(
+            tool_call_id="call_task_missing",
+            tool_arguments=raw_args,
+            tool_call=ResponseFunctionToolCall(
+                arguments=raw_args,
+                call_id="call_task_missing",
+                name="task",
+                type="function_call",
+            ),
+        )
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 0
+        assert "Missing required parameter: type" in result["error"]
+
 
 # ── _get_available_types ───────────────────────────────────────────
 
