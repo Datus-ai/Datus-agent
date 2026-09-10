@@ -97,11 +97,11 @@ class TestSetupTracing:
 
         with (
             patch.object(module, "_disable_sdk_tracing") as mock_disable,
-            patch("datus.observability.manager.configure_observability") as mock_configure,
+            patch("datus.observability.manager.configure_observability", return_value=False) as mock_configure,
         ):
             setup_tracing(cfg)
 
-        mock_configure.assert_not_called()
+        mock_configure.assert_called_once_with(cfg)
         mock_disable.assert_called_once_with("observability tracing not configured")
 
     def test_empty_observability_does_not_enable_legacy_env_tracing(self, monkeypatch):
@@ -202,11 +202,17 @@ class TestOptionalTraceable:
             ),
         )
         def op():
+            from datus.observability.model_call import ModelCall
+
             seen["ctx"] = get_trace_context()
+            with ModelCall(model="test", model_impl="test", protocol="test") as call:
+                call.request({"tools": []})
+            seen["run_id"] = call.fields.get("run_id")
             return "ok"
 
         assert op() == "ok"
         assert seen["ctx"].name == "workflow/test"
+        assert seen["run_id"]
         assert get_trace_context() is None
 
     @pytest.mark.asyncio

@@ -257,11 +257,6 @@ def configure_entrypoint_logging(args: Any, *, if_unconfigured: bool = False, **
     )
 
 
-def add_exc_info(logger, method_name, event_dict):
-    """Compatibility processor: exception() and explicit exc_info own tracebacks."""
-    return event_dict
-
-
 def add_code_location(logger, method_name, event_dict):
     """Add the correct code location by inspecting the call stack."""
     if method_name == "debug" or fileno:
@@ -352,19 +347,6 @@ def log_context(target: Literal["both", "file", "console", "none"]):
     """
     with get_log_manager().temporary_output(target):
         yield
-
-
-class AdaptiveRenderer:
-    """Console renderer with colors on supported platforms."""
-
-    def __init__(self):
-        self.colored_renderer = structlog.dev.ConsoleRenderer(
-            colors=sys.platform != "win32", exception_formatter=structlog.dev.plain_traceback
-        )
-
-    def __call__(self, logger, name, event_dict):
-        """Render console text using the platform color setting."""
-        return self.colored_renderer(logger, name, event_dict)
 
 
 def _redact_log_event(logger, method_name, event_dict):

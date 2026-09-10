@@ -368,7 +368,12 @@ class TestChatTaskManagerBehavior:
                 return "chat"
 
             async def execute_stream_with_interactions(self, action_history_manager):
+                from datus.observability.model_call import ModelCall
+
                 captured["trace_context"] = get_trace_context()
+                with ModelCall(model="test", model_impl="test", protocol="test") as call:
+                    call.request({"tools": []})
+                captured["run_id"] = call.fields.get("run_id")
                 yield ActionHistory(
                     action_id="final",
                     role=ActionRole.ASSISTANT,
@@ -390,6 +395,7 @@ class TestChatTaskManagerBehavior:
 
         assert captured["trace_context"].name == "agent/chat"
         assert captured["trace_context"].session_id == "s-final"
+        assert captured["run_id"]
         message_events = [event for event in task.events if event.event == "message"]
         assert len(message_events) == 1
         content = message_events[0].data.payload.content[0]

@@ -11,6 +11,7 @@ import asyncio
 import copy
 import os
 import uuid
+from contextlib import ExitStack
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
@@ -40,9 +41,8 @@ from datus.utils.path_manager import set_current_path_manager
 from datus.utils.time_utils import now_utc_iso
 from datus.utils.trace_context import (
     build_chat_trace_context,
-    reset_trace_context,
     resolve_trace_identity,
-    set_trace_context,
+    trace_context,
 )
 
 
@@ -582,7 +582,7 @@ class ChatTaskManager:
         """Execute the full agentic loop, pushing SSE events to the task buffer."""
         session_id = task.session_id
         event_id = 0
-        trace_token = None
+        trace_stack = ExitStack()
 
         # Pin the path manager into this task's context. Required when the caller
         # dispatched us from a thread that never inherited AgentConfig's ContextVar
@@ -640,21 +640,24 @@ class ChatTaskManager:
             # Without this the API path silently drops mid-run messages (the
             # CLI wires its own queue in chat_commands).
             node.pending_input_queue = task.pending_input_queue
-            trace_token = set_trace_context(
-                build_chat_trace_context(
-                    session_id=session_id,
-                    llm_session_id=node.session_id,
-                    node_name=node.get_node_name() if hasattr(node, "get_node_name") else None,
-                    subagent_id=sub_agent_id,
-                    user_id=user_id,
-                    datasource=agent_config.current_datasource,
-                    source_session_id=request.source_session_id,
-                    source=request.source or self._default_source,
-                    model=request.model,
-                    agent_home=agent_config.home,
-                    identity=resolve_trace_identity(),
-                    max_turns=getattr(node, "max_turns", None),
-                    release=_release_stamp(),
+            trace_stack.enter_context(
+                trace_context(
+                    build_chat_trace_context(
+                        session_id=session_id,
+                        llm_session_id=node.session_id,
+                        node_name=node.get_node_name() if hasattr(node, "get_node_name") else None,
+                        subagent_id=sub_agent_id,
+                        user_id=user_id,
+                        datasource=agent_config.current_datasource,
+                        source_session_id=request.source_session_id,
+                        source=request.source or self._default_source,
+                        model=request.model,
+                        agent_home=agent_config.home,
+                        identity=resolve_trace_identity(),
+                        max_turns=getattr(node, "max_turns", None),
+                        release=_release_stamp(),
+                    ),
+                    replace=True,
                 )
             )
 
@@ -961,8 +964,7 @@ class ChatTaskManager:
             event_id += 1
 
         finally:
-            if trace_token is not None:
-                reset_trace_context(trace_token)
+            trace_stack.close()
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)
