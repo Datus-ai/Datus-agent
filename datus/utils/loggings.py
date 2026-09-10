@@ -224,10 +224,16 @@ def configure_logging(
     )
     _log_manager.configured = True
 
+    # Set the LiteLLM logger thresholds before importing it. LiteLLM installs
+    # its own DEBUG console handlers at import time, so importing first leaks
+    # startup diagnostics whenever Datus itself is running at DEBUG level.
+    configure_litellm_logging(_log_manager.file_handler)
     try:
         import litellm  # noqa: F401
     except ModuleNotFoundError:
         pass
+    # Remove the console handlers LiteLLM added during import and retain the
+    # Datus-formatted file handler for warnings and errors.
     configure_litellm_logging(_log_manager.file_handler)
 
     # Set output target based on console_output parameter
