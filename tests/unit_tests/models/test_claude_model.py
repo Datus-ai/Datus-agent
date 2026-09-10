@@ -2014,7 +2014,8 @@ class TestNativeLoopHooks:
         connected_server.call_tool.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_denied_tool_aborts_native_loop(self):
+    @pytest.mark.parametrize("entrypoint", ["stream", "nonstream"])
+    async def test_denied_tool_aborts_native_loop(self, entrypoint):
         """on_tool_start raising PermissionDeniedException must propagate out of
         the generator and prevent the tool from running — mirroring the SDK
         path, where a denied tool aborts the run instead of feeding the model a
@@ -2042,16 +2043,25 @@ class TestNativeLoopHooks:
             mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
             mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
             with pytest.raises(PermissionDeniedException):
-                async for action in model._generate_with_mcp_stream(
-                    prompt="q",
-                    mcp_servers={},
-                    instruction="sys",
-                    output_type={},
-                    func_tools=[func_tool],
-                    action_history_manager=ActionHistoryManager(),
-                    hooks=hooks,
-                ):
-                    seen.append(action)
+                if entrypoint == "nonstream":
+                    await model.generate_with_tools(
+                        prompt="q",
+                        mcp_servers={"test": MagicMock()},
+                        instruction="sys",
+                        tools=[func_tool],
+                        hooks=hooks,
+                    )
+                else:
+                    async for action in model._generate_with_mcp_stream(
+                        prompt="q",
+                        mcp_servers={},
+                        instruction="sys",
+                        output_type={},
+                        func_tools=[func_tool],
+                        action_history_manager=ActionHistoryManager(),
+                        hooks=hooks,
+                    ):
+                        seen.append(action)
 
         # Tool never executed; no SUCCESS completion emitted for the block.
         func_tool.on_invoke_tool.assert_not_awaited()

@@ -10,6 +10,8 @@ import pytest
 from datus.configuration.logging_config import LoggingConfig, add_logging_arguments, resolve_logging_arguments
 from datus.utils.loggings import configure_entrypoint_logging, configure_logging, get_logger
 
+pytestmark = pytest.mark.usefixtures("isolated_logging")
+
 
 @pytest.mark.parametrize(
     "yaml_level,env_level,flags,expected,source",
@@ -205,3 +207,64 @@ def test_uvicorn_startup_keeps_service_logs_in_shared_text_file(tmp_path, monkey
     assert "[uvicorn.error]" in service_record
     assert "agent-error" in agent_record
     assert "[datus.agent]" in agent_record
+
+
+@pytest.mark.parametrize("raw", ["debug", {"level": "verbose"}, {"redact": "all"}])
+@pytest.mark.parametrize("entrypoint", ["logging", "agent"])
+def test_invalid_yaml_logging_reports_configuration_error(tmp_path, monkeypatch, raw, entrypoint):
+    import yaml
+
+    from datus.configuration.agent_config_loader import load_agent_config
+    from datus.utils.exceptions import DatusException, ErrorCode
+
+    monkeypatch.delenv("DATUS_LOG_LEVEL", raising=False)
+    config = tmp_path / "agent.yml"
+    config.write_text(yaml.safe_dump({"agent": {"home": str(tmp_path), "logging": raw}}))
+    with pytest.raises(DatusException) as error:
+        if entrypoint == "logging":
+            resolve_logging_arguments(argparse.Namespace(config=str(config)))
+        else:
+            load_agent_config(config=str(config), reload=True)
+    assert error.value.code == ErrorCode.COMMON_CONFIG_ERROR
+    assert isinstance(error.value.__cause__, ValueError)
+
+
+def test_windows_logging_without_colorama(tmp_path, monkeypatch):
+    import structlog.dev
+
+    monkeypatch.setattr("datus.utils.loggings.sys.platform", "win32")
+    monkeypatch.setattr(structlog.dev, "_IS_WINDOWS", True)
+    monkeypatch.setattr(structlog.dev, "colorama", None)
+    manager = configure_logging(level="INFO", log_dir=tmp_path, console_output=True)
+    record = logging.LogRecord("datus.test", logging.INFO, __file__, 1, "plain-windows-log", (), None)
+    for handler in (manager.file_handler, manager.console_handler):
+        output = handler.format(record)
+        assert "plain-windows-log" in output
+        assert "\x1b[" not in output
+
+
+def test_web_logging_uses_configured_home(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from datus.cli.web.chatbot import run_web_interface
+    from datus.utils import loggings, path_manager
+
+    home = tmp_path / "custom-home"
+    config = tmp_path / "agent.yml"
+    config.write_text(f"agent:\n  home: {home}\n  logging:\n    level: INFO\n")
+    monkeypatch.delenv("DATUS_LOG_LEVEL", raising=False)
+    # Keep the real path-manager and logging setup while avoiding an HTTP server.
+    token = path_manager.set_current_path_manager(str(tmp_path / "old-home"))
+    monkeypatch.setattr("datus.cli.web.chatbot.create_web_app", lambda args: object())
+    monkeypatch.setattr("datus.cli.web.chatbot._schedule_browser_open", lambda url: None)
+    monkeypatch.setattr("uvicorn.Server.serve", AsyncMock())
+    try:
+        run_web_interface(argparse.Namespace(config=str(config), datasource="test"))
+        get_logger("datus.web").info("configured-home-log")
+        handler = loggings.get_log_manager().file_handler
+        handler.flush()
+        assert Path(handler.baseFilename).parent == home / "logs"
+        assert "configured-home-log" in Path(handler.baseFilename).read_text()
+        assert not (tmp_path / "old-home" / "logs").exists()
+    finally:
+        path_manager.reset_path_manager(token)

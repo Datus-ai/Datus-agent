@@ -981,7 +981,10 @@ class AgentConfig:
         self.nodes = nodes
         self.export_config: Dict[str, Any] = kwargs.get("export", {})
         self.api_config: Dict[str, Any] = kwargs.get("api", {}) or {}
-        self.logging = LoggingConfig.from_dict(_resolve_nested_value(kwargs.get("logging")))
+        try:
+            self.logging = LoggingConfig.from_dict(_resolve_nested_value(kwargs.get("logging")))
+        except ValueError as exc:
+            raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message_args={"config_error": str(exc)}) from exc
         self.observability = ObservabilityConfig.from_dict(_resolve_nested_value(kwargs.get("observability")))
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
         self.dashboard_config: Dict[str, DashboardConfig] = {}

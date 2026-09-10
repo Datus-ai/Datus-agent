@@ -133,6 +133,7 @@ def model_endpoint():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("protocol,expected_execution", [("litellm", ["ok"]), ("responses", [])])
+@pytest.mark.component
 async def test_wire_tools_and_raw_ids_match_each_exported_generation(
     exported_calls, model_endpoint, protocol, expected_execution, streaming, monkeypatch
 ):
@@ -260,6 +261,7 @@ def test_no_synthetic_id_and_summary_phase():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tracing_disabled", [False, True])
+@pytest.mark.component
 async def test_same_named_concurrent_agents_do_not_compare_each_others_tools(
     exported_calls, model_endpoint, tracing_disabled, monkeypatch
 ):
@@ -299,6 +301,7 @@ async def test_same_named_concurrent_agents_do_not_compare_each_others_tools(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tracing_disabled", [False, True])
+@pytest.mark.component
 async def test_sdk_handled_tool_exception_is_not_logged_as_success(
     exported_calls, model_endpoint, monkeypatch, tracing_disabled
 ):
@@ -323,6 +326,7 @@ async def test_sdk_handled_tool_exception_is_not_logged_as_success(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.component
 async def test_tool_definition_capture_is_independent_of_prompt_content(exported_calls, model_endpoint, enabled):
     from openinference.instrumentation import TraceConfig
 

@@ -94,7 +94,12 @@ def resolve_logging_arguments(args: argparse.Namespace, agent_config: Any = None
             if logging_raw is not None:
                 from datus.configuration.agent_config import _resolve_nested_value
 
-                config = LoggingConfig.from_dict(_resolve_nested_value(logging_raw))
+                try:
+                    config = LoggingConfig.from_dict(_resolve_nested_value(logging_raw))
+                except ValueError as exc:
+                    raise DatusException(
+                        ErrorCode.COMMON_CONFIG_ERROR, message_args={"config_error": str(exc)}
+                    ) from exc
     effective, source = resolve_log_level(
         level=getattr(args, "log_level", None), debug=getattr(args, "debug", False), config=config
     )

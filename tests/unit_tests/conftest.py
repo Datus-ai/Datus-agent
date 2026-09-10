@@ -63,6 +63,48 @@ from datus.configuration.agent_config import AgentConfig, NodeConfig  # noqa: E4
 from tests.unit_tests.mock_llm_model import MockLLMModel  # noqa: E402
 
 
+@pytest.fixture
+def isolated_logging(monkeypatch):
+    """Keep entrypoint logging tests from replacing the test runner's handlers."""
+    import logging
+
+    import structlog
+
+    from datus.utils import loggings
+
+    config = structlog.get_config()
+    loggers = [logging.getLogger()] + [
+        item for item in logging.Logger.manager.loggerDict.values() if isinstance(item, logging.Logger)
+    ]
+    saved = {item: (list(item.handlers), item.level, item.propagate) for item in loggers}
+    handlers = {handler: handler.level for item in loggers for handler in item.handlers}
+    # configure_logging closes its previous manager. Preserve the host manager
+    # by removing it from the test's scope before configuring a temporary one.
+    monkeypatch.setattr(loggings, "_log_manager", None)
+    monkeypatch.setattr(loggings, "_log_redact_config", loggings._log_redact_config)
+    monkeypatch.setattr(loggings, "fileno", loggings.fileno)
+    try:
+        yield
+    finally:
+        current = [logging.getLogger()] + [
+            item for item in logging.Logger.manager.loggerDict.values() if isinstance(item, logging.Logger)
+        ]
+        for item in current:
+            for handler in item.handlers:
+                if handler not in handlers:
+                    handler.close()
+            previous_handlers, level, propagate = saved.get(item, ([], logging.NOTSET, True))
+            item.handlers = previous_handlers
+            item.setLevel(level)
+            item.propagate = propagate
+        if loggings._log_manager is not None:
+            loggings._log_manager.file_handler.close()
+            loggings._log_manager.console_handler.close()
+        for handler, level in handlers.items():
+            handler.setLevel(level)
+        structlog.configure(**config)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_project_cwd(monkeypatch, tmp_path):
     """Run every unit test in a per-test isolated working directory.

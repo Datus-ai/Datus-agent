@@ -355,15 +355,15 @@ def log_context(target: Literal["both", "file", "console", "none"]):
 
 
 class AdaptiveRenderer:
-    """Adaptive renderer that uses colored output by default"""
+    """Console renderer with colors on supported platforms."""
 
     def __init__(self):
         self.colored_renderer = structlog.dev.ConsoleRenderer(
-            colors=True, exception_formatter=structlog.dev.plain_traceback
+            colors=sys.platform != "win32", exception_formatter=structlog.dev.plain_traceback
         )
 
     def __call__(self, logger, name, event_dict):
-        """Always use colored renderer - file handler will strip colors with its formatter"""
+        """Render console text using the platform color setting."""
         return self.colored_renderer(logger, name, event_dict)
 
 
@@ -376,7 +376,9 @@ def _redact_log_event(logger, method_name, event_dict):
 
 
 def _log_formatter(*, colors: bool = False) -> logging.Formatter:
-    renderer = structlog.dev.ConsoleRenderer(colors=colors, exception_formatter=structlog.dev.plain_traceback)
+    renderer = structlog.dev.ConsoleRenderer(
+        colors=colors and sys.platform != "win32", exception_formatter=structlog.dev.plain_traceback
+    )
     return structlog.stdlib.ProcessorFormatter(
         foreign_pre_chain=[
             structlog.contextvars.merge_contextvars,

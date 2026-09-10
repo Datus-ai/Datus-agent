@@ -172,9 +172,9 @@ def run_web_interface(args: argparse.Namespace) -> None:
     from datus.cli.web.config_manager import get_home_from_config
     from datus.utils.path_manager import set_current_path_manager
 
-    configure_entrypoint_logging(args)
     config_path = getattr(args, "config", None) or "conf/agent.yml"
     set_current_path_manager(get_home_from_config(config_path))
+    configure_entrypoint_logging(args)
 
     host = getattr(args, "host", "localhost")
     port = getattr(args, "port", 8501)

@@ -631,8 +631,7 @@ class CodexModel(LLMBaseModel):
                 agent_kwargs["tools"] = tools
             if (kwargs.get("builtin_web_tools") or {}).get("web_search") and self.supports_builtin_web_search():
                 agent_kwargs["tools"] = [*(agent_kwargs.get("tools") or []), WebSearchTool()]
-            if hooks:
-                agent_kwargs["hooks"] = hooks
+            agent_kwargs["hooks"] = observe_tool_hooks(hooks)
 
             agent = Agent(**agent_kwargs)
 

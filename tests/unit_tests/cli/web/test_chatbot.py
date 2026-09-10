@@ -349,6 +349,7 @@ agent:
 
 
 @pytest.mark.ci
+@pytest.mark.usefixtures("isolated_logging")
 class TestRunWebInterface:
     """Tests for run_web_interface entry point."""
 

@@ -165,20 +165,48 @@ def _parse_remote_id_headers(raw: Any) -> dict[str, dict[str, str]]:
     if raw is None:
         return {}
     if not isinstance(raw, Mapping):
-        raise ValueError("remote_id_headers must map endpoint hosts to header mappings")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message_args={
+                "field_name": "remote_id_headers",
+                "except_values": "host-to-header mapping",
+                "your_value": raw,
+            },
+        )
     parsed = {}
     allowed = {"request_id_header", "trace_id_header", "gateway_request_id_header", "issuer"}
     for host, mapping in raw.items():
         if not isinstance(mapping, Mapping) or set(mapping) - allowed:
-            raise ValueError(f"Invalid remote ID header mapping for {host}")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": f"remote_id_headers.{host}",
+                    "except_values": sorted(allowed),
+                    "your_value": mapping,
+                },
+            )
         values = {str(k): str(v).lower() for k, v in mapping.items()}
         if values.get("issuer", "unknown") not in {"provider", "gateway", "unknown"}:
-            raise ValueError("Remote ID issuer must be provider, gateway or unknown")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": f"remote_id_headers.{host}.issuer",
+                    "except_values": "provider, gateway, unknown",
+                    "your_value": values["issuer"],
+                },
+            )
         for key, header in values.items():
             if key != "issuer" and (
                 not header or any(term in header for term in ("authorization", "cookie", "api-key", "token", "secret"))
             ):
-                raise ValueError("Remote ID mappings must reference non-credential response headers")
+                raise DatusException(
+                    ErrorCode.COMMON_FIELD_INVALID,
+                    message_args={
+                        "field_name": f"remote_id_headers.{host}.{key}",
+                        "except_values": "non-credential response header",
+                        "your_value": header,
+                    },
+                )
         parsed[str(host).lower()] = values
     return parsed
 

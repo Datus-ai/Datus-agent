@@ -17,6 +17,7 @@ from datus.observability.compaction import compact_started, observe_compaction
 from datus.observability.config import ObservabilityConfig, TracingConfig
 from datus.observability.model_call import ModelCall, capability_event, model_phase, observation_run
 from datus.observability.tool_calls import observe_tool_hooks
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def definition(name, description="Test"):
@@ -110,8 +111,9 @@ def test_explicit_raw_header_mapping_works_with_tracing_disabled(exported_calls)
         missing.response(SimpleNamespace(headers={}, _request_id="wrong-header"))
     assert "request_id" not in missing.fields
     assert missing.fields["request_id_status"] == "absent"
-    with pytest.raises(ValueError):
+    with pytest.raises(DatusException) as error:
         TracingConfig.from_dict({"remote_id_headers": {"private.example": {"request_id_header": "authorization"}}})
+    assert error.value.code == ErrorCode.COMMON_FIELD_INVALID
 
 
 @pytest.mark.asyncio
@@ -190,15 +192,18 @@ async def test_tool_hooks_preserve_permissions_failure_status_and_request_identi
     assert observe_tool_hooks(hooks) is hooks
     tool = SimpleNamespace(name="lookup")
     context = SimpleNamespace(tool_call_id="tool-1")
-    with capture_logs() as records, observation_run():
+    with capture_logs() as records, observation_run() as state:
         with ModelCall(model="m", model_impl="test", protocol="test") as call:
             call.response(SimpleNamespace(_request_id="raw-1"))
-            call.record_tool_calls([{"type": "function_call", "call_id": "tool-1"}])
+            call.record_tool_calls([{"type": "function_call", "call_id": name} for name in ("tool-1", "tool-2")])
         await hooks.on_tool_start(context, None, tool)
         await hooks.on_tool_end(context, None, tool, '{"success": false, "error": "failed"}')
+        assert set(state.tool_calls) == {"tool-2"}
+        context.tool_call_id = "tool-2"
         delegate.on_tool_start.side_effect = PermissionDeniedException()
         with pytest.raises(PermissionDeniedException):
             await hooks.on_tool_start(context, None, tool)
+        assert state.tool_calls == {}
     finished = [r for r in records if r["event"] == "tool.finished"]
     assert [r["status"] for r in finished] == ["unsuccessful_result", "permission_denied"]
     assert all(r["request_id"] == "raw-1" and r["model_call_id"] == call.model_call_id for r in finished)
@@ -231,7 +236,7 @@ def test_connection_failure_does_not_claim_response_headers_arrived():
     assert call.fields["status"] == "error"
 
 
-def test_host_run_id_is_shared_by_model_and_capability_logs(tmp_path):
+def test_host_run_id_is_shared_by_model_and_capability_logs(tmp_path, isolated_logging):
     from pathlib import Path
 
     from datus.utils.loggings import configure_logging
@@ -248,3 +253,35 @@ def test_host_run_id_is_shared_by_model_and_capability_logs(tmp_path):
     assert any("mcp.degraded" in line for line in records)
     assert any("llm.finished" in line for line in records)
     assert all("run_id=host-run" in line.split() for line in records)
+
+
+@pytest.mark.parametrize(
+    "raw,field",
+    [
+        ([], "remote_id_headers"),
+        ({"host": []}, "remote_id_headers.host"),
+        ({"host": {"unsupported": "x-id"}}, "remote_id_headers.host"),
+        ({"host": {"issuer": "invalid"}}, "remote_id_headers.host.issuer"),
+        ({"host": {"request_id_header": ""}}, "remote_id_headers.host.request_id_header"),
+    ],
+)
+def test_invalid_remote_id_headers_report_field_errors(raw, field):
+    with pytest.raises(DatusException) as error:
+        TracingConfig.from_dict({"remote_id_headers": raw})
+    assert error.value.code == ErrorCode.COMMON_FIELD_INVALID
+    assert field in str(error.value)
+
+
+def test_sdk_dataclass_usage_reaches_logs_and_trace(exported_calls):
+    from agents.usage import Usage
+
+    exporter, _, provider = exported_calls
+    with capture_logs() as records, provider.get_tracer(__name__).start_as_current_span("generation") as span:
+        with ModelCall(model="m", model_impl="test", protocol="test") as call:
+            call.bind_span(span)
+            call.usage(Usage(input_tokens=12, output_tokens=3, total_tokens=15))
+    finished = next(record for record in records if record["event"] == "llm.finished")
+    (generation,) = exporter.get_finished_spans()
+    for field, expected in {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15}.items():
+        assert finished[field] == expected
+        assert generation.attributes[f"datus.llm.{field}"] == expected

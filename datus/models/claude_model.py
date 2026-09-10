@@ -1926,6 +1926,7 @@ class ClaudeModel(OpenAICompatibleModel):
         func_tools: Optional[List[Any]] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         session: Optional[Any] = None,
+        hooks=None,
         **kwargs,
     ) -> Dict:
         """Non-streaming wrapper: consumes _generate_with_mcp_stream and returns result dict."""
@@ -1939,6 +1940,7 @@ class ClaudeModel(OpenAICompatibleModel):
             func_tools=func_tools,
             action_history_manager=action_history_manager,
             session=session,
+            hooks=hooks,
             **kwargs,
         ):
             if action.role == ActionRole.ASSISTANT and action.action_type == "final_response":
@@ -1979,6 +1981,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 func_tools=tools,
                 action_history_manager=action_history_manager,
                 session=session,
+                hooks=hooks,
                 **kwargs,
             )
 

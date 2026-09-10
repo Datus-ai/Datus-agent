@@ -16,7 +16,7 @@ import time
 from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from functools import wraps
 from typing import Any
 from urllib.parse import urlparse
@@ -68,9 +68,10 @@ def capability_event(event: str, *, reason: str, **fields: Any) -> str:
     return event_id
 
 
-def tool_call_identity(tool_call_id: str | None) -> dict[str, Any]:
+def consume_tool_call_identity(tool_call_id: str | None) -> dict[str, Any]:
+    """Release a completed call while preserving other in-flight calls."""
     state = _RUN.get()
-    return dict(state.tool_calls.get(tool_call_id, {})) if state is not None else {}
+    return state.tool_calls.pop(tool_call_id, {}) if state is not None else {}
 
 
 def remember_compact(compact_id: str) -> None:
@@ -106,6 +107,8 @@ def observe_model_phase(phase: str):
 def _plain(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump()
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
     return value
 
 
