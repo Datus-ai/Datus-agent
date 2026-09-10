@@ -1827,10 +1827,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1936,6 +1932,68 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_1_6_3" id="__nav_1_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin List
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Plugin List
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../plugin/airflow/" class="md-nav__link">
         
@@ -1945,34 +2003,6 @@
     
   
     Airflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../plugin/mwaa/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MWAA
   
 
     
@@ -2009,6 +2039,98 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/eks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EKS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/k8s/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    K8s
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/flink/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flink
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4865,7 +4987,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.0/docs/configuration/agent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.1/docs/configuration/agent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5048,7 +5170,7 @@ certificate problems by trusting the CA bundle instead.</p>
 </tr>
 <tr>
 <td><code>kimi</code></td>
-<td><code>kimi-k2.5</code>, <code>kimi-k2-thinking</code></td>
+<td><code>kimi-k3</code>, <code>kimi-k2.6</code></td>
 <td><code>kimi</code></td>
 <td>API key</td>
 </tr>
@@ -5172,7 +5294,7 @@ type to filter it.</p>
 <p>For OpenAI, DeepSeek, Claude, Kimi, Qwen, Gemini, and OpenRouter, the configuration wizard can prompt with provider-specific environment variable hints (e.g. <code>${OPENROUTER_API_KEY}</code>). For <code>minimax</code>, <code>glm</code>, and the <code>*_coding</code> providers, you can still enter values such as <code>${MINIMAX_API_KEY}</code>, <code>${GLM_API_KEY}</code>, <code>${KIMI_API_KEY}</code>, or <code>${DASHSCOPE_API_KEY}</code> directly.</p>
 <p>The current implementation also auto-applies fixed parameter overrides for a few models:</p>
 <ul>
-<li><code>kimi-k2.5</code>: <code>temperature: 1.0</code>, <code>top_p: 0.95</code></li>
+<li><code>kimi-k3</code>, <code>kimi-k2.6</code>: <code>temperature: 1.0</code>, <code>top_p: 0.95</code></li>
 <li><code>qwen3-coder-plus</code>: <code>temperature: 1.0</code>, <code>top_p: 0.95</code></li>
 </ul>
 <h3 id="provider-configuration-examples">Provider Configuration Examples<a class="headerlink" href="#provider-configuration-examples" title="Permanent link">&para;</a></h3>

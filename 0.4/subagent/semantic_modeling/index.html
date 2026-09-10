@@ -1981,10 +1981,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -2090,6 +2086,68 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_1_6_3" id="__nav_1_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin List
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Plugin List
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../plugin/airflow/" class="md-nav__link">
         
@@ -2099,34 +2157,6 @@
     
   
     Airflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../plugin/mwaa/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MWAA
   
 
     
@@ -2163,6 +2193,98 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/eks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EKS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/k8s/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    K8s
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/flink/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flink
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4531,7 +4653,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.0/docs/subagent/semantic_modeling.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.1/docs/subagent/semantic_modeling.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4694,6 +4816,7 @@
 </ol>
 <p>It edits exactly one semantic model per run. If no existing model fits, it creates a business-domain model rather than one file per physical table. A dataset uses a query as its <code>source</code> only when the result is a durable reusable entity or the request explicitly requires reproducing a query.</p>
 <p>The result reports <code>generated</code>, <code>skipped</code>, or <code>blocked</code>. A blocked result explains the missing schema evidence, ambiguous target, invalid definition, or other condition that prevented a safe update.</p>
+<p>Key declarations come only from source DDL: physical primary keys become <code>primary_key</code>, and unique constraints or whole-table unique indexes on plain columns become <code>unique_keys</code>, preserving composite-column order. Semantic modeling does not scan table data to discover or verify keys. When DDL provides no usable key, it omits that key and dependent new relationships or metrics, explains the omissions, and continues the remaining modeling work. The final model still undergoes <code>validate_semantic</code> validation.</p>
 <h2 id="generated-files-and-organization">Generated files and organization<a class="headerlink" href="#generated-files-and-organization" title="Permanent link">&para;</a></h2>
 <p>New files are written under the active project and datasource:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>subject/semantic_models/&lt;datasource&gt;/&lt;semantic_model&gt;.yml

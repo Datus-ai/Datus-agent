@@ -2120,10 +2120,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -2229,6 +2225,68 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_1_6_3" id="__nav_1_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin List
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Plugin List
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../plugin/airflow/" class="md-nav__link">
         
@@ -2238,34 +2296,6 @@
     
   
     Airflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../plugin/mwaa/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MWAA
   
 
     
@@ -2302,6 +2332,98 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/eks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EKS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/k8s/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    K8s
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/flink/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flink
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -4809,7 +4931,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.0/docs/subagent/gen_job.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.1/docs/subagent/gen_job.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4934,7 +5056,7 @@
 <li><strong><code>suggest_table_layout(database=target, columns_json=...)</code></strong> — returns OLAP-specific hints (e.g. <code>{duplicate_key, distributed_by, buckets}</code> for StarRocks, <code>{engine, order_by}</code> for ClickHouse, <code>{partitioned_by}</code> for Hive via Trino).</li>
 <li><strong><code>validate_ddl(database=target, ddl=..., target_table=...)</code></strong> — runs structural validation (e.g. StarRocks must have <code>DUPLICATE KEY</code> + <code>DISTRIBUTED BY</code>; ClickHouse must have <code>ENGINE</code> + <code>ORDER BY</code>); optionally runs <code>dry_run_ddl</code> (CREATE + DROP to a temp table).</li>
 </ul>
-<p>Adapters that implement the Mixin (as of this release): StarRocks, Greenplum, PostgreSQL, MySQL, ClickHouse, Trino, Snowflake, Redshift, DuckDB, SQLite, plus a generic OLTP fallback on the SQLAlchemy base. Adapters without a Mixin yet (e.g. BigQuery, Hive, Spark, ClickZetta) fall back to pure-LLM mode — <code>get_migration_capabilities</code> returns <code>{"supported": false, "warning": ...}</code> and the LLM relies on its own knowledge of the target dialect.</p>
+<p>Adapters that implement the Mixin (as of this release): StarRocks, Greenplum, PostgreSQL, MySQL, ClickHouse, Trino, Snowflake, Redshift, BigQuery, DuckDB, SQLite, plus a generic OLTP fallback on the SQLAlchemy base. Adapters without a Mixin yet (e.g. Hive, Spark, ClickZetta) fall back to pure-LLM mode — <code>get_migration_capabilities</code> returns <code>{"supported": false, "warning": ...}</code> and the LLM relies on its own knowledge of the target dialect.</p>
 <p>To add hints for a new target dialect, implement <code>MigrationTargetMixin</code> in the adapter — no changes to the agent are required.</p>
 <h3 id="data-transfer">Data Transfer<a class="headerlink" href="#data-transfer" title="Permanent link">&para;</a></h3>
 <p>The <code>transfer_query_result</code> tool handles data movement:</p>

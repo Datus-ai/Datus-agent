@@ -1827,10 +1827,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -1936,6 +1932,68 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_1_6_3" id="__nav_1_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin List
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Plugin List
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../plugin/airflow/" class="md-nav__link">
         
@@ -1945,34 +2003,6 @@
     
   
     Airflow
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../plugin/mwaa/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MWAA
   
 
     
@@ -2009,6 +2039,98 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/eks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EKS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/k8s/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    K8s
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../plugin/flink/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flink
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -3102,6 +3224,17 @@
     <span class="md-ellipsis">
       
         Major compact
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mid-turn-compaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mid-turn compaction
       
     </span>
   </a>
@@ -4382,6 +4515,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mid-turn-compaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mid-turn compaction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#auto-vs-manual" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4431,7 +4575,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.0/docs/configuration/compact.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.1/docs/configuration/compact.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4440,7 +4584,7 @@
 
 
 <h1 id="context-compaction">Context Compaction<a class="headerlink" href="#context-compaction" title="Permanent link">&para;</a></h1>
-<p>As a chat session grows, its history eventually approaches the model's context window limit. Datus manages this automatically with two complementary compaction passes configured under <code>agent.compact</code>, so you can keep working in one long session without manually clearing it or hitting token limits.</p>
+<p>As a chat session grows, its history eventually approaches the model's context window limit. Datus manages this automatically with two complementary compaction passes configured under <code>agent.compact</code>, so you can keep working in one long session without manually clearing it as often.</p>
 <table>
 <thead>
 <tr>
@@ -4457,7 +4601,7 @@
 </tr>
 <tr>
 <td>Driven by</td>
-<td>A rule (user-turn count)</td>
+<td>A rule (user-turn count at turn start; tool-output age mid-turn)</td>
 <td>The LLM (a summarization call)</td>
 </tr>
 <tr>
@@ -4467,7 +4611,7 @@
 </tr>
 <tr>
 <td>Touches recent turns</td>
-<td>No</td>
+<td>No (turn start) / only this turn's older tool outputs (mid-turn)</td>
 <td>Yes — replaces all history</td>
 </tr>
 <tr>
@@ -4477,28 +4621,50 @@
 </tr>
 </tbody>
 </table>
+<p>Automatic compaction uses one check <strong>before every model request</strong>, including the first request of a turn and retries. The check includes queued user messages before deciding whether to archive or summarize. The first request can archive older user turns; later requests can archive older tool results. The <code>mid_turn_enabled</code> switches control later requests only.</p>
 <h2 id="minor-compact">Minor compact<a class="headerlink" href="#minor-compact" title="Permanent link">&para;</a></h2>
-<p><strong>What triggers it</strong> — At the start of each user turn, if the session has more than <code>keep_recent_user_turns</code> user turns (default 4), minor compact runs. Its gate — the user-turn count — only changes between turns, so it is evaluated once per turn rather than after every tool call (that per-tool-call check is reserved for major, whose token ratio actually grows mid-turn). It is synchronous but, being a purely local, rule-based archive with no LLM call, finishes quickly and barely delays the agent.</p>
-<p><strong>What it does</strong> — For every turn <em>older</em> than the kept window, any tool-call argument or output longer than <code>archive_threshold</code> characters (default 1000) is moved out of the live conversation and written to an on-disk archive. A short inline preview (<code>archive_preview_chars</code>, default 1000; 2× for error outputs) is left behind with a <code>[DATUS_ARCHIVED]</code> marker.</p>
+<p><strong>What triggers it</strong> — At the start of each user turn, if the session has more than <code>keep_recent_user_turns</code> user turns (default 4), minor compact runs. Its gate — the user-turn count — only changes between turns, so it is evaluated once per turn. It is synchronous but, being a purely local, rule-based archive with no LLM call, finishes quickly and barely delays the agent.</p>
+<p><strong>What it does</strong> — For every turn <em>older</em> than the kept window, any tool output longer than <code>archive_threshold</code> characters (default 1000) is moved out of the live conversation and written to an on-disk archive. A short inline preview (<code>archive_preview_chars</code>, default 1000; 2× for error outputs) is left behind with a <code>[DATUS_ARCHIVED]</code> marker.</p>
 <p><strong>Resulting behavior</strong></p>
 <ul>
-<li>The most recent <code>keep_recent_user_turns</code> turns keep their full tool I/O — the active part of the conversation is never degraded.</li>
+<li>The most recent <code>keep_recent_user_turns</code> turns keep their full tool I/O — the active part of the conversation is never degraded at turn start.</li>
 <li>Older bulky outputs shrink to a preview plus a pointer; the model can still <code>read_file</code> the archive to recover the full content when it needs the detail.</li>
 <li>Because it only archives (never summarizes), nothing is lost and no LLM call is spent. It is cheap and fast, and runs often.</li>
 </ul>
 <h2 id="major-compact">Major compact<a class="headerlink" href="#major-compact" title="Permanent link">&para;</a></h2>
-<p><strong>What triggers it</strong> — When the input tokens of the most recent model call reach <code>token_threshold</code> of the context window (default <code>0.9</code>, i.e. 90%), a major compact is forced. The check runs at the start of each user turn and after each tool call, so it can fire <strong>mid-turn</strong> — right when the context is about to overflow — instead of waiting for the next turn. <code>/compact</code> triggers it manually at any time.</p>
-<p><strong>What it does</strong> — The model is asked to summarize the <strong>entire</strong> session into a single recap. The session history is then cleared and replaced by that summary as the new starting point, and the conversation continues from there. The complete pre-compact history is dumped to a JSONL file, and a pointer to it is appended to the summary so the agent can <code>read_file</code> it to recover any specific detail.</p>
+<p><strong>What triggers it</strong> — Before each request, Datus estimates its input size and reserves room for the reply. When that budget reaches <code>major.token_threshold</code> of the context window (default <code>0.9</code>), Datus first tries any eligible archive pass, then summarizes if needed. With a fresh per-call measurement, the estimate adds newly appended messages to that measurement. Otherwise it estimates the full messages, system instruction and tool definitions. <code>/compact</code> triggers summarization manually regardless of the estimate.</p>
+<p><strong>What it does</strong> — The model is asked to summarize the <strong>entire</strong> transcript into a single recap. The history is then replaced by that summary as the new starting point, and the conversation continues from there. The complete pre-compact history is dumped to a JSONL file, and a pointer to it is appended to the summary so the agent can <code>read_file</code> it to recover any specific detail.</p>
 <p><strong>Resulting behavior</strong></p>
 <ul>
-<li>It is <strong>synchronous and blocking</strong>: the run loop waits for the summary to be written before continuing, because the next model call must see the compacted history rather than the over-limit one.</li>
+<li>It is <strong>synchronous and blocking</strong>: the loop waits for the summary before issuing the next model call, because that call must see the compacted history rather than the over-limit one.</li>
 <li>The visible conversation is collapsed — earlier turns are replaced by the recap. In the CLI this shows a <code>Compacting context…</code> hint followed by a summary panel; over the API/print stream it arrives as a <code>compact_summary</code> markdown message.</li>
 <li>Some fidelity is traded for room: the summary is concise, so fine detail now lives only in the JSONL dump (still reachable via <code>read_file</code>).</li>
 <li>A major compact spends one extra LLM call (the summarization), so it is rarer and only triggers near the context limit.</li>
 </ul>
+<h2 id="mid-turn-compaction">Mid-turn compaction<a class="headerlink" href="#mid-turn-compaction" title="Permanent link">&para;</a></h2>
+<p>A single user request can drive dozens of tool calls, and the context can fill up long before the turn ends. Datus therefore re-evaluates the occupancy <strong>before every model call</strong> of a running turn — at the point where the previous round's tool results have all been appended and no tool is still running — and rewrites the history the model is about to receive. The very next model call already uses the compacted context; the turn continues without any user interaction.</p>
+<p><strong>Two stages, cheapest first</strong></p>
+<ol>
+<li><strong>Archive stage (minor)</strong> — at <code>minor.mid_turn_token_threshold</code> (default <code>0.75</code>): the tool outputs of the turn in progress that are older than the most recent <code>keep_recent_tool_results</code> (default 5) are moved to the on-disk archive, exactly like the turn-start minor pass does for older turns. Outputs whose marker (path + preview) would not be shorter than the text are left alone. No LLM call. If this brings the estimate back under the major threshold, nothing else happens.</li>
+<li><strong>Summary stage (major)</strong> — if the estimate is still at or above <code>major.token_threshold</code>: the (archived) transcript is summarized and the history is rebuilt as</li>
+</ol>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[user]      your original request for this turn (verbatim)
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>[user]      any message you typed while the turn was running (verbatim)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>[assistant] the summary, plus the JSONL recovery pointer
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>[user]      a short instruction to continue from the summary without asking or repeating work
+</span></code></pre></div>
+<p>The rewrite starts with your request and ends with an instruction, so the model resumes the task instead of replying to the summary. The instruction is synthetic and is hidden from the conversation history shown in the CLI and API.</p>
+<p><strong>What you will notice</strong></p>
+<ul>
+<li>The status bar shows zero context usage immediately after the rewrite until the next model response supplies an actual input-token count, and the <code>Compacting context…</code> hint / summary panel appear mid-turn.</li>
+<li>Later calls of the same turn keep the compacted view and append new tool rounds after it. The pre-compaction tool outputs are never sent again, but the full transcript is in the JSONL dump and archived outputs are in the archive directory.</li>
+<li>Pressing ESC to cancel after a mid-turn compaction rolls the session back to the compacted view (the request plus summary), not to an empty session.</li>
+<li>The session file is rewritten to match the compacted view, so a later <code>resume</code> starts from it.</li>
+</ul>
+<p><strong>Safety limits</strong> — Mid-turn compaction gives up for the rest of the turn after three consecutive failures (for example a failing summary call) or when the compacted view is itself still above the threshold; the turn then continues uncompacted. A summary failure never discards the result of the archive stage. Either stage can be switched off independently with its <code>mid_turn_enabled</code> flag without affecting turn-start compaction.</p>
 <h2 id="auto-vs-manual">Auto vs. manual<a class="headerlink" href="#auto-vs-manual" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Automatic</strong> — Both passes run on their own during a session; you don't need to do anything. Major fires near the context limit, minor as the turn count grows.</li>
+<li><strong>Automatic</strong> — Both passes run on their own during a session; you don't need to do anything. Major fires near the context limit, minor as the turn count grows or as a long turn accumulates tool output.</li>
 <li><strong>Manual <code>/compact</code></strong> — Always runs a <strong>major</strong> pass immediately, regardless of current usage. Useful before starting a big new task when you want a clean, summarized starting point.</li>
 </ul>
 <h2 id="parameters">Parameters<a class="headerlink" href="#parameters" title="Permanent link">&para;</a></h2>
@@ -4522,7 +4688,13 @@
 <td><code>compact.major.token_threshold</code></td>
 <td>float</td>
 <td><code>0.9</code></td>
-<td>Fraction of the context window above which a major compact is forced (overrides minor selection in the auto dispatcher).</td>
+<td>Fraction of the context window at which a major compact runs (turn start and mid-turn).</td>
+</tr>
+<tr>
+<td><code>compact.major.mid_turn_enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Allow the summary stage to run in the middle of a turn.</td>
 </tr>
 <tr>
 <td><code>compact.minor.enabled</code></td>
@@ -4534,13 +4706,13 @@
 <td><code>compact.minor.keep_recent_user_turns</code></td>
 <td>int</td>
 <td><code>4</code></td>
-<td>Keep the original tool I/O of the most recent N user turns intact; older turns are eligible for archiving.</td>
+<td>Turn start: keep the original tool I/O of the most recent N user turns intact; older turns are eligible for archiving.</td>
 </tr>
 <tr>
 <td><code>compact.minor.archive_threshold</code></td>
 <td>int</td>
 <td><code>1000</code></td>
-<td>Tool-call arguments/outputs longer than this many characters are offloaded to disk.</td>
+<td>Tool outputs longer than this many characters are offloaded to disk.</td>
 </tr>
 <tr>
 <td><code>compact.minor.archive_preview_chars</code></td>
@@ -4548,24 +4720,52 @@
 <td><code>1000</code></td>
 <td>Inline preview length kept in the archive marker (error outputs get a 2× preview).</td>
 </tr>
+<tr>
+<td><code>compact.minor.mid_turn_enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Allow the archive stage to run in the middle of a turn.</td>
+</tr>
+<tr>
+<td><code>compact.minor.mid_turn_token_threshold</code></td>
+<td>float</td>
+<td><code>0.75</code></td>
+<td>Mid-turn: estimated occupancy at which the archive stage runs.</td>
+</tr>
+<tr>
+<td><code>compact.minor.keep_recent_tool_results</code></td>
+<td>int</td>
+<td><code>5</code></td>
+<td>Mid-turn: the most recent N tool outputs of the running turn are never archived.</td>
+</tr>
 </tbody>
 </table>
-<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">compact</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">major</span><span class="p">:</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">token_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">minor</span><span class="p">:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">keep_recent_user_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">archive_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">archive_preview_chars</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">compact</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">major</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">token_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">mid_turn_enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">minor</span><span class="p">:</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">keep_recent_user_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="nt">archive_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">      </span><span class="nt">archive_preview_chars</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1000</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">      </span><span class="nt">mid_turn_enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="nt">mid_turn_token_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.75</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="nt">keep_recent_tool_results</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
 </span></code></pre></div>
 <p>To disable automatic compaction entirely, set both <code>major.enabled</code> and <code>minor.enabled</code> to <code>false</code>. You can still run <code>/compact</code> manually even when <code>major.enabled</code> is <code>false</code>.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Major compact's trigger reads the <strong>live</strong> token usage of the current turn (the same figure shown in the CLI status bar). On a brand-new session or right after <code>resume</code>, that signal starts at zero, so a major compact won't fire on the very first turn until at least one model call has reported usage.</li>
-<li>Minor compact reads its eligibility from the session's user-turn count, so it keeps working correctly after a resume.</li>
+<li>Legacy snapshots without an explicit measurement-validity flag are treated as unknown after upgrade; they may contain pre-upgrade estimates.</li>
+<li>Displayed context usage is the latest model response's input-token count, including cached input. <code>context_usage_ratio</code> is that count divided by the model's current context window. Cumulative input/output consumption is separate and is not reduced by compaction.</li>
+<li>A rewrite invalidates the old measurement in memory and durable session state. Resume also shows zero until another model response supplies a measurement. Request-size estimates are internal to the automatic check and are never displayed or stored as measured occupancy.</li>
+<li>The compact API returns <code>null</code> for <code>new_token_count</code>, <code>tokens_saved</code> and <code>compression_ratio</code>: a summary's output-token count does not measure the rewritten request. The summary panel's token count describes only the summarization output.</li>
+<li>Input estimation currently uses approximately four characters per token; it is a heuristic, not a guarantee against context overflow. It includes system instructions, tool definitions and output headroom. If a request still cannot fit, provider error handling remains applicable.</li>
+<li>Rewriting a cached prefix can reduce cache reuse on the next request. This is why the archive stage waits for 75% rather than running continuously.</li>
+<li>Models whose context window is unknown skip token-based triggers. First-request history archiving and manual <code>/compact</code> remain available.</li>
+<li>Minor compact reads its turn-start eligibility from the session's user-turn count, so it keeps working correctly after a resume.</li>
 <li>Archived tool I/O and the full-history JSONL live under the session's data directory; see <a href="../storage/">Storage</a> for paths.</li>
 </ul>
 
