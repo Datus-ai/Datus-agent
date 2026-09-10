@@ -305,6 +305,20 @@ class _ModelCallSpan:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._span, name)
 
+    def set_attribute(self, key: str, value: Any) -> None:
+        # The Responses mapper emits the same text as both a structured content
+        # part and a flat fallback. Consumers that support structured OI messages
+        # can otherwise render the answer twice. Keep the fallback only when no
+        # structured output was captured.
+        attributes = getattr(self._span, "attributes", None) or {}
+        if (
+            key.startswith("llm.output_messages.")
+            and key.endswith(".message.content")
+            and any(existing.startswith(f"{key}s.") for existing in attributes)
+        ):
+            return
+        self._span.set_attribute(key, value)
+
     def end(self, *args: Any, **kwargs: Any) -> None:
         try:
             _wrap_message_values(self._span)

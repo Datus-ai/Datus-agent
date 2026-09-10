@@ -245,6 +245,13 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
         else:
             content = output["content"]
             assert (content if isinstance(content, str) else "".join(part["text"] for part in content)) == "done"
+        structured_text = protocol == "responses" or streaming
+        assert attrs.get("llm.output_messages.0.message.content") == (
+            "done" if number == 2 and not structured_text else None
+        )
+        assert attrs.get("llm.output_messages.0.message.contents.0.message_content.text") == (
+            "done" if number == 2 and structured_text else None
+        )
         expected_results = [{"role": "tool", "tool_call_id": "tool-1", "content": "ok"}] if number == 2 else []
         assert [message for message in inputs if message["role"] == "tool"] == expected_results
         assert not any(key.startswith("gen_ai.") for key in attrs)
