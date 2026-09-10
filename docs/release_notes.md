@@ -2,6 +2,31 @@
 
 ## 0.4
 
+### 0.4.1
+
+**New Features**
+
+- **TiDB, BigQuery, MaxCompute, and GaussDB(DWS) Support** - Database support expands with `datus-bigquery`, `datus-maxcompute`, and `datus-dws` added to the datasource installation interface. Configuration docs cover authentication and namespaces, including BigQuery JSON object credentials and DWS TLS settings. Each conversation turn receives SQL compatibility guidance from the active adapter, and DWS compatibility mode updates when switching datasources. [#1377](https://github.com/Datus-ai/Datus-agent/pull/1377) [#1380](https://github.com/Datus-ai/Datus-agent/pull/1380) [#1383](https://github.com/Datus-ai/Datus-agent/pull/1383) [#1385](https://github.com/Datus-ai/Datus-agent/pull/1385) [#1389](https://github.com/Datus-ai/Datus-agent/pull/1389) [DB adapter docs](https://docs.datus.ai/0.4/adapters/db_adapters/)
+
+**Enhancements**
+
+- **Dosi Modeling and Parameterized Metrics** - Semantic modeling now reads authoring specifications supplied by the engine, and `query_metrics` supports scalar and list parameters. Publishing reuses validated compilation results, synchronizes only changed metrics, preserves unchanged catalog entries, and supports rollback when deletion fails. [#1392](https://github.com/Datus-ai/Datus-agent/pull/1392) [#1393](https://github.com/Datus-ai/Datus-agent/pull/1393)
+- **Semantic Keys Declared from DDL** - New key declarations rely only on source table DDL, preserving all columns and their order in composite keys instead of repeatedly scanning entire tables for nulls and duplicates. When usable keys are unavailable, modeling still produces independent models and metrics and explains omitted relationships or dependent metrics. Compact source inspection results retain the original DDL, and existing sessions refresh cached authoring instructions. This replaces the previous key-scanning validation path and its identifier-quoting handling. [#1404](https://github.com/Datus-ai/Datus-agent/pull/1404) [#1397](https://github.com/Datus-ai/Datus-agent/pull/1397)
+- **Flink, Kubernetes, and EKS Plugin Guides** - New English and Chinese documentation covers installation of all three plugins and workflows spanning EKS, Kubernetes, and the Flink Operator. [#1359](https://github.com/Datus-ai/Datus-agent/pull/1359)
+
+**Bug Fixes**
+
+- **Model SDK and Reasoning Replay** - Upgraded `openai-agents` to 0.13.4. DeepSeek and Kimi conversations now replay reasoning for the corresponding turn, preventing reasoning from one turn from being copied into others. The default Kimi model is now `kimi-k3`. [#1400](https://github.com/Datus-ai/Datus-agent/pull/1400)
+- **Compacted Context Used in Model Requests** - Automatic compaction checks the full input before both initial and subsequent model calls, and subsequent requests use the compacted context. Session history is saved atomically while preserving the current user request, messages added during execution, usage records, and turn numbering. Rewriting history immediately invalidates stale context usage until the next model response measures it again, preventing stale CLI percentages and repeated compaction based on outdated data. [#1394](https://github.com/Datus-ai/Datus-agent/pull/1394) [#1406](https://github.com/Datus-ai/Datus-agent/pull/1406)
+- **Session Titles and Plan Mode Persistence** - Compaction preserves the original session title, and later messages no longer rename it unexpectedly. Copying or rewinding a session also preserves its title, while `/clear` lets the next user message set a new one. Plan mode settings and measured context usage are stored in the session database, and deleting a session also removes legacy state files. Copied and rewound sessions inherit only the title, without carrying over the source session's plan mode or context usage state. [#1407](https://github.com/Datus-ai/Datus-agent/pull/1407)
+- **Messages Added During Claude and Codex Execution** - Messages entered during native Claude and Codex streaming execution now reach the next model call instead of remaining queued until the entire run finishes. [#1390](https://github.com/Datus-ai/Datus-agent/pull/1390)
+- **CLI Startup During Adapter Installation** - Fixed ineffective connection timeouts and duplicate concurrent installations when a database adapter is missing. Startup now displays installation status and actionable errors, and context-loading failures are classified by their actual cause. [#1369](https://github.com/Datus-ai/Datus-agent/pull/1369)
+
+**Upgrade Notes**
+
+- **Legacy Workflows and Nodes Removed** - Configurations and checkpoints using the `reflection`, `dynamic`, or `metric_to_sql` workflows, or the `reasoning`, `reflect`, `search_metrics`, `date_parser`, or `doc_search` nodes, must migrate to `fixed` / `gen_sql_agentic` and the corresponding function tools. Date parsing language configuration moves to `agent.date_parsing.language`. [#1381](https://github.com/Datus-ai/Datus-agent/pull/1381)
+- **Semantic Modeling Dependencies and Tools** - Use a Dosi adapter version that provides authoring specifications and compiled validation results. CI dependencies now require `datus-semantic-dosi>=0.1.9`, and the lockfile resolves both the adapter and engine to 0.1.9. The `validate_semantic_key_candidates` tool and the legacy `osi-semantic-authoring` and `semantic-sql-history-profiler` skills have been removed; update custom tool and skill lists to use the current `semantic_modeling` workflow. [#1393](https://github.com/Datus-ai/Datus-agent/pull/1393) [#1404](https://github.com/Datus-ai/Datus-agent/pull/1404)
+
 ### 0.4.0
 
 **New Features**
