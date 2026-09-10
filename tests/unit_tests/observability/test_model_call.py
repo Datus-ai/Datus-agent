@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
-from agents import Agent, RunConfig, Runner, function_tool
+from agents import Agent, ModelSettings, RunConfig, Runner, function_tool
 from openai import AsyncOpenAI
 
 from datus.models.observed_model import ObservedLitellmModel, ObservedResponsesModel
@@ -103,9 +103,16 @@ def model_endpoint():
                 final = {
                     **payload,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls" if invoke else "stop"}],
+                }
+                usage = {
+                    **payload,
+                    "choices": [],
                     "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
                 }
-                wire = f"data: {json.dumps(payload)}\n\ndata: {json.dumps(final)}\n\ndata: [DONE]\n\n"
+                wire = (
+                    f"data: {json.dumps(payload)}\n\ndata: {json.dumps(final)}\n\n"
+                    f"data: {json.dumps(usage)}\n\ndata: [DONE]\n\n"
+                )
             else:
                 wire = json.dumps(
                     {
@@ -160,7 +167,13 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
         if protocol == "responses"
         else ObservedLitellmModel(model="openai/test-model", base_url=endpoint, api_key="local-test-only")
     )
-    agent = Agent(name="test", model=model, tools=[echo, hidden], hooks=observe_tool_hooks())
+    agent = Agent(
+        name="test",
+        model=model,
+        model_settings=ModelSettings(include_usage=True),
+        tools=[echo, hidden],
+        hooks=observe_tool_hooks(),
+    )
     config = RunConfig(tracing_disabled=False, workflow_name="model-call-test")
     try:
         with observation_run():
@@ -200,7 +213,28 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
         assert attrs["datus.llm.tools_capture_state"] == "complete"
         assert json.loads(attrs["llm.tools.0.tool.json_schema"]) == request["tools"][0]
         assert attrs["llm.tools.0.tool.name"] == "echo"
+        definition = request["tools"][0]
+        assert json.loads(attrs["gen_ai.tool.definitions"]) == [
+            {**definition.get("function", definition), "type": definition["type"]}
+        ]
         assert attrs["datus.llm.request_id_coverage"] == "adapter_visible_response"
+        assert attrs["gen_ai.usage.input_tokens"] == 10
+        assert attrs["gen_ai.usage.output_tokens"] == 2
+        inputs = json.loads(attrs["gen_ai.input.messages"])
+        assert inputs[0] == {"role": "user", "parts": [{"type": "text", "content": "Use echo."}]}
+        assert attrs["llm.output_messages.0.message.role"] == "assistant"
+        expected_parts = (
+            [{"type": "tool_call", "id": "tool-1", "name": "echo", "arguments": {"text": "ok"}}]
+            if protocol == "litellm" and number == 1
+            else [{"type": "text", "content": "done"}]
+        )
+        assert json.loads(attrs["gen_ai.output.messages"]) == [{"role": "assistant", "parts": expected_parts}]
+        expected_results = (
+            [{"role": "tool", "parts": [{"type": "tool_call_response", "id": "tool-1", "result": "ok"}]}]
+            if protocol == "litellm" and number == 2
+            else []
+        )
+        assert [message for message in inputs if message["role"] == "tool"] == expected_results
 
 
 def test_capture_policy_empty_tools_and_redaction(exported_calls):
@@ -222,8 +256,10 @@ def test_capture_policy_empty_tools_and_redaction(exported_calls):
     assert spans[1].attributes["datus.llm.tools_count"] == 1
     assert spans[1].attributes["datus.llm.tools_capture_state"] == "disabled"
     assert not any(key.startswith("llm.tools.") for key in spans[1].attributes)
+    assert "gen_ai.tool.definitions" not in spans[1].attributes
     assert spans[2].attributes["datus.llm.tools_count"] == 0
     assert spans[2].attributes["datus.llm.tools_capture_state"] == "complete"
+    assert json.loads(spans[2].attributes["gen_ai.tool.definitions"]) == []
 
 
 @pytest.mark.asyncio
@@ -360,6 +396,10 @@ async def test_tool_definition_capture_is_independent_of_prompt_content(exported
     assert span.attributes["datus.llm.tools_count"] == 1
     if enabled:
         assert json.loads(span.attributes["llm.tools.0.tool.json_schema"])["name"] == "lookup"
+        assert json.loads(span.attributes["gen_ai.tool.definitions"])[0]["name"] == "lookup"
     else:
         assert not any(key.startswith("llm.tools.") for key in span.attributes)
+        assert "gen_ai.tool.definitions" not in span.attributes
+    assert "gen_ai.input.messages" not in span.attributes
+    assert "gen_ai.output.messages" not in span.attributes
     assert "PRIVATE-PROMPT-TEXT" not in json.dumps(dict(span.attributes))

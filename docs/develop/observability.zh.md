@@ -289,7 +289,9 @@ Datus 不会在 workflow metadata 中持久化后端特有的 UI URL。使用 `t
 
 工具通过 OpenInference 的 `llm.tools.<index>.tool.json_schema` 上报。Langfuse 会将其解析到 generation 的 `input.tools` 及 **Available tools** 展示中。选中 generation 后查看 Available tools，或切换 Input 为 JSON。工具执行节点表示实际执行过的工具；Available tools 表示该轮提供给模型的工具。Anthropic 的原始 `input_schema` 会保留，同时增加 `parameters` 映射以兼容展示，不改变发给模型的请求。
 
-`capture.tool_definitions` 默认跟随 `capture_content`（通常为 true）。关闭后仍保留请求 ID、计数和执行状态。工具定义遵循 tracing 脱敏设置。`datus.llm.tools_capture_state` 区分 `complete`、`redacted`、`disabled`、`truncated`、`failed`、`not_observable`；实际空列表为 complete、数量为零。每轮工具定义上限为 1 MiB、1,536 个工具属性；检测到 OTel 属性丢弃或字符串截断时标记不完整，并记录独立的成功采集数量。Datus 的 OTel span 属性数量上限为 4,096，下游采集器可能有其他限制。
+共用 tracing 层会将 LiteLLM 的流式 Response 外壳转换为带 `tool_calls` 的 assistant 消息，同时上报 OpenInference 索引化消息和 OTel GenAI 的 `gen_ai.input.messages` / `gen_ai.output.messages`（包含结构化 `parts`）、`gen_ai.tool.definitions` 与用量字段。所有 OTLP adapter 收到相同的数据表示，不按后端单独转换输出。这些字段支持 Langfuse 的 called/not-called 分类、LangSmith 的消息和工具调用展示，以及 Datadog 文档中的 GenAI/OpenInference 映射；各平台的页面布局可以不同。
+
+`capture.tool_definitions` 默认跟随 `capture_content`（通常为 true）。关闭后两种表示均不包含工具定义，仍保留请求 ID、计数和执行状态。工具定义遵循 tracing 脱敏设置。`datus.llm.tools_capture_state` 区分 `complete`、`redacted`、`disabled`、`truncated`、`failed`、`not_observable`；实际空列表为 complete、数量为零。每轮按 1 MiB 的定义采集预算及 1,536 个索引属性的预算选取工具，然后以两种标准表示导出；检测到 OTel 属性丢弃或字符串截断时标记不完整，并记录独立的成功采集数量。Datus 的 OTel span 属性数量上限为 4,096，下游采集器可能有其他限制。
 
 采集边界为 `sdk_request`：SDK 完成工具筛选和转换之后，LiteLLM 的供应商适配或网关继续变换之前。它证明 Datus 在此边界提供了哪些工具。验证模型服务最终收到了什么，需要通过返回的 request ID 查询服务端请求日志。Tracing 不影响工具是否可调用。
 

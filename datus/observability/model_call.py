@@ -453,6 +453,8 @@ class ModelCall:
             state = self._tool_state
             count = 0
             definitions = {}
+            gen_ai_tools = []
+            gen_ai_definition = None
             size = 0
             if state == "complete" and not manager.content_enabled("tool_definitions"):
                 state = "disabled"
@@ -479,6 +481,10 @@ class ModelCall:
                     if isinstance(body.get("description"), str):
                         span.set_attribute(f"{prefix}.description", body["description"])
                     count += 1
+                    gen_ai_tools.append({**body, "type": redacted.get("type", "function")})
+            if gen_ai_tools or state == "complete":
+                gen_ai_definition = json.dumps(gen_ai_tools, ensure_ascii=False, separators=(",", ":"))
+                span.set_attribute("gen_ai.tool.definitions", gen_ai_definition)
             # Write IDs and counts last so bounded OTel attributes retain them.
             span.set_attribute("datus.llm.tools_capture_state", state)
             span.set_attribute("datus.llm.tools_captured_count", count)
@@ -490,7 +496,9 @@ class ModelCall:
             attributes = getattr(span, "attributes", None)
             if isinstance(attributes, Mapping) and count:
                 retained = sum(attributes.get(key) == value for key, value in definitions.items())
-                if retained != count:
+                if retained != count or (
+                    gen_ai_definition is not None and attributes.get("gen_ai.tool.definitions") != gen_ai_definition
+                ):
                     span.set_attribute("datus.llm.tools_capture_state", "truncated")
                     span.set_attribute("datus.llm.tools_captured_count", retained)
         except Exception as exc:

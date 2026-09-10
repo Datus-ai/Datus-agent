@@ -235,7 +235,7 @@ def _build_openinference_trace_config(trace_config_cls: type, tracing_config: Tr
                 return value() if callable(value) else value
             # OpenInference normally couples tools to hide_inputs. Datus has an
             # independent definition switch; preserve masking for all other input.
-            if key.startswith("llm.tools."):
+            if key.startswith("llm.tools.") or key == "gen_ai.tool.definitions":
                 if self.hide_llm_tools:
                     return None
                 return value() if callable(value) else value
