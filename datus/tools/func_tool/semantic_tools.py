@@ -860,7 +860,7 @@ class SemanticTools:
         """
         # Normalize null values from LLM
         path = _normalize_optional_path(path)
-        logger.info(f"list_metrics called: path={path}, limit={limit}, offset={offset}")
+        logger.debug(f"list_metrics called: path={path}, limit={limit}, offset={offset}")
         adapter, error = self._require_adapter("list_metrics")
         if error:
             return error
@@ -948,7 +948,7 @@ class SemanticTools:
         """
         # Normalize null values from LLM
         path = _normalize_optional_path(path)
-        logger.info(f"get_dimensions called: metric={metric_name}, path={path}")
+        logger.debug(f"get_dimensions called: metric={metric_name}, path={path}")
         adapter, error = self._require_adapter("get_dimensions")
         if error:
             return error
@@ -1069,7 +1069,7 @@ class SemanticTools:
         time_granularity = normalize_null(time_granularity)
         where = normalize_null(where)
         limit = normalize_null(limit)
-        logger.info(
+        logger.debug(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
             f"limit={limit}, dry_run={dry_run}"
@@ -1173,7 +1173,7 @@ class SemanticTools:
             payload = getattr(e, "payload", None)
             if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":
                 data = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
-                logger.info(f"query_metrics validation rejection: code={data.get('code')}")
+                logger.debug(f"query_metrics validation rejection: code={data.get('code')}")
                 return FuncToolResult(
                     success=0,
                     error=getattr(payload, "message", "") or "query_metrics validation failed",
@@ -1242,7 +1242,7 @@ class SemanticTools:
                     result=None,
                 )
 
-        logger.info(f"validate_semantic called scope={scope} checks={checks_list}")
+        logger.debug(f"validate_semantic called scope={scope} checks={checks_list}")
         adapter, error = self._require_adapter("validate_semantic")
         if error:
             error.result = None
@@ -1331,7 +1331,7 @@ class SemanticTools:
 
             # If validation succeeded, reload the adapter to pick up new metrics
             if effective_valid:
-                logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
+                logger.debug("Validation succeeded, reloading adapter to pick up new metrics...")
                 self._reload_adapter()
 
             compact_issues = [

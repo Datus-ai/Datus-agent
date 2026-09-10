@@ -1,7 +1,6 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 import argparse
 import json
 import os
@@ -16,6 +15,7 @@ import pandas as pd
 from datus.agent.agent import Agent
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.agent_config_loader import load_agent_config
+from datus.configuration.logging_config import add_logging_arguments
 from datus.tools.db_tools.db_manager import db_manager_instance
 from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.time_utils import format_duration_human
@@ -36,7 +36,7 @@ ROUND_DURATION_ROW_LABEL = "Round Duration"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run multi-round benchmark + evaluation cycles.")
     parser.add_argument("--config", default="", help="Path to agent config file.")
-    parser.add_argument("--debug", action="store_true", help="Debug mode.")
+    add_logging_arguments(parser)
     setup_base_parser_args(parser)
     return parser.parse_args()
 
@@ -390,9 +390,9 @@ def multi_benchmark(args: argparse.Namespace):
 
 def main():
     args = parse_args()
-    from datus.utils.loggings import configure_logging
+    from datus.utils.loggings import configure_entrypoint_logging
 
-    configure_logging(args.debug)
+    configure_entrypoint_logging(args)
     multi_benchmark(args)
 
 

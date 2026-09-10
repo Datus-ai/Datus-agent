@@ -16,6 +16,7 @@ import json
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.litellm_adapter import is_official_anthropic_endpoint
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
+from datus.observability.model_call import native_model_call, observe_model_phase
 from datus.observability.native_agents import (
     capture_native_trace_content,
     finish_native_span,
@@ -40,6 +42,7 @@ from datus.observability.native_agents import (
     start_native_tool_span,
     trace_native_agent_stream,
 )
+from datus.observability.tool_calls import observe_tool_hooks
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.schemas.tool_summary import detect_tool_failure
@@ -511,12 +514,48 @@ class ClaudeModel(OpenAICompatibleModel):
         return system_message if system_message else anthropic.NOT_GIVEN
 
     def _anthropic_messages_create(self, **kwargs):
+        with native_model_call(
+            model=self.model_name,
+            model_impl="anthropic_native",
+            protocol="messages",
+            endpoint=getattr(self.anthropic_client, "base_url", None),
+            params=kwargs,
+        ) as call:
+            response = self._raw_anthropic_messages_create(**kwargs)
+            call.response(response)
+            call.output(response)
+            return response
+
+    def _anthropic_messages_stream(self, **kwargs):
+        manager = self._raw_anthropic_messages_stream(**kwargs)
+        return self._observe_anthropic_stream(manager, kwargs)
+
+    @asynccontextmanager
+    async def _observe_anthropic_stream(self, manager, kwargs):
+        with native_model_call(
+            model=self.model_name,
+            model_impl="anthropic_native",
+            protocol="messages",
+            endpoint=getattr(self.async_anthropic_client, "base_url", None),
+            params=kwargs,
+        ) as call:
+            async with manager as stream:
+                call.response(stream, streaming=True)
+                yield stream
+                # Inspect only the accumulated snapshot. get_final_message()
+                # drains unread SSE and would change early-exit behavior.
+                try:
+                    call.output(stream.current_message_snapshot)
+                except Exception:
+                    logger.debug("llm.final_message_not_observable", model_call_id=call.model_call_id)
+
+    def _raw_anthropic_messages_create(self, **kwargs):
         """Call the correct Anthropic Messages endpoint for the current auth mode."""
         if self._is_oauth_token:
             return self.anthropic_client.beta.messages.create(**kwargs)
         return self.anthropic_client.messages.create(**kwargs)
 
-    def _anthropic_messages_stream(self, **kwargs):
+    def _raw_anthropic_messages_stream(self, **kwargs):
         """Return an async context manager that streams Anthropic Messages events.
 
         Routes to ``beta.messages.stream`` for OAuth subscription tokens (which
@@ -710,6 +749,7 @@ class ClaudeModel(OpenAICompatibleModel):
         self._setup_custom_json_encoder()
 
         logger.debug(f"Using native Anthropic API with prompt caching, model: {self.model_name}")
+        hooks = observe_tool_hooks(hooks)
         active_generation_span = None
         active_tool_span = None
         trace_failure: BaseException | None = None
@@ -1886,6 +1926,7 @@ class ClaudeModel(OpenAICompatibleModel):
         func_tools: Optional[List[Any]] = None,
         action_history_manager: Optional[ActionHistoryManager] = None,
         session: Optional[Any] = None,
+        hooks=None,
         **kwargs,
     ) -> Dict:
         """Non-streaming wrapper: consumes _generate_with_mcp_stream and returns result dict."""
@@ -1899,6 +1940,7 @@ class ClaudeModel(OpenAICompatibleModel):
             func_tools=func_tools,
             action_history_manager=action_history_manager,
             session=session,
+            hooks=hooks,
             **kwargs,
         ):
             if action.role == ActionRole.ASSISTANT and action.action_type == "final_response":
@@ -1939,6 +1981,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 func_tools=tools,
                 action_history_manager=action_history_manager,
                 session=session,
+                hooks=hooks,
                 **kwargs,
             )
 
@@ -1963,6 +2006,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 self._diagnose_oauth_401(e)
             raise
 
+    @observe_model_phase("compact_summary")
     async def summarize_items(
         self,
         items: List[Dict[str, Any]],

@@ -15,6 +15,7 @@ from agents.mcp import MCPServerStdio
 from agents.run import CallModelData, ModelInputData, RunConfig
 
 from datus.configuration.agent_config import AgentConfig, ModelConfig
+from datus.observability.model_call import observe_model_phase
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.utils.constants import LLMProvider
 from datus.utils.loggings import get_logger
@@ -263,6 +264,7 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
                     logger.exception("Failed to emit user_insert ActionHistory; model still sees the text.")
         return pending
 
+    @observe_model_phase("compact_summary")
     async def summarize_items(
         self,
         items: List[Dict[str, Any]],

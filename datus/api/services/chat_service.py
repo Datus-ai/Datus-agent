@@ -280,7 +280,6 @@ class ChatService:
 
             sse_messages: List[SSEMessagePayload] = []
             event_id = 0
-            logger.info(f"Retrieved {len(raw_messages)} messages for session {session_id}")
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")
@@ -351,7 +350,12 @@ class ChatService:
                         )
                         event_id += 1
 
-            logger.info(f"Retrieved {len(sse_messages)} messages for session {session_id}")
+            logger.info(
+                "chat.history_loaded",
+                session_id=session_id,
+                stored_messages=len(raw_messages),
+                returned_messages=len(sse_messages),
+            )
             return Result[ChatHistoryData](success=True, data=ChatHistoryData(messages=sse_messages))
 
         except Exception as e:

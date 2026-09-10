@@ -782,12 +782,12 @@ class MetricRAG:
         self.create_indices()
 
     def store_batch(self, metrics: List[Dict[str, Any]]):
-        logger.info(f"store metrics: {metrics}")
+        logger.debug("store metrics", count=len(metrics))
         self.storage.batch_store_metrics(metrics)
 
     def upsert_batch(self, metrics: List[Dict[str, Any]]):
         """Upsert metrics (update if id exists, insert if not)."""
-        logger.info(f"upsert metrics: {metrics}")
+        logger.debug("upsert metrics", count=len(metrics))
         self.storage.batch_upsert_metrics(metrics)
 
     def search_all_metrics(

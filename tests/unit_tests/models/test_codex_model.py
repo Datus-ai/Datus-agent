@@ -5,7 +5,7 @@
 """Unit tests for Codex model."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -775,10 +775,19 @@ class TestCodexModelGenerateWithToolsStream:
     @patch("datus.models.codex_model.multiple_mcp_servers")
     @patch("datus.models.codex_model.Runner")
     @patch("datus.models.codex_model.Agent")
+    @pytest.mark.parametrize("with_delegate", [False, True])
     async def test_stream_with_tools_and_hooks(
-        self, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config
+        self, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config, with_delegate
     ):
+        from types import SimpleNamespace
+
+        from structlog.testing import capture_logs
+
         from datus.models.codex_model import CodexModel
+        from datus.observability.tool_calls import ToolObservationHooks
+
+        delegate = SimpleNamespace(on_tool_start=AsyncMock(), on_tool_end=AsyncMock())
+        supplied_hooks = delegate if with_delegate else None
 
         mock_oauth = MagicMock()
         mock_oauth.get_access_token.return_value = "tok"
@@ -805,7 +814,7 @@ class TestCodexModelGenerateWithToolsStream:
                 prompt="test",
                 tools=[MagicMock()],
                 mcp_servers={"db": MagicMock()},
-                hooks=MagicMock(),
+                hooks=supplied_hooks,
             ):
                 actions.append(action)
 
@@ -814,7 +823,21 @@ class TestCodexModelGenerateWithToolsStream:
             agent_kwargs = mock_agent_cls.call_args[1]
             assert "mcp_servers" in agent_kwargs
             assert "tools" in agent_kwargs
-            assert "hooks" in agent_kwargs
+            hooks = agent_kwargs["hooks"]
+            assert isinstance(hooks, ToolObservationHooks)
+            assert hooks.delegate is supplied_hooks
+            context = SimpleNamespace(tool_call_id="codex-call")
+            tool = SimpleNamespace(name="lookup")
+            with capture_logs() as records:
+                await hooks.on_tool_start(context, None, tool)
+                await hooks.on_tool_end(context, None, tool, '{"success": true}')
+            finished = next(record for record in records if record["event"] == "tool.finished")
+            assert finished["tool_call_id"] == "codex-call"
+            assert finished["status"] == "success"
+            assert delegate.on_tool_start.await_args_list == ([call(context, None, tool)] if with_delegate else [])
+            assert delegate.on_tool_end.await_args_list == (
+                [call(context, None, tool, '{"success": true}')] if with_delegate else []
+            )
 
 
 class TestCodexModelBaseUrl:

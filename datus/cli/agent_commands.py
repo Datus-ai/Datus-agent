@@ -611,7 +611,7 @@ class AgentCommands:
             else:
                 # Use normal print for results without sql_query
                 self.console.print(dict_to_tree(next_node.result.to_dict(), console=self.console))
-            logger.info(f"Node result: {next_node.result}")
+            logger.debug("node.finished", node_type=next_node.type)
             workflow.advance_to_next_node()  # ToDo: this should be modified for status
 
             # 6. Update workflow context

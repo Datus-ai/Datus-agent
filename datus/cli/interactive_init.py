@@ -27,7 +27,7 @@ from datus.cli.init_util import detect_db_connectivity
 from datus.cli.provider_auth_flows import configure_claude_subscription, configure_codex_oauth
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.project_config import ProjectOverride, ProjectTarget, save_project_override
-from datus.utils.loggings import configure_logging, get_logger, print_rich_exception
+from datus.utils.loggings import configure_entrypoint_logging, get_logger, print_rich_exception
 from datus.utils.path_manager import get_path_manager
 from datus.utils.path_utils import safe_rmtree
 from datus.utils.resource_utils import copy_data_file, read_data_file_text
@@ -911,7 +911,9 @@ def do_init_sql_and_log_result(
 
 def main():
     """Entry point for the interactive init command."""
-    configure_logging(console_output=False)
+    import argparse
+
+    configure_entrypoint_logging(argparse.Namespace(), console_output=False)
     init = InteractiveInit()
     return init.run()
 

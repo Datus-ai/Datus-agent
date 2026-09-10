@@ -220,7 +220,7 @@ class TestGetAgentsSdkModel:
         mock_module = MagicMock()
         mock_module.LitellmModel = mock_litellm_model_cls
 
-        with patch.dict("sys.modules", {"agents.extensions.models.litellm_model": mock_module}):
+        with patch("datus.models.observed_model.ObservedLitellmModel", mock_litellm_model_cls):
             result = adapter.get_agents_sdk_model()
         assert result is mock_model
         mock_litellm_model_cls.assert_called_once()

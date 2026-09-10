@@ -52,6 +52,7 @@ PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
 PR_HARNESS_MARK_EXPR = "(acceptance or component or llm_harness) and not quarantine"
 IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness and not nightly and not quarantine"
 PR_ACCEPTANCE_TARGETS = [
+    "tests/unit_tests/observability/test_model_call.py",
     "tests/unit_tests/agent/node/test_chat_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_sql_agentic_node.py",
     "tests/unit_tests/agent/node/test_compare_agentic_node.py",

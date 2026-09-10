@@ -14,7 +14,6 @@ start/stop/restart/status actions.
 import argparse
 import asyncio
 import atexit
-import logging
 import multiprocessing
 import os
 import signal
@@ -24,7 +23,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from datus import __version__
-from datus.utils.loggings import configure_logging, get_logger
+from datus.configuration.logging_config import add_logging_arguments, resolve_logging_arguments
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
@@ -147,8 +147,7 @@ def _daemon_worker(args: argparse.Namespace, pid_file: Path, log_file: Path) -> 
         os.umask(0o022)
 
     log_dir = str(log_file.parent)
-    configure_logging(args.debug, log_dir=log_dir, console_output=False)
-    logging.getLogger().setLevel(getattr(logging, args.log_level, logging.INFO))
+    configure_entrypoint_logging(args, log_dir=log_dir, console_output=False)
     _redirect_stdio(log_file)
     _write_pid_file(pid_file, os.getpid())
 
@@ -224,15 +223,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--host", default="0.0.0.0", help="Health-check bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=9000, help="Health-check bind port (default: 9000)")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument(
-        "--log-level",
-        dest="log_level",
-        type=str,
-        default=os.getenv("DATUS_LOG_LEVEL", "INFO"),
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Log level (default: INFO or DATUS_LOG_LEVEL env var)",
-    )
+    add_logging_arguments(parser)
 
     # Daemon control
     parser.add_argument(
@@ -277,14 +268,13 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    if args.debug:
-        args.log_level = "DEBUG"
+    resolve_logging_arguments(args)
 
     # Subcommand dispatch (does not touch daemon/pid paths).
     if getattr(args, "subcommand", None) == "configure":
         from datus.gateway.configure import ChannelConfigurator
 
-        configure_logging(args.debug)
+        configure_entrypoint_logging(args)
         config_path = getattr(args, "configure_config", None) or args.config or ""
         raise SystemExit(ChannelConfigurator(config_path).run())
 
@@ -294,14 +284,14 @@ def main() -> None:
     log_file = Path(args.daemon_log_file) if args.daemon_log_file else default_log
 
     if args.action in {"status", "stop"}:
-        configure_logging(args.debug)
+        configure_entrypoint_logging(args)
         if args.action == "status":
             raise SystemExit(_status(pid_file))
         if args.action == "stop":
             raise SystemExit(_stop(pid_file))
 
     if args.action == "restart":
-        configure_logging(args.debug)
+        configure_entrypoint_logging(args)
         _stop(pid_file)
         args.daemon = True
         # fall-through to start as daemon
@@ -312,7 +302,7 @@ def main() -> None:
             raise SystemExit(0)
 
         log_dir = str(log_file.parent)
-        configure_logging(args.debug, log_dir=log_dir, console_output=False)
+        configure_entrypoint_logging(args, log_dir=log_dir, console_output=False)
         logger.info(f"Starting Datus Gateway (daemon) on {args.host}:{args.port} | Debug: {args.debug}")
 
         daemon_process = multiprocessing.Process(target=_daemon_worker, args=(args, pid_file, log_file), daemon=False)
@@ -328,9 +318,7 @@ def main() -> None:
             daemon_process.join()
             os._exit(1)
     else:
-        configure_logging(args.debug)
-
-    logging.getLogger().setLevel(getattr(logging, args.log_level, logging.INFO))
+        configure_entrypoint_logging(args)
 
     logger.info(f"Starting Datus Gateway on {args.host}:{args.port}")
     _run_gateway(args)

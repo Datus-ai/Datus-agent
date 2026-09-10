@@ -13,6 +13,8 @@ Current patches:
   Kimi/Moonshot empty-content recovery on the sync path.
 - LiteLLM ``Usage`` serialization warning suppression for provider-specific
   ``server_tool_use`` dict payloads.
+- Preservation of official correlation headers and GLM ``request_id`` fields
+  that LiteLLM otherwise drops while constructing streaming responses.
 - Pydantic serializer warnings redirected from the CLI to the logger.
 
 Per-turn ``reasoning_content`` replay itself is handled by the SDK: DeepSeek by
@@ -93,6 +95,16 @@ _original_usage_model_dump = None
 _original_usage_model_dump_json = None
 _original_usage_init = None
 _original_showwarning = None
+_original_make_async_call_stream_helper = None
+_original_openai_stream_chunk_parser = None
+
+_CORRELATION_RESPONSE_HEADERS = {
+    "msh-request-id",
+    "request-id",
+    "trace-id",
+    "x-ds-trace-id",
+    "x-request-id",
+}
 
 
 _REASONING_CONTENT_FIELD_NAMES = (
@@ -361,6 +373,35 @@ def _recover_empty_kimi_content(response: Any) -> None:
         logger.debug(f"[SDK Patch] Failed to recover empty Kimi content: {e}")
 
 
+def _remember_stream_response_headers(result: Any, logging_obj: Any) -> None:
+    """Keep only known correlation headers on LiteLLM's stream logging object."""
+    if not isinstance(result, tuple) or len(result) != 2 or logging_obj is None:
+        return
+    headers = result[1]
+    try:
+        captured = {
+            str(key).lower(): value
+            for key, value in headers.items()
+            if str(key).lower() in _CORRELATION_RESPONSE_HEADERS and isinstance(value, str) and value
+        }
+    except (AttributeError, TypeError):
+        return
+    if not captured:
+        return
+    details = getattr(logging_obj, "model_call_details", None)
+    if isinstance(details, dict):
+        details["_datus_response_headers"] = captured
+
+
+def _preserve_stream_request_id(chunk: Any, response: Any) -> Any:
+    """Copy GLM's documented streaming ``request_id`` through LiteLLM."""
+    if isinstance(chunk, dict):
+        request_id = chunk.get("request_id")
+        if isinstance(request_id, str) and request_id and response is not None:
+            response.request_id = request_id
+    return response
+
+
 def apply_sdk_patches() -> None:
     """
     Apply all SDK patches.
@@ -369,6 +410,7 @@ def apply_sdk_patches() -> None:
     before any SDK methods are used.
     """
     global _original_items_to_messages, _original_acompletion, _original_completion
+    global _original_make_async_call_stream_helper, _original_openai_stream_chunk_parser
 
     from functools import wraps
 
@@ -376,6 +418,8 @@ def apply_sdk_patches() -> None:
 
     # Import agents SDK here to avoid circular dependencies
     from agents.models.chatcmpl_converter import Converter
+    from litellm.llms.custom_httpx.llm_http_handler import BaseLLMHTTPHandler
+    from litellm.llms.openai.chat.gpt_transformation import OpenAIChatCompletionStreamingHandler
 
     _patch_litellm_usage_serialization()
     _redirect_pydantic_serializer_warnings_to_log()
@@ -385,7 +429,7 @@ def apply_sdk_patches() -> None:
         _original_items_to_messages = Converter.items_to_messages.__func__  # type: ignore
 
     Converter.items_to_messages = classmethod(_patched_items_to_messages)  # type: ignore
-    logger.info("Applied SDK patch: Converter.items_to_messages (content-block normalization)")
+    logger.debug("Applied SDK patch: Converter.items_to_messages (content-block normalization)")
 
     # Patch 2: litellm.acompletion reasoning_content placeholders
     if _original_acompletion is None:
@@ -401,7 +445,7 @@ def apply_sdk_patches() -> None:
             return response
 
         litellm.acompletion = _patched_acompletion
-        logger.info("Applied SDK patch: litellm.acompletion (reasoning_content placeholders, Kimi content recovery)")
+        logger.debug("Applied SDK patch: litellm.acompletion (reasoning_content placeholders, Kimi content recovery)")
 
     # Patch 3: litellm.completion reasoning_content placeholders + Kimi empty-content recovery
     if _original_completion is None:
@@ -416,7 +460,37 @@ def apply_sdk_patches() -> None:
             return response
 
         litellm.completion = _patched_completion
-        logger.info("Applied SDK patch: litellm.completion (reasoning_content placeholders, Kimi content recovery)")
+        logger.debug("Applied SDK patch: litellm.completion (reasoning_content placeholders, Kimi content recovery)")
+
+    # Patch 4: retain correlation metadata that LiteLLM drops from streams.
+    if _original_make_async_call_stream_helper is None:
+        _original_make_async_call_stream_helper = BaseLLMHTTPHandler.make_async_call_stream_helper
+
+        @wraps(_original_make_async_call_stream_helper)
+        async def _patched_make_async_call_stream_helper(self, *args, **kwargs):
+            result = await _original_make_async_call_stream_helper(self, *args, **kwargs)
+            logging_obj = kwargs.get("logging_obj")
+            if logging_obj is None:
+                try:
+                    bound = inspect.signature(_original_make_async_call_stream_helper).bind(self, *args, **kwargs)
+                    logging_obj = bound.arguments.get("logging_obj")
+                except (TypeError, ValueError):
+                    pass
+            _remember_stream_response_headers(result, logging_obj)
+            return result
+
+        BaseLLMHTTPHandler.make_async_call_stream_helper = _patched_make_async_call_stream_helper
+        logger.debug("Applied SDK patch: LiteLLM streaming correlation headers")
+
+    if _original_openai_stream_chunk_parser is None:
+        _original_openai_stream_chunk_parser = OpenAIChatCompletionStreamingHandler.chunk_parser
+
+        @wraps(_original_openai_stream_chunk_parser)
+        def _patched_openai_stream_chunk_parser(self, chunk):
+            return _preserve_stream_request_id(chunk, _original_openai_stream_chunk_parser(self, chunk))
+
+        OpenAIChatCompletionStreamingHandler.chunk_parser = _patched_openai_stream_chunk_parser
+        logger.debug("Applied SDK patch: GLM streaming request_id")
 
 
 def remove_sdk_patches() -> None:
@@ -427,25 +501,37 @@ def remove_sdk_patches() -> None:
     """
     global _original_items_to_messages, _original_acompletion, _original_completion
     global _original_usage_model_dump, _original_usage_model_dump_json, _original_usage_init
-    global _original_showwarning
+    global _original_showwarning, _original_make_async_call_stream_helper, _original_openai_stream_chunk_parser
 
     import litellm
     from agents.models.chatcmpl_converter import Converter
+    from litellm.llms.custom_httpx.llm_http_handler import BaseLLMHTTPHandler
+    from litellm.llms.openai.chat.gpt_transformation import OpenAIChatCompletionStreamingHandler
 
     if _original_items_to_messages is not None:
         Converter.items_to_messages = classmethod(_original_items_to_messages)  # type: ignore
         _original_items_to_messages = None
-        logger.info("Removed SDK patch: Converter.items_to_messages")
+        logger.debug("Removed SDK patch: Converter.items_to_messages")
 
     if _original_acompletion is not None:
         litellm.acompletion = _original_acompletion
         _original_acompletion = None
-        logger.info("Removed SDK patch: litellm.acompletion")
+        logger.debug("Removed SDK patch: litellm.acompletion")
 
     if _original_completion is not None:
         litellm.completion = _original_completion
         _original_completion = None
-        logger.info("Removed SDK patch: litellm.completion")
+        logger.debug("Removed SDK patch: litellm.completion")
+
+    if _original_make_async_call_stream_helper is not None:
+        BaseLLMHTTPHandler.make_async_call_stream_helper = _original_make_async_call_stream_helper
+        _original_make_async_call_stream_helper = None
+        logger.debug("Removed SDK patch: LiteLLM streaming correlation headers")
+
+    if _original_openai_stream_chunk_parser is not None:
+        OpenAIChatCompletionStreamingHandler.chunk_parser = _original_openai_stream_chunk_parser
+        _original_openai_stream_chunk_parser = None
+        logger.debug("Removed SDK patch: GLM streaming request_id")
 
     try:
         from litellm.types.utils import Usage
@@ -453,19 +539,19 @@ def remove_sdk_patches() -> None:
         if _original_usage_init is not None:
             Usage.__init__ = _original_usage_init
             _original_usage_init = None
-            logger.info("Removed SDK patch: LiteLLM Usage.__init__")
+            logger.debug("Removed SDK patch: LiteLLM Usage.__init__")
         if _original_usage_model_dump is not None:
             Usage.model_dump = _original_usage_model_dump
             _original_usage_model_dump = None
-            logger.info("Removed SDK patch: LiteLLM Usage.model_dump")
+            logger.debug("Removed SDK patch: LiteLLM Usage.model_dump")
         if _original_usage_model_dump_json is not None:
             Usage.model_dump_json = _original_usage_model_dump_json
             _original_usage_model_dump_json = None
-            logger.info("Removed SDK patch: LiteLLM Usage.model_dump_json")
+            logger.debug("Removed SDK patch: LiteLLM Usage.model_dump_json")
     except Exception as e:
         logger.debug(f"Failed to remove LiteLLM Usage serialization patch: {e}")
 
     if _original_showwarning is not None:
         warnings.showwarning = _original_showwarning
         _original_showwarning = None
-        logger.info("Removed SDK patch: warnings.showwarning (Pydantic serializer warnings)")
+        logger.debug("Removed SDK patch: warnings.showwarning (Pydantic serializer warnings)")

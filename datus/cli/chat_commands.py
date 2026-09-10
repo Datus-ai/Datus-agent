@@ -1556,8 +1556,8 @@ class ChatCommands:
                 if output and isinstance(output, str):
                     output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
                 return sql, output
-            except json.JSONDecodeError as e:
-                logger.debug(f"DEBUG: JSON decode failed for content: {content[:100]}... Error: {e}")
+            except json.JSONDecodeError:
+                pass
 
             # Pattern 3: Look for SQL code blocks
             sql_pattern = r"```sql\s*(.*?)\s*```"
@@ -2138,10 +2138,7 @@ class ChatCommands:
 
         if last_sql_action is None:
             # No SQL action found, skip adding to context
-            action_types = [
-                (a.action_type, a.role.value if hasattr(a.role, "value") else a.role) for a in incremental_actions
-            ]
-            logger.warning(f"No SQL action found in incremental_actions. Actions: {action_types}")
+            logger.debug("No SQL action found in incremental actions", action_count=len(incremental_actions))
             return
 
         action_output = _maybe_parse_json(last_sql_action.output)

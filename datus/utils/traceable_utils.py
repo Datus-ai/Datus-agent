@@ -4,6 +4,7 @@
 
 import inspect
 import logging
+from contextlib import nullcontext
 from typing import Literal
 
 from datus.utils.loggings import get_logger
@@ -29,30 +30,20 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain", context_b
         trace_name = name or getattr(func, "__name__", "agent_operation")
 
         def _prepare_trace_context(args, kwargs):
-            token = None
             trace_ctx = None
+            scope = nullcontext()
             try:
-                from datus.utils.trace_context import get_trace_context, set_trace_context
+                from datus.utils.trace_context import get_trace_context, trace_context
 
                 trace_ctx = get_trace_context()
                 if trace_ctx is None and context_builder is not None:
                     trace_ctx = context_builder(*args, **kwargs)
                     if trace_ctx is not None:
-                        token = set_trace_context(trace_ctx)
+                        scope = trace_context(trace_ctx)
             except Exception as e:
                 logger.debug(f"Failed to prepare trace context: {e}")
                 trace_ctx = None
-            return trace_ctx, token
-
-        def _reset_trace_context(token) -> None:
-            if token is None:
-                return
-            try:
-                from datus.utils.trace_context import reset_trace_context
-
-                reset_trace_context(token)
-            except Exception as e:
-                logger.debug(f"Failed to reset trace context: {e}")
+            return trace_ctx, scope
 
         def _span_attributes(trace_ctx) -> dict:
             from datus.utils.trace_context import build_trace_span_attributes
@@ -72,16 +63,14 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain", context_b
 
             @functools.wraps(func)
             async def _asyncgen_observability_wrapper(*args, **kwargs):
-                trace_ctx, token = _prepare_trace_context(args, kwargs)
-                try:
+                trace_ctx, scope = _prepare_trace_context(args, kwargs)
+                with scope:
                     from datus.observability.manager import get_observability_manager
 
                     observability = get_observability_manager()
                     with observability.span(trace_name, _span_attributes(trace_ctx), run_id=_run_id(trace_ctx)):
                         async for item in func(*args, **kwargs):
                             yield item
-                finally:
-                    _reset_trace_context(token)
 
             return _asyncgen_observability_wrapper
 
@@ -89,8 +78,8 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain", context_b
 
             @functools.wraps(func)
             async def _async_observability_wrapper(*args, **kwargs):
-                trace_ctx, token = _prepare_trace_context(args, kwargs)
-                try:
+                trace_ctx, scope = _prepare_trace_context(args, kwargs)
+                with scope:
                     from datus.observability.manager import get_observability_manager
 
                     observability = get_observability_manager()
@@ -99,22 +88,18 @@ def optional_traceable(name: str = "", run_type: RUN_TYPE_T = "chain", context_b
                         if inspect.isawaitable(result):
                             return await result
                         return result
-                finally:
-                    _reset_trace_context(token)
 
             return _async_observability_wrapper
 
         @functools.wraps(func)
         def _observability_wrapper(*args, **kwargs):
-            trace_ctx, token = _prepare_trace_context(args, kwargs)
-            try:
+            trace_ctx, scope = _prepare_trace_context(args, kwargs)
+            with scope:
                 from datus.observability.manager import get_observability_manager
 
                 observability = get_observability_manager()
                 with observability.span(trace_name, _span_attributes(trace_ctx), run_id=_run_id(trace_ctx)):
                     return func(*args, **kwargs)
-            finally:
-                _reset_trace_context(token)
 
         return _observability_wrapper
 
@@ -173,7 +158,6 @@ def _setup_configured_observability(observability_config) -> bool | None:
     """Initialize the new observability manager when config explicitly asks for it.
 
     Returns:
-        True: config path handled tracing and legacy setup should not run.
         True: tracing was configured and enabled.
         False: tracing should remain disabled.
     """
@@ -184,14 +168,12 @@ def _setup_configured_observability(observability_config) -> bool | None:
     if tracing is None or not getattr(tracing, "explicit", False):
         return False
 
-    if not getattr(tracing, "enabled", False):
-        return False
-
     try:
         from datus.observability.manager import configure_observability
 
-        if configure_observability(observability_config):
-            return True
+        # Configure even when export is disabled. Model-call logs still use
+        # explicitly declared response-header semantics for remote request IDs.
+        return configure_observability(observability_config)
     except Exception as e:
         logger.warning(f"Configured observability initialization failed: {e}")
 

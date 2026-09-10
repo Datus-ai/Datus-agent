@@ -349,6 +349,7 @@ agent:
 
 
 @pytest.mark.ci
+@pytest.mark.usefixtures("isolated_logging")
 class TestRunWebInterface:
     """Tests for run_web_interface entry point."""
 
@@ -385,6 +386,7 @@ class TestRunWebInterface:
                 host="localhost",
                 port=8501,
                 log_level="info",
+                log_config=None,
             )
             mock_uvicorn.Server.assert_called_once_with(mock_uvicorn.Config.return_value)
             mock_asyncio_run.assert_called_once()

@@ -395,7 +395,7 @@ class TestConfigureLogging:
         msg = f"{logger_name} completion() model= test-model; provider = test-provider"
         litellm_logger = logging.getLogger(logger_name)
         capsys.readouterr()
-        litellm_logger.info(msg)
+        litellm_logger.warning(msg)
         for handler in litellm_logger.handlers:
             handler.flush()
 
@@ -418,7 +418,7 @@ class TestConfigureLogging:
 
         msg = f"{logger_name} completion() model= late-import; provider = test-provider"
         capsys.readouterr()
-        litellm_logger.info(msg)
+        litellm_logger.warning(msg)
         for handler in litellm_logger.handlers:
             handler.flush()
 
@@ -427,24 +427,6 @@ class TestConfigureLogging:
         assert msg not in captured.out
         assert msg not in captured.err
         assert msg in Path(mgr.file_handler.baseFilename).read_text(encoding="utf-8")
-
-
-class TestAddExcInfo:
-    """Tests for add_exc_info processor (line 202-206)."""
-
-    def test_adds_exc_info_for_error(self):
-        from datus.utils.loggings import add_exc_info
-
-        event_dict = {}
-        result = add_exc_info(None, "error", event_dict)
-        assert result["exc_info"] is True
-
-    def test_no_exc_info_for_info(self):
-        from datus.utils.loggings import add_exc_info
-
-        event_dict = {}
-        result = add_exc_info(None, "info", event_dict)
-        assert "exc_info" not in result
 
 
 class TestAddCodeLocation:
@@ -613,24 +595,6 @@ class TestSetupWebChatbotLogging:
 
         assert path_manager.logs_dir.exists()
         assert any(path_manager.logs_dir.glob("web_chatbot.*.log"))
-
-
-class TestAdaptiveRenderer:
-    """Tests for AdaptiveRenderer (lines 297-307)."""
-
-    def test_renderer_is_callable(self):
-        from datus.utils.loggings import AdaptiveRenderer
-
-        renderer = AdaptiveRenderer()
-        assert callable(renderer)
-
-    def test_renderer_produces_string_output(self):
-        """AdaptiveRenderer.__call__ returns a string (delegates to ConsoleRenderer)."""
-        from datus.utils.loggings import AdaptiveRenderer
-
-        renderer = AdaptiveRenderer()
-        result = renderer(None, "info", {"event": "test message"})
-        assert isinstance(result, str)
 
 
 class TestLogContext:

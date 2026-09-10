@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import structlog
 from rich.console import Console
 
+from datus.configuration.logging_config import resolve_log_level, resolve_logging_arguments
+
 fileno = False
+_log_redact_config = None
 
 _LITELLM_LOGGER_NAMES = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
 
@@ -50,8 +53,9 @@ def _is_source_environment() -> bool:
 class DynamicLogManager:
     """Dynamic log manager that supports switching log output targets at runtime"""
 
-    def __init__(self, debug=False, log_dir=None, path_manager=None, agent_config=None):
-        self.debug = debug
+    def __init__(self, debug=False, log_dir=None, path_manager=None, agent_config=None, *, level=None):
+        self.level = logging._nameToLevel[resolve_log_level(level=level, debug=debug)[0]]
+        self.debug = self.level == logging.DEBUG
         # Default to ~/.datus/logs (via path manager) when log_dir is not specified.
         if log_dir is None:
             from datus.utils.path_manager import get_path_manager
@@ -81,27 +85,16 @@ class DynamicLogManager:
         )
         self.file_handler.suffix = "%Y-%m-%d"
 
-        # Use a custom formatter for the file handler that removes color codes
-        class PlainTextFormatter(logging.Formatter):
-            def format(self, record):
-                # Get the original message
-                msg = super().format(record)
-                # Remove ANSI color codes
-                import re
-
-                ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
-                return ansi_escape.sub("", msg)
-
-        file_formatter = PlainTextFormatter("%(message)s")
-        self.file_handler.setFormatter(file_formatter)
+        self.file_handler.setFormatter(_log_formatter())
+        self.file_handler.setLevel(self.level)
 
         # Create console handler with normal formatter
-        self.console_handler = logging.StreamHandler(sys.stdout)
-        console_formatter = logging.Formatter("%(message)s")
-        self.console_handler.setFormatter(console_formatter)
+        self.console_handler = logging.StreamHandler(sys.stderr)
+        self.console_handler.setFormatter(_log_formatter(colors=True))
+        self.console_handler.setLevel(self.level)
 
         # Set up root logger
-        self.root_logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
+        self.root_logger.setLevel(self.level)
         self.original_handlers = self.root_logger.handlers.copy()
 
     def set_output_target(self, target: Literal["both", "file", "console", "none"]):
@@ -168,7 +161,7 @@ def configure_litellm_logging(file_handler: Optional[logging.Handler] = None) ->
         logger = logging.getLogger(logger_name)
         logger.handlers.clear()
         logger.propagate = False
-        logger.setLevel(logging.INFO)
+        logger.setLevel(max(logging.WARNING, logging.getLogger().level))
         logger.addHandler(file_handler if file_handler is not None else logging.NullHandler())
 
 
@@ -179,6 +172,9 @@ def configure_logging(
     *,
     path_manager: Optional["DatusPathManager"] = None,
     agent_config: Optional[Any] = None,
+    level: str | None = None,
+    level_source: str | None = None,
+    redact: dict[str, Any] | None = None,
 ) -> DynamicLogManager:
     """Configure logging with the specified debug level.
     Args:
@@ -187,11 +183,29 @@ def configure_logging(
                  (resolved via the active ``DatusPathManager``).
         console_output: If False, disable logging to console
     """
-    # Suppress noisy third-party loggers
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    config = getattr(agent_config, "logging", None)
+    effective_level, source = resolve_log_level(level=level, debug=debug, config=config)
+    numeric_level = logging._nameToLevel[effective_level]
+    from datus.observability.config import RedactConfig
+
+    global _log_redact_config
+    _log_redact_config = RedactConfig.from_dict(redact if redact is not None else getattr(config, "redact", None))
+    _configure_structlog()
+    # Retain targeted noise suppression without bypassing the selected threshold.
+    for name in ("httpx", "httpcore", "openai.agents", "markdown_it", "datus_semantic_core"):
+        logging.getLogger(name).setLevel(max(logging.WARNING, numeric_level))
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        named_logger = logging.getLogger(name)
+        named_logger.handlers.clear()
+        named_logger.propagate = True
+        named_logger.setLevel(numeric_level)
+    for name in ("web_chatbot",):
+        named_logger = logging.getLogger(name)
+        named_logger.setLevel(numeric_level)
+        for handler in named_logger.handlers:
+            handler.setLevel(numeric_level)
     global fileno
-    fileno = debug
+    fileno = numeric_level == logging.DEBUG
 
     # Default to ~/.datus/logs (via path manager) when log_dir is not specified.
     if log_dir is None:
@@ -201,17 +215,25 @@ def configure_logging(
 
     # Create or get log manager with specified parameters
     global _log_manager
+    previous_manager = _log_manager
     _log_manager = DynamicLogManager(
-        debug=debug,
+        level=effective_level,
         log_dir=log_dir,
         path_manager=path_manager,
         agent_config=agent_config,
     )
+    _log_manager.configured = True
 
+    # Set the LiteLLM logger thresholds before importing it. LiteLLM installs
+    # its own DEBUG console handlers at import time, so importing first leaks
+    # startup diagnostics whenever Datus itself is running at DEBUG level.
+    configure_litellm_logging(_log_manager.file_handler)
     try:
         import litellm  # noqa: F401
     except ModuleNotFoundError:
         pass
+    # Remove the console handlers LiteLLM added during import and retain the
+    # Datus-formatted file handler for warnings and errors.
     configure_litellm_logging(_log_manager.file_handler)
 
     # Set output target based on console_output parameter
@@ -219,14 +241,26 @@ def configure_logging(
         _log_manager.set_output_target("both")
     else:
         _log_manager.set_output_target("file")
+    if previous_manager is not None:
+        previous_manager.file_handler.close()
+        previous_manager.console_handler.close()
+    get_logger(__name__).info("logging.configured", log_level=effective_level, source=level_source or source)
     return _log_manager
 
 
-def add_exc_info(logger, method_name, event_dict):
-    """Add exception info to error logs."""
-    if method_name == "error":
-        event_dict["exc_info"] = True
-    return event_dict
+def configure_entrypoint_logging(args: Any, *, if_unconfigured: bool = False, **kwargs: Any) -> DynamicLogManager:
+    """Apply the shared configuration at an application/worker entry point."""
+    config = resolve_logging_arguments(args, kwargs.get("agent_config"))
+    if if_unconfigured and _log_manager is not None and getattr(_log_manager, "configured", False):
+        # An in-process API app must retain its host's handler destinations.
+        # Spawned workers have no configured manager and initialize normally.
+        return _log_manager
+    return configure_logging(
+        level=config.level,
+        level_source=args.log_level_source,
+        redact=config.redact,
+        **kwargs,
+    )
 
 
 def add_code_location(logger, method_name, event_dict):
@@ -254,6 +288,7 @@ def setup_web_chatbot_logging(
     *,
     path_manager: Optional["DatusPathManager"] = None,
     agent_config: Optional[Any] = None,
+    level: str | None = None,
 ):
     """Setup simplified logging for web chatbot using same format as agent.log
 
@@ -278,7 +313,8 @@ def setup_web_chatbot_logging(
 
     # Create independent logger for web chatbot
     web_logger = logging.getLogger("web_chatbot")
-    web_logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    effective, _ = resolve_log_level(level=level, debug=debug, config=getattr(agent_config, "logging", None))
+    web_logger.setLevel(effective)
 
     # Remove existing handlers to avoid duplicates
     web_logger.handlers.clear()
@@ -295,8 +331,8 @@ def setup_web_chatbot_logging(
     file_handler.suffix = "%Y-%m-%d"
 
     # Use same formatter as agent.log (simple message format)
-    formatter = logging.Formatter("%(message)s")
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(_log_formatter())
+    file_handler.setLevel(effective)
 
     web_logger.addHandler(file_handler)
     web_logger.propagate = False  # Prevent propagation to root logger
@@ -319,22 +355,36 @@ def log_context(target: Literal["both", "file", "console", "none"]):
         yield
 
 
-class AdaptiveRenderer:
-    """Adaptive renderer that uses colored output by default"""
+def _redact_log_event(logger, method_name, event_dict):
+    # Independent of tracing being configured or enabled.
+    from datus.observability.config import RedactConfig
+    from datus.observability.privacy import redact_value
 
-    def __init__(self):
-        self.colored_renderer = structlog.dev.ConsoleRenderer(
-            colors=True, exception_formatter=structlog.dev.plain_traceback
-        )
-
-    def __call__(self, logger, name, event_dict):
-        """Always use colored renderer - file handler will strip colors with its formatter"""
-        return self.colored_renderer(logger, name, event_dict)
+    return redact_value(event_dict, _log_redact_config or RedactConfig())
 
 
-if not structlog.is_configured():
-    # Initialize event dict to avoid NoneType errors
-    structlog.configure_once(
+def _log_formatter(*, colors: bool = False) -> logging.Formatter:
+    renderer = structlog.dev.ConsoleRenderer(
+        colors=colors and sys.platform != "win32", exception_formatter=structlog.dev.plain_traceback
+    )
+    return structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
+        ],
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.format_exc_info,
+            _redact_log_event,
+            renderer,
+        ],
+    )
+
+
+def _configure_structlog():
+    structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.filter_by_level,
@@ -342,18 +392,21 @@ if not structlog.is_configured():
             structlog.stdlib.add_logger_name,
             structlog.stdlib.PositionalArgumentsFormatter(),
             add_code_location,
-            add_exc_info,
             structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
-            AdaptiveRenderer(),
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
+
+
+if not structlog.is_configured():
+    _configure_structlog()
 
 
 def _get_current_log_file() -> Path | None:
@@ -396,7 +449,7 @@ def print_rich_exception(
         file_logger = get_logger(__name__)
     """Print a concise, user-friendly error with a log file hint."""
 
-    file_logger.error(f"{error_description}, Reason: {ex}")
+    file_logger.error(f"{error_description}, Reason: {ex}", exc_info=(type(ex), ex, ex.__traceback__))
     log_file = _get_current_log_file()
 
     console.print(

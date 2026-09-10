@@ -4,6 +4,20 @@ Agent 配置定义 Datus Agent 的核心设置，包括默认目标模型与整�
 
 ## 结构
 
+### 日志配置
+
+在 `agent.yml` 中配置进程日志：
+
+```yaml
+agent:
+  logging:
+    level: INFO     # DEBUG、INFO、WARNING、ERROR、CRITICAL；不区分大小写
+```
+
+级别优先级为显式 `--log-level` / `--debug` → `DATUS_LOG_LEVEL` → `agent.logging.level` → `INFO`。`--debug` 等价于 `--log-level DEBUG`，两者不能同时指定。例如，`datus-api --config conf/agent.yml --log-level WARNING` 会同时将 API 和 Agent 业务日志设为 WARNING。CLI、API、Gateway、MCP 服务、Web Chatbot 和 benchmark 使用相同的解析规则；API 子进程继承最终级别，重建 Agent 不会重置级别。嵌入式应用可在启动时调用 `configure_logging(agent_config=config)`。
+
+文件 handler 同样执行级别过滤，第三方库原有的降噪策略继续保留。日志文件统一使用纯文本格式，事件字段以键值对展示；交互式控制台输出到 stderr。日志与 tracing 独立。可选的 `agent.logging.redact` 支持 `enabled`、`fields` 和正则 `patterns`，默认开启凭据字段脱敏。事件及 trace 采集控制详见[可观测性](../develop/observability.zh.md)。
+
 ### 目标模型（target）
 在未单独覆盖时，所有节点默认使用 `target` 指向的 LLM 设置：
 ```yaml

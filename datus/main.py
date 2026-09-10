@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
-
 import argparse
 import os
 import sys
 from datetime import datetime
 
+from datus.configuration.logging_config import add_logging_arguments
 from datus.multi_round_benchmark import multi_benchmark, setup_base_parser_args
 from datus.utils.async_utils import setup_windows_policy
 
@@ -22,7 +21,7 @@ from datus.agent.agent import Agent
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.node_models import SqlTask
 from datus.utils.exceptions import setup_exception_handler
-from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.loggings import configure_entrypoint_logging, get_logger
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
@@ -31,7 +30,7 @@ logger = get_logger(__name__)
 def create_parser() -> argparse.ArgumentParser:
     # Create a parent parser for global options that will be shared across all subcommands
     global_parser = argparse.ArgumentParser(add_help=False)
-    global_parser.add_argument("--debug", action="store_true", help="Enable debug level logging")
+    add_logging_arguments(global_parser)
     global_parser.add_argument("--config", type=str, help="Path to configuration file (default: conf/agent.yml)")
     global_parser.add_argument(
         "--save_llm_trace",
@@ -524,18 +523,18 @@ def main():
         return 1
 
     if args.action == "service":
-        configure_logging(args.debug, console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
         from datus.cli.service_manager import ServiceManager
 
         return ServiceManager(args.config or "").run(args.command)
 
     if args.action == "skill":
-        configure_logging(args.debug, console_output=False)
+        configure_entrypoint_logging(args, console_output=False)
         from datus.cli.skill_cli import run_skill_command
 
         return run_skill_command(args)
 
-    configure_logging(args.debug)
+    configure_entrypoint_logging(args)
     setup_exception_handler()
 
     if args.action == "multi-round-benchmark":
@@ -591,7 +590,10 @@ def main():
     elif args.action in ("eval", "evaluation", "evaluate"):
         result = agent.evaluation()
     if result:
-        logger.info(f"\nFinal Result: {result}")
+        logger.info("workflow.finished", action=args.action, result_type=type(result).__name__)
+        from rich import print as rich_print
+
+        rich_print(result)
 
     return 0
 

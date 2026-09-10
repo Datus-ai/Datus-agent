@@ -32,6 +32,8 @@ from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_m
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.observability.manager import get_observability_manager
+from datus.observability.model_call import ModelCall
+from datus.observability.tool_calls import observe_tool_hooks
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, detect_tool_failure
 from datus.utils.constants import LLMProvider
@@ -166,9 +168,18 @@ def _agents_trace_baggage(agent_name: Optional[str]):
 
 
 async def _stream_events_with_trace_baggage(result, agent_name: Optional[str]):
-    with _agents_trace_baggage(agent_name):
-        async for event in result.stream_events():
+    events = result.stream_events().__aiter__()
+    try:
+        while True:
+            with _agents_trace_baggage(agent_name):
+                try:
+                    event = await anext(events)
+                except StopAsyncIteration:
+                    return
             yield event
+    finally:
+        if close := getattr(events, "aclose", None):
+            await close()
 
 
 def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]:
@@ -680,17 +691,31 @@ class OpenAICompatibleModel(LLMBaseModel):
             observability = get_observability_manager()
             span_attributes = {
                 "datus.operation": "llm.generate",
-                "gen_ai.request.model": self.model_name,
-                "gen_ai.request.provider": str(routed_provider) if routed_provider else None,
-                "gen_ai.system": str(routed_provider) if routed_provider else None,
                 "datus.model.litellm_name": params["model"],
+                "openinference.span.kind": "LLM",
+                "llm.model_name": self.model_name,
             }
+            if routed_provider:
+                span_attributes["llm.provider"] = str(routed_provider)
+                span_attributes["llm.system"] = str(routed_provider)
             if observability.content_enabled("prompts"):
-                span_attributes["datus.llm.prompt"] = to_str(observability.redact(messages))
+                span_attributes["input.value"] = json.dumps(observability.redact(messages), default=str)
+                span_attributes["input.mime_type"] = "application/json"
 
-            with observability.span("llm.generate", span_attributes) as span:
+            with (
+                observability.span("llm.generate", span_attributes) as span,
+                ModelCall(
+                    model=self.model_name,
+                    model_impl="litellm",
+                    protocol="chat_completions",
+                    endpoint=params.get("api_base", params.get("base_url")),
+                ) as call,
+            ):
+                call.bind_span(span)
+                call.request(params)
                 # Use LiteLLM for unified provider support
                 response = litellm.completion(messages=messages, **params)
+                call.response(response)
                 message = response.choices[0].message
                 content = strip_litellm_placeholder(message.content)
 
@@ -721,15 +746,14 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 finish_reason = response.choices[0].finish_reason if response.choices else None
                 response_model = response.model if hasattr(response, "model") else self.model_name
-                _set_observability_span_attribute(span, "gen_ai.response.finish_reason", finish_reason)
-                _set_observability_span_attribute(span, "gen_ai.response.model", response_model)
-                _set_observability_span_attribute(span, "gen_ai.usage.input_tokens", usage_info.get("input_tokens"))
-                _set_observability_span_attribute(span, "gen_ai.usage.output_tokens", usage_info.get("output_tokens"))
-                _set_observability_span_attribute(span, "gen_ai.usage.total_tokens", usage_info.get("total_tokens"))
+                _set_observability_span_attribute(span, "llm.finish_reason", finish_reason)
+                _set_observability_span_attribute(span, "llm.model_name", response_model)
+                _set_observability_span_attribute(span, "llm.token_count.prompt", usage_info.get("input_tokens"))
+                _set_observability_span_attribute(span, "llm.token_count.completion", usage_info.get("output_tokens"))
+                _set_observability_span_attribute(span, "llm.token_count.total", usage_info.get("total_tokens"))
                 if observability.content_enabled("responses"):
-                    _set_observability_span_attribute(
-                        span, "datus.llm.response", to_str(observability.redact(final_content))
-                    )
+                    _set_observability_span_attribute(span, "output.value", to_str(observability.redact(final_content)))
+                    _set_observability_span_attribute(span, "output.mime_type", "text/plain")
                 if reasoning_content and observability.content_enabled("reasoning"):
                     _set_observability_span_attribute(
                         span, "datus.llm.reasoning", to_str(observability.redact(reasoning_content))
@@ -1098,8 +1122,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         if tools:
             agent_kwargs["tools"] = tools
 
-        if hooks:
-            agent_kwargs["hooks"] = hooks
+        agent_kwargs["hooks"] = observe_tool_hooks(hooks)
 
         return Agent(**agent_kwargs)
 

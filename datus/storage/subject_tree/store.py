@@ -212,7 +212,7 @@ class SubjectTreeStore:
             node_id = self._table.insert(record)
 
             created_node = self.get_node(node_id)
-            logger.info(f"Created node: {self.get_full_path(node_id)} (node_id={node_id})")
+            logger.debug(f"Created node: {self.get_full_path(node_id)} (node_id={node_id})")
             return created_node
 
         except UniqueViolationError as e:
@@ -864,7 +864,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         # Upsert the batch using the parent class method
         if batch_data:
             self.upsert_batch(batch_data, on_column=on_column)
-            logger.info(f"Successfully upserted {len(batch_data)} items in batch")
+            logger.debug(f"Successfully upserted {len(batch_data)} items in batch")
 
     def search_with_subject_filter(
         self,

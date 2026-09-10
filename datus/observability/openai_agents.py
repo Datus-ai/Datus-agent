@@ -12,6 +12,9 @@ from typing import Any, cast
 
 from datus.observability.manager import get_observability_manager
 from datus.schemas.tool_summary import detect_tool_failure
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 _TOOL_ERROR_MESSAGE_MAX_CHARS = 500
 _TOOL_ERROR_MESSAGE_FALLBACK = "Tool returned an unsuccessful result"
@@ -88,11 +91,46 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
             return
 
         super().on_span_start(span)
+        if isinstance(span.span_data, (_oi_processor.GenerationSpanData, _oi_processor.ResponseSpanData)):
+            from datus.observability.model_call import current_model_call
+
+            if call := current_model_call():
+                call.bind_sdk_span(span)
+                call.bind_span(self._otel_spans.get(span.span_id))
 
     def on_span_end(self, span: Any) -> None:
         if span.span_id not in self._merged_root_agent_span_ids:
             self._set_datus_span_attributes(span)
-            super().on_span_end(span)
+            data = span.span_data
+            original_output = None
+            if isinstance(data, _oi_processor.GenerationSpanData):
+                messages = _generation_output_messages(data.output)
+                if messages is not None:
+                    original_output = data.output
+                    data.output = messages
+                    if otel_span := self._otel_spans.get(span.span_id):
+                        _set_output_message_details(otel_span, messages)
+            call = getattr(span, "_datus_model_call", None)
+            original_response = None
+            if call is not None:
+                call.usage(getattr(data, "usage", None))
+                if isinstance(data, _oi_processor.ResponseSpanData) and data.response is not None:
+                    original_response = data.response
+                    # Export definitions once, under the shared content policy.
+                    # The upstream processor otherwise re-exports raw tools from
+                    # response.tools, including inside the full output envelope.
+                    data.response = data.response.model_copy(update={"tools": []})
+                    call.usage(getattr(original_response, "usage", None))
+            if isinstance(data, (_oi_processor.GenerationSpanData, _oi_processor.ResponseSpanData)):
+                if otel_span := self._otel_spans.get(span.span_id):
+                    self._otel_spans[span.span_id] = _ModelCallSpan(otel_span, call)
+            try:
+                super().on_span_end(span)
+            finally:
+                if original_output is not None:
+                    data.output = original_output
+                if original_response is not None:
+                    span.span_data.response = original_response
             return
 
         self._merged_root_agent_span_ids.discard(span.span_id)
@@ -174,6 +212,159 @@ def _set_numeric_attribute(span: Any, key: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return
     span.set_attribute(key, value)
+
+
+def _generation_output_messages(output: Any) -> list[dict[str, Any]] | None:
+    """Map the SDK's streamed Chat Completions envelope to observable messages.
+
+    LiteLLM streaming stores ``[Response.model_dump()]`` in GenerationSpanData,
+    whose OpenInference mapper expects Chat Completions messages. Normalize only
+    this envelope, without changing the SDK response or model conversation.
+    """
+    if not isinstance(output, list) or len(output) != 1:
+        return None
+    response = output[0]
+    if not isinstance(response, Mapping) or response.get("object") != "response":
+        return None
+    items = response.get("output")
+    if not isinstance(items, list):
+        return None
+    # Preserve unfamiliar provider items rather than silently dropping them.
+    if any(
+        not isinstance(item, Mapping) or item.get("type") not in {"message", "reasoning", "function_call"}
+        for item in items
+    ):
+        return None
+
+    content: list[dict[str, Any]] = []
+    tool_calls: list[dict[str, Any]] = []
+    for item in items:
+        if item["type"] == "message":
+            parts = item.get("content")
+            if not isinstance(parts, list) or any(not isinstance(part, Mapping) for part in parts):
+                return None
+            content.extend(
+                {**part, "type": "text" if part.get("type") == "output_text" else part.get("type")} for part in parts
+            )
+        elif item["type"] == "reasoning":
+            content.append(dict(item))
+        else:
+            arguments = item.get("arguments", "{}")
+            tool_calls.append(
+                {
+                    "id": item.get("call_id"),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name"),
+                        "arguments": arguments
+                        if isinstance(arguments, str)
+                        else json.dumps(arguments, ensure_ascii=False),
+                    },
+                }
+            )
+    message: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return [message]
+
+
+def _set_output_message_details(span: Any, messages: list[dict[str, Any]]) -> None:
+    """Fill OpenInference fields not emitted by its Chat Completions mapper."""
+    for index, message in enumerate(messages):
+        prefix = f"llm.output_messages.{index}.message"
+        for call_index, call in enumerate(message.get("tool_calls", [])):
+            # Upstream omits {} arguments, which are meaningful for zero-arg tools.
+            span.set_attribute(
+                f"{prefix}.tool_calls.{call_index}.tool_call.function.arguments",
+                call["function"]["arguments"],
+            )
+        for part_index, part in enumerate(message["content"]):
+            if part.get("type") != "reasoning":
+                continue
+            content_prefix = f"{prefix}.contents.{part_index}.message_content"
+            span.set_attribute(f"{content_prefix}.type", "reasoning")
+            for key in ("id", "encrypted_content"):
+                if isinstance(value := part.get(key), str):
+                    span.set_attribute(f"{content_prefix}.{key}", value)
+            text = "\n".join(
+                entry["text"]
+                for entry in part.get("content") or part.get("summary") or []
+                if isinstance(entry, Mapping) and isinstance(entry.get("text"), str)
+            )
+            if text:
+                span.set_attribute(f"{content_prefix}.text", text)
+
+
+class _ModelCallSpan:
+    """Finish common LLM attributes after upstream I/O mapping and masking."""
+
+    def __init__(self, span: Any, call: Any):
+        self._span = span
+        self._call = call
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._span, name)
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        # The Responses mapper emits the same text as both a structured content
+        # part and a flat fallback. Consumers that support structured OI messages
+        # can otherwise render the answer twice. Keep the fallback only when no
+        # structured output was captured.
+        attributes = getattr(self._span, "attributes", None) or {}
+        if (
+            key.startswith("llm.output_messages.")
+            and key.endswith(".message.content")
+            and any(existing.startswith(f"{key}s.") for existing in attributes)
+        ):
+            return
+        self._span.set_attribute(key, value)
+
+    def end(self, *args: Any, **kwargs: Any) -> None:
+        try:
+            _wrap_message_values(self._span)
+        except Exception as exc:
+            logger.warning("llm.capture_failed", field="messages", error_type=type(exc).__name__)
+        if self._call is not None:
+            self._call.end_sdk_span(self._span, *args, **kwargs)
+        else:
+            self._span.end(*args, **kwargs)
+
+
+def _wrap_message_values(span: Any) -> None:
+    """Keep captured messages in a JSON object understood by OI consumers.
+
+    Read only the upstream processor's masked values. The indexed OpenInference
+    attributes remain available for consumers that use individual message fields.
+    """
+    attributes = getattr(span, "attributes", None) or {}
+    for direction in ("input", "output"):
+        key = f"{direction}.value"
+        try:
+            value = json.loads(attributes.get(key, ""))
+        except (TypeError, ValueError):
+            continue
+        if direction == "output" and isinstance(value, dict) and value.get("object") == "response":
+            messages = _generation_output_messages([value])
+            if messages is not None:
+                value = messages
+        if isinstance(value, list):
+            if direction == "input":
+                value = _response_input_messages(value)
+            span.set_attribute(key, json.dumps({"messages": value}, ensure_ascii=False))
+
+
+def _response_input_messages(items: list[Any]) -> list[Any]:
+    """Express Responses call/result history as messages, preserving other items."""
+    messages = []
+    for item in items:
+        if isinstance(item, Mapping) and item.get("type") == "function_call_output":
+            messages.append({"role": "tool", "tool_call_id": item.get("call_id"), "content": item.get("output")})
+        elif isinstance(item, Mapping) and item.get("type") in {"function_call", "reasoning"}:
+            converted = _generation_output_messages([{"object": "response", "output": [item]}])
+            messages.extend(converted if converted is not None else [item])
+        else:
+            messages.append(item)
+    return messages
 
 
 def _tool_failure_message(output: Any) -> str:

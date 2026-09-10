@@ -15,6 +15,7 @@ CONTENT_CAPTURE_FIELDS = (
     "prompts",
     "responses",
     "reasoning",
+    "tool_definitions",
     "tool_args",
     "tool_results",
     "sql",
@@ -29,6 +30,7 @@ class CaptureConfig:
     prompts: bool = True
     responses: bool = True
     reasoning: bool = True
+    tool_definitions: bool = True
     tool_args: bool = True
     tool_results: bool = True
     sql: bool = True
@@ -68,25 +70,21 @@ class ObservabilityAdapterConfig:
     type: str
     enabled: bool = True
     endpoint: str | None = None
-    protocol: str = "http/protobuf"
     headers: dict[str, str] = field(default_factory=dict)
     timeout: float | None = None
-    features: dict[str, Any] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "ObservabilityAdapterConfig":
         adapter_type = str(raw.get("type", "")).strip().lower()
-        known = {"type", "enabled", "endpoint", "protocol", "headers", "timeout", "features"}
+        known = {"type", "enabled", "endpoint", "headers", "timeout"}
         timeout = raw.get("timeout")
         return cls(
             type=adapter_type,
             enabled=_coerce_bool(raw.get("enabled"), True),
             endpoint=_clean_string(raw.get("endpoint")),
-            protocol=_clean_string(raw.get("protocol")) or "http/protobuf",
             headers=_parse_headers(raw.get("headers")),
             timeout=_parse_optional_float(timeout, "timeout"),
-            features=dict(raw.get("features") or {}) if isinstance(raw.get("features"), Mapping) else {},
             options={str(key): value for key, value in raw.items() if key not in known},
         )
 

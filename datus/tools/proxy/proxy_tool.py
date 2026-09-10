@@ -58,6 +58,7 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
             )
             return result
         except asyncio.TimeoutError:
+            tool_ctx._datus_tool_status = "proxy_timeout"
             waited_ms = int((time.monotonic() - started) * 1000)
             logger.warning(
                 f"Proxy tool '{original.name}' timed out after {DEFAULT_RESULT_TIMEOUT}s "

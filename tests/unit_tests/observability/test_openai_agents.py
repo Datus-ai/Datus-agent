@@ -97,8 +97,7 @@ def test_openai_agents_processor_merges_first_agent_span_into_trace_root():
     assert root.attributes["openinference.span.kind"] == "AGENT"
     assert root.attributes["langfuse.trace.name"] == "agent/chat"
     assert root.attributes["langfuse.session.id"] == "session-1"
-    assert child.parent is not None
-    assert child.parent.span_id == root.context.span_id
+    assert child.parent == root.context
 
 
 def test_openai_agents_processor_fails_lazily_when_dependency_missing(monkeypatch):
@@ -193,3 +192,144 @@ def test_openai_agents_processor_marks_returned_tool_failures(monkeypatch):
     assert span_by_name["success"].status.status_code is StatusCode.OK
     assert sdk_span_by_name["success"].error is None
     assert json.loads(span_by_name["success"].attributes["output.value"]) == outputs["success"]
+
+
+@pytest.fixture
+def streamed_generation_output():
+    return [
+        {
+            "object": "response",
+            "id": "__fake_id__",
+            "tools": [],
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "reasoning-1",
+                    "summary": [{"type": "summary_text", "text": "Check sources."}],
+                    "encrypted_content": "opaque-reasoning",
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "Checking ", "annotations": []},
+                        {"type": "output_text", "text": "two sources.", "annotations": []},
+                    ],
+                },
+                {
+                    "type": "function_call",
+                    "id": "__fake_id__",
+                    "call_id": "call-list",
+                    "name": "list_models",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call",
+                    "id": "__fake_id__",
+                    "call_id": "call-glob",
+                    "name": "glob",
+                    "arguments": '{"pattern":"*.yml"}',
+                },
+            ],
+        }
+    ]
+
+
+def test_streamed_response_exports_messages_and_openinference_tool_calls(streamed_generation_output):
+    """Validate the provider-neutral payload before it reaches any OTLP exporter."""
+    from agents.tracing.span_data import GenerationSpanData
+    from openinference.instrumentation import OITracer, TraceConfig
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    processor = DatusOpenInferenceTracingProcessor(OITracer(provider.get_tracer(__name__), config=TraceConfig()))
+    original_output = streamed_generation_output
+    data = GenerationSpanData(
+        input=[{"role": "user", "content": "Inspect available sources."}],
+        output=original_output,
+        model="test-model",
+        usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+    )
+    span = FakeSpan(span_data=data, span_id="span_generation", started_at=_now_iso())
+    try:
+        processor.on_trace_start(FakeTrace())
+        processor.on_span_start(span)
+        span.ended_at = _now_iso()
+        processor.on_span_end(span)
+        processor.on_trace_end(FakeTrace())
+        assert data.output is original_output
+        assert original_output[0]["output"][1]["content"][0]["type"] == "output_text"
+        attrs = next(s.attributes for s in exporter.get_finished_spans() if s.name == "generation")
+        assert attrs["llm.token_count.total"] == 15
+        messages = json.loads(attrs["output.value"])["messages"]
+        assert len(messages) == 1
+        message = messages[0]
+        assert message["role"] == "assistant"
+        assert [part["text"] for part in message["content"] if part["type"] == "text"] == ["Checking ", "two sources."]
+        assert message["content"][0]["encrypted_content"] == "opaque-reasoning"
+        calls = message["tool_calls"]
+        assert [call["id"] for call in calls] == ["call-list", "call-glob"]
+        assert [call["function"]["name"] for call in calls] == ["list_models", "glob"]
+        assert [json.loads(call["function"]["arguments"]) for call in calls] == [{}, {"pattern": "*.yml"}]
+        for index, call in enumerate(calls):
+            prefix = f"llm.output_messages.0.message.tool_calls.{index}.tool_call"
+            assert attrs[f"{prefix}.id"] == call["id"]
+            assert attrs[f"{prefix}.function.name"] == call["function"]["name"]
+            assert attrs[f"{prefix}.function.arguments"] == call["function"]["arguments"]
+        prefix = "llm.output_messages.0.message.contents.0.message_content"
+        assert attrs[f"{prefix}.type"] == "reasoning"
+        assert attrs[f"{prefix}.text"] == "Check sources."
+        assert attrs[f"{prefix}.id"] == "reasoning-1"
+        assert attrs[f"{prefix}.encrypted_content"] == "opaque-reasoning"
+        assert json.loads(attrs["input.value"]) == {
+            "messages": [{"role": "user", "content": "Inspect available sources."}]
+        }
+        assert not any(key.startswith("gen_ai.") for key in attrs)
+    finally:
+        processor.shutdown()
+        provider.shutdown()
+
+
+def test_streamed_response_masks_normalized_tool_calls_and_reasoning(streamed_generation_output):
+    from agents.tracing.span_data import GenerationSpanData
+    from openinference.instrumentation import OITracer, TraceConfig
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    processor = DatusOpenInferenceTracingProcessor(
+        OITracer(provider.get_tracer(__name__), config=TraceConfig(hide_outputs=True))
+    )
+    data = GenerationSpanData(output=streamed_generation_output, model="test-model")
+    span = FakeSpan(span_data=data, span_id="span_generation", started_at=_now_iso())
+    try:
+        processor.on_trace_start(FakeTrace())
+        processor.on_span_start(span)
+        span.ended_at = _now_iso()
+        processor.on_span_end(span)
+        processor.on_trace_end(FakeTrace())
+        assert data.output is streamed_generation_output
+        attrs = next(s.attributes for s in exporter.get_finished_spans() if s.name == "generation")
+        assert not any(key.startswith("llm.output_messages.") for key in attrs)
+        assert "gen_ai.output.messages" not in attrs
+        exported = json.dumps(dict(attrs))
+        assert "call-glob" not in exported
+        assert "opaque-reasoning" not in exported
+        assert "Check sources." not in exported
+    finally:
+        processor.shutdown()
+        provider.shutdown()
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        [{"role": "assistant", "content": "Already a message."}],
+        [{"object": "response", "output": [{"type": "future_provider_item", "value": "preserve"}]}],
+        [{"object": "response", "output": [{"type": "message", "content": "malformed"}]}],
+        None,
+    ],
+)
+def test_generation_normalization_leaves_other_formats_to_upstream(output):
+    assert openai_agents_module._generation_output_messages(output) is None

@@ -465,7 +465,7 @@ class SkillManager:
                 skill_meta = self.registry.get_skill(skill_dir)
                 if skill_meta and skill_meta.location and (skill_meta.location / "SKILL.md").exists():
                     path = skill_meta.location
-                    logger.info(f"Resolved skill name '{skill_dir}' to {path}")
+                    logger.debug(f"Resolved skill name '{skill_dir}' to {path}")
 
             client = self._get_marketplace_client()
             result = client.publish_skill(path, owner=owner)

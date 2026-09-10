@@ -1,5 +1,7 @@
 agent:
   home: ~/.datus
+  logging:
+    level: INFO  # CLI > DATUS_LOG_LEVEL > this value > INFO
   # Storage layout (refactored):
   #   * ~/.datus/sessions/{project_name}/        — sessions sharded per project
   #   * ~/.datus/data/                           — storage-backend root; each

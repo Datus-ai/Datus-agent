@@ -408,7 +408,7 @@ class LiteLLMAdapter:
             Model instance configured for this adapter
         """
         try:
-            from agents.extensions.models.litellm_model import LitellmModel
+            from datus.models.observed_model import ObservedLitellmModel as LitellmModel
         except ImportError as err:
             raise ImportError(
                 "LitellmModel not found. Please install openai-agents with litellm support: "
@@ -457,8 +457,9 @@ class LiteLLMAdapter:
         ``default_headers`` flow into the client so Coding Plan-style
         User-Agent overrides still apply on the Responses path.
         """
-        from agents.models.openai_responses import OpenAIResponsesModel
         from openai import AsyncOpenAI
+
+        from datus.models.observed_model import ObservedResponsesModel as OpenAIResponsesModel
 
         client_kwargs: Dict[str, object] = {"api_key": self.api_key or ""}
         if self.base_url:
