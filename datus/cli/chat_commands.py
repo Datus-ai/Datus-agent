@@ -1556,8 +1556,8 @@ class ChatCommands:
                 if output and isinstance(output, str):
                     output = output.replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
                 return sql, output
-            except json.JSONDecodeError as e:
-                logger.debug(f"DEBUG: JSON decode failed for content: {content[:100]}... Error: {e}")
+            except json.JSONDecodeError:
+                pass
 
             # Pattern 3: Look for SQL code blocks
             sql_pattern = r"```sql\s*(.*?)\s*```"
