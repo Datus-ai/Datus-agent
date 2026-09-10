@@ -262,7 +262,7 @@ def test_streamed_response_exports_messages_and_openinference_tool_calls(streame
         assert original_output[0]["output"][1]["content"][0]["type"] == "output_text"
         attrs = next(s.attributes for s in exporter.get_finished_spans() if s.name == "generation")
         assert attrs["llm.token_count.total"] == 15
-        messages = json.loads(attrs["output.value"])
+        messages = json.loads(attrs["output.value"])["messages"]
         assert len(messages) == 1
         message = messages[0]
         assert message["role"] == "assistant"
@@ -282,19 +282,10 @@ def test_streamed_response_exports_messages_and_openinference_tool_calls(streame
         assert attrs[f"{prefix}.text"] == "Check sources."
         assert attrs[f"{prefix}.id"] == "reasoning-1"
         assert attrs[f"{prefix}.encrypted_content"] == "opaque-reasoning"
-        gen_ai_messages = json.loads(attrs["gen_ai.output.messages"])
-        assert gen_ai_messages == [
-            {
-                "role": "assistant",
-                "parts": [
-                    {"type": "reasoning", "content": "Check sources."},
-                    {"type": "text", "content": "Checking "},
-                    {"type": "text", "content": "two sources."},
-                    {"type": "tool_call", "id": "call-list", "name": "list_models", "arguments": {}},
-                    {"type": "tool_call", "id": "call-glob", "name": "glob", "arguments": {"pattern": "*.yml"}},
-                ],
-            }
-        ]
+        assert json.loads(attrs["input.value"]) == {
+            "messages": [{"role": "user", "content": "Inspect available sources."}]
+        }
+        assert not any(key.startswith("gen_ai.") for key in attrs)
     finally:
         processor.shutdown()
         provider.shutdown()

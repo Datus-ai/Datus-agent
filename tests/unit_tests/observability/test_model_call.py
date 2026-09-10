@@ -53,7 +53,12 @@ def model_endpoint():
             self.send_header("Content-Type", "text/event-stream" if streaming else "application/json")
             self.end_headers()
             tool_called = any(message.get("role") == "tool" for message in request.get("messages", []))
-            invoke = bool(request.get("tools")) and not tool_called and not responses
+            tool_called |= any(item.get("type") == "function_call_output" for item in request.get("input", []))
+            invoke = (
+                bool(request.get("tools"))
+                and not tool_called
+                and (not responses or any(tool.get("name") == "echo" for tool in request["tools"]))
+            )
             message = {"role": "assistant", "content": "done"}
             if invoke:
                 message = {
@@ -84,6 +89,17 @@ def model_endpoint():
                     "tool_choice": "auto",
                     "usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
                 }
+                if invoke:
+                    response["output"] = [
+                        {
+                            "type": "function_call",
+                            "id": "fc-1",
+                            "call_id": "tool-1",
+                            "name": "echo",
+                            "arguments": '{"text":"ok"}',
+                            "status": "completed",
+                        }
+                    ]
                 payload = (
                     {"type": "response.completed", "sequence_number": 0, "response": response}
                     if streaming
@@ -139,10 +155,10 @@ def model_endpoint():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("protocol,expected_execution", [("litellm", ["ok"]), ("responses", [])])
+@pytest.mark.parametrize("protocol", ["litellm", "responses"])
 @pytest.mark.component
 async def test_wire_tools_and_raw_ids_match_each_exported_generation(
-    exported_calls, model_endpoint, protocol, expected_execution, streaming, monkeypatch
+    exported_calls, model_endpoint, protocol, streaming, monkeypatch
 ):
     exporter, _, _ = exported_calls
     endpoint, requests = model_endpoint
@@ -186,7 +202,7 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
     finally:
         await client.close()
     assert result.final_output == "done"
-    assert executed == expected_execution
+    assert executed == ["ok"]
     spans = [span for span in exporter.get_finished_spans() if span.attributes.get("openinference.span.kind") == "LLM"]
     expected_events = [
         {
@@ -195,14 +211,14 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
             "model_call_id": spans[0].attributes["datus.llm.model_call_id"],
             "status": "success",
         }
-        for _ in expected_execution
+        for _ in executed
     ]
     events = [
         {key: entry.kwargs[key] for key in ("tool_call_id", "request_id", "model_call_id", "status")}
         for entry in tool_logger.info.call_args_list
     ]
     assert events == expected_events
-    assert [entry.args[0] for entry in tool_logger.info.call_args_list] == ["tool.finished" for _ in expected_execution]
+    assert [entry.args[0] for entry in tool_logger.info.call_args_list] == ["tool.finished"]
     assert len(spans) == len(requests)
     assert len({span.attributes["datus.llm.model_call_id"] for span in spans}) == len(requests)
     for number, (span, request) in enumerate(zip(spans, requests), 1):
@@ -213,28 +229,25 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
         assert attrs["datus.llm.tools_capture_state"] == "complete"
         assert json.loads(attrs["llm.tools.0.tool.json_schema"]) == request["tools"][0]
         assert attrs["llm.tools.0.tool.name"] == "echo"
-        definition = request["tools"][0]
-        assert json.loads(attrs["gen_ai.tool.definitions"]) == [
-            {**definition.get("function", definition), "type": definition["type"]}
-        ]
+        assert json.loads(attrs["llm.invocation_parameters"])["tools"] == request["tools"]
         assert attrs["datus.llm.request_id_coverage"] == "adapter_visible_response"
-        assert attrs["gen_ai.usage.input_tokens"] == 10
-        assert attrs["gen_ai.usage.output_tokens"] == 2
-        inputs = json.loads(attrs["gen_ai.input.messages"])
-        assert inputs[0] == {"role": "user", "parts": [{"type": "text", "content": "Use echo."}]}
+        assert attrs["llm.token_count.prompt"] == 10
+        assert attrs["llm.token_count.completion"] == 2
+        inputs = json.loads(attrs["input.value"])["messages"]
+        assert inputs[0] == {"role": "user", "content": "Use echo."}
         assert attrs["llm.output_messages.0.message.role"] == "assistant"
-        expected_parts = (
-            [{"type": "tool_call", "id": "tool-1", "name": "echo", "arguments": {"text": "ok"}}]
-            if protocol == "litellm" and number == 1
-            else [{"type": "text", "content": "done"}]
-        )
-        assert json.loads(attrs["gen_ai.output.messages"]) == [{"role": "assistant", "parts": expected_parts}]
-        expected_results = (
-            [{"role": "tool", "parts": [{"type": "tool_call_response", "id": "tool-1", "result": "ok"}]}]
-            if protocol == "litellm" and number == 2
-            else []
-        )
+        (output,) = json.loads(attrs["output.value"])["messages"]
+        assert output["role"] == "assistant"
+        if number == 1:
+            assert output["tool_calls"] == [
+                {"id": "tool-1", "type": "function", "function": {"name": "echo", "arguments": '{"text":"ok"}'}}
+            ]
+        else:
+            content = output["content"]
+            assert (content if isinstance(content, str) else "".join(part["text"] for part in content)) == "done"
+        expected_results = [{"role": "tool", "tool_call_id": "tool-1", "content": "ok"}] if number == 2 else []
         assert [message for message in inputs if message["role"] == "tool"] == expected_results
+        assert not any(key.startswith("gen_ai.") for key in attrs)
 
 
 def test_capture_policy_empty_tools_and_redaction(exported_calls):
@@ -248,6 +261,7 @@ def test_capture_policy_empty_tools_and_redaction(exported_calls):
             tracer.start_as_current_span("generation") as span,
             ModelCall(model="m", model_impl="test", protocol="test") as call,
         ):
+            span.set_attribute("llm.invocation_parameters", json.dumps({"temperature": 0.5, "tools": definitions}))
             call.bind_span(span)
             call.request({"tools": definitions})
     spans = exporter.get_finished_spans()
@@ -256,10 +270,11 @@ def test_capture_policy_empty_tools_and_redaction(exported_calls):
     assert spans[1].attributes["datus.llm.tools_count"] == 1
     assert spans[1].attributes["datus.llm.tools_capture_state"] == "disabled"
     assert not any(key.startswith("llm.tools.") for key in spans[1].attributes)
-    assert "gen_ai.tool.definitions" not in spans[1].attributes
+    assert "tools" not in json.loads(spans[1].attributes.get("llm.invocation_parameters", "{}"))
     assert spans[2].attributes["datus.llm.tools_count"] == 0
     assert spans[2].attributes["datus.llm.tools_capture_state"] == "complete"
-    assert json.loads(spans[2].attributes["gen_ai.tool.definitions"]) == []
+    assert json.loads(spans[2].attributes["llm.invocation_parameters"])["tools"] == []
+    assert [json.loads(s.attributes["llm.invocation_parameters"])["temperature"] for s in spans] == [0.5] * 3
 
 
 @pytest.mark.asyncio
@@ -396,10 +411,10 @@ async def test_tool_definition_capture_is_independent_of_prompt_content(exported
     assert span.attributes["datus.llm.tools_count"] == 1
     if enabled:
         assert json.loads(span.attributes["llm.tools.0.tool.json_schema"])["name"] == "lookup"
-        assert json.loads(span.attributes["gen_ai.tool.definitions"])[0]["name"] == "lookup"
+        assert json.loads(span.attributes["llm.invocation_parameters"])["tools"][0]["name"] == "lookup"
     else:
         assert not any(key.startswith("llm.tools.") for key in span.attributes)
-        assert "gen_ai.tool.definitions" not in span.attributes
+        assert "tools" not in json.loads(span.attributes.get("llm.invocation_parameters", "{}"))
     assert "gen_ai.input.messages" not in span.attributes
     assert "gen_ai.output.messages" not in span.attributes
     assert "PRIVATE-PROMPT-TEXT" not in json.dumps(dict(span.attributes))

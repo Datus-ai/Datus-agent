@@ -453,8 +453,8 @@ class ModelCall:
             state = self._tool_state
             count = 0
             definitions = {}
-            gen_ai_tools = []
-            gen_ai_definition = None
+            captured_tools = []
+            invocation_parameters = None
             size = 0
             if state == "complete" and not manager.content_enabled("tool_definitions"):
                 state = "disabled"
@@ -463,7 +463,7 @@ class ModelCall:
                     redacted = manager.redact(tool)
                     if redacted != tool:
                         state = "redacted"
-                    # Langfuse recognizes `parameters` for flat definitions.
+                    # Use the common `parameters` key for flat definitions.
                     # Preserve Anthropic's original schema and expose its alias
                     # only in telemetry; the provider request is unchanged.
                     if "input_schema" in redacted and "parameters" not in redacted:
@@ -481,10 +481,22 @@ class ModelCall:
                     if isinstance(body.get("description"), str):
                         span.set_attribute(f"{prefix}.description", body["description"])
                     count += 1
-                    gen_ai_tools.append({**body, "type": redacted.get("type", "function")})
-            if gen_ai_tools or state == "complete":
-                gen_ai_definition = json.dumps(gen_ai_tools, ensure_ascii=False, separators=(",", ":"))
-                span.set_attribute("gen_ai.tool.definitions", gen_ai_definition)
+                    captured_tools.append(redacted)
+            attributes = getattr(span, "attributes", None) or {}
+            try:
+                parameters = json.loads(attributes.get("llm.invocation_parameters", "{}"))
+            except (TypeError, ValueError):
+                parameters = {}
+            if not isinstance(parameters, dict):
+                parameters = {}
+            # Both OI representations use the same captured schemas and policy.
+            # Remove any SDK copy, including when definitions are disabled.
+            parameters.pop("tools", None)
+            if captured_tools or state == "complete":
+                parameters["tools"] = captured_tools
+            if parameters or "llm.invocation_parameters" in attributes:
+                invocation_parameters = json.dumps(parameters, ensure_ascii=False, separators=(",", ":"))
+                span.set_attribute("llm.invocation_parameters", invocation_parameters)
             # Write IDs and counts last so bounded OTel attributes retain them.
             span.set_attribute("datus.llm.tools_capture_state", state)
             span.set_attribute("datus.llm.tools_captured_count", count)
@@ -497,7 +509,8 @@ class ModelCall:
             if isinstance(attributes, Mapping) and count:
                 retained = sum(attributes.get(key) == value for key, value in definitions.items())
                 if retained != count or (
-                    gen_ai_definition is not None and attributes.get("gen_ai.tool.definitions") != gen_ai_definition
+                    invocation_parameters is not None
+                    and attributes.get("llm.invocation_parameters") != invocation_parameters
                 ):
                     span.set_attribute("datus.llm.tools_capture_state", "truncated")
                     span.set_attribute("datus.llm.tools_captured_count", retained)

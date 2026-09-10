@@ -306,16 +306,51 @@ class _ModelCallSpan:
         return getattr(self._span, name)
 
     def end(self, *args: Any, **kwargs: Any) -> None:
-        from datus.observability.gen_ai import add_gen_ai_attributes
-
         try:
-            add_gen_ai_attributes(self._span)
+            _wrap_message_values(self._span)
         except Exception as exc:
-            logger.warning("llm.capture_failed", field="gen_ai", error_type=type(exc).__name__)
+            logger.warning("llm.capture_failed", field="messages", error_type=type(exc).__name__)
         if self._call is not None:
             self._call.end_sdk_span(self._span, *args, **kwargs)
         else:
             self._span.end(*args, **kwargs)
+
+
+def _wrap_message_values(span: Any) -> None:
+    """Keep captured messages in a JSON object understood by OI consumers.
+
+    Read only the upstream processor's masked values. The indexed OpenInference
+    attributes remain available for consumers that use individual message fields.
+    """
+    attributes = getattr(span, "attributes", None) or {}
+    for direction in ("input", "output"):
+        key = f"{direction}.value"
+        try:
+            value = json.loads(attributes.get(key, ""))
+        except (TypeError, ValueError):
+            continue
+        if direction == "output" and isinstance(value, dict) and value.get("object") == "response":
+            messages = _generation_output_messages([value])
+            if messages is not None:
+                value = messages
+        if isinstance(value, list):
+            if direction == "input":
+                value = _response_input_messages(value)
+            span.set_attribute(key, json.dumps({"messages": value}, ensure_ascii=False))
+
+
+def _response_input_messages(items: list[Any]) -> list[Any]:
+    """Express Responses call/result history as messages, preserving other items."""
+    messages = []
+    for item in items:
+        if isinstance(item, Mapping) and item.get("type") == "function_call_output":
+            messages.append({"role": "tool", "tool_call_id": item.get("call_id"), "content": item.get("output")})
+        elif isinstance(item, Mapping) and item.get("type") in {"function_call", "reasoning"}:
+            converted = _generation_output_messages([{"object": "response", "output": [item]}])
+            messages.extend(converted if converted is not None else [item])
+        else:
+            messages.append(item)
+    return messages
 
 
 def _tool_failure_message(output: Any) -> str:
