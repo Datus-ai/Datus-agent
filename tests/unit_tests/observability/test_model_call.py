@@ -207,14 +207,14 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
     expected_events = [
         {
             "tool_call_id": "tool-1",
-            "request_id": "provider-raw-1",
+            "remote_correlation_id": "provider-raw-1",
             "model_call_id": spans[0].attributes["datus.llm.model_call_id"],
             "status": "success",
         }
         for _ in executed
     ]
     events = [
-        {key: entry.kwargs[key] for key in ("tool_call_id", "request_id", "model_call_id", "status")}
+        {key: entry.kwargs[key] for key in ("tool_call_id", "remote_correlation_id", "model_call_id", "status")}
         for entry in tool_logger.info.call_args_list
     ]
     assert events == expected_events
@@ -223,14 +223,13 @@ async def test_wire_tools_and_raw_ids_match_each_exported_generation(
     assert len({span.attributes["datus.llm.model_call_id"] for span in spans}) == len(requests)
     for number, (span, request) in enumerate(zip(spans, requests), 1):
         attrs = span.attributes
-        assert attrs["datus.llm.request_id"] == f"provider-raw-{number}"
-        assert attrs["datus.llm.request_id_issuer"] == "unknown"  # A proxy's issuer must not be guessed.
+        assert attrs["datus.llm.remote_correlation_id"] == f"provider-raw-{number}"
         assert attrs["datus.llm.tools_count"] == 1
         assert attrs["datus.llm.tools_capture_state"] == "complete"
         assert json.loads(attrs["llm.tools.0.tool.json_schema"]) == request["tools"][0]
         assert attrs["llm.tools.0.tool.name"] == "echo"
         assert json.loads(attrs["llm.invocation_parameters"])["tools"] == request["tools"]
-        assert attrs["datus.llm.request_id_coverage"] == "adapter_visible_response"
+        assert attrs["datus.llm.remote_correlation_coverage"] == "adapter_visible_response"
         assert attrs["llm.token_count.prompt"] == 10
         assert attrs["llm.token_count.completion"] == 2
         inputs = json.loads(attrs["input.value"])["messages"]
@@ -302,7 +301,7 @@ async def test_cancel_after_headers_and_concurrent_calls_do_not_lose_or_mix_ids(
                     raise asyncio.CancelledError()
 
     await asyncio.gather(invoke("cancelled"), invoke("succeeded"), return_exceptions=True)
-    spans = {span.attributes["datus.llm.request_id"]: span for span in exporter.get_finished_spans()}
+    spans = {span.attributes["datus.llm.remote_correlation_id"]: span for span in exporter.get_finished_spans()}
     assert spans["cancelled"].attributes["datus.llm.status"] == "cancelled"
     assert spans["succeeded"].attributes["datus.llm.status"] == "success"
     assert current_model_call() is None
@@ -312,8 +311,8 @@ def test_no_synthetic_id_and_summary_phase():
     with model_phase("compact_summary"), ModelCall(model="m", model_impl="test", protocol="test") as call:
         call.request({"tools": [], "tool_choice": "none"})
         call.response(SimpleNamespace(id="__fake_id__", _response_headers={}))
-    assert "request_id" not in call.fields
-    assert call.fields["request_id_status"] == "absent"
+    assert "remote_correlation_id" not in call.fields
+    assert call.fields["remote_correlation_status"] == "absent"
     assert call.fields["phase"] == "compact_summary"
 
 

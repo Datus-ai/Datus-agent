@@ -127,6 +127,40 @@ class TestApplyAndRemoveSdkPatches:
         remove_sdk_patches()
         assert litellm.completion is original
 
+    @pytest.mark.asyncio
+    async def test_stream_patch_preserves_only_correlation_headers(self, monkeypatch):
+        from litellm.llms.custom_httpx.llm_http_handler import BaseLLMHTTPHandler
+
+        async def fake_stream_helper(self, *args, **kwargs):
+            return object(), {"Trace-ID": "remote-trace", "Set-Cookie": "secret"}
+
+        monkeypatch.setattr(BaseLLMHTTPHandler, "make_async_call_stream_helper", fake_stream_helper)
+        apply_sdk_patches()
+        logging_obj = SimpleNamespace(model_call_details={})
+        try:
+            await BaseLLMHTTPHandler.make_async_call_stream_helper(object(), logging_obj=logging_obj)
+        finally:
+            remove_sdk_patches()
+
+        assert logging_obj.model_call_details["_datus_response_headers"] == {"trace-id": "remote-trace"}
+        assert "secret" not in str(logging_obj.model_call_details)
+
+    def test_stream_patch_preserves_glm_request_id(self, monkeypatch):
+        from litellm.llms.openai.chat.gpt_transformation import OpenAIChatCompletionStreamingHandler
+
+        transformed = SimpleNamespace()
+        monkeypatch.setattr(OpenAIChatCompletionStreamingHandler, "chunk_parser", lambda self, chunk: transformed)
+        apply_sdk_patches()
+        try:
+            result = OpenAIChatCompletionStreamingHandler.chunk_parser(
+                object(), {"id": "completion-id", "request_id": "glm-request"}
+            )
+        finally:
+            remove_sdk_patches()
+
+        assert result is transformed
+        assert result.request_id == "glm-request"
+
     def test_patched_converter_accepts_session_text_blocks_for_deepseek(self):
         """Regression for DeepSeek session replay: Chat-style text blocks must not raise Unknown content."""
         from agents.models.chatcmpl_converter import Converter

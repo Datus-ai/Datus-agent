@@ -39,7 +39,6 @@ class ObservabilityManager:
         self._initialized = False
         self._adapters: list[ObservabilityAdapter] = []
         self._tracing_config: TracingConfig | None = None
-        self.remote_id_headers: dict[str, dict[str, str]] = {}
 
     @property
     def initialized(self) -> bool:
@@ -56,7 +55,6 @@ class ObservabilityManager:
                 return bool(self._adapters)
 
             tracing = config.tracing if config is not None else None
-            self.remote_id_headers = dict(tracing.remote_id_headers) if tracing is not None else {}
             if tracing is None or not tracing.enabled:
                 return False
             self._tracing_config = tracing

@@ -291,32 +291,15 @@ Datus exports definitions using OpenInference `llm.tools.<index>.tool.json_schem
 
 The shared tracing layer normalizes LiteLLM's streamed response envelope into assistant messages with `tool_calls`. OpenInference `input.value` and `output.value` contain a JSON object with `messages`, alongside the indexed message and usage attributes. Tool schemas in invocation parameters use the same capture policy as indexed definitions. All OTLP adapters receive this OpenInference representation; no backend-specific output conversion or parallel GenAI message/tool representation is added. Langfuse, LangSmith, and Datadog ingestion has been verified with actual SDK tool calls. Langfuse exposes definitions as **Available tools**; Datadog exposes them under `Metadata > tools`. Platform interfaces can organize these fields differently.
 
-`capture.tool_definitions` defaults to the value of `capture_content` (normally true). Set it to false to omit schemas from both OpenInference fields while keeping request IDs, counts, and execution status. Definitions use the tracing redaction policy. `datus.llm.tools_capture_state` distinguishes `complete`, `redacted`, `disabled`, `truncated`, `failed`, and `not_observable`; an observed empty list is complete with count zero. Definitions are selected with a 1 MiB capture budget and a 1,536 indexed-attribute budget per generation, then exported in both OpenInference fields. Attribute eviction or value truncation is marked incomplete, with a separate captured count. Datus configures an OTel span attribute count limit of 4,096; downstream collectors may impose further limits.
+`capture.tool_definitions` defaults to the value of `capture_content` (normally true). Set it to false to omit schemas from both OpenInference fields while keeping correlation IDs, counts, and execution status. Definitions use the tracing redaction policy. `datus.llm.tools_capture_state` distinguishes `complete`, `redacted`, `disabled`, `truncated`, `failed`, and `not_observable`; an observed empty list is complete with count zero. Definitions are selected with a 1 MiB capture budget and a 1,536 indexed-attribute budget per generation, then exported in both OpenInference fields. Attribute eviction or value truncation is marked incomplete, with a separate captured count. Datus configures an OTel span attribute count limit of 4,096; downstream collectors may impose further limits.
 
-The capture boundary is `sdk_request`: after SDK tool filtering/conversion, before provider-specific LiteLLM or gateway transformations. This proves which definitions Datus offered at that boundary. To verify what a remote model received, correlate the returned request ID with that service's request logs. Tracing never enables or disables runtime tools.
+The capture boundary is `sdk_request`: after SDK tool filtering/conversion, before provider-specific LiteLLM or gateway transformations. This proves which definitions Datus offered at that boundary. To verify what a remote model received, correlate the returned remote correlation ID with that service's request logs. Tracing never enables or disables runtime tools.
 
-### Request IDs
+### Remote Correlation IDs
 
-Each generation's metadata contains `datus.llm.request_id`, its `request_id_source`, `request_id_issuer`, and `request_id_status` when observable. Values are copied verbatim from selected response headers or documented SDK properties. Response-body IDs, LiteLLM completion IDs, and generated local IDs are never substituted. A known provider's ID is also stored as `provider_request_id`; unverified endpoints use `remote_request_id` and issuer `unknown`.
+Each generation records an observable model-service identifier as `datus.llm.remote_correlation_id`, with `remote_correlation_source` and `remote_correlation_status`. The normalized field accepts these official API fields: OpenAI `x-request-id`, Anthropic `request-id`, DeepSeek `x-ds-trace-id`, Kimi `msh-request-id`, MiniMax `trace-id`, GLM `request_id`, and Gemini `responseId`. Header names are matched case-insensitively. Values are copied verbatim; generic completion/message IDs and generated local IDs are not substituted.
 
-Streaming IDs are captured as soon as response headers are available, so cancellation or parsing errors after that point retain them. Codex direct text/JSON authentication retries produce separate calls linked by `retry_of`. `request_id_coverage=adapter_visible_response` explicitly excludes invisible SDK and gateway retry attempts. Missing headers/properties remain absent or not observable. Errors record `failure_stage=before_response` or `after_response`; a connection failure does not claim response-header latency. No traceparent headers are injected.
-
-For an endpoint whose response-header semantics are known, configure only the relevant ID headers:
-
-```yaml
-agent:
-  observability:
-    tracing:
-      enabled: true
-      remote_id_headers:
-        gateway.example.com:
-          request_id_header: x-upstream-request-id
-          trace_id_header: x-upstream-trace-id
-          gateway_request_id_header: x-gateway-request-id
-          issuer: provider
-```
-
-This example declares that the selected upstream IDs belong to the provider. Use `issuer: gateway` or `unknown` where appropriate. The mapping reads headers exposed by the active SDK; it does not make otherwise hidden headers available. Only selected IDs are recorded, never the entire header set. Mappings also apply to logs when tracing is disabled. Restart the process after configuration changes.
+Streaming IDs are captured as soon as response headers or the first response chunk expose them, so cancellation or later parsing errors retain them. Codex direct text/JSON authentication retries produce separate calls linked by `retry_of`. `remote_correlation_coverage=adapter_visible_response` explicitly excludes invisible SDK and gateway retry attempts. Missing fields remain `absent` or `not_observable`. Errors record `failure_stage=before_response` or `after_response`; a connection failure does not claim response latency. Datus stores only the recognized value and source, never the full response-header set, and does not inject trace context headers.
 
 ### Lifecycle Logs
 

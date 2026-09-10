@@ -85,10 +85,9 @@ def test_codex_direct_requests_and_auth_retry_keep_each_raw_id(native_exporter, 
     spans = native_exporter.get_finished_spans()
     assert len(spans) == 2
     first, second = [span.attributes for span in spans]
-    assert first["datus.llm.request_id"] == "raw-auth-failure"
+    assert first["datus.llm.remote_correlation_id"] == "raw-auth-failure"
     assert first["datus.llm.status"] == "error"
-    assert second["datus.llm.request_id"] == "raw-success"
-    assert second["datus.llm.provider_request_id"] == "raw-success"
+    assert second["datus.llm.remote_correlation_id"] == "raw-success"
     assert second["datus.llm.retry_of"] == first["datus.llm.model_call_id"]
     assert all(span.attributes["datus.llm.tools_count"] == 0 for span in spans)
     model.oauth_manager.refresh_tokens.assert_called_once()
@@ -139,7 +138,10 @@ async def test_native_claude_generation_and_compact_summary_export_ids(native_ex
     finally:
         client.close()
     spans = native_exporter.get_finished_spans()
-    assert [s.attributes["datus.llm.request_id"] for s in spans] == ["anthropic-raw-1", "anthropic-raw-2"]
+    assert [s.attributes["datus.llm.remote_correlation_id"] for s in spans] == [
+        "anthropic-raw-1",
+        "anthropic-raw-2",
+    ]
     assert [s.attributes["datus.llm.phase"] for s in spans] == ["task", "compact_summary"]
     assert all(s.attributes["datus.llm.tools_count"] == 0 for s in spans)
 
@@ -173,7 +175,7 @@ async def test_native_claude_stream_parse_error_preserves_headers_and_tools(nati
     finally:
         await client.close()
     (span,) = native_exporter.get_finished_spans()
-    assert span.attributes["datus.llm.request_id"] == "raw-stream-error"
+    assert span.attributes["datus.llm.remote_correlation_id"] == "raw-stream-error"
     assert span.attributes["datus.llm.status"] == "error"
     actual = requests[0]["tools"][0]
     assert json.loads(span.attributes["llm.tools.0.tool.json_schema"]) == {

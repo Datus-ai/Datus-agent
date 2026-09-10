@@ -90,7 +90,6 @@ class _FakeObservabilityManager:
         self.span_calls = []
         self.trace_baggage_calls = []
         self.span_obj = None
-        self.remote_id_headers = {}
 
     def content_enabled(self, field_name):
         return field_name in self.enabled_fields
@@ -572,8 +571,8 @@ class TestGenerate:
         assert observability.span_obj.attributes["llm.model_name"] == "gpt-4"
         assert not any(key.startswith("gen_ai.") for key in start_attrs)
         assert not any(key.startswith("gen_ai.") for key in observability.span_obj.attributes)
-        assert observability.span_obj.attributes["datus.llm.request_id"] == "raw-model-request"
-        assert observability.span_obj.attributes["datus.llm.request_id_source"] == "header:x-request-id"
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_id"] == "raw-model-request"
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_source"] == "header:x-request-id"
         assert observability.span_obj.attributes["datus.llm.status"] == "success"
 
     def test_observability_span_omits_content_when_capture_disabled(self):
@@ -598,8 +597,8 @@ class TestGenerate:
         assert observability.span_obj.attributes["llm.model_name"] == "gpt-4"
         assert not any(key.startswith("gen_ai.") for key in start_attrs)
         assert not any(key.startswith("gen_ai.") for key in observability.span_obj.attributes)
-        assert observability.span_obj.attributes["datus.llm.request_id"] == "raw-model-request"
-        assert observability.span_obj.attributes["datus.llm.request_id_status"] == "captured"
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_id"] == "raw-model-request"
+        assert observability.span_obj.attributes["datus.llm.remote_correlation_status"] == "captured"
         assert observability.span_obj.attributes["datus.llm.status"] == "success"
 
 

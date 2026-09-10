@@ -4,7 +4,7 @@
 """Per-call evidence shared by SDK adapters, native models, logs and traces.
 
 The scope covers an adapter-visible request, not hidden SDK/remote retries.
-Provider IDs are copied verbatim from headers or documented SDK fields.
+Remote correlation IDs are copied verbatim from official response fields.
 """
 
 from __future__ import annotations
@@ -32,7 +32,37 @@ _CURRENT_CALL: ContextVar[ModelCall | None] = ContextVar("datus_model_call", def
 _PHASE: ContextVar[str] = ContextVar("datus_model_phase", default="task")
 _MAX_TOOL_BYTES = 1024 * 1024
 _MAX_TOOL_ATTRIBUTES = 1536
-_KNOWN_PROVIDER_HOSTS = {"api.openai.com", "api.anthropic.com", "api.deepseek.com", "chatgpt.com"}
+_PROVIDER_BY_HOST = {
+    "api.openai.com": "openai",
+    "chatgpt.com": "openai",
+    "api.anthropic.com": "anthropic",
+    "api.deepseek.com": "deepseek",
+    "api.moonshot.ai": "kimi",
+    "api.moonshot.cn": "kimi",
+    "api.kimi.com": "kimi",
+    "api.minimaxi.com": "minimax",
+    "open.bigmodel.cn": "glm",
+    "generativelanguage.googleapis.com": "gemini",
+}
+_PROVIDER_BY_MODEL_PREFIX = {
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "deepseek": "deepseek",
+    "gemini": "gemini",
+    "glm": "glm",
+    "kimi": "kimi",
+    "minimax": "minimax",
+    "moonshot": "kimi",
+    "openai": "openai",
+}
+_CORRELATION_HEADERS = {
+    "openai": ("x-request-id",),
+    "anthropic": ("request-id",),
+    "deepseek": ("x-ds-trace-id", "trace-id"),
+    "kimi": ("msh-request-id",),
+    "minimax": ("trace-id",),
+}
+_ALL_CORRELATION_HEADERS = tuple(dict.fromkeys(header for values in _CORRELATION_HEADERS.values() for header in values))
 
 
 @dataclass
@@ -145,10 +175,42 @@ def _tool_name(tool: Mapping[str, Any]) -> str:
     return str(definition.get("name") or tool.get("type") or "unknown")
 
 
+def _provider_name(model: str, host: str | None) -> str | None:
+    if host in _PROVIDER_BY_HOST:
+        return _PROVIDER_BY_HOST[host]
+    lowered = model.lower()
+    prefix = lowered.split("/", 1)[0]
+    if prefix in _PROVIDER_BY_MODEL_PREFIX:
+        return _PROVIDER_BY_MODEL_PREFIX[prefix]
+    for candidate in ("claude", "deepseek", "gemini", "glm", "kimi", "minimax", "moonshot"):
+        if lowered.startswith(candidate):
+            return _PROVIDER_BY_MODEL_PREFIX[candidate]
+    return None
+
+
+def _response_headers(response: Any) -> Mapping[str, Any] | None:
+    empty_headers = None
+    for candidate in (
+        getattr(response, "_response_headers", None),
+        getattr(getattr(response, "response", None), "headers", None),
+        getattr(response, "headers", None),
+    ):
+        if isinstance(candidate, Mapping):
+            if candidate:
+                return candidate
+            empty_headers = candidate
+    logging_obj = getattr(response, "logging_obj", None)
+    details = getattr(logging_obj, "model_call_details", None)
+    if isinstance(details, Mapping) and isinstance(details.get("_datus_response_headers"), Mapping):
+        return details["_datus_response_headers"]
+    return empty_headers
+
+
 class ModelCall:
     def __init__(self, *, model: str, model_impl: str, protocol: str, endpoint: Any = None):
         self.model_call_id = uuid4().hex
         host = urlparse(str(endpoint or "")).hostname
+        self._provider = _provider_name(str(model), host)
         self.fields: dict[str, Any] = {
             "model_call_id": self.model_call_id,
             "model": str(model),
@@ -156,13 +218,9 @@ class ModelCall:
             "protocol": protocol,
             "phase": _PHASE.get(),
             "endpoint_host": host or "provider_default",
-            "request_id_coverage": "adapter_visible_response",
-            "request_id_status": "not_observable",
-            "request_id_issuer": "provider" if host in _KNOWN_PROVIDER_HOSTS else "unknown",
+            "remote_correlation_coverage": "adapter_visible_response",
+            "remote_correlation_status": "not_observable",
         }
-        self._id_headers = dict(get_observability_manager().remote_id_headers.get(host or "", {}))
-        if issuer := self._id_headers.get("issuer"):
-            self.fields["request_id_issuer"] = issuer
         self.tools: list[dict[str, Any]] = []
         self._span = None
         self._start = time.monotonic()
@@ -287,67 +345,57 @@ class ModelCall:
         state.tools[key] = self.model_call_id, definitions, self.fields["tool_choice"]
 
     def response(self, response: Any, *, streaming: bool = False) -> None:
-        """Accept only raw headers and documented ID properties, never body.id."""
+        """Capture provider correlation fields without substituting completion IDs."""
         try:
-            headers = getattr(response, "_response_headers", None)
-            if not isinstance(headers, Mapping):
-                raw = getattr(response, "response", None)
-                headers = getattr(raw, "headers", None)
-            if not isinstance(headers, Mapping):
-                headers = getattr(response, "headers", None)
+            headers = _response_headers(response)
             source = None
-            request_id = None
+            correlation_id = None
             if isinstance(headers, Mapping):
                 normalized = {str(k).lower(): v for k, v in headers.items()}
-                selected = self._id_headers.get("request_id_header")
-                for header in [selected] if selected else ("x-request-id", "request-id"):
+                preferred = _CORRELATION_HEADERS.get(self._provider or "", ())
+                candidates = preferred + tuple(header for header in _ALL_CORRELATION_HEADERS if header not in preferred)
+                for header in candidates:
                     if isinstance(normalized.get(header), str) and normalized[header]:
-                        request_id, source = normalized[header], f"header:{header}"
+                        correlation_id, source = normalized[header], f"header:{header}"
                         break
-                if "request_id" not in self.fields:
-                    self.fields["request_id_status"] = "absent"
-                for option, field_name in (
-                    ("trace_id_header", "provider_trace_id"),
-                    ("gateway_request_id_header", "gateway_request_id"),
-                ):
-                    header = self._id_headers.get(option)
-                    value = normalized.get(header) if header else None
+            sdk_request_id = getattr(response, "_request_id", None)
+            if correlation_id is None and isinstance(sdk_request_id, str) and sdk_request_id:
+                correlation_id, source = sdk_request_id, "sdk:_request_id"
+            response_request_id = getattr(response, "request_id", None)
+            if correlation_id is None and isinstance(response_request_id, str) and response_request_id:
+                correlation_id, source = response_request_id, "field:request_id"
+            if correlation_id is None and self._provider == "gemini":
+                for attr in ("responseId", "response_id", "id"):
+                    value = getattr(response, attr, None)
                     if isinstance(value, str) and value:
-                        if option == "trace_id_header" and self.fields["request_id_issuer"] != "provider":
-                            field_name = "remote_trace_id"
-                        self.fields[field_name] = value
-                        self.fields[f"{field_name}_source"] = f"header:{header}"
-            for attr in ("_request_id", "request_id"):
-                value = getattr(response, attr, None)
-                if (
-                    request_id is None
-                    and not self._id_headers.get("request_id_header")
-                    and isinstance(value, str)
-                    and value
-                ):
-                    request_id, source = value, f"sdk:{attr}"
-            if request_id is not None:
-                self.fields.update(request_id=request_id, request_id_source=source, request_id_status="captured")
-                identity = {"provider": "provider_request_id", "gateway": "gateway_request_id"}.get(
-                    self.fields["request_id_issuer"], "remote_request_id"
+                        correlation_id, source = value, "field:responseId"
+                        break
+            if correlation_id is not None and "remote_correlation_id" not in self.fields:
+                self.fields.update(
+                    remote_correlation_id=correlation_id,
+                    remote_correlation_source=source,
+                    remote_correlation_status="captured",
                 )
-                self.fields[identity] = request_id
+            elif "remote_correlation_id" not in self.fields and (
+                isinstance(headers, Mapping) or not isinstance(response, BaseException)
+            ):
+                self.fields["remote_correlation_status"] = "absent"
             has_response = (
-                not isinstance(response, BaseException) or isinstance(headers, Mapping) or request_id is not None
+                not isinstance(response, BaseException) or isinstance(headers, Mapping) or correlation_id is not None
             )
             if has_response and not self._received:
-                self.fields["response_headers_ms"] = round((time.monotonic() - self._start) * 1000, 2)
+                self.fields["response_received_ms"] = round((time.monotonic() - self._start) * 1000, 2)
                 if streaming:
                     logger.info("llm.response_received", **self._summary())
                 self._received = True
             self.usage(getattr(response, "usage", None))
             self.export_to(self._span)
         except Exception as exc:
-            self.fields["request_id_status"] = "capture_failed"
+            self.fields["remote_correlation_status"] = "capture_failed"
             logger.warning(
                 "llm.capture_failed",
                 model_call_id=self.model_call_id,
-                field="request_id",
+                field="remote_correlation_id",
                 error_type=type(exc).__name__,
             )
 
@@ -381,7 +429,7 @@ class ModelCall:
             if state is not None and isinstance(tool_call_id, str):
                 state.tool_calls[tool_call_id] = {
                     key: self.fields[key]
-                    for key in ("model_call_id", "request_id", "session_id", "run_id")
+                    for key in ("model_call_id", "remote_correlation_id", "session_id", "run_id")
                     if key in self.fields
                 }
         self.fields["tool_calls_count"] = count

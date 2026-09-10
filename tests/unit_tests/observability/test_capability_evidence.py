@@ -12,12 +12,10 @@ from openai import AsyncOpenAI, BadRequestError
 from opentelemetry.sdk.trace import SpanLimits, TracerProvider
 from structlog.testing import capture_logs
 
-from datus.models.observed_model import ObservedResponsesModel
+from datus.models.observed_model import ObservedResponsesModel, _ObservedAsyncStream
 from datus.observability.compaction import compact_started, observe_compaction
-from datus.observability.config import ObservabilityConfig, TracingConfig
 from datus.observability.model_call import ModelCall, capability_event, model_phase, observation_run
 from datus.observability.tool_calls import observe_tool_hooks
-from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def definition(name, description="Test"):
@@ -73,47 +71,66 @@ def test_otel_limits_mark_incomplete_tool_definitions(exported_calls, limits):
         provider.shutdown()
 
 
-def test_explicit_raw_header_mapping_works_with_tracing_disabled(exported_calls):
-    _, manager, _ = exported_calls
-    config = ObservabilityConfig.from_dict(
-        {
-            "tracing": {
-                "enabled": False,
-                "remote_id_headers": {
-                    "private.example": {
-                        "request_id_header": "x-provider-request",
-                        "trace_id_header": "x-provider-trace",
-                        "gateway_request_id_header": "x-gateway-request",
-                        "issuer": "provider",
-                    }
-                },
-            }
-        }
-    )
-    assert manager.configure(config) is False
-    with ModelCall(model="m", model_impl="test", protocol="test", endpoint="https://private.example/v1") as call:
-        call.response(
-            SimpleNamespace(
-                headers={
-                    "x-provider-request": "Raw Value / 1",
-                    "x-provider-trace": "Trace-2",
-                    "x-gateway-request": "Gateway-3",
-                    "authorization": "never-export",
-                },
-                id="wrong-body-id",
-            )
-        )
-    assert call.fields["provider_request_id"] == "Raw Value / 1"
-    assert call.fields["provider_trace_id"] == "Trace-2"
-    assert call.fields["gateway_request_id"] == "Gateway-3"
+@pytest.mark.parametrize(
+    "model,endpoint,header",
+    [
+        ("gpt-5", "https://api.openai.com/v1", "X-Request-ID"),
+        ("claude-sonnet", "https://api.anthropic.com", "Request-ID"),
+        ("deepseek/deepseek-chat", "https://api.deepseek.com", "X-DS-Trace-ID"),
+        ("deepseek/private", "https://private.example", "Trace-ID"),
+        ("moonshot/kimi-k3", "https://api.moonshot.cn/v1", "MSH-Request-ID"),
+        ("openai/MiniMax-M2.7", "https://api.minimaxi.com/v1", "Trace-ID"),
+    ],
+)
+def test_official_provider_correlation_headers_are_normalized(exported_calls, model, endpoint, header):
+    with ModelCall(model=model, model_impl="test", protocol="test", endpoint=endpoint) as call:
+        call.response(SimpleNamespace(headers={header: "Raw Value / 1", "authorization": "never-export"}))
+    assert call.fields["remote_correlation_id"] == "Raw Value / 1"
+    assert call.fields["remote_correlation_source"] == f"header:{header.lower()}"
+    assert call.fields["remote_correlation_status"] == "captured"
     assert "never-export" not in json.dumps(call.fields)
-    with ModelCall(model="m", model_impl="test", protocol="test", endpoint="https://private.example") as missing:
-        missing.response(SimpleNamespace(headers={}, _request_id="wrong-header"))
-    assert "request_id" not in missing.fields
-    assert missing.fields["request_id_status"] == "absent"
-    with pytest.raises(DatusException) as error:
-        TracingConfig.from_dict({"remote_id_headers": {"private.example": {"request_id_header": "authorization"}}})
-    assert error.value.code == ErrorCode.COMMON_FIELD_INVALID
+
+
+def test_official_response_fields_are_captured_without_generic_completion_ids(exported_calls):
+    with ModelCall(
+        model="openai/glm-5", model_impl="test", protocol="test", endpoint="https://open.bigmodel.cn/api/paas/v4"
+    ) as glm:
+        glm.response(SimpleNamespace(request_id="glm-request", id="glm-completion"))
+    with ModelCall(model="gemini/gemini-3", model_impl="test", protocol="test") as gemini:
+        gemini.response(SimpleNamespace(id="gemini-response"))
+    with ModelCall(model="unknown", model_impl="test", protocol="test") as unknown:
+        unknown.response(SimpleNamespace(id="completion-id"))
+
+    assert glm.fields["remote_correlation_id"] == "glm-request"
+    assert glm.fields["remote_correlation_source"] == "field:request_id"
+    assert gemini.fields["remote_correlation_id"] == "gemini-response"
+    assert gemini.fields["remote_correlation_source"] == "field:responseId"
+    assert "remote_correlation_id" not in unknown.fields
+
+
+def test_litellm_preserved_stream_headers_are_read_when_public_headers_are_empty(exported_calls):
+    response = SimpleNamespace(
+        _response_headers={},
+        logging_obj=SimpleNamespace(model_call_details={"_datus_response_headers": {"x-ds-trace-id": "deepseek"}}),
+    )
+    with ModelCall(model="deepseek/deepseek-chat", model_impl="litellm", protocol="chat_completions") as call:
+        call.response(response, streaming=True)
+    assert call.fields["remote_correlation_id"] == "deepseek"
+    assert call.fields["remote_correlation_source"] == "header:x-ds-trace-id"
+
+
+@pytest.mark.asyncio
+async def test_gemini_response_id_is_observed_from_raw_stream_chunks(exported_calls):
+    async def chunks():
+        yield SimpleNamespace(id="gemini-stream-response")
+        yield SimpleNamespace(id=None)
+
+    with ModelCall(model="gemini/gemini-3", model_impl="litellm", protocol="chat_completions") as call:
+        observed = _ObservedAsyncStream(chunks(), call)
+        assert [chunk.id async for chunk in observed] == ["gemini-stream-response", None]
+
+    assert call.fields["remote_correlation_id"] == "gemini-stream-response"
+    assert call.fields["remote_correlation_source"] == "field:responseId"
 
 
 @pytest.mark.asyncio
@@ -143,7 +160,7 @@ async def test_http_error_id_is_added_before_sdk_generation_ends(exported_calls)
         await client.close()
     spans = [s for s in exporter.get_finished_spans() if s.attributes.get("openinference.span.kind") == "LLM"]
     assert len(spans) == 1
-    assert spans[0].attributes["datus.llm.request_id"] == "raw-error-id"
+    assert spans[0].attributes["datus.llm.remote_correlation_id"] == "raw-error-id"
     assert spans[0].attributes["datus.llm.status"] == "error"
 
 
@@ -206,7 +223,7 @@ async def test_tool_hooks_preserve_permissions_failure_status_and_request_identi
         assert state.tool_calls == {}
     finished = [r for r in records if r["event"] == "tool.finished"]
     assert [r["status"] for r in finished] == ["unsuccessful_result", "permission_denied"]
-    assert all(r["request_id"] == "raw-1" and r["model_call_id"] == call.model_call_id for r in finished)
+    assert all(r["remote_correlation_id"] == "raw-1" and r["model_call_id"] == call.model_call_id for r in finished)
     delegate.on_tool_end.assert_awaited_once()
 
 
@@ -231,8 +248,8 @@ def test_connection_failure_does_not_claim_response_headers_arrived():
         with ModelCall(model="m", model_impl="test", protocol="test") as call:
             call.request({"tools": []})
             raise ConnectionError("connection refused")
-    assert "response_headers_ms" not in call.fields
-    assert "request_id" not in call.fields
+    assert "response_received_ms" not in call.fields
+    assert "remote_correlation_id" not in call.fields
     assert call.fields["status"] == "error"
 
 
@@ -253,25 +270,6 @@ def test_host_run_id_is_shared_by_model_and_capability_logs(tmp_path, isolated_l
     assert any("mcp.degraded" in line for line in records)
     assert any("llm.finished" in line for line in records)
     assert all("run_id=host-run" in line.split() for line in records)
-
-
-@pytest.mark.parametrize(
-    "raw,field",
-    [
-        ([], "remote_id_headers"),
-        ({"host": []}, "remote_id_headers.host"),
-        ({"host": {"unsupported": "x-id"}}, "remote_id_headers.host"),
-        ({"host": {"issuer": "invalid"}}, "remote_id_headers.host.issuer"),
-        ({"host": {"request_id_header": ""}}, "remote_id_headers.host.request_id_header"),
-        ({"host": {"request_id_header": None}}, "remote_id_headers.host.request_id_header"),
-        ({"host": {"request_id_header": "   "}}, "remote_id_headers.host.request_id_header"),
-    ],
-)
-def test_invalid_remote_id_headers_report_field_errors(raw, field):
-    with pytest.raises(DatusException) as error:
-        TracingConfig.from_dict({"remote_id_headers": raw})
-    assert error.value.code == ErrorCode.COMMON_FIELD_INVALID
-    assert field in str(error.value)
 
 
 def test_sdk_dataclass_usage_reaches_logs_and_trace(exported_calls):

@@ -291,32 +291,15 @@ Datus 不会在 workflow metadata 中持久化后端特有的 UI URL。使用 `t
 
 共用 tracing 层会将 LiteLLM 的流式 Response 外壳转换为带 `tool_calls` 的 assistant 消息。OpenInference 的 `input.value` 和 `output.value` 使用包含 `messages` 的 JSON 对象，同时保留索引化消息和用量字段。调用参数中的工具定义与索引化定义遵循相同的采集策略。所有 OTLP adapter 收到相同的 OpenInference 数据，不按后端单独转换输出，也不额外增加一套 GenAI 消息和工具数据。已通过实际 SDK 工具调用验证 Langfuse、LangSmith 和 Datadog 的数据接收结果。Langfuse 在 **Available tools** 展示工具定义，Datadog 在 `Metadata > tools` 展示。各平台的页面布局可以不同。
 
-`capture.tool_definitions` 默认跟随 `capture_content`（通常为 true）。关闭后两处 OpenInference 字段均不包含工具定义，仍保留请求 ID、计数和执行状态。工具定义遵循 tracing 脱敏设置。`datus.llm.tools_capture_state` 区分 `complete`、`redacted`、`disabled`、`truncated`、`failed`、`not_observable`；实际空列表为 complete、数量为零。每轮按 1 MiB 的定义采集预算及 1,536 个索引属性的预算选取工具，然后写入两处 OpenInference 字段；检测到 OTel 属性丢弃或字符串截断时标记不完整，并记录独立的成功采集数量。Datus 的 OTel span 属性数量上限为 4,096，下游采集器可能有其他限制。
+`capture.tool_definitions` 默认跟随 `capture_content`（通常为 true）。关闭后两处 OpenInference 字段均不包含工具定义，仍保留远端关联 ID、计数和执行状态。工具定义遵循 tracing 脱敏设置。`datus.llm.tools_capture_state` 区分 `complete`、`redacted`、`disabled`、`truncated`、`failed`、`not_observable`；实际空列表为 complete、数量为零。每轮按 1 MiB 的定义采集预算及 1,536 个索引属性的预算选取工具，然后写入两处 OpenInference 字段；检测到 OTel 属性丢弃或字符串截断时标记不完整，并记录独立的成功采集数量。Datus 的 OTel span 属性数量上限为 4,096，下游采集器可能有其他限制。
 
-采集边界为 `sdk_request`：SDK 完成工具筛选和转换之后，LiteLLM 的供应商适配或网关继续变换之前。它证明 Datus 在此边界提供了哪些工具。验证模型服务最终收到了什么，需要通过返回的 request ID 查询服务端请求日志。Tracing 不影响工具是否可调用。
+采集边界为 `sdk_request`：SDK 完成工具筛选和转换之后，LiteLLM 的供应商适配或网关继续变换之前。它证明 Datus 在此边界提供了哪些工具。验证模型服务最终收到了什么，需要通过返回的远端关联 ID 查询服务端请求日志。Tracing 不影响工具是否可调用。
 
-### 模型服务请求 ID
+### 模型服务关联 ID
 
-每个 generation 的 metadata 保存可观测到的 `datus.llm.request_id`，以及 `request_id_source`、`request_id_issuer`、`request_id_status`。ID 原样取自选定响应头或 SDK 文档字段，不使用响应 body ID、LiteLLM completion ID 或本地生成 ID 兜底。确认属于供应商的 ID 同时写入 `provider_request_id`；未确认的地址使用 `remote_request_id` 和 issuer `unknown`。
+每个 generation 将可观测到的模型服务标识统一记录为 `datus.llm.remote_correlation_id`，并附带 `remote_correlation_source` 和 `remote_correlation_status`。当前识别这些官方 API 字段：OpenAI `x-request-id`、Anthropic `request-id`、DeepSeek `x-ds-trace-id`、Kimi `msh-request-id`、MiniMax `trace-id`、GLM `request_id`、Gemini `responseId`。响应头名称不区分大小写。字段值原样保存，不使用通用 completion/message ID 或本地生成 ID 兜底。
 
-流式响应在收到 headers 后立即记录 ID，因此后续取消或解析失败仍可关联请求。Codex 直接文本/JSON 调用在认证刷新重试时生成独立调用记录，并通过 `retry_of` 关联。`request_id_coverage=adapter_visible_response` 明确不包含 SDK 或网关内部不可见的重试；拿不到原始值时保留 absent 或 not_observable。错误标记 `failure_stage=before_response` 或 `after_response`，建连失败不会记录响应头耗时。本功能不注入 traceparent 请求头。
-
-已确认自管端点响应头语义时，可配置：
-
-```yaml
-agent:
-  observability:
-    tracing:
-      enabled: true
-      remote_id_headers:
-        gateway.example.com:
-          request_id_header: x-upstream-request-id
-          trace_id_header: x-upstream-trace-id
-          gateway_request_id_header: x-gateway-request-id
-          issuer: provider
-```
-
-示例声明选中的上游 ID 属于供应商；按实际语义可改为 `gateway` 或 `unknown`。映射仅读取当前 SDK 暴露的 headers，不能取回 SDK 未暴露的响应头。只记录选定 ID，不打印整份 headers。关闭 tracing 时映射仍用于日志。配置变更后重启进程。
+流式响应在 headers 或首个响应 chunk 暴露字段时立即记录，因此后续取消或解析失败仍可关联请求。Codex 直接文本/JSON 调用在认证刷新重试时生成独立调用记录，并通过 `retry_of` 关联。`remote_correlation_coverage=adapter_visible_response` 明确不包含 SDK 或网关内部不可见的重试；拿不到原始字段时保留 absent 或 not_observable。错误标记 `failure_stage=before_response` 或 `after_response`，建连失败不会记录响应耗时。Datus 只保存识别出的字段值和来源，不保存整份响应头，也不注入 trace context header。
 
 ### 日志事件
 

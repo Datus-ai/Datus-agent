@@ -16,6 +16,26 @@ from agents.util._json import _to_dump_compatible
 from datus.observability.model_call import ModelCall, current_model_call
 
 
+class _ObservedAsyncStream:
+    """Observe provider metadata on each raw LiteLLM chunk without changing it."""
+
+    def __init__(self, stream: Any, call: ModelCall):
+        self._stream = stream
+        self._iterator = stream.__aiter__()
+        self._call = call
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        chunk = await self._iterator.__anext__()
+        self._call.response(chunk)
+        return chunk
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+
 class _ObservedModel:
     _datus_protocol = "chat_completions"
     _datus_impl = "litellm"
@@ -85,7 +105,12 @@ class ObservedLitellmModel(_ObservedModel, LitellmModel):
             system_instructions, input, model_settings, tools, output_schema, handoffs, span, tracing, *args, **kwargs
         )
         if call:
-            call.response(result[1] if isinstance(result, tuple) else result, streaming=isinstance(result, tuple))
+            if isinstance(result, tuple):
+                response, stream = result
+                call.response(stream, streaming=True)
+                result = response, _ObservedAsyncStream(stream, call)
+            else:
+                call.response(result)
         return result
 
     def _tools_for_observation(self, definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -109,7 +134,7 @@ class ObservedResponsesModel(_ObservedModel, OpenAIResponsesModel):
     async def _fetch_response(self, *args, **kwargs):
         result = await super()._fetch_response(*args, **kwargs)
         if call := current_model_call():
-            # SDK 0.13.4's stream wrapper exposes request_id immediately after
-            # headers, before any SSE events or terminal response is consumed.
+            # SDK 0.13.4's stream wrapper exposes correlation headers before
+            # any SSE events or terminal response is consumed.
             call.response(result, streaming=hasattr(result, "__aiter__"))
         return result

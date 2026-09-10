@@ -99,7 +99,6 @@ class TracingConfig:
     redact: RedactConfig = field(default_factory=RedactConfig)
     adapters: list[ObservabilityAdapterConfig] = field(default_factory=list)
     explicit: bool = False
-    remote_id_headers: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> "TracingConfig":
@@ -126,7 +125,6 @@ class TracingConfig:
             redact=RedactConfig.from_dict(raw.get("redact")),
             adapters=adapters,
             explicit=True,
-            remote_id_headers=_parse_remote_id_headers(raw.get("remote_id_headers")),
         )
 
 
@@ -155,56 +153,6 @@ def _coerce_bool(value: Any, default: bool) -> bool:
         if normalized in {"0", "false", "no", "off", ""}:
             return False
     return bool(value)
-
-
-def _parse_remote_id_headers(raw: Any) -> dict[str, dict[str, str]]:
-    if raw is None:
-        return {}
-    if not isinstance(raw, Mapping):
-        raise DatusException(
-            ErrorCode.COMMON_FIELD_INVALID,
-            message_args={
-                "field_name": "remote_id_headers",
-                "except_values": "host-to-header mapping",
-                "your_value": raw,
-            },
-        )
-    parsed = {}
-    allowed = {"request_id_header", "trace_id_header", "gateway_request_id_header", "issuer"}
-    for host, mapping in raw.items():
-        if not isinstance(mapping, Mapping) or set(mapping) - allowed:
-            raise DatusException(
-                ErrorCode.COMMON_FIELD_INVALID,
-                message_args={
-                    "field_name": f"remote_id_headers.{host}",
-                    "except_values": sorted(allowed),
-                    "your_value": mapping,
-                },
-            )
-        values = {str(k): (_clean_string(v) or "").lower() for k, v in mapping.items()}
-        if values.get("issuer", "unknown") not in {"provider", "gateway", "unknown"}:
-            raise DatusException(
-                ErrorCode.COMMON_FIELD_INVALID,
-                message_args={
-                    "field_name": f"remote_id_headers.{host}.issuer",
-                    "except_values": "provider, gateway, unknown",
-                    "your_value": values["issuer"],
-                },
-            )
-        for key, header in values.items():
-            if key != "issuer" and (
-                not header or any(term in header for term in ("authorization", "cookie", "api-key", "token", "secret"))
-            ):
-                raise DatusException(
-                    ErrorCode.COMMON_FIELD_INVALID,
-                    message_args={
-                        "field_name": f"remote_id_headers.{host}.{key}",
-                        "except_values": "non-credential response header",
-                        "your_value": header,
-                    },
-                )
-        parsed[str(host).lower()] = values
-    return parsed
 
 
 def _clean_string(value: Any) -> str | None:
