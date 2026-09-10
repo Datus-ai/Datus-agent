@@ -638,6 +638,7 @@ class TestAvailableTools:
         names = [t.name for t in tools]
         assert set(names) == {
             "read_file",
+            "read_image",
             "write_file",
             "edit_file",
             "delete_file",
@@ -647,7 +648,7 @@ class TestAvailableTools:
 
     def test_available_tools_count(self, tmp_path):
         tool = _make_tool(str(tmp_path))
-        assert len(tool.available_tools()) == 6
+        assert len(tool.available_tools()) == 7
 
 
 # ---------------------------------------------------------------------------

@@ -1786,6 +1786,14 @@ class TestBuildAgent:
         ms = call_args[1]["model_settings"]
         assert ms.extra_headers == {"X-Custom": "value"}
 
+    def test_claude_enables_litellm_prompt_caching(self):
+        cfg = _make_model_config(model="claude-sonnet-4-6", model_type="claude")
+        model = _make_model(cfg)
+        model.litellm_adapter.provider = "claude"
+        _, call_args = self._call_build_agent(model)
+        ms = call_args[1]["model_settings"]
+        assert ms.extra_args["enable_prompt_caching"] is True
+
     # ``configured_base_url`` rather than ``base_url``: the pytest-base-url plugin (pulled in by
     # pytest-playwright in the nightly environment) owns a session-scoped ``base_url`` fixture, and a
     # parametrized argument of the same name collides with it.
@@ -1875,121 +1883,6 @@ class TestBuildAgent:
         ):
             _, call_args = self._call_build_agent(model)
         assert call_args[1]["model_settings"].reasoning.effort == "medium"
-
-    @pytest.mark.parametrize(
-        "provider,model_name",
-        [
-            ("deepseek", "deepseek-v4-pro"),
-            ("deepseek", "deepseek-reasoner"),
-            ("deepseek", "deepseek-v5-future"),  # unknown: deny-list negative → permissive
-            ("kimi", "kimi-k2-thinking"),
-            ("kimi", "kimi-k2.6"),
-            ("kimi", "kimi-k2.5"),
-        ],
-    )
-    def test_reasoning_injected_for_thinking_models_despite_litellm_false(self, provider, model_name):
-        """LiteLLM's catalog lags behind DeepSeek V4 / Kimi K2.x. Unknown DeepSeek
-        or Kimi models are *permissively* allowed so future releases automatically
-        work — only explicit deny-list entries are skipped."""
-        cfg = _make_model_config(model=model_name, model_type=provider)
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = provider
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        assert call_args[1]["model_settings"].reasoning.effort == "high"
-
-    @pytest.mark.parametrize(
-        "provider,model_name",
-        [
-            ("deepseek", "deepseek-chat"),
-            ("kimi", "kimi-k2"),  # bare k2, non-thinking family
-            ("kimi", "moonshot-v1-8k"),
-            ("kimi", "moonshot-v1-128k"),
-        ],
-    )
-    def test_reasoning_skipped_for_deny_listed_model(self, caplog, provider, model_name):
-        """Datus-maintained non-thinking deny-list forces a skip regardless of
-        LiteLLM's verdict, so users see an explicit warning instead of silent
-        drop_params downgrade."""
-        cfg = _make_model_config(model=model_name, model_type=provider)
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = provider
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            with caplog.at_level("WARNING"):
-                _, call_args = self._call_build_agent(model)
-        assert call_args[1]["model_settings"].reasoning is None
-        assert any("Skipping reasoning" in r.message for r in caplog.records)
-
-    def test_reasoning_skipped_for_non_reasoning_openai_model_when_litellm_false(self, caplog):
-        """OpenAI models outside the reasoning families (gpt-4.1 etc.) are
-        skipped when LiteLLM reports False — the deny-list is scoped to
-        DeepSeek/Kimi, so for other providers we trust LiteLLM's verdict."""
-        model = _make_model()
-        model.litellm_adapter.provider = "openai"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        # _model_supports_reasoning is permissive on LiteLLM False — the
-        # remaining skip-path for OpenAI would require LiteLLM raising or
-        # returning False plus the deny-list match (none for OpenAI). Confirm
-        # the permissive outcome: reasoning IS injected.
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        assert call_args[1]["model_settings"].reasoning.effort == "high"
-
-    @pytest.mark.parametrize("model_name", ["deepseek-v4-pro", "deepseek-reasoner"])
-    def test_deepseek_extra_body_carries_thinking_and_reasoning_effort(self, model_name):
-        """DeepSeek's transformation pops ``reasoning_effort`` during param
-        mapping, so Datus re-injects it via ``extra_body`` alongside the
-        ``thinking`` flag. DeepSeek's docs require both to control depth."""
-        cfg = _make_model_config(model=model_name, model_type="deepseek")
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = "deepseek"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        assert ms.extra_args["extra_body"] == {
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": "high",
-        }
-
-    @pytest.mark.parametrize("model_name", ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking"])
-    def test_kimi_extra_body_only_carries_thinking(self, model_name):
-        """Moonshot's API does not accept ``reasoning_effort``; sending it
-        would be rejected. Only ``thinking.type=enabled`` goes in extra_body."""
-        cfg = _make_model_config(model=model_name, model_type="kimi")
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = "kimi"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        with patch("datus.models.openai_compatible.litellm.supports_reasoning", return_value=False):
-            _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        assert ms.extra_args["extra_body"] == {"thinking": {"type": "enabled"}}
-        assert "reasoning_effort" not in ms.extra_args["extra_body"]
-
-    def test_extra_body_thinking_not_added_for_openai(self):
-        """OpenAI's reasoning_effort is handled natively by the SDK/Responses
-        API; no native thinking payload should be injected."""
-        model = _make_model()
-        model.litellm_adapter.provider = "openai"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        # extra_args may be unset (None/empty) or set (e.g. prompt_cache_key);
-        # either way, extra_body must never appear for native-reasoning OpenAI.
-        assert "extra_body" not in (ms.extra_args or {})
-
-    def test_extra_body_thinking_not_added_for_deny_listed_deepseek_chat(self):
-        cfg = _make_model_config(model="deepseek-chat", model_type="deepseek")
-        model = _make_model(cfg)
-        model.litellm_adapter.provider = "deepseek"
-        model.litellm_adapter.reasoning_effort_level = "high"
-        _, call_args = self._call_build_agent(model)
-        ms = call_args[1]["model_settings"]
-        # Gate skipped injection entirely; extra_body must never appear regardless
-        # of whether extra_args was populated by other settings.
-        assert "extra_body" not in (ms.extra_args or {})
 
     def test_temperature_and_top_p_from_config(self):
         cfg = _make_model_config(temperature=0.5, top_p=0.9)

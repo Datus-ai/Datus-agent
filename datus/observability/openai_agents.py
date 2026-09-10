@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from datus.observability.manager import get_observability_manager
 from datus.schemas.tool_summary import detect_tool_failure
+from datus.utils.image_content import redact_image_payloads
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -99,6 +100,25 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
                 call.bind_span(self._otel_spans.get(span.span_id))
 
     def on_span_end(self, span: Any) -> None:
+        data = span.span_data
+        originals: dict[str, Any] = {}
+        if isinstance(
+            data, (_oi_processor.ResponseSpanData, _oi_processor.GenerationSpanData, _oi_processor.FunctionSpanData)
+        ):
+            fields = ("input",) if isinstance(data, _oi_processor.ResponseSpanData) else ("input", "output")
+            for field in fields:
+                original = getattr(data, field)
+                redacted = redact_image_payloads(original)
+                if redacted is not original:
+                    originals[field] = original
+                    setattr(data, field, redacted)
+        try:
+            self._on_span_end_redacted(span)
+        finally:
+            for field, original in originals.items():
+                setattr(data, field, original)
+
+    def _on_span_end_redacted(self, span: Any) -> None:
         if span.span_id not in self._merged_root_agent_span_ids:
             self._set_datus_span_attributes(span)
             data = span.span_data

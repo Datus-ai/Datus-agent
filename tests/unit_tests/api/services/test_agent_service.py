@@ -282,6 +282,7 @@ class TestConstants:
         # filters out BaseTool framework methods.
         expected_runtime_methods = {
             "read_file",
+            "read_image",
             "write_file",
             "edit_file",
             "delete_file",

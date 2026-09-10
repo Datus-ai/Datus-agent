@@ -51,6 +51,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
         return [
             trans_to_function_tool(self.read_file),
+            trans_to_function_tool(self.read_image),
             trans_to_function_tool(self.upsert_osi_metrics),
             trans_to_function_tool(self.delete_osi_metrics),
             trans_to_function_tool(self.upsert_osi_datasets),
@@ -678,6 +679,7 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
 
         return [
             trans_to_function_tool(self.read_file),
+            trans_to_function_tool(self.read_image),
             trans_to_function_tool(self.edit_file),
             trans_to_function_tool(self.upsert_osi_datasets),
             trans_to_function_tool(self.delete_osi_datasets),
@@ -789,6 +791,7 @@ class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
 
         return [
             trans_to_function_tool(self.read_file),
+            trans_to_function_tool(self.read_image),
             trans_to_function_tool(self.edit_file),
             trans_to_function_tool(self.upsert_osi_datasets),
             trans_to_function_tool(self.delete_osi_datasets),

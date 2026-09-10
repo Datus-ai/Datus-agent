@@ -1917,10 +1917,12 @@ class AgenticNode(Node):
                 return None
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = archive.dir / f"history_{ts}.jsonl"
+        from datus.utils.image_content import replace_images
+
         try:
             with path.open("w", encoding="utf-8") as f:
                 for it in items:
-                    f.write(json.dumps(it, ensure_ascii=False, default=str) + "\n")
+                    f.write(json.dumps(replace_images(it), ensure_ascii=False, default=str) + "\n")
         except OSError as exc:
             logger.warning("history JSONL dump failed: %s", exc)
             return None

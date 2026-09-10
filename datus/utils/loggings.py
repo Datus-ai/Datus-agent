@@ -359,8 +359,9 @@ def _redact_log_event(logger, method_name, event_dict):
     # Independent of tracing being configured or enabled.
     from datus.observability.config import RedactConfig
     from datus.observability.privacy import redact_value
+    from datus.utils.image_content import redact_image_payloads
 
-    return redact_value(event_dict, _log_redact_config or RedactConfig())
+    return redact_value(redact_image_payloads(event_dict), _log_redact_config or RedactConfig())
 
 
 def _log_formatter(*, colors: bool = False) -> logging.Formatter:

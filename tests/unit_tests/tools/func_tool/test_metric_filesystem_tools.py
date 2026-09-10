@@ -75,6 +75,7 @@ class TestMetricFilesystemFuncTool:
 
         assert tool_names == {
             "read_file",
+            "read_image",
             "upsert_osi_metrics",
             "delete_osi_metrics",
             "upsert_osi_datasets",
@@ -219,6 +220,7 @@ class TestMetricFilesystemFuncTool:
         assert state.planned_dataset_names == ["retention_query_dataset"]
         assert set(tool.name for tool in tool.available_tools()) == {
             "read_file",
+            "read_image",
             "edit_file",
             "upsert_osi_datasets",
             "delete_osi_datasets",

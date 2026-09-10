@@ -21,7 +21,7 @@ providers:
     deterministic:
       nodeids:
         - tests/unit_tests/models/test_reasoning_replay.py::TestShouldReplayReasoningContent
-        - tests/unit_tests/models/test_reasoning_replay.py::TestEnsureReasoningContentPlaceholders
+        - tests/unit_tests/models/test_image_model_roundtrip.py::test_deepseek_http_request_delivers_image_and_reasoning
     live_provider_health:
       mode: warn-only
       nodeids:

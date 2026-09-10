@@ -235,7 +235,7 @@ def trans_to_function_tool(
     # The invoker MUST be an 'async' function.
     # We define a closure to correctly capture the 'bound_method' for each iteration.
     def create_async_invoker(method_to_call: Callable) -> Callable:
-        async def final_invoker(tool_ctx, args_str) -> dict:
+        async def final_invoker(tool_ctx, args_str) -> Any:
             """
             This is an async wrapper for tool methods.
             The agent framework will 'await' this coroutine.
