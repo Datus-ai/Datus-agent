@@ -144,7 +144,7 @@ class SqlSummaryAgenticNode(AgenticNode):
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
-        logger.debug(
+        logger.info(
             f"Setup {len(self.tools)} tools for {self.configured_node_name}: {[tool.name for tool in self.tools]}"
         )
 

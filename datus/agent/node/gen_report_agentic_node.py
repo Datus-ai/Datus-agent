@@ -153,7 +153,7 @@ class GenReportAgenticNode(AgenticNode):
         if self.sub_agent_task_tool:
             self.tools.extend(self.sub_agent_task_tool.available_tools())
 
-        logger.debug(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
+        logger.info(f"Setup {len(self.tools)} tools: {[tool.name for tool in self.tools]}")
 
     def _setup_tool_pattern(self, pattern: str):
         """

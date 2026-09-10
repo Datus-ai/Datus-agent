@@ -143,7 +143,7 @@ class SkillCreatorAgenticNode(AgenticNode):
         try:
             self.filesystem_func_tool = self._make_filesystem_tool()
             self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.debug(f"Setup filesystem tools rooted at: {self.filesystem_func_tool.root_path}")
+            logger.info(f"Setup filesystem tools rooted at: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.warning(f"Failed to setup filesystem tools, continuing without: {e}")
 
