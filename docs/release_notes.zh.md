@@ -2,6 +2,31 @@
 
 ## 0.4
 
+### 0.4.1
+
+**新功能**
+
+- **接入 TiDB、BigQuery、MaxCompute 和 GaussDB(DWS)** - 扩展数据库支持，数据源安装界面新增 `datus-bigquery`、`datus-maxcompute` 和 `datus-dws`。配置文档补充认证与命名空间说明，包括 BigQuery 的 JSON 对象凭据和 DWS 的 TLS 配置。每轮对话都会注入当前适配器提供的 SQL 兼容性信息，DWS 兼容模式也会随数据源切换更新。[#1377](https://github.com/Datus-ai/Datus-agent/pull/1377) [#1380](https://github.com/Datus-ai/Datus-agent/pull/1380) [#1383](https://github.com/Datus-ai/Datus-agent/pull/1383) [#1385](https://github.com/Datus-ai/Datus-agent/pull/1385) [#1389](https://github.com/Datus-ai/Datus-agent/pull/1389) [数据库适配器文档](https://docs.datus.ai/zh/0.4/adapters/db_adapters/)
+
+**增强**
+
+- **Dosi 建模与参数化指标** - 语义建模现在读取引擎提供的建模规范，`query_metrics` 支持标量和列表参数。发布时复用已校验的编译结果，只同步本次变更的指标，保留未修改的目录条目，并支持删除失败时回滚。[#1392](https://github.com/Datus-ai/Datus-agent/pull/1392) [#1393](https://github.com/Datus-ai/Datus-agent/pull/1393)
+- **根据 DDL 声明语义模型的键** - 新增键声明只依据源表 DDL，保留复合键的完整列集合及顺序，不再反复扫描整表检查空值和重复值来推断键。缺少可用键时，仍会生成可独立使用的模型和指标，并说明省略的关系或依赖指标。精简后的源表检查结果仍保留原始 DDL，已有会话也会刷新缓存中的建模指令。此流程替代了此前的键扫描校验路径及其标识符引用处理。[#1404](https://github.com/Datus-ai/Datus-agent/pull/1404) [#1397](https://github.com/Datus-ai/Datus-agent/pull/1397)
+- **Flink、Kubernetes 与 EKS 插件指南** - 新增中英文使用文档，介绍三个插件的安装，以及从 EKS、Kubernetes 到 Flink Operator 的操作流程。[#1359](https://github.com/Datus-ai/Datus-agent/pull/1359)
+
+**Bug 修复**
+
+- **模型 SDK 与推理记录回放** - `openai-agents` 升级至 0.13.4。DeepSeek 和 Kimi 对话按轮次回放各自的推理内容，避免把一轮的推理复制到其他轮次；Kimi 默认模型改为 `kimi-k3`。[#1400](https://github.com/Datus-ai/Datus-agent/pull/1400)
+- **上下文压缩结果正确用于模型请求** - 自动压缩会在首次及后续模型调用前检查完整输入，后续请求使用压缩后的上下文。会话历史以原子操作保存，同时保留当前用户请求、运行中追加的消息、用量记录和轮次编号。重写历史后，旧的上下文占用数据立即失效，由下一次模型响应重新测量，避免 CLI 百分比停留在旧值或依据旧数据反复压缩。[#1394](https://github.com/Datus-ai/Datus-agent/pull/1394) [#1406](https://github.com/Datus-ai/Datus-agent/pull/1406)
+- **会话标题与计划模式持久化** - 会话压缩后仍保留原始标题，后续消息不会意外改名；复制或回退会话也会保留标题，执行 `/clear` 后则由下一条用户消息重新命名。计划模式设置与实测上下文用量统一存入会话数据库，删除会话时也会清理旧状态文件。复制和回退只继承标题，不沿用源会话的计划模式或上下文用量状态。[#1407](https://github.com/Datus-ai/Datus-agent/pull/1407)
+- **Claude 与 Codex 运行中追加消息** - 在原生 Claude 和 Codex 流式执行过程中输入的消息，现在会进入下一次模型调用，不再一直排队到整次运行结束。[#1390](https://github.com/Datus-ai/Datus-agent/pull/1390)
+- **CLI 启动不再被适配器安装拖住** - 修复缺少数据库适配器时连接超时失效、并发重复安装的问题。启动时展示安装状态和可操作的错误提示，上下文加载失败也会按实际原因分类。[#1369](https://github.com/Datus-ai/Datus-agent/pull/1369)
+
+**升级说明**
+
+- **移除旧工作流与节点** - 使用 `reflection`、`dynamic`、`metric_to_sql` 工作流，或 `reasoning`、`reflect`、`search_metrics`、`date_parser`、`doc_search` 节点的配置及检查点，需要迁移到 `fixed` / `gen_sql_agentic` 和对应函数工具。日期解析语言配置改为 `agent.date_parsing.language`。[#1381](https://github.com/Datus-ai/Datus-agent/pull/1381)
+- **语义建模依赖与工具调整** - 请使用提供建模规范和已编译校验结果的 Dosi 适配器版本；CI 依赖现要求 `datus-semantic-dosi>=0.1.9`，锁文件中的适配器与引擎均为 0.1.9。`validate_semantic_key_candidates` 工具，以及旧的 `osi-semantic-authoring`、`semantic-sql-history-profiler` 技能已移除；自定义工具或技能列表应调整为当前 `semantic_modeling` 流程。[#1393](https://github.com/Datus-ai/Datus-agent/pull/1393) [#1404](https://github.com/Datus-ai/Datus-agent/pull/1404)
+
 ### 0.4.0
 
 **新功能**
