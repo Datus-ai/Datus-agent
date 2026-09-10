@@ -682,16 +682,17 @@ class OpenAICompatibleModel(LLMBaseModel):
             observability = get_observability_manager()
             span_attributes = {
                 "datus.operation": "llm.generate",
-                "gen_ai.request.model": self.model_name,
-                "gen_ai.request.provider": str(routed_provider) if routed_provider else None,
-                "gen_ai.system": str(routed_provider) if routed_provider else None,
                 "datus.model.litellm_name": params["model"],
+                "openinference.span.kind": "LLM",
+                "llm.model_name": self.model_name,
             }
+            if routed_provider:
+                span_attributes["llm.provider"] = str(routed_provider)
+                span_attributes["llm.system"] = str(routed_provider)
             if observability.content_enabled("prompts"):
                 span_attributes["input.value"] = json.dumps(observability.redact(messages), default=str)
                 span_attributes["input.mime_type"] = "application/json"
 
-            span_attributes.update({"openinference.span.kind": "LLM", "llm.model_name": self.model_name})
             with (
                 observability.span("llm.generate", span_attributes) as span,
                 ModelCall(
@@ -736,11 +737,11 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                 finish_reason = response.choices[0].finish_reason if response.choices else None
                 response_model = response.model if hasattr(response, "model") else self.model_name
-                _set_observability_span_attribute(span, "gen_ai.response.finish_reason", finish_reason)
-                _set_observability_span_attribute(span, "gen_ai.response.model", response_model)
-                _set_observability_span_attribute(span, "gen_ai.usage.input_tokens", usage_info.get("input_tokens"))
-                _set_observability_span_attribute(span, "gen_ai.usage.output_tokens", usage_info.get("output_tokens"))
-                _set_observability_span_attribute(span, "gen_ai.usage.total_tokens", usage_info.get("total_tokens"))
+                _set_observability_span_attribute(span, "llm.finish_reason", finish_reason)
+                _set_observability_span_attribute(span, "llm.model_name", response_model)
+                _set_observability_span_attribute(span, "llm.token_count.prompt", usage_info.get("input_tokens"))
+                _set_observability_span_attribute(span, "llm.token_count.completion", usage_info.get("output_tokens"))
+                _set_observability_span_attribute(span, "llm.token_count.total", usage_info.get("total_tokens"))
                 if observability.content_enabled("responses"):
                     _set_observability_span_attribute(span, "output.value", to_str(observability.redact(final_content)))
                     _set_observability_span_attribute(span, "output.mime_type", "text/plain")

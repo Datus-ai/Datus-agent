@@ -263,6 +263,8 @@ def test_host_run_id_is_shared_by_model_and_capability_logs(tmp_path, isolated_l
         ({"host": {"unsupported": "x-id"}}, "remote_id_headers.host"),
         ({"host": {"issuer": "invalid"}}, "remote_id_headers.host.issuer"),
         ({"host": {"request_id_header": ""}}, "remote_id_headers.host.request_id_header"),
+        ({"host": {"request_id_header": None}}, "remote_id_headers.host.request_id_header"),
+        ({"host": {"request_id_header": "   "}}, "remote_id_headers.host.request_id_header"),
     ],
 )
 def test_invalid_remote_id_headers_report_field_errors(raw, field):

@@ -181,7 +181,7 @@ def _parse_remote_id_headers(raw: Any) -> dict[str, dict[str, str]]:
                     "your_value": mapping,
                 },
             )
-        values = {str(k): str(v).lower() for k, v in mapping.items()}
+        values = {str(k): (_clean_string(v) or "").lower() for k, v in mapping.items()}
         if values.get("issuer", "unknown") not in {"provider", "gateway", "unknown"}:
             raise DatusException(
                 ErrorCode.COMMON_FIELD_INVALID,

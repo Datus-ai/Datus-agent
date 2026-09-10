@@ -555,7 +555,9 @@ class TestGenerate:
         assert result == "step by step reasoning"
         span_name, start_attrs = observability.span_calls[0]
         assert span_name == "llm.generate"
-        assert start_attrs["gen_ai.request.model"] == "gpt-4"
+        assert start_attrs["llm.model_name"] == "gpt-4"
+        assert start_attrs["llm.provider"] == "openai"
+        assert start_attrs["llm.system"] == "openai"
         assert start_attrs["datus.model.litellm_name"] == "openai/gpt-4"
         assert start_attrs["openinference.span.kind"] == "LLM"
         assert start_attrs["input.mime_type"] == "application/json"
@@ -563,9 +565,13 @@ class TestGenerate:
         assert observability.span_obj.attributes["output.value"] == "step by step reasoning"
         assert observability.span_obj.attributes["output.mime_type"] == "text/plain"
         assert observability.span_obj.attributes["datus.llm.reasoning"] == "step by step reasoning"
-        assert observability.span_obj.attributes["gen_ai.usage.input_tokens"] == 10
-        assert observability.span_obj.attributes["gen_ai.usage.output_tokens"] == 5
-        assert observability.span_obj.attributes["gen_ai.usage.total_tokens"] == 15
+        assert observability.span_obj.attributes["llm.token_count.prompt"] == 10
+        assert observability.span_obj.attributes["llm.token_count.completion"] == 5
+        assert observability.span_obj.attributes["llm.token_count.total"] == 15
+        assert observability.span_obj.attributes["llm.finish_reason"] == "stop"
+        assert observability.span_obj.attributes["llm.model_name"] == "gpt-4"
+        assert not any(key.startswith("gen_ai.") for key in start_attrs)
+        assert not any(key.startswith("gen_ai.") for key in observability.span_obj.attributes)
         assert observability.span_obj.attributes["datus.llm.request_id"] == "raw-model-request"
         assert observability.span_obj.attributes["datus.llm.request_id_source"] == "header:x-request-id"
         assert observability.span_obj.attributes["datus.llm.status"] == "success"
@@ -588,8 +594,10 @@ class TestGenerate:
         assert "input.value" not in start_attrs
         assert "output.value" not in observability.span_obj.attributes
         assert "secret" not in json.dumps(dict(observability.span_obj.attributes))
-        assert observability.span_obj.attributes["gen_ai.response.finish_reason"] == "stop"
-        assert observability.span_obj.attributes["gen_ai.response.model"] == "gpt-4"
+        assert observability.span_obj.attributes["llm.finish_reason"] == "stop"
+        assert observability.span_obj.attributes["llm.model_name"] == "gpt-4"
+        assert not any(key.startswith("gen_ai.") for key in start_attrs)
+        assert not any(key.startswith("gen_ai.") for key in observability.span_obj.attributes)
         assert observability.span_obj.attributes["datus.llm.request_id"] == "raw-model-request"
         assert observability.span_obj.attributes["datus.llm.request_id_status"] == "captured"
         assert observability.span_obj.attributes["datus.llm.status"] == "success"
