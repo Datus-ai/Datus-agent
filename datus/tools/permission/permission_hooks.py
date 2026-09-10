@@ -17,7 +17,6 @@ when prompting users for permission confirmation.
 
 import asyncio
 import json
-import logging
 import re
 import weakref
 from dataclasses import dataclass
@@ -41,13 +40,14 @@ from datus.tools.permission.permission_config import PermissionLevel, classify_s
 from datus.tools.registry.tool_registry import ToolRegistry
 from datus.utils.constants import SQLType
 from datus.utils.json_utils import to_pretty_str
+from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.tools.permission.auto_reviewer import AutoReviewer, AutoReviewVerdict
     from datus.tools.permission.bash_classifier import BashCommandClassifier
     from datus.tools.permission.permission_manager import PermissionManager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ``permissions.bash_commands.classifier`` is consulted on every bash ASK, so
 # the migration hint is emitted once per process instead of once per command.
