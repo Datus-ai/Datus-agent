@@ -199,12 +199,6 @@ class ActionBus:
                 if item is self._DONE:
                     seen += 1
                     continue
-                logger.debug(
-                    "ActionBus.merge yield",
-                    action_type=getattr(item, "action_type", "?"),
-                    role=str(getattr(item, "role", "?")),
-                    depth=getattr(item, "depth", "?"),
-                )
                 yield item
             if primary_error is not None:
                 raise primary_error
