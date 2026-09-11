@@ -1008,7 +1008,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
 
-        if self.litellm_adapter.provider == "claude":
+        if self._suppresses_sampling_params():
             # LiteLLM 1.100+ supports per-request Anthropic prompt caching and
             # injects provider-valid breakpoints after message conversion.
             existing_extra_args = dict(model_settings_kwargs.get("extra_args") or {})

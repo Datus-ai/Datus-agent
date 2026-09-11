@@ -1786,10 +1786,11 @@ class TestBuildAgent:
         ms = call_args[1]["model_settings"]
         assert ms.extra_headers == {"X-Custom": "value"}
 
-    def test_claude_enables_litellm_prompt_caching(self):
-        cfg = _make_model_config(model="claude-sonnet-4-6", model_type="claude")
+    @pytest.mark.parametrize("provider", ["claude", "anthropic"])
+    def test_anthropic_providers_enable_litellm_prompt_caching(self, provider):
+        cfg = _make_model_config(model="claude-sonnet-4-6", model_type=provider)
         model = _make_model(cfg)
-        model.litellm_adapter.provider = "claude"
+        model.litellm_adapter.provider = provider
         _, call_args = self._call_build_agent(model)
         ms = call_args[1]["model_settings"]
         assert ms.extra_args["enable_prompt_caching"] is True
