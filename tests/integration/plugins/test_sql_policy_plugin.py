@@ -29,6 +29,7 @@ from datus.tools.permission.permission_config import PermissionLevel
 def _policies() -> list[dict]:
     return [
         {
+            "id": "sp_store_scope_sql",
             "name": "store_scope_sql",
             "type": "row_filter",
             "applies_to": {"datasources": ["warehouse"], "tables": ["orders"]},
@@ -39,6 +40,7 @@ def _policies() -> list[dict]:
             },
         },
         {
+            "id": "sp_store_scope_metrics",
             "name": "store_scope_metrics",
             "type": "metric_row_filter",
             "applies_to": {"datasets": ["orders"]},
@@ -150,6 +152,8 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         status = managed_plugin_runtime.run("sql-policy", "status")
         assert "2 policies configured" in status.stdout
         assert "store_scope_sql" in status.stdout
+        assert "sp_store_scope_sql" in status.stdout
+        assert "sp_store_scope_metrics" in status.stdout
         checked = managed_plugin_runtime.run(
             "sql-policy",
             "check",

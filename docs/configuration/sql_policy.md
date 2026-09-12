@@ -13,7 +13,8 @@ agent:
       default:
         default: true
         policies:
-          - name: store_scope_sql
+          - id: sp_store_scope_sql
+            name: store_scope_sql
             type: row_filter
             applies_to:
               datasources: ["warehouse"]
@@ -24,7 +25,7 @@ agent:
               value_from: policy_context.row_filter.store_ids
 ```
 
-Policy types and their fields belong to the policy plugin. Agent only loads the plugin runtime declared by its `datus-plugin.yml` manifest.
+Policy types and their fields belong to the policy plugin. Every `row_filter` and `metric_row_filter` policy requires a stable, unique `id`. Agent only loads the plugin runtime declared by its `datus-plugin.yml` manifest.
 
 ## Request Context
 
@@ -40,6 +41,9 @@ The agreed shape has one section per policy family, without an identity or group
 {
   "row_filter": {
     "access_mode": "scoped",
+    "policy_modes": {
+      "sp_store_scope_sql": "scoped"
+    },
     "store_ids": [1, 2]
   },
   "column_mask": {
@@ -48,15 +52,21 @@ The agreed shape has one section per policy family, without an identity or group
 }
 ```
 
-The current sql-policy plugin supports these row-filter modes:
+The current sql-policy plugin first applies the request-wide row-filter mode:
 
 | `access_mode` | Behavior |
 |---|---|
 | `denied` | Reject every data read. |
-| `scoped` | Apply configured row filters and resolve their `policy_context.*` inputs. Missing inputs fail closed. |
-| `unrestricted` | Skip row filtering. Other policy families, such as future column masking, still run. |
+| `scoped` | Evaluate each configured row filter. Missing required inputs fail closed. |
 
-When row policies are configured, a missing or unknown `access_mode` is rejected. When no row policy is configured, an empty context is allowed.
+For a scoped request, the optional `policy_modes` object can override individual policies by ID:
+
+| Per-policy mode | Behavior |
+|---|---|
+| `scoped` | Apply that policy and resolve its `policy_context.*` inputs. |
+| `unrestricted` | Skip only that policy. Other row and result policies still run. |
+
+Omitted policies default to `scoped`. Unknown policy IDs, malformed modes, and a missing or unknown request-wide `access_mode` are rejected. When no row policy is configured, an empty context is allowed.
 
 `X-Datus-User-Id` remains session identity only. Agent does not merge it into `policy_context`, and it does not treat any context field as authenticated identity.
 
