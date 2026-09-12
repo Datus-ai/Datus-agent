@@ -281,6 +281,27 @@ class TestReviewerRequest:
             assert await reviewer.review(request, AutoReviewConfig(enabled=True)) is None
 
     @pytest.mark.asyncio
+    async def test_adapter_error_sentinel_returns_actionable_fail_closed_verdict(self):
+        fake_model = MagicMock()
+        fake_model.generate_with_json_output.return_value = {
+            "error": "Failed to parse JSON response",
+            "raw_response": "",
+        }
+        reviewer = LLMAutoReviewer(agent_config=MagicMock())
+        request = AutoReviewRequest("bash", {"command": "make"}, {}, {})
+
+        with patch("datus.models.base.LLMBaseModel.create_model", return_value=fake_model):
+            result = await reviewer.review(request, AutoReviewConfig(enabled=True))
+
+        assert result == AutoReviewVerdict(
+            risk_level="high",
+            user_authorization="unknown",
+            decision="ask",
+            confidence=0.0,
+            rationale="AI review unavailable: Failed to parse JSON response",
+        )
+
+    @pytest.mark.asyncio
     async def test_schema_is_passed_to_adapter_and_included_in_prompt(self):
         fake_model = MagicMock()
         fake_model.generate_with_json_output.return_value = {
