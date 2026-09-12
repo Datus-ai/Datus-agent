@@ -25,11 +25,14 @@ from datus.tools.middleware.tool_middleware import transform_tool_args
 from datus.tools.permission.bash_rules import evaluate_bash_command
 from datus.tools.permission.permission_config import PermissionLevel
 
+SQL_POLICY_ID = "sp_store_scope_sql"
+METRIC_POLICY_ID = "sp_store_scope_metrics"
+
 
 def _policies() -> list[dict]:
     return [
         {
-            "id": "sp_store_scope_sql",
+            "id": SQL_POLICY_ID,
             "name": "store_scope_sql",
             "type": "row_filter",
             "applies_to": {"datasources": ["warehouse"], "tables": ["orders"]},
@@ -40,7 +43,7 @@ def _policies() -> list[dict]:
             },
         },
         {
-            "id": "sp_store_scope_metrics",
+            "id": METRIC_POLICY_ID,
             "name": "store_scope_metrics",
             "type": "metric_row_filter",
             "applies_to": {"datasets": ["orders"]},
@@ -51,6 +54,34 @@ def _policies() -> list[dict]:
             },
         },
     ]
+
+
+def _scoped_context(*, sql_mode: str | None = None, metric_mode: str | None = None) -> dict:
+    """Build scoped policy context, optionally overriding either policy mode."""
+    row_filter = {"access_mode": "scoped", "store_ids": ["S001"]}
+    policy_modes = {}
+    if sql_mode is not None:
+        policy_modes[SQL_POLICY_ID] = sql_mode
+    if metric_mode is not None:
+        policy_modes[METRIC_POLICY_ID] = metric_mode
+    if policy_modes:
+        row_filter["policy_modes"] = policy_modes
+    return {"row_filter": row_filter}
+
+
+def _transform_metric(config: AgentConfig, policy_context: dict) -> dict:
+    """Apply the managed metric policy to the shared nightly query."""
+    return transform_tool_args(
+        "query_metrics",
+        {"metrics": ["order_revenue"], "where": "orders.amount > 0"},
+        category="semantic_tools",
+        active_plugin_names=config.active_plugin_names(),
+        context={
+            "agent_config": config,
+            "policy_context": policy_context,
+            "metric_datasets": {"order_revenue": ["orders"]},
+        },
+    )
 
 
 def _agent_document(home, workspace, database) -> dict:
@@ -152,8 +183,8 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         status = managed_plugin_runtime.run("sql-policy", "status")
         assert "2 policies configured" in status.stdout
         assert "store_scope_sql" in status.stdout
-        assert "sp_store_scope_sql" in status.stdout
-        assert "sp_store_scope_metrics" in status.stdout
+        assert SQL_POLICY_ID in status.stdout
+        assert METRIC_POLICY_ID in status.stdout
         checked = managed_plugin_runtime.run(
             "sql-policy",
             "check",
@@ -164,7 +195,7 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
             "--dialect",
             "sqlite",
             "--policy-context",
-            json.dumps({"row_filter": {"access_mode": "scoped", "store_ids": ["S001"]}}),
+            json.dumps(_scoped_context()),
         )
         assert "store_scope_sql" in checked.stdout
         assert "S001" in checked.stdout
@@ -177,7 +208,7 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         managed_plugin_dir = datus_home / "plugins" / "sql-policy"
         assert Path(plugin_spec.origin).resolve().is_relative_to(managed_plugin_dir.resolve())
 
-        scoped = {"row_filter": {"access_mode": "scoped", "store_ids": ["S001"]}}
+        scoped = _scoped_context()
         config.policy_context = scoped
         tool = DBFuncTool(connector, agent_config=config, default_datasource="warehouse")
         sql_result = tool.execute_read_enforced(
@@ -188,25 +219,55 @@ async def test_managed_sql_policy_enforces_sql_semantic_and_api_reads(
         assert sql_result.success, sql_result.error
         assert sql_result.sql_return == [{"store_id": "S001", "amount": 10}]
 
-        transformed = transform_tool_args(
-            "query_metrics",
-            {"metrics": ["order_revenue"], "where": "orders.amount > 0"},
-            category="semantic_tools",
-            active_plugin_names=config.active_plugin_names(),
-            context={
-                "agent_config": config,
-                "policy_context": scoped,
-                "metric_datasets": {"order_revenue": ["orders"]},
-            },
-        )
+        transformed = _transform_metric(config, scoped)
         assert "orders.amount > 0" in transformed["where"]
         assert "orders.store_id" in transformed["where"]
         assert "S001" in transformed["where"]
 
+        sql_unrestricted = _scoped_context(sql_mode="unrestricted", metric_mode="scoped")
+        config.policy_context = sql_unrestricted
+        unrestricted_sql_result = tool.execute_read_enforced(
+            "SELECT store_id, amount FROM orders ORDER BY store_id",
+            connector,
+            datasource="warehouse",
+        )
+        assert unrestricted_sql_result.success is True, unrestricted_sql_result.error
+        assert unrestricted_sql_result.sql_return == [
+            {"store_id": "S001", "amount": 10},
+            {"store_id": "S002", "amount": 20},
+        ]
+        metric_still_scoped = _transform_metric(config, sql_unrestricted)
+        assert "orders.store_id" in metric_still_scoped["where"]
+
+        metric_unrestricted = _scoped_context(sql_mode="scoped", metric_mode="unrestricted")
+        config.policy_context = metric_unrestricted
+        sql_still_scoped = tool.execute_read_enforced(
+            "SELECT store_id, amount FROM orders ORDER BY store_id",
+            connector,
+            datasource="warehouse",
+        )
+        assert sql_still_scoped.success is True, sql_still_scoped.error
+        assert sql_still_scoped.sql_return == [{"store_id": "S001", "amount": 10}]
+        unrestricted_metric_args = _transform_metric(config, metric_unrestricted)
+        assert unrestricted_metric_args["where"] == "orders.amount > 0"
+
         provider = HeaderContextProvider()
+        config.policy_context = scoped
         scoped_context = await provider.authenticate(_request(scoped))
         assert scoped_context.policy_context == scoped
         assert _policy_context_pre_check(SimpleNamespace(agent_config=config), scoped_context) is None
+
+        unknown_policy = {
+            "row_filter": {
+                "access_mode": "scoped",
+                "policy_modes": {"sp_unknown": "unrestricted"},
+                "store_ids": ["S001"],
+            }
+        }
+        unknown_context = await provider.authenticate(_request(unknown_policy))
+        unknown_outcome = _policy_context_pre_check(SimpleNamespace(agent_config=config), unknown_context)
+        assert unknown_outcome.allow is False
+        assert unknown_outcome.error_type == "POLICY_CONTEXT_REJECTED"
 
         denied = {"row_filter": {"access_mode": "denied"}}
         denied_context = await provider.authenticate(_request(denied))
