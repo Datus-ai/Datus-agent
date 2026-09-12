@@ -1177,6 +1177,36 @@ flow_groups:
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
 
+      - id: extension.image_tool
+        title: Local image reading tool
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/configuration/image_tool.md
+        entrypoints:
+          - "Tool: read_image"
+        contracts:
+          - read_image validates and normalizes a local image without exposing encoded image bytes in normal tool output.
+          - The normalized image reaches the next model request and remains usable when an agent session is resumed.
+        coverage:
+          pr_acceptance:
+            status: covered
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_read_image.py
+              - tests/unit_tests/models/test_image_model_roundtrip.py
+          merge_queue:
+            status: covered
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_read_image.py
+              - tests/unit_tests/models/test_image_model_roundtrip.py
+          nightly:
+            status: external
+            notes: Live image interpretation depends on provider credentials and network access.
+          weekly_benchmark:
+            status: not_applicable
+        gaps:
+          - https://github.com/Datus-ai/Datus-agent/issues/910
+
   quality_and_ops:
     description: Validation, observability, provider compatibility, benchmark, and release-confidence operations.
     flows:

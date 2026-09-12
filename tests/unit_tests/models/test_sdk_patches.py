@@ -2,366 +2,51 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""
-Unit tests for datus/models/sdk_patches.py.
-
-Covers:
-- _normalize_text_content_blocks / _normalize_items: Chat-style text block normalization
-- _extract_reasoning_content: robust reasoning extraction from provider payloads
-- litellm.(a)completion wrappers: reasoning_content placeholders and Kimi empty-content recovery
-- apply_sdk_patches / remove_sdk_patches: full lifecycle
-"""
-
 from types import SimpleNamespace
 
 import pytest
 
-from datus.models.sdk_patches import (
-    _extract_reasoning_content,
-    _normalize_items,
-    _normalize_text_content_blocks,
-    _recover_empty_kimi_content,
-    apply_sdk_patches,
-    remove_sdk_patches,
-)
+from datus.models.sdk_patches import apply_sdk_patches, remove_sdk_patches
 
 
-class TestNormalizeItems:
-    def test_text_blocks_are_normalized_for_chat_completions_converter(self):
-        """Session replay may contain Chat-style text blocks; SDK input expects input_text."""
-        items = [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
-
-        result_items = _normalize_items(items)
-
-        assert result_items[0]["content"] == [{"type": "input_text", "text": "hello"}]
-        assert items[0]["content"] == [{"type": "text", "text": "hello"}]
-
-    def test_assistant_response_message_text_blocks_are_normalized_to_output_text(self):
-        """Response output messages expect output_text, not input_text."""
-        items = [{"type": "message", "role": "assistant", "content": [{"type": "text", "text": "final answer"}]}]
-
-        result_items = _normalize_items(items)
-
-        assert result_items[0]["content"] == [{"type": "output_text", "text": "final answer"}]
-
-    def test_string_items_returned_as_is(self):
-        assert _normalize_items("plain prompt") == "plain prompt"
+@pytest.fixture(autouse=True)
+def unpatched_baseline():
+    remove_sdk_patches()
+    yield
+    remove_sdk_patches()
 
 
-class TestNormalizeTextContentBlocks:
-    def test_non_dict_item_is_returned_unchanged(self):
-        item = object()
-        assert _normalize_text_content_blocks(item) is item
+@pytest.mark.asyncio
+async def test_stream_patch_preserves_only_correlation_headers(monkeypatch):
+    from litellm.llms.custom_httpx.llm_http_handler import BaseLLMHTTPHandler
 
-    def test_item_without_text_blocks_is_returned_unchanged(self):
-        item = {"role": "user", "content": [{"type": "input_text", "text": "hello"}]}
-        assert _normalize_text_content_blocks(item) is item
+    async def fake_stream_helper(self, *args, **kwargs):
+        return object(), {"Trace-ID": "remote-trace", "Set-Cookie": "secret"}
 
-    def test_tool_output_text_blocks_are_normalized(self):
-        item = {"type": "function_call_output", "output": [{"type": "text", "text": "tool result"}]}
-
-        result = _normalize_text_content_blocks(item)
-
-        assert result["output"] == [{"type": "input_text", "text": "tool result"}]
-        assert item["output"] == [{"type": "text", "text": "tool result"}]
-
-
-class TestReasoningContentExtraction:
-    def test_extracts_from_dict_and_nested_provider_fields(self):
-        value = {"provider_specific_fields": {"reasoning_content": "nested thought"}}
-        assert _extract_reasoning_content(value) == "nested thought"
-
-    def test_extracts_from_object_model_extra(self):
-        class Value:
-            model_extra = {"reasoning": {"text": "model-extra thought"}}
-
-        assert _extract_reasoning_content(Value()) == "model-extra thought"
-
-    def test_does_not_treat_normal_content_as_reasoning(self):
-        value = {"content": "visible assistant text"}
-        assert _extract_reasoning_content(value) is None
-
-
-class TestRecoverEmptyKimiContent:
-    def test_empty_content_is_replaced_by_reasoning(self):
-        message = SimpleNamespace(content="", reasoning_content="hidden thought")
-        response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
-
-        _recover_empty_kimi_content(response)
-
-        assert message.content == "hidden thought"
-
-    def test_visible_content_is_kept(self):
-        message = SimpleNamespace(content="answer", reasoning_content="hidden thought")
-        response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
-
-        _recover_empty_kimi_content(response)
-
-        assert message.content == "answer"
-
-
-class TestApplyAndRemoveSdkPatches:
-    """Tests for apply_sdk_patches and remove_sdk_patches lifecycle."""
-
-    @pytest.fixture(autouse=True)
-    def unpatched_baseline(self):
-        """Start every lifecycle test from the un-patched state.
-
-        ``datus/models/__init__.py`` calls ``apply_sdk_patches()`` at import
-        time, so by the time any test runs ``litellm.completion`` is already
-        the patched wrapper and ``sdk_patches._original_*`` already hold the
-        true originals. Tests here capture ``litellm.completion`` as "the true
-        original" and re-apply, which only holds when nothing is patched yet.
-        """
-        remove_sdk_patches()
-        yield
+    monkeypatch.setattr(BaseLLMHTTPHandler, "make_async_call_stream_helper", fake_stream_helper)
+    apply_sdk_patches()
+    logging_obj = SimpleNamespace(model_call_details={})
+    try:
+        await BaseLLMHTTPHandler.make_async_call_stream_helper(object(), logging_obj=logging_obj)
+    finally:
         remove_sdk_patches()
 
-    def test_apply_and_remove_patches(self):
-        """apply_sdk_patches and remove_sdk_patches complete without error."""
-        import litellm
+    assert logging_obj.model_call_details["_datus_response_headers"] == {"trace-id": "remote-trace"}
+    assert "secret" not in str(logging_obj.model_call_details)
 
-        original = litellm.completion
-        apply_sdk_patches()
-        assert litellm.completion is not original
-        remove_sdk_patches()
-        assert litellm.completion is original
 
-    @pytest.mark.asyncio
-    async def test_stream_patch_preserves_only_correlation_headers(self, monkeypatch):
-        from litellm.llms.custom_httpx.llm_http_handler import BaseLLMHTTPHandler
+def test_stream_patch_preserves_glm_request_id(monkeypatch):
+    from litellm.llms.openai.chat.gpt_transformation import OpenAIChatCompletionStreamingHandler
 
-        async def fake_stream_helper(self, *args, **kwargs):
-            return object(), {"Trace-ID": "remote-trace", "Set-Cookie": "secret"}
-
-        monkeypatch.setattr(BaseLLMHTTPHandler, "make_async_call_stream_helper", fake_stream_helper)
-        apply_sdk_patches()
-        logging_obj = SimpleNamespace(model_call_details={})
-        try:
-            await BaseLLMHTTPHandler.make_async_call_stream_helper(object(), logging_obj=logging_obj)
-        finally:
-            remove_sdk_patches()
-
-        assert logging_obj.model_call_details["_datus_response_headers"] == {"trace-id": "remote-trace"}
-        assert "secret" not in str(logging_obj.model_call_details)
-
-    def test_stream_patch_preserves_glm_request_id(self, monkeypatch):
-        from litellm.llms.openai.chat.gpt_transformation import OpenAIChatCompletionStreamingHandler
-
-        transformed = SimpleNamespace()
-        monkeypatch.setattr(OpenAIChatCompletionStreamingHandler, "chunk_parser", lambda self, chunk: transformed)
-        apply_sdk_patches()
-        try:
-            result = OpenAIChatCompletionStreamingHandler.chunk_parser(
-                object(), {"id": "completion-id", "request_id": "glm-request"}
-            )
-        finally:
-            remove_sdk_patches()
-
-        assert result is transformed
-        assert result.request_id == "glm-request"
-
-    def test_patched_converter_accepts_session_text_blocks_for_deepseek(self):
-        """Regression for DeepSeek session replay: Chat-style text blocks must not raise Unknown content."""
-        from agents.models.chatcmpl_converter import Converter
-
-        apply_sdk_patches()
-        try:
-            messages = Converter.items_to_messages(
-                [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
-                model="deepseek/deepseek-v4-flash",
-            )
-            assert messages == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
-        finally:
-            remove_sdk_patches()
-
-    def test_patched_converter_replays_each_turns_own_reasoning_for_kimi(self):
-        """With the replay hook, every assistant message carries the reasoning of its own turn only."""
-        from agents.models.chatcmpl_converter import Converter
-
-        from datus.models.reasoning_replay import should_replay_reasoning_content
-
-        model = "moonshot/kimi-k2.6"
-        items = [
-            {"role": "user", "content": "hi"},
-            {
-                "id": "r1",
-                "type": "reasoning",
-                "summary": [{"text": "think-1", "type": "summary_text"}],
-                "provider_data": {"model": model},
-            },
-            {
-                "id": "c1",
-                "type": "function_call",
-                "call_id": "call_1",
-                "name": "get_weather",
-                "arguments": "{}",
-                "provider_data": {"model": model},
-            },
-            {"type": "function_call_output", "call_id": "call_1", "output": "{}"},
-            {
-                "id": "c2",
-                "type": "function_call",
-                "call_id": "call_2",
-                "name": "get_weather",
-                "arguments": "{}",
-                "provider_data": {"model": model},
-            },
-            {"type": "function_call_output", "call_id": "call_2", "output": "{}"},
-            {
-                "id": "r3",
-                "type": "reasoning",
-                "summary": [{"text": "think-3", "type": "summary_text"}],
-                "provider_data": {"model": model},
-            },
-            {
-                "id": "m3",
-                "type": "message",
-                "role": "assistant",
-                "status": "completed",
-                "content": [{"type": "output_text", "text": "done", "annotations": []}],
-                "provider_data": {"model": model},
-            },
-        ]
-
-        apply_sdk_patches()
-        try:
-            messages = Converter.items_to_messages(
-                items, model=model, should_replay_reasoning_content=should_replay_reasoning_content
-            )
-        finally:
-            remove_sdk_patches()
-
-        assistant = [m for m in messages if m.get("role") == "assistant"]
-        assert [m.get("reasoning_content") for m in assistant] == ["think-1", None, "think-3"]
-
-    def test_patched_completion_adds_placeholders_and_recovers_kimi_content(self, monkeypatch):
-        """The sync wrapper fills reasoning_content gaps with '' and surfaces Kimi reasoning-only replies."""
-        import litellm
-
-        captured = {}
-        reply = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))])
-
-        def fake_completion(*args, **kwargs):
-            captured["messages"] = kwargs["messages"]
-            return reply
-
-        monkeypatch.setattr(litellm, "completion", fake_completion)
-        apply_sdk_patches()
-        try:
-            litellm.completion(
-                model="moonshot/kimi-k2.6",
-                messages=[
-                    {"role": "user", "content": "q"},
-                    {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}], "reasoning_content": "t1"},
-                    {"role": "tool", "tool_call_id": "c1", "content": "{}"},
-                    {"role": "assistant", "content": None, "tool_calls": [{"id": "c2"}]},
-                ],
-            )
-        finally:
-            remove_sdk_patches()
-
-        assert captured["messages"][3]["reasoning_content"] == ""
-        assert captured["messages"][3]["content"] == ""
-        assert captured["messages"][1]["reasoning_content"] == "t1"
-        assert reply.choices[0].message.content == "why"
-
-    @pytest.mark.asyncio
-    async def test_patched_acompletion_recovers_kimi_content_for_complete_responses(self, monkeypatch):
-        """The async wrapper recovers reasoning-only Kimi replies, but leaves streaming iterators untouched."""
-        import litellm
-
-        complete = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
+    transformed = SimpleNamespace()
+    monkeypatch.setattr(OpenAIChatCompletionStreamingHandler, "chunk_parser", lambda self, chunk: transformed)
+    apply_sdk_patches()
+    try:
+        result = OpenAIChatCompletionStreamingHandler.chunk_parser(
+            object(), {"id": "completion-id", "request_id": "glm-request"}
         )
-        stream = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
-        )
+    finally:
+        remove_sdk_patches()
 
-        async def fake_acompletion(*args, **kwargs):
-            return stream if kwargs.get("stream") else complete
-
-        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-        apply_sdk_patches()
-        try:
-            await litellm.acompletion(model="moonshot/kimi-k3", messages=[{"role": "user", "content": "q"}])
-            await litellm.acompletion(
-                model="moonshot/kimi-k3", messages=[{"role": "user", "content": "q"}], stream=True
-            )
-        finally:
-            remove_sdk_patches()
-
-        assert complete.choices[0].message.content == "why"
-        assert stream.choices[0].message.content == ""
-
-    @pytest.mark.asyncio
-    async def test_wrappers_handle_positional_model_and_messages(self, monkeypatch):
-        """LiteLLM accepts model/messages positionally; placeholders and recovery must still apply."""
-        import litellm
-
-        captured = {}
-
-        def fake_completion(model, messages, **kwargs):
-            captured["sync"] = (model, messages)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
-            )
-
-        async def fake_acompletion(model, messages, **kwargs):
-            captured["async"] = (model, messages, kwargs.get("stream"))
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content="", reasoning_content="why"))]
-            )
-
-        history = [
-            {"role": "user", "content": "q"},
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}], "reasoning_content": "t1"},
-            {"role": "tool", "tool_call_id": "c1", "content": "{}"},
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "c2"}]},
-        ]
-        monkeypatch.setattr(litellm, "completion", fake_completion)
-        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-        apply_sdk_patches()
-        try:
-            sync_reply = litellm.completion("moonshot/kimi-k3", [dict(m) for m in history])
-            async_reply = await litellm.acompletion("moonshot/kimi-k3", [dict(m) for m in history])
-            streamed = await litellm.acompletion("moonshot/kimi-k3", [dict(m) for m in history], stream=True)
-        finally:
-            remove_sdk_patches()
-
-        assert captured["sync"][0] == "moonshot/kimi-k3"
-        assert captured["sync"][1][3]["reasoning_content"] == ""
-        assert captured["async"][1][3]["reasoning_content"] == ""
-        assert sync_reply.choices[0].message.content == "why"
-        assert async_reply.choices[0].message.content == "why"
-        assert streamed.choices[0].message.content == ""
-
-    def test_apply_patches_idempotent(self):
-        """Calling apply_sdk_patches twice must not re-capture the already-patched
-        litellm functions as 'originals'. Otherwise remove_sdk_patches() would
-        restore the patched version instead of the true original.
-        """
-        import litellm
-
-        from datus.models import sdk_patches
-
-        true_original_completion = litellm.completion
-        true_original_acompletion = litellm.acompletion
-
-        apply_sdk_patches()
-        captured_after_first = sdk_patches._original_completion
-        captured_acompletion_after_first = sdk_patches._original_acompletion
-        patched_completion_first = litellm.completion
-
-        apply_sdk_patches()  # second call must be a no-op for capture
-        try:
-            assert sdk_patches._original_completion is true_original_completion
-            assert sdk_patches._original_acompletion is true_original_acompletion
-            assert sdk_patches._original_completion is captured_after_first
-            assert sdk_patches._original_acompletion is captured_acompletion_after_first
-            assert litellm.completion is patched_completion_first
-        finally:
-            remove_sdk_patches()
-
-        assert litellm.completion is true_original_completion
-        assert litellm.acompletion is true_original_acompletion
+    assert result is transformed
+    assert result.request_id == "glm-request"

@@ -227,8 +227,8 @@ class TestKimiModel:
     def test_generate_basic(self):
         """Test basic text generation functionality."""
         # Kimi/Moonshot API requires temperature=1 for this model; use model config default
-        # kimi-k3 is a reasoning model: reasoning_content is injected into content
-        # by sdk_patches when litellm.completion returns empty content.
+        # kimi-k3 is a reasoning model: when the response content is empty,
+        # OpenAICompatibleModel uses reasoning_content as the returned content.
         result = self.model.generate(
             "Explain what SQL JOIN does in exactly two sentences.",
             max_tokens=200,

@@ -45,6 +45,37 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@pytest.mark.parametrize("span_type", ["response", "generation", "function"])
+def test_image_bytes_are_removed_from_exported_spans_without_changing_history(span_type):
+    from agents.tracing.span_data import FunctionSpanData, GenerationSpanData, ResponseSpanData
+    from openinference.instrumentation import OITracer, TraceConfig
+
+    image = {"type": "input_image", "image_url": "data:image/png;base64,c2VjcmV0"}
+    history = [{"role": "user", "content": [{"type": "input_text", "text": "chart.png"}, image]}]
+    if span_type == "response":
+        data = ResponseSpanData(input=history)
+    elif span_type == "generation":
+        data = GenerationSpanData(input=history, model="test")
+    else:
+        data = FunctionSpanData(name="read_image", input='{"path":"chart.png"}', output=str(history))
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    processor = DatusOpenInferenceTracingProcessor(OITracer(provider.get_tracer(__name__), config=TraceConfig()))
+    trace = FakeTrace()
+    span = FakeSpan(span_data=data, span_id="image_span", started_at=_now_iso(), ended_at=_now_iso())
+    processor.on_trace_start(trace)
+    processor.on_span_start(span)
+    processor.on_span_end(span)
+    processor.on_trace_end(trace)
+    exported = str([dict(item.attributes) for item in exporter.get_finished_spans()])
+    assert "c2VjcmV0" not in exported
+    assert "chart.png" in exported
+    assert history[0]["content"][1]["image_url"].endswith("c2VjcmV0")
+    processor.shutdown()
+    provider.shutdown()
+
+
 def test_openai_agents_processor_merges_first_agent_span_into_trace_root():
     from agents.tracing.span_data import AgentSpanData, FunctionSpanData
     from openinference.instrumentation import OITracer, TraceConfig

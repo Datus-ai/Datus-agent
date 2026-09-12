@@ -38,7 +38,7 @@ SUMMARY_ERROR_MAX_CHARS = 19
 # result titles / page label visible on the compact line rather than clipped
 # to a handful of characters.
 FS_TOOLS_NO_CLIP = frozenset(
-    {"read_file", "write_file", "edit_file", "delete_file", "glob", "grep", "web_search", "web_fetch"}
+    {"read_file", "read_image", "write_file", "edit_file", "delete_file", "glob", "grep", "web_search", "web_fetch"}
 )
 SUMMARY_TOOLS_NO_CLIP = FS_TOOLS_NO_CLIP | frozenset({"attribution_analyze"})
 
@@ -865,6 +865,12 @@ def _fmt_read_file(result: Any) -> str:
     return ""
 
 
+def _fmt_read_image(result: Any) -> str:
+    if isinstance(result, dict):
+        return f"{result.get('path', 'image')} ({result.get('width', '?')}×{result.get('height', '?')})"
+    return ""
+
+
 def _fmt_write_file(result: Any) -> str:
     if isinstance(result, str):
         marker = "File written successfully: "
@@ -1282,6 +1288,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "execute_reference_template": _fmt_execute_reference_template,
         # Filesystem
         "read_file": _fmt_read_file,
+        "read_image": _fmt_read_image,
         "write_file": _fmt_write_file,
         "edit_file": _fmt_edit_file,
         "delete_file": _fmt_delete_file,

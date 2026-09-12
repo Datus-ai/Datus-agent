@@ -87,6 +87,9 @@ class ObservabilityManager:
         return bool(getattr(self._tracing_config.capture, field_name, True))
 
     def redact(self, value: Any) -> Any:
+        from datus.utils.image_content import redact_image_payloads
+
+        value = redact_image_payloads(value)
         if self._tracing_config is None:
             return value
         return redact_value(value, self._tracing_config.redact)

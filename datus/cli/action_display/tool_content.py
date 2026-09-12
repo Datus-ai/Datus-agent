@@ -323,6 +323,7 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "list_schemas": lambda a: _format_positional(a, "database", "catalog"),
     # Filesystem tools
     "read_file": lambda a: _format_positional(a, "file_path", "path"),
+    "read_image": lambda a: _format_positional(a, "path"),
     "write_file": lambda a: _format_positional(a, "file_path", "path"),
     "edit_file": lambda a: _format_positional(a, "file_path", "path"),
     "delete_file": lambda a: _format_positional(a, "file_path", "path"),

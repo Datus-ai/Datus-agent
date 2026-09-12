@@ -28,7 +28,7 @@ from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
-from datus.models.litellm_adapter import LiteLLMAdapter, is_known_non_thinking_model, is_official_openai_endpoint
+from datus.models.litellm_adapter import LiteLLMAdapter, is_official_openai_endpoint
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.observability.manager import get_observability_manager
@@ -38,6 +38,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, detect_tool_failure
 from datus.utils.constants import LLMProvider
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.image_content import image_result_for_display, redact_image_payloads
 from datus.utils.json_utils import to_str
 from datus.utils.loggings import configure_litellm_logging, get_logger
 from datus.utils.resource_utils import read_data_file_text
@@ -344,72 +345,15 @@ class OpenAICompatibleModel(LLMBaseModel):
         return None
 
     def _model_supports_reasoning(self) -> bool:
-        """Decide whether ``/effort`` should inject ``Reasoning(effort=…)``.
-
-        Authority chain (permissive by design — new models default to
-        supported, Datus only bails out when it has *positive* evidence the
-        model cannot reason):
-
-        1. Datus-maintained deny-list (:func:`is_known_non_thinking_model`)
-           kicks in first. ``deepseek-chat``, ``moonshot-v1-*`` and the bare
-           ``kimi-k2`` family are the only DeepSeek/Kimi models we treat as
-           non-reasoning; everything else in those providers defaults to
-           supported so LiteLLM's catalog lag on DeepSeek V4 / Kimi K2.x
-           doesn't mute the effort hint.
-        2. LiteLLM's built-in catalog returns ``True`` → accepted.
-        3. LiteLLM raises (unknown provider, self-hosted proxy, …) → accepted
-           under the permissive default.
-        4. LiteLLM returns ``False`` → accepted. New models routinely ship
-           before LiteLLM adds them; ``drop_params=True`` still protects the
-           request at the transport layer. ``_build_agent`` emits a ``skip``
-           warning only when branch 1 explicitly blocks.
-        """
-        provider = self.litellm_adapter.provider
-        if is_known_non_thinking_model(provider, self.model_name):
-            return False
+        """Use LiteLLM's model metadata to decide whether to send reasoning effort."""
         try:
-            if litellm.supports_reasoning(model=self.model_name, custom_llm_provider=provider):
-                return True
+            return bool(litellm.supports_reasoning(model=self.litellm_adapter.litellm_model_name))
         except Exception as e:
             logger.debug(f"litellm.supports_reasoning raised for {self.model_name}: {e}")
+        # Custom OpenAI-compatible endpoints may use model names absent from
+        # LiteLLM's catalog. Keep honoring an explicit /effort choice there;
+        # drop_params still removes unsupported transport parameters.
         return True
-
-    def _native_thinking_extra_body(self) -> Optional[Dict[str, Any]]:
-        """Extra ``extra_body`` payload that activates DeepSeek/Moonshot thinking.
-
-        LiteLLM handles these two providers differently, and both need Datus
-        intervention to land the required fields in the HTTP body:
-
-        - **Moonshot**: its ``get_supported_openai_params`` does not list
-          ``thinking`` or ``reasoning_effort``, so under
-          ``litellm.drop_params=True`` both fields are stripped during param
-          mapping. Pushing ``thinking`` through ``extra_body`` bypasses the
-          filter because the OpenAI client merges ``extra_body`` verbatim into
-          the request body. ``reasoning_effort`` is intentionally NOT added
-          for Moonshot — Kimi K2.x does not accept it and would reject the
-          request.
-        - **DeepSeek**: its transformation *does* recognise both fields but
-          pops ``reasoning_effort`` during mapping (it only keeps ``thinking``
-          internally). Per
-          https://api-docs.deepseek.com/zh-cn/guides/thinking_mode, DeepSeek
-          requires ``reasoning_effort`` alongside ``thinking.type=enabled`` to
-          control depth. Adding ``reasoning_effort`` to ``extra_body`` re-injects
-          it into the final request body after the transformation has run.
-
-        Returns ``None`` for non-DeepSeek/Kimi providers or explicitly
-        non-thinking models (see :func:`is_known_non_thinking_model`).
-        """
-        provider = self.litellm_adapter.provider
-        if provider not in ("deepseek", "kimi"):
-            return None
-        if is_known_non_thinking_model(provider, self.model_name):
-            return None
-        body: Dict[str, Any] = {"thinking": {"type": "enabled"}}
-        if provider == "deepseek":
-            effort = self.litellm_adapter.reasoning_effort_level
-            if effort:
-                body["reasoning_effort"] = effort
-        return body
 
     def _default_prompt_cache_key(self, agent_name: str) -> Optional[str]:
         """Build a stable prompt cache key for requests with shared prefixes."""
@@ -1064,32 +1008,22 @@ class OpenAICompatibleModel(LLMBaseModel):
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
 
+        if self._suppresses_sampling_params():
+            # LiteLLM 1.100+ supports per-request Anthropic prompt caching and
+            # injects provider-valid breakpoints after message conversion.
+            existing_extra_args = dict(model_settings_kwargs.get("extra_args") or {})
+            existing_extra_args["enable_prompt_caching"] = True
+            model_settings_kwargs["extra_args"] = existing_extra_args
+
         effort = self.litellm_adapter.reasoning_effort_level
         if effort:
             if self._model_supports_reasoning():
                 model_settings_kwargs["reasoning"] = Reasoning(effort=effort)
                 logger.debug(f"Enabled reasoning (effort={effort}) for model: {self.model_name}")
-                native_thinking = self._native_thinking_extra_body()
-                if native_thinking:
-                    # Must go through ``extra_args["extra_body"]`` (not
-                    # ``ModelSettings.extra_body``). The agents SDK *flattens*
-                    # ``extra_body`` into the acompletion kwargs, which means
-                    # Moonshot's transformation — whose ``get_supported_openai_params``
-                    # list does not include ``thinking`` — would silently drop the
-                    # flag under ``drop_params=True``. Nesting it one level deeper
-                    # keeps ``extra_body={...}`` as a reserved acompletion kwarg,
-                    # which the OpenAI client then merges verbatim into the HTTP
-                    # POST body, bypassing the per-provider supported-params filter.
-                    existing_extra_args = dict(model_settings_kwargs.get("extra_args") or {})
-                    nested_extra_body = dict(existing_extra_args.get("extra_body") or {})
-                    nested_extra_body.update(native_thinking)
-                    existing_extra_args["extra_body"] = nested_extra_body
-                    model_settings_kwargs["extra_args"] = existing_extra_args
-                    logger.debug(f"Added native thinking payload for {self.model_name}: {native_thinking}")
             else:
                 logger.warning(
-                    "Skipping reasoning (effort=%s) for %s: Datus recognises this model "
-                    "as not supporting thinking. Use `/effort off` or switch to a "
+                    "Skipping reasoning (effort=%s) for %s: LiteLLM marks this model "
+                    "as not supporting reasoning. Use `/effort off` or switch to a "
                     "thinking-capable model (gpt-5*, o-series, claude-4*, gemini-2.5*+, "
                     "deepseek-v4*, deepseek-reasoner, kimi-k2.6+) to silence this warning.",
                     effort,
@@ -1550,7 +1484,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                         elif item_type == "tool_call_output_item":
                             tool_output_seen = True
                             raw_item = getattr(event.item, "raw_item", None)
-                            output_content = getattr(event.item, "output", "")
+                            output_content = image_result_for_display(getattr(event.item, "output", ""))
 
                             # Extract call_id from raw_item
                             # raw_item can be either a dict or an object
@@ -2032,6 +1966,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                 "reason_content": reasoning_content or "",
                 "output_content": response_content,
             }
+            trace_data = redact_image_payloads(trace_data)
 
             # Save to YAML file named after node ID
             trace_file = trace_dir / f"{self.current_node.id}.yml"

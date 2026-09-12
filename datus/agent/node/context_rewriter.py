@@ -89,18 +89,24 @@ _ANTHROPIC_BLOCK_TYPES = frozenset(
 
 
 def estimate_items_tokens(items: List[Any]) -> int:
-    """Rough token estimate: serialized JSON length / 4.
+    """Rough text estimate plus a bounded allowance per image.
 
     Used only for internal capacity checks, never as measured usage.
     Unserializable items fall back to ``str()``.
     """
+    from datus.utils.image_content import count_images, replace_images
+
+    image_tokens = count_images(items) * 4096
+    # read_image normalizes to at most 2048 pixels per side. Use a fixed
+    # allowance until the provider supplies measured usage, never tokenize base64.
     total = 0
+    items = replace_images(items)
     for item in items:
         try:
             total += len(json.dumps(item, ensure_ascii=False, default=str))
         except Exception:  # noqa: BLE001 — estimation must never break the run loop
             total += len(str(item))
-    return total // 4
+    return total // 4 + image_tokens
 
 
 def detect_item_format(items: List[Any]) -> ItemFormat:

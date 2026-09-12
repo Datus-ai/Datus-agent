@@ -12,22 +12,25 @@ but by default only when the target model is DeepSeek.
 :func:`should_replay_reasoning_content` is passed to ``LitellmModel`` as the
 SDK's ``should_replay_reasoning_content`` hook so Kimi/Moonshot get the same
 per-turn replay.
-
-Turns whose response carried no reasoning are left with an empty
-``reasoning_content`` placeholder by
-:func:`ensure_reasoning_content_placeholders`, matching how LiteLLM, OpenCode
-and Hermes handle the same providers. Reasoning is never copied from one turn
-to another: a message either carries the reasoning it was produced with or an
-empty string.
 """
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Optional
 
-from datus.models.litellm_adapter import is_known_non_thinking_model
+import litellm
 
 _KIMI_MARKERS = ("kimi", "moonshot", "k2.5", "k2-")
+REASONING_ENDPOINT_KEY = "datus_reasoning_endpoint"
+
+
+def reasoning_endpoint_identity(base_url: Optional[str]) -> Optional[str]:
+    """Return a stable, non-secret identity for a model endpoint."""
+    if not base_url:
+        return None
+    normalized = str(base_url).rstrip("/")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def is_kimi_model(model_name: Optional[str]) -> bool:
@@ -54,23 +57,18 @@ def reasoning_provider_family(model_name: Optional[str]) -> Optional[str]:
     return None
 
 
-def _bare_model_name(model_name: str) -> str:
-    """Strip a LiteLLM provider prefix such as ``moonshot/`` or ``deepseek/``."""
-    return model_name.rsplit("/", 1)[-1]
-
-
 def is_reasoning_echo_provider(model_name: Optional[str]) -> bool:
-    """Return True when the model runs in a thinking mode that echoes ``reasoning_content``.
-
-    Non-thinking models of the same vendors (``deepseek-chat``, ``moonshot-v1*``,
-    bare ``kimi-k2``) are excluded through the shared deny-list in
-    :mod:`datus.models.litellm_adapter`; they neither produce nor expect
-    reasoning, so nothing must be replayed or padded for them.
-    """
+    """Return True for a LiteLLM-known reasoning model that echoes reasoning content."""
     family = reasoning_provider_family(model_name)
     if family is None:
         return False
-    return not is_known_non_thinking_model(family, _bare_model_name(model_name or ""))
+    name = model_name or ""
+    if "/" not in name:
+        name = f"{'deepseek' if family == 'deepseek' else 'moonshot'}/{name}"
+    try:
+        return bool(litellm.supports_reasoning(model=name))
+    except Exception:
+        return False
 
 
 def should_replay_reasoning_content(context: Any) -> bool:
@@ -81,11 +79,11 @@ def should_replay_reasoning_content(context: Any) -> bool:
     duck-typed here so this module does not import the agents SDK at import
     time.
 
-    Replay only when the request targets a thinking-mode DeepSeek or Kimi model
-    and the item records a thinking-mode origin model of the same provider
-    family. Items without provenance, or produced by a non-thinking model, are
-    never replayed, so reasoning from another provider or a stale session
-    cannot leak into the request.
+    Apply a strict same-route provenance check to LiteLLM-known DeepSeek and
+    Kimi/Moonshot reasoning models. Both the provider-qualified model and a
+    non-secret endpoint identity must match. Missing endpoint provenance is
+    rejected because the previous request may have used another compatible
+    endpoint with the same model name.
     """
     model = getattr(context, "model", None)
     if not is_reasoning_echo_provider(model):
@@ -95,47 +93,20 @@ def should_replay_reasoning_content(context: Any) -> bool:
     origin_model = getattr(reasoning, "origin_model", None)
     if not is_reasoning_echo_provider(origin_model):
         return False
-    return reasoning_provider_family(origin_model) == reasoning_provider_family(model)
-
-
-def ensure_reasoning_content_placeholders(messages: Any, model: Optional[str]) -> Any:
-    """Fill ``reasoning_content`` gaps with an empty string for thinking-mode requests.
-
-    Applies only when ``model`` is a thinking-mode DeepSeek or Kimi/Moonshot
-    model and the conversation is already in thinking mode, i.e. at least one
-    assistant message carries ``reasoning_content``. Every other assistant
-    message then gets ``reasoning_content = ""``. Assistant messages with
-    ``tool_calls`` and ``content=None`` are normalised to ``content=""`` because
-    Moonshot rejects ``null`` content on tool-call messages.
-
-    Messages are mutated in place and returned; non-list payloads are returned
-    untouched.
-    """
-    if not is_reasoning_echo_provider(model) or not isinstance(messages, list):
-        return messages
-
-    thinking_active = any(
-        isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("reasoning_content") is not None
-        for msg in messages
-    )
-
-    for msg in messages:
-        if not isinstance(msg, dict) or msg.get("role") != "assistant":
-            continue
-        has_tool_calls = bool(msg.get("tool_calls"))
-        if has_tool_calls and msg.get("content") is None:
-            msg["content"] = ""
-        if thinking_active and msg.get("reasoning_content") is None:
-            msg["reasoning_content"] = ""
-
-    return messages
+    provider_data = getattr(reasoning, "provider_data", None)
+    if not isinstance(provider_data, dict):
+        return False
+    origin_endpoint = provider_data.get(REASONING_ENDPOINT_KEY)
+    current_endpoint = reasoning_endpoint_identity(getattr(context, "base_url", None))
+    return origin_model == model and origin_endpoint is not None and origin_endpoint == current_endpoint
 
 
 __all__ = [
-    "ensure_reasoning_content_placeholders",
+    "REASONING_ENDPOINT_KEY",
     "is_deepseek_model",
     "is_kimi_model",
     "is_reasoning_echo_provider",
+    "reasoning_endpoint_identity",
     "reasoning_provider_family",
     "should_replay_reasoning_content",
 ]

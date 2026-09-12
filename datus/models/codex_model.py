@@ -32,6 +32,7 @@ from datus.observability.tool_calls import observe_tool_hooks
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.tool_summary import detect_tool_failure
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.image_content import image_result_for_display
 from datus.utils.loggings import get_logger
 from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
 
@@ -835,7 +836,7 @@ class CodexModel(LLMBaseModel):
 
                         elif item_type == "tool_call_output_item":
                             raw_item = getattr(event.item, "raw_item", None)
-                            output_content = getattr(event.item, "output", "")
+                            output_content = image_result_for_display(getattr(event.item, "output", ""))
                             if raw_item:
                                 # raw_item can be a dict (Responses API) or Pydantic model (Chat Completions)
                                 if isinstance(raw_item, dict):

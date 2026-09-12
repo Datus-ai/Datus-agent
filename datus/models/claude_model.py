@@ -48,6 +48,7 @@ from datus.schemas.node_models import SQLContext
 from datus.schemas.tool_summary import detect_tool_failure
 from datus.utils.constants import SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.image_content import anthropic_image_tool_content, image_result_for_display
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
 from datus.utils.ssl_utils import is_ssl_cert_verification_error
@@ -67,6 +68,7 @@ class _ToolResult:
     """Lightweight stand-in for MCP CallToolResult (`.content[0].text`)."""
 
     content: List[_ToolResultPart] = field(default_factory=list)
+    model_content: Optional[List[Dict[str, Any]]] = None
 
 
 def _anthropic_trace_input(request_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1307,11 +1309,23 @@ class ClaudeModel(OpenAICompatibleModel):
                                     # as separate ``<node>_request`` / ``<node>_response``
                                     # blocks.
                                     result_val = await ft.on_invoke_tool(tool_ctx, tool_args)
+                                    image_content = anthropic_image_tool_content(result_val)
                                     hook_result = result_val
-                                    # Ensure result is a string (Anthropic API requires string content)
-                                    result_str = result_val if isinstance(result_val, str) else json.dumps(result_val)
+                                    # Keep ordinary results intact for model input and
+                                    # hooks. Image metadata is the text companion to
+                                    # the separate native image content below.
+                                    model_result = (
+                                        image_result_for_display(result_val)
+                                        if image_content is not None
+                                        else result_val
+                                    )
+                                    result_str = (
+                                        model_result if isinstance(model_result, str) else json.dumps(model_result)
+                                    )
                                     # Wrap in object matching MCP tool result format
-                                    func_result = _ToolResult(content=[_ToolResultPart(text=result_str)])
+                                    func_result = _ToolResult(
+                                        content=[_ToolResultPart(text=result_str)], model_content=image_content
+                                    )
                                     tool_call_cache[block.id] = func_result
                                     tool_executed = True
                                 except Exception as e:
@@ -1344,7 +1358,7 @@ class ClaudeModel(OpenAICompatibleModel):
                             # success/error signal in via detect_tool_failure.
                             result_text = ""
                             if block.id in tool_call_cache:
-                                result_text = tool_call_cache[block.id].content[0].text
+                                result_text = image_result_for_display(tool_call_cache[block.id].content[0].text)
                             tool_failed = (not tool_executed) or detect_tool_failure(hook_result)
                             result_summary = (
                                 self._format_tool_result(result_text, block.name) if not tool_failed else "Failed"
@@ -1360,10 +1374,11 @@ class ClaudeModel(OpenAICompatibleModel):
                             # envelope so benchmark trajectory evaluation can read
                             # source_context_id provenance.
                             structured_result = None
-                            if isinstance(hook_result, dict):
-                                structured_result = hook_result.get("result", hook_result)
-                            elif isinstance(hook_result, list):
-                                structured_result = hook_result
+                            display_result = image_result_for_display(hook_result)
+                            if isinstance(display_result, dict):
+                                structured_result = display_result.get("result", display_result)
+                            elif isinstance(display_result, list):
+                                structured_result = display_result
                             if isinstance(structured_result, (dict, list)):
                                 tool_output["result"] = structured_result
                             complete_action = ActionHistory(
@@ -1471,7 +1486,11 @@ class ClaudeModel(OpenAICompatibleModel):
                                         {
                                             "type": "tool_result",
                                             "tool_use_id": block.id,
-                                            "content": sql_result,
+                                            "content": (
+                                                tool_call_cache[block.id].model_content or sql_result
+                                                if isinstance(tool_call_cache[block.id], _ToolResult)
+                                                else sql_result
+                                            ),
                                         }
                                     ],
                                 }

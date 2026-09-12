@@ -217,10 +217,7 @@ class TestGetAgentsSdkModel:
         adapter = LiteLLMAdapter(provider="deepseek", model="deepseek-chat", api_key="key")
         mock_model = MagicMock()
         mock_litellm_model_cls = MagicMock(return_value=mock_model)
-        mock_module = MagicMock()
-        mock_module.LitellmModel = mock_litellm_model_cls
-
-        with patch("datus.models.observed_model.ObservedLitellmModel", mock_litellm_model_cls):
+        with patch("datus.models.litellm_image.ImageToolLitellmModel", mock_litellm_model_cls):
             result = adapter.get_agents_sdk_model()
         assert result is mock_model
         mock_litellm_model_cls.assert_called_once()
@@ -231,10 +228,7 @@ class TestGetAgentsSdkModel:
         headers = {"User-Agent": "datus-agent (cli)"}
         adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="key", default_headers=headers)
         mock_model = MagicMock()
-        with patch(
-            "datus.models.litellm_cache_control.CacheControlLitellmModel",
-            return_value=mock_model,
-        ) as mock_cls:
+        with patch("datus.models.litellm_image.ImageToolLitellmModel", return_value=mock_model) as mock_cls:
             adapter.get_agents_sdk_model()
         call_kwargs = mock_cls.call_args
         assert "extra_headers" not in (call_kwargs.kwargs or {})
@@ -548,14 +542,16 @@ class TestIsOfficialAnthropicEndpoint:
 
 
 class TestGetAgentsSdkModelRouting:
-    def test_claude_returns_cache_control_subclass(self):
+    def test_claude_uses_observed_image_model(self):
         from agents.extensions.models.litellm_model import LitellmModel
 
-        from datus.models.litellm_cache_control import CacheControlLitellmModel
+        from datus.models.litellm_image import ImageToolLitellmModel
+        from datus.models.observed_model import ObservedLitellmModel
 
         adapter = LiteLLMAdapter(provider="claude", model="claude-sonnet-4", api_key="sk-test")
         model = adapter.get_agents_sdk_model()
-        assert isinstance(model, CacheControlLitellmModel)
+        assert isinstance(model, ImageToolLitellmModel)
+        assert isinstance(model, ObservedLitellmModel)
         assert isinstance(model, LitellmModel)
 
     def test_official_openai_returns_responses_model(self):

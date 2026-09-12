@@ -26,9 +26,10 @@ tool calls. Only outputs are archived.
 
 Two design properties matter:
 
-1. **Zero information loss** — the LLM can always ``read_file(<path>)`` to
-   reconstruct the original, including for execute_sql SQL, write_file
-   content, or 50KB task subagent outputs.
+1. **Text recovery** — the LLM can ``read_file(<path>)`` to reconstruct archived
+   text, including execute_sql SQL, write_file content, or large task outputs.
+   Older images are omitted with their source metadata instead; they can be
+   read again with ``read_image`` while the source file remains available.
 2. **Idempotent re-scan** — the in-session replacement starts with a fixed
    prefix (:data:`ARCHIVED_MARKER`) so a second compact pass detects the
    already-archived item and skips it. The ``compacted_until`` state is only
@@ -39,6 +40,8 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Tuple
+
+from datus.utils.image_content import contains_images, replace_images
 
 # Re-exported for backwards compatibility with existing import sites
 # (datus/api/services/action_sse_converter.py, tests, etc.).
@@ -65,9 +68,9 @@ def maybe_truncate_item(
 ) -> Dict[str, Any]:
     """Apply the archive rule to a single session item.
 
-    Only ``function_call_output.output`` is eligible. ``function_call.arguments``
-    is deliberately never archived — it must stay a valid tool-call payload (see
-    the module docstring) — so ``function_call`` items always pass through.
+    Responses tool outputs and image blocks in native Anthropic tool results
+    are eligible. ``function_call.arguments`` is deliberately never archived
+    so the tool-call payload stays valid (see the module docstring).
 
     Returns the input ``item`` unchanged when nothing was archived (already a
     marker, below threshold, or not an eligible type) so callers can
@@ -79,6 +82,13 @@ def maybe_truncate_item(
     no extra writes and no double-encoded markers.
     """
     item_type = item.get("type")
+    if contains_images(item) and (
+        item_type == "function_call_output"
+        or item.get("role") == "user"
+        and isinstance(item.get("content"), list)
+        and any(block.get("type") == "tool_result" for block in item["content"] if isinstance(block, dict))
+    ):
+        return replace_images(item)
     if item_type == "function_call_output":
         out_text = item.get("output", "")
         if not isinstance(out_text, str) or len(out_text) < threshold:
@@ -196,6 +206,11 @@ def archive_old_tool_outputs(
                     new_blocks.append(block)
                     continue
                 text = _tool_result_text(block.get("content"))
+                if contains_images(block.get("content")):
+                    new_blocks.append({**block, "content": replace_images(block["content"])})
+                    archived += 1
+                    changed = True
+                    continue
                 if text is None or not _worth_archiving(text, archive, threshold):
                     new_blocks.append(block)
                     continue
@@ -220,6 +235,10 @@ def archive_old_tool_outputs(
             rewritten.append(item)
             continue
         output = item.get("output")
+        if contains_images(output):
+            rewritten.append({**item, "output": replace_images(output)})
+            archived += 1
+            continue
         if not isinstance(output, str) or not _worth_archiving(output, archive, threshold):
             rewritten.append(item)
             continue

@@ -8,7 +8,6 @@ Unit tests for datus/models/reasoning_replay.py.
 Covers:
 - Provider detection helpers (is_kimi_model / is_deepseek_model / reasoning_provider_family)
 - should_replay_reasoning_content: the SDK replay hook decision matrix
-- ensure_reasoning_content_placeholders: empty-string placeholders, never cross-turn copies
 """
 
 from types import SimpleNamespace
@@ -16,10 +15,10 @@ from types import SimpleNamespace
 import pytest
 
 from datus.models.reasoning_replay import (
-    ensure_reasoning_content_placeholders,
     is_deepseek_model,
     is_kimi_model,
     is_reasoning_echo_provider,
+    reasoning_endpoint_identity,
     reasoning_provider_family,
     should_replay_reasoning_content,
 )
@@ -65,10 +64,13 @@ class TestProviderDetection:
 
 
 def _context(model, origin_model=None, provider_data=None):
+    base_url = "https://models.example.test/v1"
+    if provider_data is None:
+        provider_data = {"datus_reasoning_endpoint": reasoning_endpoint_identity(base_url)}
     return SimpleNamespace(
         model=model,
-        base_url=None,
-        reasoning=SimpleNamespace(item={}, origin_model=origin_model, provider_data=provider_data or {}),
+        base_url=base_url,
+        reasoning=SimpleNamespace(item={}, origin_model=origin_model, provider_data=provider_data),
     )
 
 
@@ -109,64 +111,3 @@ class TestShouldReplayReasoningContent:
     def test_non_thinking_origins_never_replay(self, target, origin):
         """A non-thinking model cannot have produced reasoning; same-family origin is not enough."""
         assert should_replay_reasoning_content(_context(target, origin)) is False
-
-
-class TestEnsureReasoningContentPlaceholders:
-    def _history(self):
-        return [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "q1"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "t", "arguments": "{}"}}],
-                "reasoning_content": "turn-1 thought",
-            },
-            {"role": "tool", "tool_call_id": "c1", "content": "{}"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "t", "arguments": "{}"}}],
-            },
-            {"role": "tool", "tool_call_id": "c2", "content": "{}"},
-            {"role": "assistant", "content": "final answer"},
-        ]
-
-    @pytest.mark.parametrize(
-        "model", ["gpt-5.4", "moonshot/moonshot-v1-8k", "moonshot/kimi-k2", "deepseek/deepseek-chat"]
-    )
-    def test_non_echo_provider_untouched(self, model):
-        """Other vendors and known non-thinking Kimi/DeepSeek models get no placeholders at all."""
-        messages = self._history()
-        result = ensure_reasoning_content_placeholders(messages, model)
-        assert result is messages
-        assert "reasoning_content" not in messages[4]
-        assert messages[4]["content"] is None
-
-    def test_placeholders_are_empty_strings_never_other_turns_reasoning(self):
-        messages = self._history()
-        ensure_reasoning_content_placeholders(messages, "deepseek/deepseek-v4-pro")
-
-        assert messages[2]["reasoning_content"] == "turn-1 thought"
-        assert messages[4]["reasoning_content"] == ""
-        assert messages[6]["reasoning_content"] == ""
-        assert all("reasoning_content" not in m for m in messages if m["role"] != "assistant")
-
-    def test_tool_call_content_none_becomes_empty_string(self):
-        messages = self._history()
-        ensure_reasoning_content_placeholders(messages, "moonshot/kimi-k2.6")
-        assert messages[2]["content"] == ""
-        assert messages[4]["content"] == ""
-        assert messages[6]["content"] == "final answer"
-
-    def test_no_reasoning_anywhere_means_not_thinking_mode(self):
-        messages = self._history()
-        del messages[2]["reasoning_content"]
-        ensure_reasoning_content_placeholders(messages, "deepseek/deepseek-v4-pro")
-
-        assert all("reasoning_content" not in m for m in messages)
-        assert messages[2]["content"] == ""
-
-    def test_non_list_payload_untouched(self):
-        assert ensure_reasoning_content_placeholders("prompt", "deepseek/deepseek-v4-pro") == "prompt"
-        assert ensure_reasoning_content_placeholders(None, "deepseek/deepseek-v4-pro") is None

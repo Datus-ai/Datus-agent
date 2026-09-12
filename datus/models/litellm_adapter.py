@@ -392,11 +392,10 @@ class LiteLLMAdapter:
           speaks the Responses API. This is the only endpoint that accepts
           ``reasoning_effort`` together with function tools for o-series /
           gpt-5* reasoning models.
-        - **Anthropic Claude** uses :class:`CacheControlLitellmModel` so the
-          prompt caching control markers survive the LiteLLM transform.
-        - **Every other OpenAI-compatible provider** (DeepSeek, Kimi, Qwen,
-          Gemini, OpenRouter, GLM, MiniMax, vLLM, and self-hosted proxies)
-          uses :class:`LitellmModel` as before.
+        - **Every other OpenAI-compatible provider** (Anthropic Claude,
+          DeepSeek, Kimi, Qwen, Gemini, OpenRouter, GLM, MiniMax, vLLM, and
+          self-hosted proxies) uses :class:`ImageToolLitellmModel`, which adds
+          image-tool transport on top of the observed SDK model.
 
         Every LiteLLM-path model receives
         :func:`datus.models.reasoning_replay.should_replay_reasoning_content`
@@ -408,7 +407,7 @@ class LiteLLMAdapter:
             Model instance configured for this adapter
         """
         try:
-            from datus.models.observed_model import ObservedLitellmModel as LitellmModel
+            from datus.models.litellm_image import ImageToolLitellmModel, register_image_model_capabilities
         except ImportError as err:
             raise ImportError(
                 "LitellmModel not found. Please install openai-agents with litellm support: "
@@ -440,13 +439,8 @@ class LiteLLMAdapter:
         # at call time in OpenAICompatibleModel.generate_with_tools/_stream.
 
         logger.debug(f"Creating LitellmModel with model={self.litellm_model_name}")
-
-        if self.provider == "claude":
-            from datus.models.litellm_cache_control import CacheControlLitellmModel
-
-            return CacheControlLitellmModel(**model_kwargs)
-
-        return LitellmModel(**model_kwargs)
+        register_image_model_capabilities(self.litellm_model_name)
+        return ImageToolLitellmModel(**model_kwargs)
 
     def _build_openai_responses_model(self) -> "Model":
         """Construct an :class:`OpenAIResponsesModel` bound to this adapter.

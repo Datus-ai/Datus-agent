@@ -1731,11 +1731,17 @@ class SessionManager:
                                     last_action = current_actions[-1]
 
                                 # Extract output directly from message_json
-                                output_text = message_json.get("output", "")
+                                from datus.utils.image_content import image_result_for_display
+
+                                output_text = image_result_for_display(message_json.get("output", ""))
 
                                 # Try to parse as Python literal (the output is stored as string repr of dict)
                                 output_data = {}
-                                if output_text:
+                                if isinstance(output_text, dict):
+                                    output_data = output_text
+                                elif output_text:
+                                    if not isinstance(output_text, str):
+                                        output_text = json.dumps(output_text, ensure_ascii=False)
                                     try:
                                         # Try ast.literal_eval first (safer than eval)
                                         output_data = ast.literal_eval(output_text)

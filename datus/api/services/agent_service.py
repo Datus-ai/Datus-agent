@@ -75,7 +75,7 @@ _USER_FACING_TOOL_CATEGORIES: tuple[str, ...] = (
 # documented in the ``ask_report`` / ``ask_dashboard`` entries of
 # :data:`SUBAGENT_TOOL_REFERENCE`: the consultant reads ``analysis/`` and
 # ``queries/`` to answer follow-ups but must never mutate the artifact.
-_ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file")
+_ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file", "read_image")
 
 # Per-agent-type editor whitelist. Previously the saas frontend
 # (``tool-tree.ts`` ``enableToolGroup``) decided which categories the picker
@@ -200,6 +200,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "reference_template_tools.*",
             "date_parsing_tools.*",
             "filesystem_tools.read_file",
+            "filesystem_tools.read_image",
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
@@ -218,6 +219,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "reference_template_tools.*",
             "date_parsing_tools.*",
             "filesystem_tools.read_file",
+            "filesystem_tools.read_image",
             "filesystem_tools.glob",
             "filesystem_tools.grep",
         ],
