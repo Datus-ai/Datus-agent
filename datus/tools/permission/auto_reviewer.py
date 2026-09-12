@@ -262,7 +262,17 @@ class LLMAutoReviewer(AutoReviewer):
                 # the provider request; schema-only adapters ignore it.
                 timeout=config.timeout_seconds,
             )
-            verdict = AutoReviewVerdict.model_validate(raw)
+            if isinstance(raw, dict) and raw.get("error"):
+                error = str(raw["error"]).strip() or "model returned an invalid response"
+                verdict = AutoReviewVerdict(
+                    risk_level=ReviewRiskLevel.HIGH,
+                    user_authorization=UserAuthorization.UNKNOWN,
+                    decision=ReviewDecision.ASK,
+                    confidence=0.0,
+                    rationale=f"AI review unavailable: {error}"[:1000],
+                )
+            else:
+                verdict = AutoReviewVerdict.model_validate(raw)
             if span is not None:
                 span.set_attribute("datus.permission.review.risk", verdict.risk_level.value)
                 span.set_attribute("datus.permission.review.decision", verdict.decision.value)
