@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/cli/sql_execution/">
+        <link rel="canonical" href="https://docs.datus.ai/zh/dev/dev/configuration/image_tool/">
       
       
-        <link rel="prev" href="../mcp_extensions/">
+        <link rel="prev" href="../web_tool/">
       
       
-        <link rel="next" href="../skill_command/">
+        <link rel="next" href="../datasources/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>SQL 执行 - Datus Docs</title>
+        <title>读图 - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#sql" class="md-skip">
+        <a href="#_1" class="md-skip">
           跳转至
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              SQL 执行
+              读图
             
           </span>
         </div>
@@ -704,10 +704,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -740,11 +738,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -765,7 +763,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -783,7 +781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
@@ -811,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../chat_command/" class="md-nav__link">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
@@ -839,7 +837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../context_command/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
@@ -867,7 +865,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../execution_command/" class="md-nav__link">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
@@ -895,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp_extensions/" class="md-nav__link">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
@@ -920,37 +918,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    SQL 执行
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
@@ -966,187 +937,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="目录">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      目录
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. 概览
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. 基础用法
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. 基础用法">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#sql_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        执行 SQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#explore-metadata" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        探索元数据
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 高级能力
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. 高级能力">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        跨数据库兼容
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        丰富的结果展示
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        查询历史
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        导出选项
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        最佳实践
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="最佳实践">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        查询优化
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        元数据探索流程
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        与聊天能力结合
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1159,7 +949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_command/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
@@ -1187,7 +977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../package_command/" class="md-nav__link">
+      <a href="../../cli/package_command/" class="md-nav__link">
         
   
   
@@ -1215,7 +1005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../reference/" class="md-nav__link">
+      <a href="../../cli/reference/" class="md-nav__link">
         
   
   
@@ -1243,7 +1033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../plan_mode/" class="md-nav__link">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
         
   
   
@@ -1271,7 +1061,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../other_commands/" class="md-nav__link">
+      <a href="../../cli/other_commands/" class="md-nav__link">
         
   
   
@@ -3226,8 +3016,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -3260,11 +3052,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12" checked>
         
           
           <label class="md-nav__link" for="__nav_1_12" id="__nav_1_12_label" tabindex="0">
@@ -3285,7 +3077,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_12_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_12_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_12">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3303,7 +3095,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -3331,7 +3123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/agent/" class="md-nav__link">
+      <a href="../agent/" class="md-nav__link">
         
   
   
@@ -3359,7 +3151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/compact/" class="md-nav__link">
+      <a href="../compact/" class="md-nav__link">
         
   
   
@@ -3387,7 +3179,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/workflow/" class="md-nav__link">
+      <a href="../workflow/" class="md-nav__link">
         
   
   
@@ -3415,7 +3207,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/benchmark/" class="md-nav__link">
+      <a href="../benchmark/" class="md-nav__link">
         
   
   
@@ -3443,7 +3235,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
+      <a href="../sql_policy/" class="md-nav__link">
         
   
   
@@ -3471,7 +3263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/web_tool/" class="md-nav__link">
+      <a href="../web_tool/" class="md-nav__link">
         
   
   
@@ -3496,10 +3288,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../configuration/image_tool/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    读图
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3515,6 +3334,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        工具与权限
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        支持范围
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        对话记录
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3587,7 +3459,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/datasources/" class="md-nav__link">
+      <a href="../datasources/" class="md-nav__link">
         
   
   
@@ -3615,7 +3487,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/semantic_layer/" class="md-nav__link">
+      <a href="../semantic_layer/" class="md-nav__link">
         
   
   
@@ -3643,7 +3515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/bi_platforms/" class="md-nav__link">
+      <a href="../bi_platforms/" class="md-nav__link">
         
   
   
@@ -3671,7 +3543,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/schedulers/" class="md-nav__link">
+      <a href="../schedulers/" class="md-nav__link">
         
   
   
@@ -3707,7 +3579,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/storage/" class="md-nav__link">
+      <a href="../storage/" class="md-nav__link">
         
   
   
@@ -3735,7 +3607,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/nodes/" class="md-nav__link">
+      <a href="../nodes/" class="md-nav__link">
         
   
   
@@ -4618,163 +4490,35 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. 概览
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. 基础用法
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. 基础用法">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#sql_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        执行 SQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#explore-metadata" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        探索元数据
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 高级能力
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. 高级能力">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        跨数据库兼容
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        丰富的结果展示
+        工具与权限
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        查询历史
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        导出选项
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        最佳实践
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="最佳实践">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        查询优化
+        支持范围
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        元数据探索流程
+        对话记录
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        与聊天能力结合
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4795,7 +4539,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/sql_execution.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/image_tool.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4803,104 +4547,48 @@
   
 
 
-<h1 id="sql">SQL 执行<a class="headerlink" href="#sql" title="Permanent link">&para;</a></h1>
-<h2 id="1">1. 概览<a class="headerlink" href="#1" title="Permanent link">&para;</a></h2>
-<p>除了命令（<code>/</code>、<code>@</code>、<code>!</code>），Datus-CLI 也能像传统 SQL 客户端一样工作。你可以直接执行 SQL 查询，并通过内置的元数据命令（如 <code>/tables</code>、<code>/databases</code>、<code>/schemas</code> 等）探索数据库结构。</p>
-<p>我们提供了一组内置的元数据命令，以统一方式访问不同数据库的元信息；当然，也可以继续使用原生命令，如 <code>SHOW DATABASES</code>、<code>DESCRIBE TABLES</code> 等。</p>
-<hr />
-<h2 id="2">2. 基础用法<a class="headerlink" href="#2" title="Permanent link">&para;</a></h2>
-<h3 id="sql_1">执行 SQL<a class="headerlink" href="#sql_1" title="Permanent link">&para;</a></h3>
-<p>在 CLI 中直接运行 SQL 查询：</p>
-<div class="language-sql highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">Datus</span><span class="o">-</span><span class="k">sql</span><span class="o">&gt;</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="n">T2</span><span class="p">.</span><span class="n">Zip</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">frpm</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">T1</span><span class="w"> </span><span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">schools</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">T2</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">T1</span><span class="p">.</span><span class="n">CDSCode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">T2</span><span class="p">.</span><span class="n">CDSCode</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">T1</span><span class="p">.</span><span class="o">`</span><span class="n">District</span><span class="w"> </span><span class="n">Name</span><span class="o">`</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'Fresno County Office of Education'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">T1</span><span class="p">.</span><span class="o">`</span><span class="n">Charter</span><span class="w"> </span><span class="n">School</span><span class="w"> </span><span class="p">(</span><span class="n">Y</span><span class="o">/</span><span class="n">N</span><span class="p">)</span><span class="o">`</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<h1 id="_1">读图<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>直接让 Agent 查看本地截图、图表、表格、流程图或照片：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>读取 images/dashboard.png，解释图表的含义。
 </span></code></pre></div>
-<p><strong>输出：</strong>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>┏━━━━━━━━━━━━━━━━━━┓
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>┃ Zip              ┃
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>┡━━━━━━━━━━━━━━━━━━┩
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>│ 93726-5309       │
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>│ 93628-9602       │
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>│ 93706-2611       │
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>│ 93726-5208       │
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>│ 93706-2819       │
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>└──────────────────┘
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>Returned 5 rows in 0.01 seconds
-</span></code></pre></div></p>
-<h3 id="explore-metadata">探索元数据<a class="headerlink" href="#explore-metadata" title="Permanent link">&para;</a></h3>
-<p>使用内置元数据命令查看数据库结构：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/databases<span class="w">                       </span><span class="c1"># 列出所有数据库</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>/database<span class="w"> </span>&lt;database_name&gt;<span class="w">        </span><span class="c1"># 切换当前数据库</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>/schemas<span class="w">                         </span><span class="c1"># 列出所有 Schema（或展示详情）</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>/schema<span class="w"> </span>&lt;schema_name&gt;<span class="w">            </span><span class="c1"># 切换当前 Schema</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>/tables<span class="w">                          </span><span class="c1"># 列出当前 Schema 的所有表</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>/table_schema<span class="w"> </span>&lt;table_name&gt;<span class="w">       </span><span class="c1"># 查看表结构详情</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>/indexes<span class="w"> </span>&lt;table_name&gt;<span class="w">            </span><span class="c1"># 查看表索引</span>
-</span></code></pre></div>
-<p>结合聊天或调试 SQL 时，这些命令能帮助你快速熟悉数据环境。</p>
-<h2 id="3">3. 高级能力<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
-<h3 id="_1">跨数据库兼容<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h3>
-<p>元数据命令在不同数据库类型间保持一致体验：</p>
-<ul>
-<li><strong>SQLite</strong>：本地文件数据库</li>
-<li><strong>DuckDB</strong>：分析型工作负载</li>
-<li><strong>Snowflake</strong>：云数仓</li>
-<li><strong>MySQL/PostgreSQL</strong>：传统关系型数据库</li>
-<li><strong>StarRocks</strong>：实时分析场景</li>
-</ul>
-<h3 id="_2">丰富的结果展示<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
-<p>SQL 结果会带来：</p>
-<ul>
-<li><strong>表格化输出</strong>：列对齐、带边框</li>
-<li><strong>类型感知</strong>：数字、日期、字符串均按类型优化显示</li>
-<li><strong>性能指标</strong>：执行耗时与返回行数</li>
-<li><strong>错误处理</strong>：清晰的错误提示与建议</li>
-</ul>
-<h3 id="_3">查询历史<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
-<ul>
-<li>所有执行过的查询都会自动保存</li>
-<li>可通过上下方向键访问历史记录</li>
-<li>查询历史在会话之间持久化</li>
-<li>与 <code>@sql</code> 上下文系统深度集成</li>
-</ul>
-<h3 id="_4">导出选项<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
-<p>查询结果可导出为多种格式：</p>
-<ul>
-<li><strong>CSV</strong>：用于数据分析与报表</li>
-<li><strong>JSON</strong>：用于 API 集成与数据交换</li>
-<li><strong>SQL</strong>：用于查询导出与回放</li>
-</ul>
-<h2 id="_5">最佳实践<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<h3 id="_6">查询优化<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong>充分利用 LIMIT</strong>：对大表做探索性查询时先限制返回行数</li>
-<li><strong>关注索引</strong>：复杂 JOIN 前先用 <code>/indexes</code> 查看索引</li>
-<li><strong>理解 Schema</strong>：通过 <code>/table_schema</code> 明确字段类型</li>
-<li><strong>监控性能</strong>：关注执行时间提示</li>
-</ol>
-<h3 id="_7">元数据探索流程<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
-<ol>
-<li>使用 <code>/databases</code> 查看可用数据库</li>
-<li>通过 <code>/database &lt;name&gt;</code> 切换目标数据库</li>
-<li>使用 <code>/schemas</code> 浏览 Schema</li>
-<li>用 <code>/tables</code> 列出表</li>
-<li>通过 <code>/table_schema &lt;table&gt;</code> 查看特定表结构</li>
-<li>使用 <code>/indexes &lt;table&gt;</code> 查看性能相关索引</li>
-</ol>
-<h3 id="_8">与聊天能力结合<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
-<p>将 SQL 执行与聊天命令结合，效率更高：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># 先用聊天生成 SQL</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>/<span class="w"> </span>Show<span class="w"> </span>me<span class="w"> </span>the<span class="w"> </span>top<span class="w"> </span><span class="m">10</span><span class="w"> </span>customers<span class="w"> </span>by<span class="w"> </span>revenue
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># 直接执行生成的 SQL</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>SELECT<span class="w"> </span>customer_name,<span class="w"> </span>SUM<span class="o">(</span>order_total<span class="o">)</span><span class="w"> </span>as<span class="w"> </span>revenue
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>FROM<span class="w"> </span>customers<span class="w"> </span>c<span class="w"> </span>JOIN<span class="w"> </span>orders<span class="w"> </span>o<span class="w"> </span>ON<span class="w"> </span>c.id<span class="w"> </span><span class="o">=</span><span class="w"> </span>o.customer_id
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>GROUP<span class="w"> </span>BY<span class="w"> </span>customer_name
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>ORDER<span class="w"> </span>BY<span class="w"> </span>revenue<span class="w"> </span>DESC
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>LIMIT<span class="w"> </span><span class="m">10</span><span class="p">;</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c1"># 随后注入上下文</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>/catalog<span class="w"> </span>customers
-</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>/<span class="w"> </span>Now<span class="w"> </span>show<span class="w"> </span>me<span class="w"> </span>their<span class="w"> </span>contact<span class="w"> </span>information
-</span></code></pre></div>
+<p>Agent 会调用 <code>filesystem_tools.read_image(path)</code>，将图片发送给当前选择的模型，无需单独配置视觉模型或 API Key。Datus 不提前判断模型能力。模型拒绝图片输入时，沿用现有模型错误处理，保留图片工具结果和对话历史。继续使用同一个模型时，后续请求可能再次报错；可以切换支持图片的模型，或新建会话。</p>
+<h2 id="_2">工具与权限<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p><code>read_image</code> 属于 filesystem 工具组，沿用 <code>read_file</code> 的路径权限，支持相对于项目根目录的路径和绝对路径。如果 Agent 配置了明确的工具列表，需要包含 <code>filesystem_tools.read_image</code> 或 <code>filesystem_tools.*</code>。</p>
+<p>文件必须位于运行 Agent 的机器上。此工具不负责附件上传、剪贴板读取或图片 URL 下载。</p>
+<h2 id="_3">支持范围<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>限制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>格式</td>
+<td>静态 PNG、JPEG、WebP，按实际文件内容校验</td>
+</tr>
+<tr>
+<td>原文件大小</td>
+<td>10 MiB</td>
+</tr>
+<tr>
+<td>原图像素数</td>
+<td>2500 万像素</td>
+</tr>
+<tr>
+<td>发送给模型的图片</td>
+<td>自动纠正方向，最长边不超过 2048 像素</td>
+</tr>
+<tr>
+<td>编码后图片大小</td>
+<td>base64 编码前不超过 3 MiB，必要时继续缩小</td>
+</tr>
+</tbody>
+</table>
+<p>动画、PDF、SVG、损坏文件和超过上述限制的文件会返回工具错误。原文件不会被修改。缩图可能影响小字辨识，必要时可将关注区域裁成单独图片。</p>
+<h2 id="_4">对话记录<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>图片会保存在本地会话数据库中，供后续追问和会话恢复使用。上下文压缩时，较旧的图片可能被替换为保留来源路径的标记；只要原文件仍存在，Agent 就可以再次调用 <code>read_image</code>。CLI、导出的对话文本、日志和 Trace 只保留图片元数据或省略标记，不包含图片数据。</p>
 
 
 
@@ -4930,7 +4618,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../mcp_extensions/" class="md-footer__link md-footer__link--prev" aria-label="上一页: MCP 扩展">
+          <a href="../web_tool/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Web Tools">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4940,20 +4628,20 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                MCP 扩展
+                Web Tools
               </div>
             </div>
           </a>
         
         
           
-          <a href="../skill_command/" class="md-footer__link md-footer__link--next" aria-label="下一页: 技能命令">
+          <a href="../datasources/" class="md-footer__link md-footer__link--next" aria-label="下一页: Datasources">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                技能命令
+                Datasources
               </div>
             </div>
             <div class="md-footer__button md-icon">
