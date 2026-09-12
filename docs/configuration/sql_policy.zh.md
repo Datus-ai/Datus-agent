@@ -13,7 +13,8 @@ agent:
       default:
         default: true
         policies:
-          - name: store_scope_sql
+          - id: sp_store_scope_sql
+            name: store_scope_sql
             type: row_filter
             applies_to:
               datasources: ["warehouse"]
@@ -24,7 +25,7 @@ agent:
               value_from: policy_context.row_filter.store_ids
 ```
 
-policy type 及其字段由 policy plugin 定义。Agent 只加载 plugin 在 `datus-plugin.yml` 中声明的运行时。
+policy type 及其字段由 policy plugin 定义。每个 `row_filter` 和 `metric_row_filter` policy 都必须有稳定且唯一的 `id`。Agent 只加载 plugin 在 `datus-plugin.yml` 中声明的运行时。
 
 ## 请求上下文
 
@@ -40,6 +41,9 @@ X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}
 {
   "row_filter": {
     "access_mode": "scoped",
+    "policy_modes": {
+      "sp_store_scope_sql": "scoped"
+    },
     "store_ids": [1, 2]
   },
   "column_mask": {
@@ -48,15 +52,21 @@ X-Datus-Policy-Context: {"row_filter":{"access_mode":"scoped","store_ids":[1,2]}
 }
 ```
 
-当前 sql-policy plugin 支持三种 row-filter 模式：
+当前 sql-policy plugin 首先应用请求级 row-filter 模式：
 
 | `access_mode` | 行为 |
 |---|---|
 | `denied` | 拒绝所有数据读取。 |
-| `scoped` | 执行已配置的行过滤，并解析其 `policy_context.*` 输入；缺少输入时 fail closed。 |
-| `unrestricted` | 仅跳过行过滤；未来的 column masking 等其他 policy family 仍会执行。 |
+| `scoped` | 逐个评估已配置的行过滤；缺少必需输入时 fail closed。 |
 
-配置了 row policy 时，缺少 `access_mode` 或传入未知值都会被拒绝；没有配置 row policy 时，空 context 可以通过。
+对于 scoped 请求，可选的 `policy_modes` object 可以按 policy ID 单独覆盖模式：
+
+| 单 policy 模式 | 行为 |
+|---|---|
+| `scoped` | 执行该 policy，并解析其 `policy_context.*` 输入。 |
+| `unrestricted` | 仅跳过该 policy；其他 row policy 和 result policy 仍会执行。 |
+
+未在 `policy_modes` 中声明的 policy 默认为 `scoped`。未知 policy ID、格式错误的模式，以及缺少或未知的请求级 `access_mode` 都会被拒绝；没有配置 row policy 时，空 context 可以通过。
 
 `X-Datus-User-Id` 只用于会话隔离。Agent 不会把它合并进 `policy_context`，也不会把 context 中的任何字段当作已认证身份。
 
