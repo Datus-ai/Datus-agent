@@ -111,16 +111,17 @@ def _anthropic_trace_output(response: Any) -> List[Dict[str, Any]]:
     return [output]
 
 
-def _anthropic_trace_usage(response: Any) -> Dict[str, Any]:
+def _anthropic_trace_usage(response: Any, *, cache_write_supported: bool = True) -> Dict[str, Any]:
     """Return per-call token usage in the Agents SDK's standard shape."""
     usage = getattr(response, "usage", None)
     if usage is None:
         return {}
     fresh_input = int(getattr(usage, "input_tokens", 0) or 0)
     cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
-    cache_write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    raw_cache_write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    cache_write = raw_cache_write if cache_write_supported else 0
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    input_tokens = fresh_input + cache_read + cache_write
+    input_tokens = fresh_input + cache_read + raw_cache_write
     return model_usage_to_span_usage(
         Usage(
             requests=1,
@@ -1115,8 +1116,9 @@ class ClaudeModel(OpenAICompatibleModel):
                     if hasattr(response, "usage") and response.usage:
                         call_input = getattr(response.usage, "input_tokens", 0)
                         call_cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
-                        call_cache_write = getattr(response.usage, "cache_creation_input_tokens", 0)
-                        call_total_input = call_input + call_cache_read + call_cache_write
+                        raw_call_cache_write = getattr(response.usage, "cache_creation_input_tokens", 0)
+                        call_total_input = call_input + call_cache_read + raw_call_cache_write
+                        call_cache_write = raw_call_cache_write if self._supports_cache_write_usage() else 0
                         cumulative_input_tokens += call_total_input
                         cumulative_output_tokens += getattr(response.usage, "output_tokens", 0)
                         cache_write_tokens += call_cache_write
@@ -1141,7 +1143,10 @@ class ClaudeModel(OpenAICompatibleModel):
                         )
                         await self._invoke_hook(hooks, "on_llm_end", run_ctx, hook_agent, response)
 
-                    active_generation_span.span_data.usage = _anthropic_trace_usage(response)
+                    active_generation_span.span_data.usage = _anthropic_trace_usage(
+                        response,
+                        cache_write_supported=self._supports_cache_write_usage(),
+                    )
                     generation_output = capture_native_trace_content("responses", _anthropic_trace_output(response))
                     finish_native_span(active_generation_span, output=generation_output)
                     active_generation_span = None
@@ -1828,6 +1833,9 @@ class ClaudeModel(OpenAICompatibleModel):
         semantics carry through cache-hit-rate and context-usage-ratio derivation.
         """
         total_tokens = cumulative_input_tokens + cumulative_output_tokens
+        if not self._supports_cache_write_usage():
+            cache_write_tokens = 0
+            last_call_cache_write_tokens = 0
         return Usage(
             requests=requests,
             input_tokens=cumulative_input_tokens,

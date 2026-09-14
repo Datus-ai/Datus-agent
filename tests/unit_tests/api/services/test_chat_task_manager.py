@@ -11,10 +11,12 @@ import pytest
 from datus.api.models.cli_models import (
     IMessageContent,
     SSEDataType,
+    SSEEndData,
     SSEEvent,
     SSEMessageData,
     SSEMessagePayload,
     SSEPingData,
+    SSEUsageData,
 )
 from datus.api.services.chat_task_manager import (
     ChatTask,
@@ -401,6 +403,78 @@ class TestChatTaskManagerBehavior:
         content = message_events[0].data.payload.content[0]
         assert content.type == "markdown"
         assert content.payload["content"] == "1 table: orders"
+
+    @pytest.mark.asyncio
+    async def test_run_loop_end_event_matches_final_cache_write_usage(self, real_agent_config):
+        """The real end-event producer must forward the final turn cache-write usage."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        from datus.schemas.token_usage import TokenUsage
+
+        class FakeNode:
+            session_id = "llm-cache-write"
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                yield ActionHistory(
+                    action_id="usage-1",
+                    role=ActionRole.ASSISTANT,
+                    action_type="token_usage",
+                    messages="Token usage update",
+                    input={},
+                    output={
+                        "cumulative": {
+                            "requests": 2,
+                            "input_tokens": 900,
+                            "output_tokens": 100,
+                            "total_tokens": 1000,
+                            "cached_tokens": 300,
+                            "cache_write_tokens": 125,
+                        },
+                        "delta": {
+                            "requests": 1,
+                            "input_tokens": 400,
+                            "output_tokens": 40,
+                            "total_tokens": 440,
+                            "cached_tokens": 100,
+                            "cache_write_tokens": 25,
+                        },
+                        "last_call_input_tokens": 400,
+                        "context_length": 200_000,
+                    },
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return TokenUsage(
+                    requests=2,
+                    input_tokens=900,
+                    output_tokens=100,
+                    total_tokens=1000,
+                    cached_tokens=300,
+                    cache_write_tokens=125,
+                    session_total_tokens=400,
+                    context_length=200_000,
+                )
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="api-cache-write", asyncio_task=MagicMock())
+
+        await manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="measure usage", session_id="api-cache-write"),
+        )
+
+        [usage_event] = [event for event in task.events if event.event == "usage"]
+        [end_event] = [event for event in task.events if event.event == "end"]
+        assert isinstance(usage_event.data, SSEUsageData)
+        assert isinstance(end_event.data, SSEEndData)
+        assert usage_event.data.cache_write_tokens == 125
+        assert end_event.data.cache_write_tokens == usage_event.data.cache_write_tokens
 
     @pytest.mark.asyncio
     async def test_run_loop_shares_task_pending_queue_with_node(self, real_agent_config):

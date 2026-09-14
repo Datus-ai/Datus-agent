@@ -1943,6 +1943,7 @@ class TestExtractUsageInfo:
 
     def test_uses_cache_write_tokens_for_official_anthropic(self):
         model = _make_model(_make_model_config(model_type="claude"))
+        model.litellm_adapter.provider = "claude"
         usage = Usage(
             input_tokens=100,
             output_tokens=10,
@@ -1988,6 +1989,7 @@ class TestExtractUsageInfo:
     )
     def test_ignores_cache_write_tokens_from_other_compatible_providers(self, model_type, base_url):
         model = _make_model(_make_model_config(model_type=model_type, base_url=base_url))
+        model.litellm_adapter.provider = model_type
         usage = Usage(
             input_tokens=100,
             output_tokens=10,

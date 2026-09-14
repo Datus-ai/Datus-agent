@@ -34,12 +34,12 @@ def test_codex_search_yes_only_on_official_endpoint():
     # OpenAI Responses exposes hosted web_search but no hosted fetch — and the
     # hosted tool is only honored by the official ChatGPT Codex host. A custom
     # base_url (third-party relay) must fall back to the local backend.
-    official = Mock()
+    official = CodexModel.__new__(CodexModel)
     official._base_url = "https://chatgpt.com/backend-api/codex"
     assert CodexModel.supports_builtin_web_search(official) is True
     assert CodexModel.supports_builtin_web_fetch(official) is False
 
-    proxy = Mock()
+    proxy = CodexModel.__new__(CodexModel)
     proxy._base_url = "https://my-proxy.example.com/codex"
     assert CodexModel.supports_builtin_web_search(proxy) is False
     assert CodexModel.supports_builtin_web_fetch(proxy) is False

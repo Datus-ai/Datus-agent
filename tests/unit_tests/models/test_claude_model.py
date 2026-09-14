@@ -191,6 +191,17 @@ class TestAnthropicTraceNormalization:
             },
             "output_tokens_details": {"reasoning_tokens": 0},
         }
+        assert _anthropic_trace_usage(response, cache_write_supported=False) == {
+            "requests": 1,
+            "input_tokens": 125,
+            "output_tokens": 7,
+            "total_tokens": 132,
+            "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_tokens": 100,
+            },
+            "output_tokens_details": {"reasoning_tokens": 0},
+        }
         assert _anthropic_trace_model_config(request) == {
             "provider": "anthropic",
             "system": "anthropic",
@@ -2258,6 +2269,40 @@ class TestStoreNativeTurnUsage:
         assert stored_usage.input_tokens_details.cached_tokens == 37747
         assert stored_usage.input_tokens_details.cache_write_tokens == 4096
         assert stored_usage.request_usage_entries[-1].input_tokens_details.cache_write_tokens == 2048
+
+    @pytest.mark.asyncio
+    async def test_custom_endpoint_does_not_persist_cache_write_tokens(self):
+        model = _make_claude_model(
+            _make_model_config(
+                use_native_api=True,
+                base_url="https://proxy.example.com/anthropic",
+            )
+        )
+        stored = []
+
+        async def _store(result):
+            stored.append(result.context_wrapper.usage)
+
+        session = MagicMock()
+        session.store_run_usage = _store
+        usage = model._build_sdk_usage(
+            requests=1,
+            cumulative_input_tokens=5000,
+            cumulative_output_tokens=100,
+            cache_read_tokens=2000,
+            cache_write_tokens=1000,
+            last_call_input_tokens=5000,
+            last_call_cache_read_tokens=2000,
+            last_call_cache_write_tokens=1000,
+        )
+
+        await model._store_native_turn_usage(session, usage)
+
+        [stored_usage] = stored
+        assert stored_usage.input_tokens == 5000
+        assert stored_usage.input_tokens_details.cached_tokens == 2000
+        assert stored_usage.input_tokens_details.cache_write_tokens == 0
+        assert stored_usage.request_usage_entries[-1].input_tokens_details.cache_write_tokens == 0
 
     @pytest.mark.asyncio
     async def test_swallows_store_run_usage_failure(self):

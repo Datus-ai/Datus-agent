@@ -1666,3 +1666,29 @@ class TestCodexUsageExtraction:
         assert info["cache_write_tokens"] == 15
         assert info["cached_tokens"] == 20
         assert info["last_call_input_tokens"] == 60
+
+    def test_ignores_cache_write_tokens_from_custom_endpoint(self, mock_oauth):
+        from agents import Usage
+        from agents.usage import InputTokensDetails
+
+        from datus.models.codex_model import CodexModel
+
+        config = ModelConfig(
+            type="codex",
+            api_key="",
+            model="gpt-5.3-codex",
+            base_url="https://proxy.example.com/codex",
+            auth_type="oauth",
+        )
+        usage = Usage(
+            requests=1,
+            input_tokens=100,
+            input_tokens_details=InputTokensDetails(cached_tokens=20, cache_write_tokens=15),
+            output_tokens=40,
+            total_tokens=140,
+        )
+
+        info = CodexModel(model_config=config)._extract_usage_info(usage)
+
+        assert info["cached_tokens"] == 20
+        assert info["cache_write_tokens"] == 0

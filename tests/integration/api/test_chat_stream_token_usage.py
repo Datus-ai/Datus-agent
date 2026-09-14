@@ -157,14 +157,15 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
     # in the first event (or mis-attributed tokens across calls) would still
     # pass the aggregate checks above but fail here.
     expected_deltas = [
-        (600, 500, 100),  # Call 1: first call, full cumulative
-        (750, 600, 150),  # Call 2: 1350-600, 1100-500, 250-100
-        (800, 600, 200),  # Call 3: 2150-1350, 1700-1100, 450-250
+        (600, 500, 100, 100),  # Call 1: first call, full cumulative
+        (750, 600, 150, 50),  # Call 2: cumulative minus call 1
+        (800, 600, 200, 30),  # Call 3: cumulative minus call 2
     ]
-    for idx, (exp_total, exp_input, exp_output) in enumerate(expected_deltas):
+    for idx, (exp_total, exp_input, exp_output, exp_cache_write) in enumerate(expected_deltas):
         assert usage_events[idx].data.delta.total_tokens == exp_total
         assert usage_events[idx].data.delta.input_tokens == exp_input
         assert usage_events[idx].data.delta.output_tokens == exp_output
+        assert usage_events[idx].data.delta.cache_write_tokens == exp_cache_write
 
     # Each per-call delta must be non-negative — UI consumers display this
     # to the user and a negative delta would be confusing nonsense.

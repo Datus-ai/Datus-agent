@@ -148,17 +148,21 @@ class CodexModel(LLMBaseModel):
         # the backend routes them to one cache node. See _stable_prompt_cache_key.
         self._prompt_cache_keys: Dict[str, str] = {}
 
+    def _is_official_chatgpt_host(self) -> bool:
+        """Return whether this model targets the official ChatGPT Codex host."""
+        try:
+            hostname = (urlparse(self._base_url).hostname or "").lower() if self._base_url else ""
+        except Exception:
+            return False
+        return hostname == "chatgpt.com"
+
     def supports_builtin_web_search(self) -> bool:
         # OpenAI Responses API exposes a hosted ``web_search`` tool, but only the
         # official ChatGPT Codex backend (``chatgpt.com/backend-api/codex``) honors
         # it. A custom ``base_url`` points at a third-party relay that may not
         # support the hosted tool, so gate on the official host and fall back to
         # the local Tavily backend otherwise.
-        try:
-            hostname = (urlparse(self._base_url).hostname or "").lower() if self._base_url else ""
-        except Exception:
-            return False
-        return hostname == "chatgpt.com"
+        return self._is_official_chatgpt_host()
 
     def supports_builtin_web_fetch(self) -> bool:
         # OpenAI Responses has no hosted fetch tool; web_fetch uses the local backend.
@@ -988,7 +992,8 @@ class CodexModel(LLMBaseModel):
         cache_write_tokens = 0
         if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
             cached_tokens = _int(getattr(usage.input_tokens_details, "cached_tokens", 0))
-            cache_write_tokens = _int(getattr(usage.input_tokens_details, "cache_write_tokens", 0))
+            if self._is_official_chatgpt_host():
+                cache_write_tokens = _int(getattr(usage.input_tokens_details, "cache_write_tokens", 0))
 
         reasoning_tokens = 0
         if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
