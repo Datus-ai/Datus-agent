@@ -432,6 +432,21 @@ async def test_litellm_usage_on_every_chunk_does_not_re_export_per_chunk(
         return export_to(self, span)
 
     monkeypatch.setattr(ModelCall, "export_to", counting_export_to)
+    # The terminal totals are LiteLLM's to compute (it re-tokenises the streamed
+    # text rather than trusting a provider's running counts), so pinning numbers
+    # would test LiteLLM. What this change owns is that the span ends up with
+    # the LAST usage the call received, not a value left over from an earlier
+    # export. Record that last value per call and compare against the span.
+    last_total_tokens = {}
+    usage = ModelCall.usage
+
+    def recording_usage(self, value):
+        result = usage(self, value)
+        if value is not None:
+            last_total_tokens[self.model_call_id] = self.fields.get("total_tokens")
+        return result
+
+    monkeypatch.setattr(ModelCall, "usage", recording_usage)
     config = RunConfig(tracing_disabled=False, workflow_name="usage-every-chunk-test")
     counts = {}
     for content_chunks in (3, 300):
@@ -454,6 +469,9 @@ async def test_litellm_usage_on_every_chunk_does_not_re_export_per_chunk(
     spans = [span for span in exporter.get_finished_spans() if span.attributes.get("openinference.span.kind") == "LLM"]
     assert [span.attributes["datus.llm.remote_correlation_id"] for span in spans] == ["provider-raw-usage"] * 2
     assert all(isinstance(span.attributes.get("datus.llm.total_tokens"), int) for span in spans)
+    terminal = [last_total_tokens.get(span.attributes["datus.llm.model_call_id"]) for span in spans]
+    assert all(isinstance(total, int) for total in terminal)
+    assert [span.attributes["datus.llm.total_tokens"] for span in spans] == terminal
 
 
 def test_no_synthetic_id_and_summary_phase():
