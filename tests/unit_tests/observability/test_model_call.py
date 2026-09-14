@@ -308,6 +308,53 @@ async def test_cancel_after_headers_and_concurrent_calls_do_not_lose_or_mix_ids(
     assert current_model_call() is None
 
 
+def test_stream_chunks_do_not_re_export_the_span(exported_calls, monkeypatch):
+    # Regression: response() runs once per raw LiteLLM chunk, and every export
+    # re-redacts and re-serialises all tool definitions. Exporting on each
+    # chunk made one streamed reply cost (chunks x tools) redactions on the
+    # event loop and froze the backend for tens of seconds. The number of
+    # exports must not depend on how many chunks the stream has.
+    exporter, _, provider = exported_calls
+    tools = [
+        {"type": "function", "function": {"name": f"tool_{i}", "description": "d", "parameters": {"type": "object"}}}
+        for i in range(5)
+    ]
+    exports = []
+    export_to = ModelCall.export_to
+
+    def counting_export_to(self, span):
+        exports.append(self.model_call_id)
+        return export_to(self, span)
+
+    monkeypatch.setattr(ModelCall, "export_to", counting_export_to)
+    tracer = provider.get_tracer(__name__)
+    counts = {}
+    for chunks in (3, 300):
+        exports.clear()
+        with (
+            tracer.start_as_current_span("generation") as span,
+            ModelCall(model="m", model_impl="test", protocol="test") as call,
+        ):
+            call.bind_span(span)
+            call.request({"tools": tools})
+            call.response(SimpleNamespace(_response_headers={"x-request-id": f"req-{chunks}"}), streaming=True)
+            # New information still reaches the span when it arrives, not only at the end.
+            assert span.attributes["datus.llm.remote_correlation_id"] == f"req-{chunks}"
+            for _ in range(chunks):
+                call.response(SimpleNamespace(id="chatcmpl-1", usage=None))
+            call.response(
+                SimpleNamespace(id="chatcmpl-1", usage={"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12})
+            )
+            assert span.attributes["datus.llm.total_tokens"] == 12
+        counts[chunks] = len(exports)
+
+    assert counts[3] == counts[300]
+    spans = exporter.get_finished_spans()
+    assert [s.attributes["datus.llm.remote_correlation_id"] for s in spans] == ["req-3", "req-300"]
+    assert [s.attributes["datus.llm.tools_captured_count"] for s in spans] == [5, 5]
+    assert [s.attributes["datus.llm.status"] for s in spans] == ["success", "success"]
+
+
 def test_no_synthetic_id_and_summary_phase():
     with model_phase("compact_summary"), ModelCall(model="m", model_impl="test", protocol="test") as call:
         call.request({"tools": [], "tool_choice": "none"})
