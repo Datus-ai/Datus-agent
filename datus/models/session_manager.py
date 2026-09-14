@@ -1194,7 +1194,14 @@ class SessionManager:
         self._validate_session_id(session_id)
         db_path = os.path.join(self.session_dir, f"{session_id}.db")
         empty_result = {
-            "total": {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cached_tokens": 0},
+            "total": {
+                "requests": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cached_tokens": 0,
+                "cache_write_tokens": 0,
+            },
             "turns": [],
             "turn_count": 0,
             "running": None,
@@ -1208,6 +1215,7 @@ class SessionManager:
             "output_tokens": 0,
             "total_tokens": 0,
             "cached_tokens": 0,
+            "cache_write_tokens": 0,
         }
         turns: List[Dict[str, Any]] = []
 
@@ -1243,6 +1251,8 @@ class SessionManager:
 
                     cached = inp_detail_dict.get("cached_tokens", 0)
                     total["cached_tokens"] += cached or 0
+                    cache_write = inp_detail_dict.get("cache_write_tokens", 0)
+                    total["cache_write_tokens"] += cache_write or 0
 
                     turns.append(
                         {
@@ -1267,6 +1277,7 @@ class SessionManager:
             total["output_tokens"] += int(cumulative.get("output_tokens", 0) or 0)
             total["total_tokens"] += int(cumulative.get("total_tokens", 0) or 0)
             total["cached_tokens"] += int(cumulative.get("cached_tokens", 0) or 0)
+            total["cache_write_tokens"] += int(cumulative.get("cache_write_tokens", 0) or 0)
 
         return {"total": total, "turns": turns, "turn_count": len(turns), "running": running}
 

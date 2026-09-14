@@ -19,6 +19,7 @@ The ONLY allowed mock: LLMBaseModel.create_model -> returns MockLLMModel
 
 import os
 import shutil
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -103,6 +104,27 @@ def isolated_logging(monkeypatch):
         for handler, level in handlers.items():
             handler.setLevel(level)
         structlog.configure(**config)
+        # ``configure_logging`` enables structlog's first-use cache. A logger
+        # first used inside one of these tests otherwise keeps the temporary
+        # processors after the global config above is restored, so later tests
+        # cannot capture its events. Module-level loggers are lazy proxies;
+        # removing their instance-level ``bind`` closure makes them resolve the
+        # restored configuration on their next use.
+        from structlog._config import BoundLoggerLazyProxy
+
+        seen: set[int] = set()
+        for module in tuple(sys.modules.values()):
+            namespace = getattr(module, "__dict__", None)
+            if not isinstance(namespace, dict):
+                continue
+            for value in tuple(namespace.values()):
+                # ``isinstance`` is unsafe here because some SDK lazy proxies
+                # implement ``__class__`` by importing optional dependencies.
+                # Structlog creates this concrete proxy type, so an exact type
+                # check avoids evaluating arbitrary module globals.
+                if type(value) is BoundLoggerLazyProxy and id(value) not in seen:
+                    seen.add(id(value))
+                    vars(value).pop("bind", None)
 
 
 @pytest.fixture(autouse=True)

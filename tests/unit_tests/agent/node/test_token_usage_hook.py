@@ -106,6 +106,7 @@ async def test_on_llm_end_first_call_emits_full_delta_and_persists():
                 "output_tokens": 200,
                 "total_tokens": 1000,
                 "cached_tokens": 0,
+                "cache_write_tokens": 120,
                 "reasoning_tokens": 0,
                 "last_call_input_tokens": 800,
             }
@@ -124,6 +125,8 @@ async def test_on_llm_end_first_call_emits_full_delta_and_persists():
     assert action.status == ActionStatus.SUCCESS
     assert action.output["cumulative"]["total_tokens"] == 1000
     assert action.output["delta"]["total_tokens"] == 1000
+    assert action.output["cumulative"]["cache_write_tokens"] == 120
+    assert action.output["delta"]["cache_write_tokens"] == 120
     assert action.output["context_length"] == 200_000
     assert action.output["last_call_input_tokens"] == 800
 
@@ -133,6 +136,7 @@ async def test_on_llm_end_first_call_emits_full_delta_and_persists():
     assert kwargs["session_id"] == "chat_session_abc"
     assert kwargs["context_length"] == 200_000
     assert kwargs["cumulative"]["total_tokens"] == 1000
+    assert kwargs["cumulative"]["cache_write_tokens"] == 120
 
     # context-window occupancy persisted to the on-disk session_state via the
     # node, using the call's real context window (``last_call_input_tokens``).
@@ -141,6 +145,7 @@ async def test_on_llm_end_first_call_emits_full_delta_and_persists():
     # node snapshot populated so the status bar's next render sees it
     snapshot = node.running_turn_usage
     assert snapshot.total_tokens == 1000
+    assert snapshot.cache_write_tokens == 120
     assert snapshot.session_total_tokens == 800
     assert snapshot.context_length == 200_000
 
@@ -153,8 +158,8 @@ async def test_on_llm_end_second_call_reports_only_incremental_delta():
     contribution as ``delta`` while ``cumulative`` keeps the running total."""
     node, manager, bus, sm, _ = _fake_node(
         [
-            {"input_tokens": 500, "output_tokens": 100, "total_tokens": 600},
-            {"input_tokens": 1200, "output_tokens": 300, "total_tokens": 1500},
+            {"input_tokens": 500, "output_tokens": 100, "total_tokens": 600, "cache_write_tokens": 40},
+            {"input_tokens": 1200, "output_tokens": 300, "total_tokens": 1500, "cache_write_tokens": 95},
         ]
     )
     hook = TokenUsageHook(node)
@@ -168,6 +173,7 @@ async def test_on_llm_end_second_call_reports_only_incremental_delta():
     assert second.output["delta"]["total_tokens"] == 900
     assert second.output["delta"]["input_tokens"] == 700
     assert second.output["delta"]["output_tokens"] == 200
+    assert second.output["delta"]["cache_write_tokens"] == 55
 
 
 @pytest.mark.asyncio

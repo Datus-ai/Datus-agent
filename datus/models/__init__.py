@@ -5,7 +5,7 @@
 # Model wrappers for different LLM providers
 # This package contains implementations for various LLM providers
 
-# Apply the narrow LiteLLM correlation patches before model calls begin.
+# Apply the narrow LiteLLM correlation patch before model calls begin.
 from datus.models.sdk_patches import apply_sdk_patches
 
 apply_sdk_patches()

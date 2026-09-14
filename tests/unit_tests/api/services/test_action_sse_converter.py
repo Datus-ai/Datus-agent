@@ -1502,6 +1502,7 @@ class TestTokenUsageEvent:
                     "output_tokens": 300,
                     "total_tokens": 1500,
                     "cached_tokens": 100,
+                    "cache_write_tokens": 80,
                     "reasoning_tokens": 50,
                 },
                 "delta": {
@@ -1510,6 +1511,7 @@ class TestTokenUsageEvent:
                     "output_tokens": 200,
                     "total_tokens": 900,
                     "cached_tokens": 0,
+                    "cache_write_tokens": 30,
                     "reasoning_tokens": 0,
                 },
                 "context_length": 200_000,
@@ -1523,6 +1525,7 @@ class TestTokenUsageEvent:
         assert isinstance(event.data, SSEUsageData)
         assert event.data.total_tokens == 1500
         assert event.data.cached_tokens == 100
+        assert event.data.cache_write_tokens == 80
         assert event.data.reasoning_tokens == 50
         assert event.data.last_call_input_tokens == 700
         assert event.data.context_length == 200_000
@@ -1530,6 +1533,7 @@ class TestTokenUsageEvent:
         assert event.data.delta.total_tokens == 900
         assert event.data.delta.input_tokens == 700
         assert event.data.delta.output_tokens == 200
+        assert event.data.delta.cache_write_tokens == 30
 
     def test_missing_output_fields_zero_fill_instead_of_crashing(self):
         """Defensive: a malformed ``token_usage`` action should still emit a

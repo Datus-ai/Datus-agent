@@ -347,9 +347,16 @@ class TestTokenUsageContent:
                     "output_tokens": 300,
                     "total_tokens": 1500,
                     "cached_tokens": 100,
+                    "cache_write_tokens": 80,
                     "reasoning_tokens": 0,
                 },
-                "delta": {"input_tokens": 700, "output_tokens": 200, "total_tokens": 900, "cached_tokens": 0},
+                "delta": {
+                    "input_tokens": 700,
+                    "output_tokens": 200,
+                    "total_tokens": 900,
+                    "cached_tokens": 0,
+                    "cache_write_tokens": 30,
+                },
                 "context_length": 200_000,
                 "last_call_input_tokens": 700,
             },
@@ -365,9 +372,11 @@ class TestTokenUsageContent:
         assert c.type == "usage"
         assert c.payload["total_tokens"] == 1500
         assert c.payload["cached_tokens"] == 100
+        assert c.payload["cache_write_tokens"] == 80
         assert c.payload["last_call_input_tokens"] == 700
         assert c.payload["context_length"] == 200_000
         assert c.payload["delta"]["total_tokens"] == 900
+        assert c.payload["delta"]["cache_write_tokens"] == 30
 
     def test_build_token_usage_content_zero_fills_malformed(self):
         from datus.schemas.action_content_builder import build_token_usage_content

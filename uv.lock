@@ -663,9 +663,9 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "charset-normalizer", specifier = ">=3.4.2" },
     { name = "datus-bi-core", specifier = ">=0.1.2" },
-    { name = "datus-db-core", specifier = ">=0.1.6" },
+    { name = "datus-db-core", specifier = ">=0.1.7" },
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
-    { name = "datus-semantic-core", specifier = ">=0.2.3" },
+    { name = "datus-semantic-core", specifier = ">=0.2.4" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "duckdb", specifier = "==1.5.2" },
@@ -681,8 +681,8 @@ requires-dist = [
     { name = "lxml", specifier = ">=5.0.0" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "mcp", specifier = ">=1.11.0" },
-    { name = "openai", specifier = ">=2.26.0,<2.45.0" },
-    { name = "openai-agents", extras = ["litellm"], specifier = "==0.14.0" },
+    { name = "openai", specifier = ">=2.45.0,<3.0.0" },
+    { name = "openai-agents", extras = ["litellm"], specifier = "==0.18.1" },
     { name = "openinference-instrumentation-openai-agents", specifier = "==1.6.2" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
@@ -756,15 +756,15 @@ wheels = [
 
 [[package]]
 name = "datus-db-core"
-version = "0.1.6"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "sqlglot" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0d/e2/34dce76ebc97c04efed7b0e52a3612b4b6d47ade0bc6fe29dbf43624c77a/datus_db_core-0.1.6.tar.gz", hash = "sha256:594458425ea509c468a6e69633af544937fd632f919dd71c2a3dade56204030b", size = 35324, upload-time = "2026-08-17T11:50:22.638Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/1b/5480c9c1efca69ec7322b3b22f574a6b8844b0810efd9bb7bdd80a1d80ba/datus_db_core-0.1.7.tar.gz", hash = "sha256:182cb85d2319bed3f52badc181e02598a3759d38cf495540e1c695cee6b79df2", size = 36045, upload-time = "2026-09-03T06:59:33.493Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/cf/82967a705891c33d4ea8cf8cc9d7a98d2703b93f6daf29f10967e798e36a/datus_db_core-0.1.6-py3-none-any.whl", hash = "sha256:92cd4909b9de035d231480beed2d9ee69b64f4578bb595db3b35102fd882b318", size = 27751, upload-time = "2026-08-17T11:50:21.516Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/0b/8f45dd4a4c7ba06d74318054d04e862048225ff0a29421161bbf480ea390/datus_db_core-0.1.7-py3-none-any.whl", hash = "sha256:bbc1cc1a96b890b909f30678b402e8954af4bf1bf89bc9027a03d01e479164c8", size = 28525, upload-time = "2026-09-03T06:59:32.582Z" },
 ]
 
 [[package]]
@@ -781,15 +781,15 @@ wheels = [
 
 [[package]]
 name = "datus-semantic-core"
-version = "0.2.3"
+version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/02/3b/71c3cf9fa310e94c80a2b7985e2f20b35f13a3ae716cafad29106c096ed1/datus_semantic_core-0.2.3.tar.gz", hash = "sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42", size = 21011, upload-time = "2026-07-28T09:40:51.722Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/13/50d3af94fbd917560ff9950e838582bcbe18edb89d8dbde1cd5a13bff80c/datus_semantic_core-0.2.4.tar.gz", hash = "sha256:6d9a117b32fbc776fb08e78f418e492725a95664823eef90cf826f395b0c6100", size = 21044, upload-time = "2026-09-04T06:55:06.375Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/6e/67d83303b7d5cf8fb5cab12ea73e38723173980b32f88e1d446f241d2dd6/datus_semantic_core-0.2.3-py3-none-any.whl", hash = "sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d", size = 18286, upload-time = "2026-07-28T09:40:50.661Z" },
+    { url = "https://files.pythonhosted.org/packages/95/52/f24ab476b9063777b592a8811bec9676062ed031018e85399f5dfcd340dd/datus_semantic_core-0.2.4-py3-none-any.whl", hash = "sha256:be6957eb6f1d8dda559055d3382a4fc390b6403195f7efb3c2684b1786a701ef", size = 18340, upload-time = "2026-09-04T06:55:05.307Z" },
 ]
 
 [[package]]
@@ -2211,7 +2211,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.44.0"
+version = "2.54.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2223,14 +2223,14 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/49/f5/7c7cb955305cb41f7f3c5fd7e0e38bf6bbf2658468863d4b7b868a5cb8df/openai-2.44.0.tar.gz", hash = "sha256:68a5a5ffad82b8ff7d451c437529fb64f7c3b8123aaf0c021966a882d9e3947d", size = 988753, upload-time = "2026-06-24T20:56:02.293Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/50/9a/8c75e8c8a5b407a0586faeb2afac91674ff955c191ecc1d6d3b6669f6788/openai-2.54.0.tar.gz", hash = "sha256:e3e6f8bc1ba30ddf381ace1a14340eed381cb984a1a59bd0f34b5be3b5d49cfa", size = 1100285, upload-time = "2026-08-11T18:46:59.035Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ae/f4/561ed79fd94876160018a5e75254cfcb9b0e62d4dded9dcb20072e86d623/openai-2.44.0-py3-none-any.whl", hash = "sha256:0a2a3ab2e29aeda368700f662ff9ba0f9df17ba4c54577a64e08b8115a3cc0ad", size = 1366216, upload-time = "2026-06-24T20:55:58.882Z" },
+    { url = "https://files.pythonhosted.org/packages/64/a8/bb76c7356de8ad57f59d5ff993d434df0607f07f08bcc9c9a5c275e399c0/openai-2.54.0-py3-none-any.whl", hash = "sha256:89089789197ccdb87f173a03145ed1598d00795220c93e96cf712b1cbf5e5f2b", size = 1660351, upload-time = "2026-08-11T18:46:56.684Z" },
 ]
 
 [[package]]
 name = "openai-agents"
-version = "0.14.0"
+version = "0.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffelib" },
@@ -2238,13 +2238,12 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic" },
     { name = "requests" },
-    { name = "types-requests" },
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/3c/965968ab53d6afc1d6e4223b6b2e8cdfca15f39fdcc20cfe5dd526ea99f4/openai_agents-0.14.0.tar.gz", hash = "sha256:d82cbafbeea5b189712c243664552268df16082fa14f1778af40f706eb976692", size = 5192284, upload-time = "2026-04-15T17:12:10.191Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/b0/4ee0eda742e395fa48f625a96ef0713c53b49f397f9c5fadcef417d021b3/openai_agents-0.18.1.tar.gz", hash = "sha256:689ad88c8f64435413dde707ca45fb42d55217ff6ef63aab3d638c33f78e04bf", size = 5521444, upload-time = "2026-07-09T23:39:18.907Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/3e/0be9a884d3b770114572e0be101ab8adb04a7f1a99620261e7393b72a655/openai_agents-0.14.0-py3-none-any.whl", hash = "sha256:5a1dad74de95970efbf4a3f89dfd50d6a22202d9105b81d7abb25a0be3d493c7", size = 795734, upload-time = "2026-04-15T17:12:08.001Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/5d/7f6a9a87279761091f864b3f39a872b5c1653f7a14468e530c10685cc0ee/openai_agents-0.18.1-py3-none-any.whl", hash = "sha256:d78b868911de3a202996dce1a333732c6f89e4dd11f83b7f2a7a62b9723dc360", size = 862813, upload-time = "2026-07-09T23:39:16.744Z" },
 ]
 
 [package.optional-dependencies]
@@ -4028,18 +4027,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e0/a8/949edebe3a82774c1ec34f637f5dd82d1cf22c25e963b7d63771083bbee5/twine-6.2.0.tar.gz", hash = "sha256:e5ed0d2fd70c9959770dce51c8f39c8945c574e18173a7b81802dab51b4b75cf", size = 172262, upload-time = "2025-09-04T15:43:17.255Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/7a/882d99539b19b1490cac5d77c67338d126e4122c8276bf640e411650c830/twine-6.2.0-py3-none-any.whl", hash = "sha256:418ebf08ccda9a8caaebe414433b0ba5e25eb5e4a927667122fbe8f829f985d8", size = 42727, upload-time = "2025-09-04T15:43:15.994Z" },
-]
-
-[[package]]
-name = "types-requests"
-version = "2.32.4.20250913"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/36/27/489922f4505975b11de2b5ad07b4fe1dca0bca9be81a703f26c5f3acfce5/types_requests-2.32.4.20250913.tar.gz", hash = "sha256:abd6d4f9ce3a9383f269775a9835a4c24e5cd6b9f647d64f88aa4613c33def5d", size = 23113, upload-time = "2025-09-13T02:40:02.309Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/20/9a227ea57c1285986c4cf78400d0a91615d25b24e257fd9e2969606bdfae/types_requests-2.32.4.20250913-py3-none-any.whl", hash = "sha256:78c9c1fffebbe0fa487a418e0fa5252017e9c60d1a2da394077f1780f655d7e1", size = 20658, upload-time = "2025-09-13T02:40:01.115Z" },
 ]
 
 [[package]]

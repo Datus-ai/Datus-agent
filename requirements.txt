@@ -10,11 +10,9 @@ packaging>=21.0
 lancedb==0.34.0
 fastembed==0.4.2
 structlog>=23.1.0
-# Floor: openai-agents 0.14.0 requires openai>=2.26. Cap below 2.45.0: openai
-# 2.45.0 made ``InputTokensDetails.cache_write_tokens`` a required field and
-# ``datus/models/claude_model.py`` still constructs ``InputTokensDetails``
-# without it. Lift the cap together with that code.
-openai>=2.26.0,<2.45.0
+# OpenAI 2.45 makes cache_write_tokens a first-class InputTokensDetails
+# field, so AdvancedSQLiteSession persists it without a Datus-side patch.
+openai>=2.45.0,<3.0.0
 httpx[socks]==0.28.1
 tantivy>=0.22.2
 aiohttp>=3.11.16
@@ -22,7 +20,7 @@ xlsxwriter>=3.2.2
 openpyxl>=3.1.5
 xlrd>=2.0.1
 Pillow>=10.4.0
-openai-agents[litellm]==0.14.0
+openai-agents[litellm]==0.18.1
 openinference-instrumentation-openai-agents==1.6.2
 opentelemetry-api>=1.20.0
 opentelemetry-sdk>=1.20.0
@@ -55,7 +53,7 @@ tabulate>=0.9.0
 jsonschema>=4.17,<5
 jinja2>=3.1,<4
 datus-storage-base>=0.1.5,<0.2.0
-datus-db-core>=0.1.6
-datus-semantic-core>=0.2.3
+datus-db-core>=0.1.7
+datus-semantic-core>=0.2.4
 datus-bi-core>=0.1.2
 datus-scheduler-core>=0.1.1

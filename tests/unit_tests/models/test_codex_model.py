@@ -1634,3 +1634,35 @@ class TestCodexContextRewriterPlumbing:
         assert build.call_args.kwargs["context_rewriter"] is rewriter
         # The rewriter was consulted before every model call of the run.
         assert rewriter.rewrite_sdk_input.await_count == stub.turn
+
+
+class TestCodexUsageExtraction:
+    def test_reads_standard_sdk_cache_write_tokens(self, model_config, mock_oauth):
+        from agents import Usage
+        from agents.usage import InputTokensDetails, OutputTokensDetails, RequestUsage
+
+        from datus.models.codex_model import CodexModel
+
+        usage = Usage(
+            requests=2,
+            input_tokens=100,
+            input_tokens_details=InputTokensDetails(cached_tokens=20, cache_write_tokens=15),
+            output_tokens=40,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=3),
+            total_tokens=140,
+            request_usage_entries=[
+                RequestUsage(
+                    input_tokens=60,
+                    input_tokens_details=InputTokensDetails(cached_tokens=10, cache_write_tokens=5),
+                    output_tokens=20,
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=1),
+                    total_tokens=80,
+                )
+            ],
+        )
+
+        info = CodexModel(model_config=model_config)._extract_usage_info(usage)
+
+        assert info["cache_write_tokens"] == 15
+        assert info["cached_tokens"] == 20
+        assert info["last_call_input_tokens"] == 60

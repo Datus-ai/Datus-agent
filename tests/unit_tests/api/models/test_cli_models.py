@@ -24,6 +24,7 @@ class TestSSEEndDataTokenFields:
         assert data.output_tokens == 0
         assert data.total_tokens == 0
         assert data.cached_tokens == 0
+        assert data.cache_write_tokens == 0
         assert data.session_total_tokens == 0
         assert data.context_length == 0
 
@@ -38,6 +39,7 @@ class TestSSEEndDataTokenFields:
             output_tokens=200,
             total_tokens=1200,
             cached_tokens=500,
+            cache_write_tokens=125,
             session_total_tokens=1000,
             context_length=128000,
         )
@@ -46,6 +48,7 @@ class TestSSEEndDataTokenFields:
         assert data.output_tokens == 200
         assert data.total_tokens == 1200
         assert data.cached_tokens == 500
+        assert data.cache_write_tokens == 125
         assert data.session_total_tokens == 1000
         assert data.context_length == 128000
 
@@ -64,6 +67,7 @@ class TestSSEEndDataTokenFields:
         assert "input_tokens" in d
         assert d["input_tokens"] == 42
         assert d["output_tokens"] == 0
+        assert d["cache_write_tokens"] == 0
 
 
 class TestUserInteractionInput:

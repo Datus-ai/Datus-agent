@@ -29,7 +29,7 @@ class _ObservedAsyncStream:
 
     async def __anext__(self):
         chunk = await self._iterator.__anext__()
-        self._call.response(chunk)
+        self._call.response(chunk, streaming=True)
         return chunk
 
     def __getattr__(self, name: str):
@@ -134,7 +134,7 @@ class ObservedResponsesModel(_ObservedModel, OpenAIResponsesModel):
     async def _fetch_response(self, *args, **kwargs):
         result = await super()._fetch_response(*args, **kwargs)
         if call := current_model_call():
-            # SDK 0.13.4's stream wrapper exposes correlation headers before
-            # any SSE events or terminal response is consumed.
+            # The SDK stream wrapper exposes correlation metadata before any
+            # SSE events or terminal response is consumed.
             call.response(result, streaming=hasattr(result, "__aiter__"))
         return result

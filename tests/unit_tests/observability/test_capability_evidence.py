@@ -3,7 +3,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -108,11 +108,8 @@ def test_official_response_fields_are_captured_without_generic_completion_ids(ex
     assert "remote_correlation_id" not in unknown.fields
 
 
-def test_litellm_preserved_stream_headers_are_read_when_public_headers_are_empty(exported_calls):
-    response = SimpleNamespace(
-        _response_headers={},
-        logging_obj=SimpleNamespace(model_call_details={"_datus_response_headers": {"x-ds-trace-id": "deepseek"}}),
-    )
+def test_litellm_stream_headers_are_read_from_wrapper_field(exported_calls):
+    response = SimpleNamespace(_response_headers={"x-ds-trace-id": "deepseek"})
     with ModelCall(model="deepseek/deepseek-chat", model_impl="litellm", protocol="chat_completions") as call:
         call.response(response, streaming=True)
     assert call.fields["remote_correlation_id"] == "deepseek"
@@ -131,6 +128,22 @@ async def test_gemini_response_id_is_observed_from_raw_stream_chunks(exported_ca
 
     assert call.fields["remote_correlation_id"] == "gemini-stream-response"
     assert call.fields["remote_correlation_source"] == "field:responseId"
+
+
+@pytest.mark.asyncio
+async def test_stream_chunks_defer_span_export_until_stream_closes():
+    async def chunks():
+        yield SimpleNamespace(id="first", usage=None)
+        yield SimpleNamespace(id="second", usage=None)
+
+    call = ModelCall(model="glm/glm-5.3", model_impl="litellm", protocol="chat_completions")
+    call.export_to = Mock()
+    with call:
+        observed = _ObservedAsyncStream(chunks(), call)
+        assert [chunk.id async for chunk in observed] == ["first", "second"]
+        call.export_to.assert_not_called()
+
+    call.export_to.assert_called_once_with(None)
 
 
 @pytest.mark.asyncio

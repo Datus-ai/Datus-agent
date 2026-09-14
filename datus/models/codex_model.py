@@ -985,8 +985,10 @@ class CodexModel(LLMBaseModel):
         total_tokens = _int(getattr(usage, "total_tokens", 0))
 
         cached_tokens = 0
+        cache_write_tokens = 0
         if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
             cached_tokens = _int(getattr(usage.input_tokens_details, "cached_tokens", 0))
+            cache_write_tokens = _int(getattr(usage.input_tokens_details, "cache_write_tokens", 0))
 
         reasoning_tokens = 0
         if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
@@ -1012,6 +1014,7 @@ class CodexModel(LLMBaseModel):
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
             "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
             "reasoning_tokens": reasoning_tokens,
             "cache_hit_rate": cache_hit_rate,
             "context_usage_ratio": context_usage_ratio,

@@ -47,6 +47,7 @@ _USAGE_FIELDS = (
     "output_tokens",
     "total_tokens",
     "cached_tokens",
+    "cache_write_tokens",
     "reasoning_tokens",
 )
 

@@ -914,6 +914,7 @@ class ChatTaskManager:
                         "output_tokens": turn_usage.output_tokens,
                         "total_tokens": turn_usage.total_tokens,
                         "cached_tokens": turn_usage.cached_tokens,
+                        "cache_write_tokens": turn_usage.cache_write_tokens,
                         "session_total_tokens": turn_usage.session_total_tokens,
                         "context_length": turn_usage.context_length,
                     }

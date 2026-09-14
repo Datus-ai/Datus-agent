@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agents import Usage
 
 from datus.models.claude_model import (
     ClaudeModel,
@@ -180,11 +181,15 @@ class TestAnthropicTraceNormalization:
             }
         ]
         assert _anthropic_trace_usage(response) == {
+            "requests": 1,
             "input_tokens": 125,
             "output_tokens": 7,
             "total_tokens": 132,
-            "cache_read_input_tokens": 100,
-            "cache_creation_input_tokens": 20,
+            "input_tokens_details": {
+                "cache_write_tokens": 20,
+                "cached_tokens": 100,
+            },
+            "output_tokens_details": {"reasoning_tokens": 0},
         }
         assert _anthropic_trace_model_config(request) == {
             "provider": "anthropic",
@@ -1113,15 +1118,16 @@ class TestGenerateWithMcpStream:
         assert actions[0].action_type == "list_tables"
         assert actions[1].role == ActionRole.TOOL
         assert actions[1].status == ActionStatus.SUCCESS
+        assert actions[1].output["raw_output"] == '["table1", "table2"]'
         assert actions[2].role == ActionRole.ASSISTANT
 
     @pytest.mark.asyncio
-    async def test_structured_tool_result_preserves_provenance_in_action_output(self):
-        """Regression: search_reference_sql results carrying source_context_id must
-        be recorded as structured records under output["result"], not only as a
-        stringified raw_output. Benchmark trajectory evaluation reads this
-        provenance; when it was a JSON string only, every task became
-        source_context_id_missing and reference_sql ranking scored 0%.
+    async def test_structured_tool_result_uses_canonical_action_output(self):
+        """Structured native-Claude tool results match OpenAI-compatible actions.
+
+        ActionHistory consumers need the FuncToolResult envelope as a mapping,
+        while the Anthropic Messages API must still receive a JSON string in the
+        next turn's tool_result block.
         """
         from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 
@@ -1167,16 +1173,25 @@ class TestGenerateWithMcpStream:
         assert len(success) == 1
         output = success[0].output
 
-        # Must be the unwrapped records list (what the benchmark trajectory provider
-        # reads), not the envelope — a wrapped envelope has no source_context_id.
+        assert output["raw_output"] == envelope
+
+        # Keep the unwrapped records for existing provenance consumers.
         assert output.get("result") == records
         ids = [item["source_context_id"] for item in output["result"]]
         assert ids == ["refsql:task:0", "refsql:task:9"]
 
-        # Backward-compat: the stringified raw_output is still present for display
-        # and message reconstruction.
-        assert isinstance(output["raw_output"], str)
-        assert "refsql:task:0" in output["raw_output"]
+        # The provider-facing replay remains a string even though ActionHistory is
+        # structured, so this change does not alter the Anthropic wire contract.
+        second_turn_messages = model.anthropic_client.messages.create.call_args_list[1].kwargs["messages"]
+        tool_result = next(
+            block
+            for message in second_turn_messages
+            if message.get("role") == "user" and isinstance(message.get("content"), list)
+            for block in message["content"]
+            if block.get("type") == "tool_result"
+        )
+        assert isinstance(tool_result["content"], str)
+        assert json.loads(tool_result["content"]) == envelope
 
     @pytest.mark.asyncio
     async def test_func_tool_receives_tool_call_id_matching_block_id(self):
@@ -1993,10 +2008,11 @@ class TestNativeLoopHooks:
         connected_server.call_tool = AsyncMock(return_value=tool_result)
 
         hooks = _make_recorder_hooks()
+        actions = []
         with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
             mock_mcp.return_value.__aenter__ = AsyncMock(return_value={"srv": connected_server})
             mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
-            async for _ in model._generate_with_mcp_stream(
+            async for action in model._generate_with_mcp_stream(
                 prompt="q",
                 mcp_servers={"srv": MagicMock()},
                 instruction="sys",
@@ -2004,7 +2020,7 @@ class TestNativeLoopHooks:
                 action_history_manager=ActionHistoryManager(),
                 hooks=hooks,
             ):
-                pass
+                actions.append(action)
 
         hooks.on_tool_start.assert_awaited_once()
         _ctx, _agent, ts_tool = hooks.on_tool_start.await_args.args
@@ -2012,6 +2028,8 @@ class TestNativeLoopHooks:
         hooks.on_tool_end.assert_awaited_once()
         assert hooks.on_tool_end.await_args.args[3] == "rows"
         connected_server.call_tool.assert_awaited_once()
+        completed = next(action for action in actions if action.action_id == "complete_call_m")
+        assert completed.output["raw_output"] == "rows"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("entrypoint", ["stream", "nonstream"])
@@ -2197,7 +2215,7 @@ class TestStoreNativeTurnUsage:
     async def test_noop_when_session_is_none(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
         # No session → nothing to persist; the guard returns None without raising.
-        result = await model._store_native_turn_usage(None, {"total_tokens": 100})
+        result = await model._store_native_turn_usage(None, Usage(total_tokens=100))
         assert result is None
 
     @pytest.mark.asyncio
@@ -2207,11 +2225,11 @@ class TestStoreNativeTurnUsage:
         # it) must trip the guard and no-op rather than AttributeError.
         session = MagicMock(spec=["add_items"])
         assert not hasattr(session, "store_run_usage")
-        result = await model._store_native_turn_usage(session, {"total_tokens": 100})
+        result = await model._store_native_turn_usage(session, Usage(total_tokens=100))
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_builds_usage_and_calls_store_run_usage(self):
+    async def test_passes_sdk_usage_to_store_run_usage(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
         stored = []
 
@@ -2220,23 +2238,26 @@ class TestStoreNativeTurnUsage:
 
         session = MagicMock()
         session.store_run_usage = _store
-        await model._store_native_turn_usage(
-            session,
-            {
-                "requests": 3,
-                "input_tokens": 52499,
-                "output_tokens": 1932,
-                "total_tokens": 54431,
-                "cached_tokens": 37747,
-                "reasoning_tokens": 0,
-            },
+        usage = model._build_sdk_usage(
+            requests=3,
+            cumulative_input_tokens=52499,
+            cumulative_output_tokens=1932,
+            cache_read_tokens=37747,
+            cache_write_tokens=4096,
+            last_call_input_tokens=18000,
+            last_call_cache_read_tokens=12000,
+            last_call_cache_write_tokens=2048,
         )
+        await model._store_native_turn_usage(session, usage)
         assert len(stored) == 1
-        usage = stored[0]
-        assert usage.input_tokens == 52499
-        assert usage.output_tokens == 1932
-        assert usage.total_tokens == 54431
-        assert usage.input_tokens_details.cached_tokens == 37747
+        stored_usage = stored[0]
+        assert stored_usage is usage
+        assert stored_usage.input_tokens == 52499
+        assert stored_usage.output_tokens == 1932
+        assert stored_usage.total_tokens == 54431
+        assert stored_usage.input_tokens_details.cached_tokens == 37747
+        assert stored_usage.input_tokens_details.cache_write_tokens == 4096
+        assert stored_usage.request_usage_entries[-1].input_tokens_details.cache_write_tokens == 2048
 
     @pytest.mark.asyncio
     async def test_swallows_store_run_usage_failure(self):
@@ -2251,7 +2272,7 @@ class TestStoreNativeTurnUsage:
         session = MagicMock()
         session.store_run_usage = _boom
         # The warning path must not propagate the exception.
-        await model._store_native_turn_usage(session, {"total_tokens": 100})
+        await model._store_native_turn_usage(session, Usage(total_tokens=100))
         # Storage WAS attempted (and the raised error swallowed), confirming the
         # except branch ran rather than the call being skipped entirely.
         assert len(attempts) == 1

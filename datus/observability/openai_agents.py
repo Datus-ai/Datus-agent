@@ -182,6 +182,8 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
                 otel_span.set_attribute(_oi_processor.LLM_SYSTEM, system)
 
             usage = data.usage if isinstance(data.usage, Mapping) else {}
+            input_details = usage.get("input_tokens_details")
+            input_details = input_details if isinstance(input_details, Mapping) else {}
             _set_numeric_attribute(
                 otel_span,
                 _oi_processor.LLM_TOKEN_COUNT_TOTAL,
@@ -190,12 +192,24 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
             _set_numeric_attribute(
                 otel_span,
                 "llm.token_count.prompt_details.cache_read",
-                usage.get("cache_read_input_tokens"),
+                input_details.get("cached_tokens"),
             )
             _set_numeric_attribute(
                 otel_span,
                 "llm.token_count.prompt_details.cache_write",
-                usage.get("cache_creation_input_tokens"),
+                input_details.get("cache_write_tokens"),
+            )
+        elif isinstance(data, _oi_processor.ResponseSpanData):
+            # OpenInference 1.6.2 exports cache reads from the OpenAI Responses
+            # usage object but does not yet export the SDK's cache-write field.
+            # Add only that missing attribute and leave the remaining Response
+            # usage mapping to the upstream processor.
+            response_usage = getattr(getattr(data, "response", None), "usage", None)
+            input_details = getattr(response_usage, "input_tokens_details", None)
+            _set_numeric_attribute(
+                otel_span,
+                "llm.token_count.prompt_details.cache_write",
+                getattr(input_details, "cache_write_tokens", None),
             )
         elif isinstance(data, _oi_processor.FunctionSpanData):
             mcp_data = data.mcp_data if isinstance(data.mcp_data, Mapping) else {}

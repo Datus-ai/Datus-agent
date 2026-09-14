@@ -562,6 +562,7 @@ class SSEEndData(BaseModel):
     output_tokens: int = Field(0, description="Turn output tokens")
     total_tokens: int = Field(0, description="Turn total tokens")
     cached_tokens: int = Field(0, description="Cache hit tokens")
+    cache_write_tokens: int = Field(0, description="Input tokens written to cache")
     session_total_tokens: int = Field(0, description="Current context window usage (last model call input_tokens)")
     context_length: int = Field(0, description="Model max context window")
 
@@ -589,6 +590,7 @@ class SSEUsageDelta(BaseModel):
     output_tokens: int = Field(0, description="Output tokens produced by this LLM call")
     total_tokens: int = Field(0, description="Total tokens (input + output + reasoning)")
     cached_tokens: int = Field(0, description="Cached input tokens credited to this call")
+    cache_write_tokens: int = Field(0, description="Input tokens written to cache by this call")
     reasoning_tokens: int = Field(0, description="Reasoning tokens spent on this call")
 
 
@@ -612,6 +614,7 @@ class SSEUsageData(BaseModel):
     output_tokens: int = Field(0, description="Turn-cumulative output tokens")
     total_tokens: int = Field(0, description="Turn-cumulative total tokens")
     cached_tokens: int = Field(0, description="Turn-cumulative cache-hit tokens")
+    cache_write_tokens: int = Field(0, description="Turn-cumulative cache-write tokens")
     reasoning_tokens: int = Field(0, description="Turn-cumulative reasoning tokens")
     last_call_input_tokens: int = Field(0, description="Most recent call's input window size")
     context_length: int = Field(0, description="Model max context window")

@@ -15,8 +15,8 @@ class TestTokenUsageDefaults:
         assert tu.output_tokens == 0
         assert tu.total_tokens == 0
         assert tu.cached_tokens == 0
+        assert tu.cache_write_tokens == 0
         assert tu.reasoning_tokens == 0
-        assert tu.cache_creation_tokens == 0
         assert tu.cache_hit_rate == 0.0
         assert tu.context_usage_ratio == 0.0
         assert tu.context_length == 0
@@ -45,6 +45,7 @@ class TestTokenUsageFromUsageDict:
             "output_tokens": 200,
             "total_tokens": 1200,
             "cached_tokens": 500,
+            "cache_write_tokens": 125,
             "reasoning_tokens": 10,
             "cache_hit_rate": 0.5,
             "context_usage_ratio": 0.01,
@@ -53,6 +54,7 @@ class TestTokenUsageFromUsageDict:
         assert tu.requests == 3
         assert tu.input_tokens == 1000
         assert tu.cached_tokens == 500
+        assert tu.cache_write_tokens == 125
         assert tu.cache_hit_rate == 0.5
 
     def test_from_usage_dict_overrides(self):
