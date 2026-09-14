@@ -32,6 +32,22 @@ _CURRENT_CALL: ContextVar[ModelCall | None] = ContextVar("datus_model_call", def
 _PHASE: ContextVar[str] = ContextVar("datus_model_phase", default="task")
 _MAX_TOOL_BYTES = 1024 * 1024
 _MAX_TOOL_ATTRIBUTES = 1536
+# The fields response() and usage() write. response() runs once per raw chunk
+# of a LiteLLM stream, and export_to() re-redacts and re-serialises every tool
+# definition, so exporting unconditionally made a single streamed answer cost
+# (chunks x tools) redactions on the event loop -- tens of seconds of a frozen
+# backend for one reply. Exporting only when one of these changed keeps the
+# span current at the moments it actually gains information (first response,
+# correlation ID, final usage); finish() still exports once more at the end.
+_RESPONSE_FIELDS = (
+    "remote_correlation_id",
+    "remote_correlation_source",
+    "remote_correlation_status",
+    "response_received_ms",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+)
 _PROVIDER_BY_HOST = {
     "api.openai.com": "openai",
     "chatgpt.com": "openai",
@@ -373,6 +389,7 @@ class ModelCall:
     def response(self, response: Any, *, streaming: bool = False) -> None:
         """Capture provider correlation fields without substituting completion IDs."""
         try:
+            before = tuple(self.fields.get(name) for name in _RESPONSE_FIELDS)
             headers = _response_headers(response)
             source = None
             correlation_id = None
@@ -424,7 +441,8 @@ class ModelCall:
                     )
                 self._received = True
             self.usage(getattr(response, "usage", None))
-            self.export_to(self._span)
+            if tuple(self.fields.get(name) for name in _RESPONSE_FIELDS) != before:
+                self.export_to(self._span)
         except Exception as exc:
             self.fields["remote_correlation_status"] = "capture_failed"
             logger.warning(

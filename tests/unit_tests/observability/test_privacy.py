@@ -59,6 +59,18 @@ def test_redaction_applies_patterns_and_nested_sequences():
     assert redacted == {"messages": ["call me at [REDACTED]", ("safe", "code [REDACTED]")]}
 
 
+def test_cached_field_splitting_does_not_carry_one_config_into_another():
+    # Field splitting is cached per key string; the decision whether a key is
+    # sensitive must still come from the config of each call.
+    value = {"apiKey": "secret", "userPassword": "hunter2"}
+
+    first = redact_value(value, RedactConfig(fields=["api_key"]))
+    second = redact_value(value, RedactConfig(fields=["password"]))
+
+    assert first == {"apiKey": "[REDACTED]", "userPassword": "hunter2"}
+    assert second == {"apiKey": "secret", "userPassword": "[REDACTED]"}
+
+
 def test_redaction_ignores_invalid_patterns_and_exact_fields():
     redacted = redact_value(
         {

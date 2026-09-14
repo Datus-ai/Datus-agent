@@ -308,6 +308,172 @@ async def test_cancel_after_headers_and_concurrent_calls_do_not_lose_or_mix_ids(
     assert current_model_call() is None
 
 
+def test_stream_chunks_do_not_re_export_the_span(exported_calls, monkeypatch):
+    # Regression: response() runs once per raw LiteLLM chunk, and every export
+    # re-redacts and re-serialises all tool definitions. Exporting on each
+    # chunk made one streamed reply cost (chunks x tools) redactions on the
+    # event loop and froze the backend for tens of seconds. The number of
+    # exports must not depend on how many chunks the stream has.
+    exporter, _, provider = exported_calls
+    tools = [
+        {"type": "function", "function": {"name": f"tool_{i}", "description": "d", "parameters": {"type": "object"}}}
+        for i in range(5)
+    ]
+    exports = []
+    export_to = ModelCall.export_to
+
+    def counting_export_to(self, span):
+        exports.append(self.model_call_id)
+        return export_to(self, span)
+
+    monkeypatch.setattr(ModelCall, "export_to", counting_export_to)
+    tracer = provider.get_tracer(__name__)
+    counts = {}
+    for chunks in (3, 300):
+        exports.clear()
+        with (
+            tracer.start_as_current_span("generation") as span,
+            ModelCall(model="m", model_impl="test", protocol="test") as call,
+        ):
+            call.bind_span(span)
+            call.request({"tools": tools})
+            call.response(SimpleNamespace(_response_headers={"x-request-id": f"req-{chunks}"}), streaming=True)
+            # New information still reaches the span when it arrives, not only at the end.
+            assert span.attributes["datus.llm.remote_correlation_id"] == f"req-{chunks}"
+            for _ in range(chunks):
+                call.response(SimpleNamespace(id="chatcmpl-1", usage=None))
+            call.response(
+                SimpleNamespace(id="chatcmpl-1", usage={"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12})
+            )
+            assert span.attributes["datus.llm.total_tokens"] == 12
+        counts[chunks] = len(exports)
+
+    assert counts[3] == counts[300]
+    spans = exporter.get_finished_spans()
+    assert [s.attributes["datus.llm.remote_correlation_id"] for s in spans] == ["req-3", "req-300"]
+    assert [s.attributes["datus.llm.tools_captured_count"] for s in spans] == [5, 5]
+    assert [s.attributes["datus.llm.status"] for s in spans] == ["success", "success"]
+
+
+@pytest.fixture
+def usage_on_every_chunk_endpoint():
+    """Real SSE stream that reports running token usage on every chunk.
+
+    Some OpenAI-compatible servers (vLLM's continuous_usage_stats, for one) do
+    this. The number of content chunks is read from ``state`` per request.
+    """
+    state = {"content_chunks": 0, "usage_chunks_sent": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("x-request-id", "provider-raw-usage")
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            total = state["content_chunks"]
+            for index in range(total + 1):
+                finished = index == total
+                completion = min(index + 1, total)
+                chunk = {
+                    "id": "chatcmpl-usage",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {} if finished else {"content": "x"},
+                            "finish_reason": "stop" if finished else None,
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": completion, "total_tokens": 10 + completion},
+                }
+                self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                state["usage_chunks_sent"] += 1
+            self.wfile.write(b"data: [DONE]\n\n")
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/v1", state
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.component
+async def test_litellm_usage_on_every_chunk_does_not_re_export_per_chunk(
+    exported_calls, usage_on_every_chunk_endpoint, monkeypatch
+):
+    # ModelCall.response() exports when token counts change, and it runs once
+    # per chunk. A provider that reports running usage on every chunk would
+    # therefore bring the per-chunk export back -- except that LiteLLM moves
+    # usage off intermediate chunks before they reach _ObservedAsyncStream.
+    # That is a dependency's behaviour, not ours, so pin it against real
+    # LiteLLM through the production path: Runner -> ObservedLitellmModel.
+    exporter, _, _ = exported_calls
+    endpoint, state = usage_on_every_chunk_endpoint
+
+    @function_tool
+    async def lookup(name: str) -> str:
+        """Look a name up."""
+        return name
+
+    exports = []
+    export_to = ModelCall.export_to
+
+    def counting_export_to(self, span):
+        exports.append(self.model_call_id)
+        return export_to(self, span)
+
+    monkeypatch.setattr(ModelCall, "export_to", counting_export_to)
+    # The terminal totals are LiteLLM's to compute (it re-tokenises the streamed
+    # text rather than trusting a provider's running counts), so pinning numbers
+    # would test LiteLLM. What this change owns is that the span ends up with
+    # the LAST usage the call received, not a value left over from an earlier
+    # export. Record that last value per call and compare against the span.
+    last_total_tokens = {}
+    usage = ModelCall.usage
+
+    def recording_usage(self, value):
+        result = usage(self, value)
+        if value is not None:
+            last_total_tokens[self.model_call_id] = self.fields.get("total_tokens")
+        return result
+
+    monkeypatch.setattr(ModelCall, "usage", recording_usage)
+    config = RunConfig(tracing_disabled=False, workflow_name="usage-every-chunk-test")
+    counts = {}
+    for content_chunks in (3, 300):
+        exports.clear()
+        state.update(content_chunks=content_chunks, usage_chunks_sent=0)
+        agent = Agent(
+            name="usage",
+            model=ObservedLitellmModel(model="openai/test-model", base_url=endpoint, api_key="local-test-only"),
+            model_settings=ModelSettings(include_usage=True),
+            tools=[lookup],
+        )
+        result = Runner.run_streamed(agent, "Say x.", run_config=config)
+        async for _ in result.stream_events():
+            pass
+        assert result.final_output == "x" * content_chunks
+        assert state["usage_chunks_sent"] == content_chunks + 1
+        counts[content_chunks] = len(exports)
+
+    assert counts[3] == counts[300]
+    spans = [span for span in exporter.get_finished_spans() if span.attributes.get("openinference.span.kind") == "LLM"]
+    assert [span.attributes["datus.llm.remote_correlation_id"] for span in spans] == ["provider-raw-usage"] * 2
+    assert all(isinstance(span.attributes.get("datus.llm.total_tokens"), int) for span in spans)
+    terminal = [last_total_tokens.get(span.attributes["datus.llm.model_call_id"]) for span in spans]
+    assert all(isinstance(total, int) for total in terminal)
+    assert [span.attributes["datus.llm.total_tokens"] for span in spans] == terminal
+
+
 def test_no_synthetic_id_and_summary_phase():
     with model_phase("compact_summary"), ModelCall(model="m", model_impl="test", protocol="test") as call:
         call.request({"tools": [], "tool_choice": "none"})
