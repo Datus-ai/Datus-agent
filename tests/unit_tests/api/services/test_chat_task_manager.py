@@ -474,6 +474,7 @@ class TestChatTaskManagerBehavior:
         assert isinstance(usage_event.data, SSEUsageData)
         assert isinstance(end_event.data, SSEEndData)
         assert usage_event.data.cache_write_tokens == 125
+        assert usage_event.data.delta.cache_write_tokens == 25
         assert end_event.data.cache_write_tokens == usage_event.data.cache_write_tokens
 
     @pytest.mark.asyncio

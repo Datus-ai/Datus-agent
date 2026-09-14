@@ -131,7 +131,7 @@ async def test_gemini_response_id_is_observed_from_raw_stream_chunks(exported_ca
 
 
 @pytest.mark.asyncio
-async def test_stream_chunks_defer_span_export_until_stream_closes():
+async def test_stream_chunks_export_only_when_evidence_changes():
     async def chunks():
         yield SimpleNamespace(id="first", usage=None)
         yield SimpleNamespace(id="second", usage=None)
@@ -141,9 +141,9 @@ async def test_stream_chunks_defer_span_export_until_stream_closes():
     with call:
         observed = _ObservedAsyncStream(chunks(), call)
         assert [chunk.id async for chunk in observed] == ["first", "second"]
-        call.export_to.assert_not_called()
+        call.export_to.assert_called_once_with(None)
 
-    call.export_to.assert_called_once_with(None)
+    assert call.export_to.call_count == 2
 
 
 @pytest.mark.asyncio
