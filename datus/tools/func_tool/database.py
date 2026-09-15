@@ -40,6 +40,12 @@ from datus.tools.db_tools.data_file_loader import (
     registered_objects,
     unresolved_table_references,
 )
+from datus.tools.db_tools.database_import import (
+    DatabaseImportError,
+    import_duckdb_file,
+    read_generator_meta,
+)
+from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
@@ -1201,6 +1207,12 @@ class DBFuncTool:
         if LOCAL_FILES_DATASOURCE in self._datasources:
             methods_to_convert.append(self.load_file_as_table)
 
+        # Both of these speak DuckDB directly (ATTACH, duckdb_tables(), CHECKPOINT),
+        # so they are mounted only where the active datasource is DuckDB.
+        if self._dialect_name(getattr(self.connector, "dialect", "")) == "duckdb":
+            methods_to_convert.append(self.import_database_file)
+            methods_to_convert.append(self.check_datasource_quality)
+
         if self._configured_supports("database"):
             bound_tools.append(self.to_function_tool(self.list_databases))
 
@@ -1931,6 +1943,185 @@ class DBFuncTool:
         except Exception as e:
             logger.error(f"load_file_as_table failed for {path}: {e}", exc_info=True)
             return FuncToolResult(success=0, error=f"Failed to load {path}: {e}")
+
+    def _duckdb_connection(self, datasource: Optional[str], operation: str):
+        """Return (context manager, None) for the target datasource, or (None, refusal).
+
+        Both tools below have to run inside the connection that already holds the DuckDB file
+        lock — opening the file again from this process is refused by DuckDB itself. That
+        connection is what ``exclusive_connection`` hands out, and its absence is exactly how a
+        non-DuckDB datasource announces itself.
+        """
+        connector = self._get_connector(datasource or "", "")
+        exclusive = getattr(connector, "exclusive_connection", None)
+        if exclusive is None:
+            return None, FuncToolResult(
+                success=0,
+                error=(
+                    f"Datasource '{self._resolve_effective_datasource(datasource)}' is not a DuckDB "
+                    f"datasource, so {operation} is not available for it."
+                ),
+            )
+        return exclusive, None
+
+    @mcp_tool()
+    def import_database_file(
+        self,
+        path: str,
+        mode: str = "replace",
+        tables: Optional[List[str]] = None,
+        keep_constraints: bool = True,
+    ) -> FuncToolResult:
+        """
+        Load every table of a DuckDB file in the workspace into the current datasource.
+
+        Use this to hand over a database you just generated — the ``gen-datasource`` skill
+        builds one under ``data/_build/`` and this is how it reaches the datasource. Writing
+        into the datasource file directly does not work: this process already holds its lock,
+        and a second writer is refused with "Conflicting lock is held". This tool copies
+        through the connection that owns the lock, so there is nothing to work around.
+
+        The source DDL is replayed rather than ``CREATE TABLE AS SELECT``, so PRIMARY KEY,
+        UNIQUE, NOT NULL and FOREIGN KEY arrive with the data instead of being silently
+        dropped — the agent reads relationships off those keys. Table and column comments come
+        across too, so there is no need to re-issue ``COMMENT ON`` afterwards.
+
+        Args:
+            path: The .duckdb file to import, relative to the project workspace.
+            mode: ``replace`` (default) drops a same-named table in the datasource first;
+                ``skip_existing`` keeps what is already there and reports it as skipped.
+            tables: Import only these source tables. Omit to import all of them.
+            keep_constraints: Replay the declared DDL so keys survive. Set False only when the
+                source constraints are known to conflict with the target.
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[dict]): On success, ``datasource``, ``source``,
+                    ``tables`` (name -> row count), ``table_count``, ``total_rows``, any
+                    ``skipped`` tables, and ``degraded`` — tables whose constraints could not be
+                    applied, with the reason.
+        """
+        try:
+            refusal = self._refuse_write_if_read_only("import_database_file")
+            if refusal is not None:
+                return refusal
+
+            resolved = self._resolve_data_file(path)
+            target = resolved.resolved
+            if not target.exists():
+                return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+
+            exclusive, refusal = self._duckdb_connection("", "import_database_file")
+            if refusal is not None:
+                return refusal
+
+            with exclusive() as connection:
+                outcome = import_duckdb_file(
+                    connection,
+                    target,
+                    mode=mode,
+                    tables=tables or None,
+                    keep_constraints=keep_constraints,
+                )
+
+            result: Dict[str, Any] = {
+                "datasource": self._resolve_effective_datasource(""),
+                "source": resolved.display,
+                "tables": outcome["imported"],
+                "table_count": outcome["table_count"],
+                "total_rows": outcome["total_rows"],
+            }
+            if outcome["skipped"]:
+                result["skipped"] = outcome["skipped"]
+            if outcome["degraded"]:
+                result["degraded"] = outcome["degraded"]
+                result["note"] = (
+                    "Some tables were copied without their constraints; see 'degraded'. "
+                    "The data is complete, but those keys are not declared in the datasource."
+                )
+            return FuncToolResult(result=result)
+
+        except (DatabaseImportError, DataFileError) as e:
+            return FuncToolResult(success=0, error=str(e))
+        except Exception as e:
+            logger.error(f"import_database_file failed for {path}: {e}", exc_info=True)
+            return FuncToolResult(success=0, error=f"Failed to import {path}: {e}")
+
+    @mcp_tool()
+    def check_datasource_quality(
+        self,
+        config_path: Optional[str] = "",
+        meta_path: Optional[str] = "",
+    ) -> FuncToolResult:
+        """
+        Run the demo-datasource quality checks against the current DuckDB datasource.
+
+        Validates what will actually be queried: layering, foreign-key orphans, primary-key
+        uniqueness, time span and trend, weekday cycle, event explainability, derived-ratio
+        ranges, dead and constant columns, event monotonicity, long-tail concentration and head
+        dominance, aggregation density, comment coverage, semantic naming, and future-dated
+        rows. Pair it with ``import_database_file`` after generating a dataset — every FAIL is a
+        defect in the generator, never a threshold to relax.
+
+        Args:
+            config_path: Optional JSON file of business assertions, relative to the workspace
+                (the ``gen-datasource`` skill writes ``data/checks.json``). Supports ``fk``,
+                ``assertions`` ({name, sql, expect}, where expect is ``zero`` / ``nonzero`` /
+                {min, max}), ``skip`` and ``strict_ddl``.
+            meta_path: Optional path to the generator's ``.<name>.meta.json``. Omit it when the
+                build database sits next to its metadata — passing the build file's path here
+                lets the check use the declared roles and keys instead of re-inferring them.
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure.
+                  - 'result' (Optional[dict]): On success, ``datasource``, ``summary``
+                    (total/passed/failed/warned/ok) and ``checks`` — every check with its
+                    status and a one-line explanation.
+        """
+        try:
+            config: Dict[str, Any] = {}
+            if config_path:
+                resolved = self._resolve_data_file(config_path)
+                if not resolved.resolved.exists():
+                    return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
+                config = json.loads(resolved.resolved.read_text(encoding="utf-8"))
+                if not isinstance(config, dict):
+                    return FuncToolResult(
+                        success=0,
+                        error=f"{resolved.display} must contain a JSON object, not a {type(config).__name__}.",
+                    )
+
+            meta = None
+            if meta_path:
+                meta_resolved = self._resolve_data_file(meta_path)
+                meta = read_generator_meta(meta_resolved.resolved)
+
+            exclusive, refusal = self._duckdb_connection("", "check_datasource_quality")
+            if refusal is not None:
+                return refusal
+
+            with exclusive() as connection:
+                checks = QualityChecker(connection, config, meta).run()
+
+            return FuncToolResult(
+                result={
+                    "datasource": self._resolve_effective_datasource(""),
+                    "summary": {k: v for k, v in summarize(checks).items() if k not in ("failures", "warnings")},
+                    "checks": checks,
+                }
+            )
+
+        except DataFileError as e:
+            return FuncToolResult(success=0, error=str(e))
+        except json.JSONDecodeError as e:
+            return FuncToolResult(success=0, error=f"{config_path} is not valid JSON: {e}")
+        except Exception as e:
+            logger.error(f"check_datasource_quality failed: {e}", exc_info=True)
+            return FuncToolResult(success=0, error=f"Quality check failed: {e}")
 
     @mcp_tool()
     def execute_sql(

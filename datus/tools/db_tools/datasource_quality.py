@@ -1,0 +1,679 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""Quality checks for a generated demo datasource (DuckDB).
+
+Deterministic validation of a synthetic warehouse: is it layered, do foreign keys resolve,
+does the time series carry trend/weekday/event signal, are derived ratios in range, is the
+long tail believable, is the aggregation dense enough to drill into.
+
+This is the engine-side counterpart of the ``gen-datasource`` skill. It lives here rather
+than in the skill bundle so the checks version with the tool that runs them, and so a
+private deployment picks them up by upgrading the package.
+
+The checker works on an open DuckDB connection, so it can run against a live datasource
+after the data has been imported - validating what will actually be queried rather than a
+build artifact.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import date as _date
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
+RATIO_HINTS = ("_rate", "_pct", "_ratio", "ctr", "cvr", "_share")
+# FX rates and SLA targets are not bounded ratios despite the naming.
+RATIO_EXCLUDE = ("fx_", "exchange", "_to_usd", "_to_cny", "sla_")
+COUNT_HINTS = ("_cnt", "_qty", "_num", "_count")
+# Metric preference: amounts beat counts. These are identifier/calendar columns and can never be metrics.
+METRIC_PREFER = ("amt", "gmv", "revenue", "sales", "value", "profit", "premium", "balance")
+AUDIT_COLS = ("created_at", "updated_at", "etl_", "_load_", "insert_", "modify_")
+METRIC_EXCLUDE = (
+    "_key",
+    "_id",
+    "year",
+    "month",
+    "week",
+    "day_of",
+    "quarter",
+    "_seq",
+    "flag",
+    "is_",
+    "_rate",
+    "_pct",
+    "_ratio",
+    "sla",
+    "_dt",
+    "score",
+    "level",
+)
+NUMERIC = ("BIGINT", "DOUBLE", "INTEGER", "HUGEINT", "SMALLINT", "FLOAT", "DECIMAL")
+# Future dates that are legitimate business semantics rather than a defect.
+FUTURE_OK_SUFFIX = ("promise_dt", "expire_dt", "due_dt", "end_dt", "renew_dt")
+
+PASS, FAIL, WARN = "PASS", "FAIL", "WARN"
+
+
+class QualityChecker:
+    """Run the demo-datasource checks against an open DuckDB connection.
+
+    Args:
+        con: An open DuckDB connection (or any object exposing ``execute(...).fetchall()``).
+        config: Optional business assertions - ``fk``, ``assertions``, ``skip``, ``strict_ddl``.
+        meta: Optional structural metadata written by the generator
+            (``.<db stem>.meta.json``): table roles, declared keys, strict-DDL flag. Supplying
+            it keeps the checker from inferring a second, conflicting view of the schema.
+    """
+
+    ROLE2KIND = {
+        "date_dim": "date",
+        "dim": "dim",
+        "fact": "fact",
+        "detail": "fact",
+        "downstream": "fact",
+        "metric_daily": "fact",
+        "event": "event",
+        "snapshot": "fact",
+    }
+
+    def __init__(self, con: Any, config: Optional[Dict[str, Any]] = None, meta: Optional[Dict[str, Any]] = None):
+        self.con = con
+        self.cfg = config or {}
+        self.meta = meta
+        self.results: List[Tuple[str, str, str]] = []
+        self.skip = set(self.cfg.get("skip", []))
+        self.kind: Dict[str, str] = {}
+        self.date_table: Optional[str] = None
+
+    # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _num(v):
+        """DECIMAL columns come back as Decimal and raise TypeError when mixed with float.
+
+        This normalises the type only; it never changes a threshold.
+        """
+        return float(v) if isinstance(v, Decimal) else v
+
+    def q(self, sql: str) -> List[tuple]:
+        try:
+            return [tuple(self._num(v) for v in r) for r in self.con.execute(sql).fetchall()]
+        except Exception as e:  # a malformed column/table just means this check does not apply
+            logger.debug("quality check query failed: %s | %s", e, sql)
+            return []
+
+    def one(self, sql: str, default=None):
+        r = self.q(sql)
+        return r[0][0] if r and r[0] and r[0][0] is not None else default
+
+    def add(self, name: str, ok: bool, detail: str, warn: bool = False) -> None:
+        """With warn=True a failure is recorded as WARN rather than FAIL (acceptable but worth flagging)."""
+        if name in self.skip:
+            return
+        self.results.append((name, PASS if ok else (WARN if warn else FAIL), detail))
+
+    def tables(self) -> List[str]:
+        return [r[0] for r in self.q("SELECT table_name FROM duckdb_tables() ORDER BY 1")]
+
+    def cols(self, t: str) -> List[tuple]:
+        return self.q(
+            f"SELECT column_name, data_type FROM information_schema.columns "
+            f"WHERE table_name='{t}' ORDER BY ordinal_position"
+        )
+
+    def numeric_cols(self, t: str) -> List[str]:
+        return [c for c, d in self.cols(t) if any(d.upper().startswith(n) for n in NUMERIC)]
+
+    def date_cols(self, t: str) -> List[str]:
+        return [c for c, d in self.cols(t) if d.upper() in ("DATE", "TIMESTAMP")]
+
+    # ------------------------------------------------------------------ checks
+
+    def check_structure(self) -> List[str]:
+        ts = self.tables()
+        rows = self.one("SELECT sum(estimated_size) FROM duckdb_tables()", 0)
+        # Layering is inferred structurally, never from a dim_/ods_ prefix - user DDL names vary wildly.
+        if self.meta and self.meta.get("roles"):
+            syn = set(self.meta.get("synthetic_tables", []))
+            for t in ts:
+                r = self.meta["roles"].get(t)
+                self.kind[t] = (
+                    "summary"
+                    if ((t in syn and not r) or re.match(r"^(dws|ads|agg|summary)", t))
+                    else self.ROLE2KIND.get(r, "fact")
+                )
+        for t in ts:
+            if t in self.kind:
+                continue
+            n = self.one(f"SELECT count(*) FROM {t}", 0)
+            cs = [c for c, _ in self.cols(t)]
+            if (
+                any(c in ("date_key", "stat_dt", "dt") for c in cs)
+                and n <= 1200
+                and not any(c.endswith("_id") for c in cs)
+            ):
+                self.kind[t] = "date"
+            elif any(c.endswith("_seq") for c in cs):
+                self.kind[t] = "event"
+            elif n <= max(2000, rows * 0.08) and sum(1 for c in cs if c.endswith("_id")) <= 2:
+                self.kind[t] = "dim"
+            elif re.search(r"^(dws|ads|agg|summary)", t):
+                self.kind[t] = "summary"
+            else:
+                self.kind[t] = "fact"
+        for t in ts:
+            if re.search(r"^(dws|ads|agg|summary)", t):
+                self.kind[t] = "summary"
+
+        cnt = {k: sum(1 for v in self.kind.values() if v == k) for k in ("date", "dim", "fact", "event", "summary")}
+        strict = self.cfg.get("strict_ddl", bool(self.meta and self.meta.get("strict_ddl")))
+        no_sum = not cnt["summary"]
+        note = ""
+        if no_sum:
+            note = " (source tables only, no summary layer" + (
+                "; strict_ddl declared)" if strict else "; set extra_tables='summary' if a dashboard rollup is needed)"
+            )
+        self.add(
+            "layering",
+            bool(cnt["dim"] and cnt["fact"] and (not no_sum or strict)),
+            f"{len(ts)} tables / {rows:,.0f} rows - " + " ".join(f"{k}:{v}" for k, v in cnt.items() if v) + note,
+            warn=no_sum and not strict,
+        )
+
+        date_t = [t for t, k in self.kind.items() if k == "date"]
+        self.add(
+            "date dimension present",
+            bool(date_t),
+            f"date dimension {date_t[0]}"
+            if date_t
+            else (
+                "user DDL has no date dimension; event names are documented in the data dictionary (strict_ddl)"
+                if strict
+                else "no date dimension, so anomaly attribution has no anchor"
+            ),
+            warn=strict,
+        )
+        self.date_table = date_t[0] if date_t else None
+        return ts
+
+    def check_fk(self, ts: Sequence[str]) -> None:
+        """Declared foreign keys are authoritative; name-based inference only fills the gaps."""
+        pk_owner: Dict[str, str] = {}
+        for t in ts:
+            cs = [c for c, _ in self.cols(t)]
+            if not cs:
+                continue
+            head = cs[0]
+            if head.endswith("_id") and t.startswith(("dim_", "ods_")):
+                n = self.one(f"SELECT count(*) FROM {t}", 0)
+                d = self.one(f"SELECT count(DISTINCT {head}) FROM {t}", 0)
+                if n and n == d:
+                    pk_owner.setdefault(head, t)
+
+        pairs = [
+            tuple(p.split(".")) + tuple(q.split("."))
+            for p, q in (x if isinstance(x, (list, tuple)) else (x["from"], x["to"]) for x in self.cfg.get("fk", []))
+        ]
+        declared = []
+        for src, (rt, rc) in ((self.meta or {}).get("declared", {}).get("fk", {}) or {}).items():
+            if "." in src:
+                st, sc = src.split(".", 1)
+                if st in ts and rt in ts:
+                    declared.append((st, sc, rt, rc))
+        pairs += declared
+
+        auto = []
+        for t in ts:
+            if self.kind.get(t) in ("date", "dim"):
+                continue
+            for c, _ in self.cols(t):
+                if c.endswith("_id") and c in pk_owner and pk_owner[c] != t:
+                    auto.append((t, c, pk_owner[c], c))
+
+        bad, detail = [], []
+        for st, sc, tt, tc in pairs + auto:
+            miss = self.one(
+                f"SELECT count(*) FROM {st} a LEFT JOIN {tt} b ON a.{sc}=b.{tc} "
+                f"WHERE a.{sc} IS NOT NULL AND b.{tc} IS NULL",
+                0,
+            )
+            tot = self.one(f"SELECT count(*) FROM {st} WHERE {sc} IS NOT NULL", 0) or 1
+            if miss:
+                bad.append(f"{st}.{sc}->{tt} {miss:,} orphans ({100.0 * miss / tot:.1f}%)")
+            else:
+                detail.append(f"{st}.{sc}->{tt}")
+        n_decl = len(declared)
+        self.add(
+            "foreign key integrity",
+            not bad,
+            "; ".join(bad)
+            if bad
+            else (
+                f"{len(detail)} path(s) resolve 100%" + (f" ({n_decl} from declared DDL)" if n_decl else "")
+                if detail
+                else "no foreign key relationship found"
+            ),
+        )
+
+        # A primary key that is entirely NULL while foreign keys report a 100% hit rate is the
+        # most dangerous false positive this checker can produce, so it is checked explicitly.
+        pk_bad = []
+        pks = (self.meta or {}).get("pks", {})
+        for t in ts:
+            col = pks.get(t)
+            if not col or col not in [c for c, _ in self.cols(t)]:
+                continue
+            n = self.one(f"SELECT count(*) FROM {t}", 0) or 0
+            if not n:
+                continue
+            nul = self.one(f"SELECT count(*) FROM {t} WHERE {col} IS NULL", 0) or 0
+            dup = n - (self.one(f"SELECT count(DISTINCT {col}) FROM {t}", 0) or 0)
+            if nul:
+                pk_bad.append(f"{t}.{col} has {nul:,}/{n:,} NULL keys")
+            if dup:
+                pk_bad.append(f"{t}.{col} has {dup:,} duplicate keys")
+        self.add(
+            "primary key non-null and unique",
+            not pk_bad,
+            "; ".join(pk_bad)
+            if pk_bad
+            else (f"{len(pks)} table(s) have a non-null unique key" if pks else "no metadata, skipped"),
+        )
+
+    # ------------------------------------------------------------------ time signal
+
+    def _main_daily(self):
+        """Pick day-grain tables plus a main amount/count column to observe the time signal on."""
+        out = []
+        cands = [t for t, k in self.kind.items() if k == "summary"] + sorted(
+            [t for t, k in self.kind.items() if k in ("fact", "metric_daily")],
+            key=lambda t: -(self.one(f"SELECT count(*) FROM {t}", 0) or 0),
+        )
+        for t in cands[:4]:
+            dcs = []
+            for c, d in self.cols(t):
+                if d.upper() not in ("DATE", "TIMESTAMP") or any(a in c for a in AUDIT_COLS):
+                    continue  # audit timestamps are not business dates
+                expr = c if d.upper() == "DATE" else f"CAST({c} AS DATE)"
+                if (self.one(f"SELECT count(DISTINCT {expr}) FROM {t}", 0) or 0) > 60:
+                    dcs.append(expr)
+            if not dcs:
+                continue
+            ncs = [
+                c
+                for c in self.numeric_cols(t)
+                if not any(h in c for h in METRIC_EXCLUDE) and (self.one(f"SELECT sum({c}) FROM {t}", 0) or 0) > 0
+            ]
+            if not ncs:
+                continue
+            pref = [c for c in ncs if any(h in c for h in METRIC_PREFER)]
+            pool = sorted(pref or ncs, key=lambda c: -(self.one(f"SELECT sum({c}) FROM {t}", 0) or 0))
+            out.append((t, dcs[:2], pool[:4]))
+        return out
+
+    def _weekly_dev(self, t: str, dc: str, c: str) -> float:
+        we = self.one(
+            f"SELECT avg(v) FROM (SELECT {dc} d, sum({c}) v FROM {t} GROUP BY 1) WHERE dayofweek(d) IN (0,6)", 0
+        )
+        wd = self.one(
+            f"SELECT avg(v) FROM (SELECT {dc} d, sum({c}) v FROM {t} GROUP BY 1) WHERE dayofweek(d) NOT IN (0,6)", 0
+        )
+        return (we / wd) if (we and wd) else 1.0
+
+    def check_time(self) -> None:
+        groups = self._main_daily()
+        if not groups:
+            self.add("time signal", False, "no table with a business date; trend/cycle cannot be assessed")
+            return
+        # A downstream fact (ship/settle date) smooths the weekday signal away, and a cumulative
+        # stock column does not reflect that day's intensity - so pick the strongest signal among
+        # all (table, date column, metric column) combinations.
+        best, best_dev = None, -1.0
+        for t, dcs, mcs in groups:
+            for dc in dcs:
+                for mc in mcs:
+                    dev = abs(self._weekly_dev(t, dc, mc) - 1.0)
+                    if dev > best_dev:
+                        best, best_dev = (t, dc, mc), dev
+        if not best:
+            self.add("time signal", False, "no observable numeric metric found")
+            return
+
+        t, dc, mc = best
+        span = self.q(f"SELECT min({dc}), max({dc}), count(DISTINCT {dc}) FROM {t}")[0]
+        months = (span[1].year - span[0].year) * 12 + span[1].month - span[0].month + 1
+        self.add(
+            "time span",
+            months >= 13,
+            f"{span[0]} ~ {span[1]}, {months} months / {span[2]} days"
+            + ("" if months >= 13 else " (< 13 months, year-over-year is impossible)"),
+        )
+
+        mm = self.q(
+            f"SELECT date_trunc('month', {dc}) m, sum({mc}) v FROM {t} GROUP BY 1 HAVING sum({mc})>0 ORDER BY 1"
+        )
+        if len(mm) >= 3:
+            vals = [r[1] for r in mm[1:-1]] or [r[1] for r in mm]  # drop partial first/last months
+            ratio = max(vals) / min(vals) if min(vals) else 0
+            first, last = vals[0], vals[-1]
+            self.add(
+                "time trend",
+                1.8 <= ratio <= 12,
+                f"observing {t}.{mc}: monthly {min(vals):,.0f} ~ {max(vals):,.0f} ({ratio:.1f}x), "
+                f"first to last month {100.0 * (last / first - 1):+.0f}%"
+                + ("" if ratio <= 12 else "  <- too volatile, usually a missing stock baseline (cold start)"),
+            )
+            allv = [r[1] for r in mm]
+            if len(allv) >= 4 and allv[1]:
+                self.add(
+                    "stock baseline",
+                    allv[0] >= allv[1] * 0.35,
+                    f"first month {allv[0]:,.0f} vs second {allv[1]:,.0f}"
+                    + (
+                        ""
+                        if allv[0] >= allv[1] * 0.35
+                        else "  <- first month too low: every entity is new in-range, distorting YoY (invariant 16)"
+                    ),
+                )
+
+        r = self._weekly_dev(t, dc, mc)
+        if r:
+            self.add(
+                "weekday cycle",
+                r >= 1.12 or r <= 0.88,
+                f"weekend/weekday = {r:.2f}x"
+                + (
+                    " (B2C shape: weekends busier)"
+                    if r >= 1.12
+                    else " (B2B shape: weekends quieter)"
+                    if r <= 0.88
+                    else "  <- no weekday signal, the curve is flat"
+                ),
+            )
+
+        if self.date_table:
+            dtbl = self.date_table
+            ev = self.q(
+                f"SELECT d.event_name, avg(x.v) FROM (SELECT {dc} d, sum({mc}) v "
+                f"FROM {t} GROUP BY 1) x JOIN {dtbl} d ON d.date_key=x.d "
+                f"WHERE d.day_type_cd='PROMO' AND d.event_name<>'' GROUP BY 1 ORDER BY 2 DESC LIMIT 3"
+            )
+            base = self.one(
+                f"SELECT avg(x.v) FROM (SELECT {dc} d, sum({mc}) v FROM {t} GROUP BY 1) x "
+                f"JOIN {dtbl} d ON d.date_key=x.d WHERE d.day_type_cd='NORMAL'",
+                0,
+            )
+            if ev and base:
+                self.add(
+                    "events are explainable",
+                    ev[0][1] / base >= 2.0,
+                    "; ".join(f"{n} {v / base:.1f}x" for n, v in ev) + f" (normal-day baseline {base:,.0f})",
+                )
+
+    def check_future(self, ts: Sequence[str]) -> None:
+        today = _date.today()
+        bad = []
+        for t in ts:
+            for c in self.date_cols(t):
+                if c.endswith(FUTURE_OK_SUFFIX):
+                    continue  # a promise/expiry/renewal date in the future is business semantics
+                n = self.one(f"SELECT count(*) FROM {t} WHERE {c} > DATE '{today}'", 0)
+                if n:
+                    mx = self.one(f"SELECT max({c}) FROM {t}")
+                    bad.append(f"{t}.{c} has {n:,} rows after today (max {mx})")
+        self.add("no future-dated rows", not bad, "; ".join(bad) if bad else f"every fact date is on or before {today}")
+
+    def check_derived(self, ts: Sequence[str]) -> None:
+        bad = []
+        for t in ts:
+            for c in self.numeric_cols(t):
+                if any(h in c for h in RATIO_HINTS) and not any(x in c for x in RATIO_EXCLUDE):
+                    mn = self.one(f"SELECT min({c}) FROM {t}")
+                    mx = self.one(f"SELECT max({c}) FROM {t}")
+                    if mn is None:
+                        continue
+                    hi = 100.0 if ("_pct" in c or "_rate_pct" in c) else 1.0
+                    # Margin/growth/YoY style ratios are legitimately negative; only cap the top.
+                    signed = any(
+                        k in c for k in ("margin", "profit", "growth", "yoy", "mom", "change", "diff", "delta")
+                    )
+                    if (mn < 0 and not signed) or mx > hi * 1.0001:
+                        bad.append(
+                            f"{t}.{c} in [{mn:.4g},{mx:.4g}] out of range (max {hi:g}"
+                            + ("" if signed else ", min 0")
+                            + ")"
+                        )
+                if any(h in c for h in COUNT_HINTS):
+                    neg = self.one(f"SELECT count(*) FROM {t} WHERE {c} < 0", 0)
+                    if neg:
+                        bad.append(f"{t}.{c} has {neg:,} negative values")
+        self.add(
+            "derived quantities sane", not bad, "; ".join(bad) if bad else "ratio columns in range, no negative counts"
+        )
+
+    def check_dead_cols(self, ts: Sequence[str]) -> None:
+        zero, const = [], []
+        for t in ts:
+            n = self.one(f"SELECT count(*) FROM {t}", 0)
+            if not n:
+                continue
+            for c in self.numeric_cols(t):
+                s = self.one(f"SELECT sum({c}) FROM {t}")
+                if s is not None and s == 0:
+                    zero.append(f"{t}.{c}")
+                elif n > 50 and self.one(f"SELECT count(DISTINCT {c}) FROM {t}", 0) == 1:
+                    const.append(f"{t}.{c}")
+        self.add("no dead columns", not zero, f"all-zero numeric columns: {zero if zero else 'none'}")
+        self.add(
+            "no constant columns",
+            not const,
+            f"constant numeric columns: {const if const else 'none'} (may be a wrong definition)",
+            warn=True,
+        )
+
+    def check_monotonic(self, ts: Sequence[str]) -> None:
+        bad = []
+        for t in ts:
+            cs = [c for c, _ in self.cols(t)]
+            seq = next((c for c in cs if c.endswith("_seq")), None)
+            key = next((c for c in cs if c.endswith("_id") and c != seq), None)
+            tsc = next((c for c, d in self.cols(t) if d.upper() == "TIMESTAMP"), None)
+            if not (seq and key and tsc):
+                continue
+            gk = next((c for c in cs if c.endswith("_id") and c not in (key,)), key)
+            n = self.one(
+                f"SELECT count(*) FROM (SELECT {tsc} ts, "
+                f"lag({tsc}) OVER (PARTITION BY {gk} ORDER BY {seq}) p FROM {t}) "
+                f"WHERE p IS NOT NULL AND ts < p",
+                0,
+            )
+            if n:
+                bad.append(f"{t} has {n:,} backwards steps")
+        self.add("event sequence monotonic", not bad, "; ".join(bad) if bad else "event chains increase strictly")
+
+    @staticmethod
+    def _head_cap(k: int) -> float:
+        """Single-entity share cap, banded by cardinality.
+
+        This observes an amount (popularity weight x unit price x quantity), and unit-price
+        variance inflates concentration to roughly twice the pure-weight theoretical value,
+        so the cap leaves headroom.
+        """
+        return 30.0 if k < 50 else 22.0 if k < 200 else 12.0 if k < 1000 else 8.0
+
+    def check_longtail(self, ts: Sequence[str]) -> None:
+        best, best_rows = None, 0
+        for t in ts:
+            if self.kind.get(t) not in ("fact", "event"):
+                continue
+            n = self.one(f"SELECT count(*) FROM {t}", 0)
+            if n < 1000 or n < best_rows:
+                continue
+            ncs = [
+                c
+                for c in self.numeric_cols(t)
+                if any(h in c for h in METRIC_PREFER)
+                and not any(x in c for x in ("refund", "cost", "promo", "fee", "claim"))
+            ]
+            # A usable dimension has a cardinality far below the row count; otherwise every key
+            # holds one record and concentration is meaningless.
+            fks = [
+                c
+                for c, _ in self.cols(t)
+                if c.endswith("_id") and (self.one(f"SELECT count(DISTINCT {c}) FROM {t}", 0) or n) < n * 0.2
+            ]
+            if not ncs or not fks:
+                continue
+            best, best_rows = (t, fks[0], ncs[0]), n
+        if not best:
+            self.add("long-tail concentration", True, "no assessable fact table (skipped)", warn=True)
+            return
+
+        t, dim, m = best
+        share = self.one(
+            f"WITH x AS (SELECT {dim} k, sum({m}) v, "
+            f"row_number() OVER (ORDER BY sum({m}) DESC) rn, count(*) OVER () n FROM {t} GROUP BY 1) "
+            f"SELECT 100.0*sum(CASE WHEN rn<=greatest(1,n/10) THEN v END)/sum(v) FROM x"
+        )
+
+        # Check every dimension, not just one: an insurance dataset with a healthy holder_id and an
+        # agent_id holding 40% of premium is a real case this caught.
+        head_bad, head_ok = [], []
+        total_rows = self.one(f"SELECT count(*) FROM {t}", 0) or 1
+        for d in [c for c, _ in self.cols(t) if c.endswith("_id")]:
+            k = self.one(f"SELECT count(DISTINCT {d}) FROM {t}", 0) or 0
+            if k < 3 or k > total_rows * 0.2:
+                continue  # a near-unique column is not a dimension
+            v = self.one(f"WITH x AS (SELECT {d} k, sum({m}) v FROM {t} GROUP BY 1) SELECT 100.0*max(v)/sum(v) FROM x")
+            if v is None:
+                continue
+            (head_bad if v > self._head_cap(k) else head_ok).append(f"{d} top entity {v:.1f}% of {k:,}")
+        self.add(
+            "head not dominant",
+            not head_bad,
+            (
+                f"{t}: "
+                + "; ".join(head_bad)
+                + "  <- a passing Top-10% total does not make the head reasonable; check the Zipf alpha and rank offset"
+            )
+            if head_bad
+            else f"{t}: " + "; ".join(head_ok or ["no assessable dimension"]),
+        )
+
+        # The floor relaxes with cardinality: the Top 10% of a small dimension is two or three
+        # entities, and forcing them to hold 50% produces an extreme head. The engine flattens its
+        # long-tail target below 200 distinct values, and this must use the same standard.
+        n_dim = self.one(f"SELECT count(DISTINCT {dim}) FROM {t}", 0) or 1
+        lo = 30.0 if n_dim < 60 else 40.0 if n_dim < 200 else 50.0
+        self.add(
+            "long-tail concentration",
+            share is not None and lo <= share <= 92,
+            f"{t} grouped by {dim} on {m}: Top 10% holds {share:.1f}% ({n_dim:,} entities, floor {lo:.0f}%)"
+            + ("" if lo <= (share or 0) <= 92 else "  <- too low = no head, too high = stacked Zipf weights"),
+        )
+
+    def check_density(self, ts: Sequence[str]) -> None:
+        rows = []
+        for t in ts:
+            if self.kind.get(t) == "summary":
+                cc = next((c for c in self.numeric_cols(t) if c.endswith("_cnt")), None)
+                if cc:
+                    rows.append((t, cc, self.one(f"SELECT avg({cc}) FROM {t} WHERE {cc}>0", 0) or 0))
+            elif self.kind.get(t) in ("fact", "metric_daily"):
+                # Without a summary layer, measure the fact table's own per-day density.
+                expr = None
+                for c, d in self.cols(t):
+                    if d.upper() not in ("DATE", "TIMESTAMP") or any(a in c for a in AUDIT_COLS):
+                        continue
+                    expr = c if d.upper() == "DATE" else f"CAST({c} AS DATE)"
+                    break
+                if expr:
+                    v = self.one(f"SELECT avg(n) FROM (SELECT {expr} d, count(*) n FROM {t} GROUP BY 1) WHERE n>0", 0)
+                    rows.append((f"{t} (by day)", "rows/day", v or 0))
+        total = self.one("SELECT sum(estimated_size) FROM duckdb_tables()", 0) or 0
+        thr = 20 if total >= 500_000 else 8  # a small dataset cannot reach 20 per cell at a fine grain
+        ok = any(r[2] >= thr for r in rows)
+        self.add(
+            "aggregation density",
+            ok,
+            f"threshold {thr}/cell (database {total:,.0f} rows): "
+            + "; ".join(f"{t}.{c} {v:.1f}" for t, c, v in sorted(rows, key=lambda x: -x[2])[:5])
+            + ("" if ok else "  <- no grain qualifies; reduce dimensions or add a coarser summary (invariant 14)"),
+        )
+
+    def check_semantics(self, ts: Sequence[str]) -> None:
+        nt = self.one("SELECT count(*) FROM duckdb_tables() WHERE comment IS NOT NULL", 0)
+        tt = len(ts)
+        self.add(
+            "metadata comments",
+            nt >= tt * 0.9,
+            f"{nt}/{tt} tables carry a comment (the agent reads them to understand semantics)",
+        )
+        bad = []
+        for t in ts:
+            if self.kind.get(t) != "dim":
+                continue
+            for c, d in self.cols(t):
+                if c.endswith("_name") and d.upper().startswith("VARCHAR"):
+                    n = self.one(f"SELECT count(*) FROM {t} WHERE regexp_matches({c}, '^[a-zA-Z_]+[_ ]?[0-9]+$')", 0)
+                    tot = self.one(f"SELECT count(*) FROM {t}", 1)
+                    if n and n > tot * 0.5:
+                        bad.append(f"{t}.{c} {n}/{tot} look like xxx_123")
+        self.add(
+            "semantic naming",
+            not bad,
+            "; ".join(bad) if bad else "dimension names are not placeholders (e.g. seller_0 / wh_3)",
+        )
+
+    def check_config(self) -> None:
+        for a in self.cfg.get("assertions", []):
+            v = self.one(a["sql"])
+            exp = a.get("expect", "zero")
+            if exp == "zero":
+                ok, d = (v == 0), f"actual {v}"
+            elif exp == "nonzero":
+                ok, d = bool(v), f"actual {v}"
+            else:
+                lo, hi = exp.get("min", float("-inf")), exp.get("max", float("inf"))
+                ok = v is not None and lo <= v <= hi
+                d = f"actual {v:.4g} (expected {lo}~{hi})" if v is not None else "query returned nothing"
+            self.add(a["name"], ok, d)
+
+    # ------------------------------------------------------------------ entry point
+
+    def run(self) -> List[Dict[str, str]]:
+        ts = self.check_structure()
+        self.check_fk(ts)
+        self.check_time()
+        self.check_future(ts)
+        self.check_derived(ts)
+        self.check_dead_cols(ts)
+        self.check_monotonic(ts)
+        self.check_longtail(ts)
+        self.check_density(ts)
+        self.check_semantics(ts)
+        self.check_config()
+        return [{"check": n, "status": s, "detail": d} for n, s, d in self.results]
+
+
+def summarize(results: Sequence[Dict[str, str]]) -> Dict[str, Any]:
+    """Aggregate a run into counts plus the failing/warning subsets."""
+    n_pass = sum(1 for r in results if r["status"] == PASS)
+    n_fail = sum(1 for r in results if r["status"] == FAIL)
+    n_warn = sum(1 for r in results if r["status"] == WARN)
+    return {
+        "total": len(results),
+        "passed": n_pass,
+        "failed": n_fail,
+        "warned": n_warn,
+        "ok": n_fail == 0,
+        "failures": [r for r in results if r["status"] == FAIL],
+        "warnings": [r for r in results if r["status"] == WARN],
+    }

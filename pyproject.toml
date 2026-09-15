@@ -118,6 +118,12 @@ exclude = ["benchmark*", "docs*"]
 "*" = ["*.yml", "*.yaml", "*.json", "*.md", "*.txt", "*.j2"]
 "datus" = [
     "*.yml", "*.yaml", "*.json", "*.md", "*.txt",
+    # Skill bundles ship executable helpers; *.py is not covered by the patterns
+    # above (a skill's scripts/ directory is data, not an importable package),
+    # so without this line the wheel carries SKILL.md and no engine.
+    "resources/skills/*/scripts/*.py",
+    "resources/skills/*/scripts/*.sh",
+    "resources/skills/*/references/*.md",
     "sample_data/*.duckdb",
     "sample_data/california_schools/*.csv",
     "sample_data/california_schools/*.sqlite",

@@ -1229,6 +1229,10 @@ class TestDBFuncToolEdgeCases:
                 expected_tool_count += 1
             if connector_registry.support_schema(dialect):
                 expected_tool_count += 1
+            # import_database_file / check_datasource_quality speak DuckDB directly
+            # (ATTACH, duckdb_tables(), CHECKPOINT) and mount only for that dialect.
+            if str(getattr(dialect, "value", dialect)).lower() == "duckdb":
+                expected_tool_count += 2
 
             assert len(tools) == expected_tool_count, f"Failed for dialect {dialect}"
 
