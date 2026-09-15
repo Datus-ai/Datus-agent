@@ -479,7 +479,13 @@ def test_report_lists_only_the_columns_that_really_get_a_code(engine_module, tmp
     con = duckdb.connect(str(tmp_path / "c.duckdb"))
     try:
         assert con.execute("SELECT order_no FROM orders LIMIT 1").fetchone()[0].startswith("ORD")
-        assert not con.execute("SELECT sku_code FROM products LIMIT 1").fetchone()[0].startswith("SKU0")
+        # State the property rather than a forbidden prefix: sku_code must keep drawing from the
+        # finite enum domain inference gave it. A prefix test would pass for any wrong-but-not-
+        # SKU0 filler, and would fail a legitimate domain that happens to contain "SKU0...".
+        domain = set(eng._enum_values("products", "sku_code")[0])
+        assert domain, "the column must have an inferred enum domain to be drawn from"
+        generated = {row[0] for row in con.execute("SELECT DISTINCT sku_code FROM products").fetchall()}
+        assert generated <= domain, f"values outside the inferred domain: {sorted(generated - domain)}"
     finally:
         con.close()
 
@@ -609,3 +615,78 @@ def test_a_daily_summary_without_a_dimension_column_still_carries_measures(engin
         assert con.execute("SELECT count(*) FROM ads_daily_summary WHERE gmv IS NULL").fetchone()[0] == 0
     finally:
         con.close()
+
+
+CODE_ON_CHILDREN_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_no VARCHAR,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    line_no VARCHAR,
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_events (
+    event_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    event_seq INTEGER,
+    event_type VARCHAR,
+    event_time TIMESTAMP,
+    trace_ref VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_code_column_on_a_child_table_is_filled_not_left_null(engine_module, tmp_path):
+    """Only `_gen_dim` and `_gen_fact` called `_code_val` directly.
+
+    The detail, downstream, event and metric generators reach a leftover column through
+    `_fill_generic`, which had no code branch - so `order_items.line_no` came out NULL on every
+    row while `report()` listed it under "generated business codes".
+    """
+    eng = engine_module.DDLEngine(CODE_ON_CHILDREN_DDL, rows=9000, months=3, seed=1)
+    assert eng.roles["order_items"] == "detail"
+    assert eng.roles["order_events"] == "event"
+
+    eng.generate(str(tmp_path / "k.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "k.duckdb"))
+    try:
+        for table, column in (("order_items", "line_no"), ("order_events", "trace_ref")):
+            total, filled, distinct = con.execute(
+                f"SELECT count(*), count({column}), count(DISTINCT {column}) FROM {table}"  # noqa: S608
+            ).fetchone()
+            assert total > 0
+            assert filled == total, f"{table}.{column} left {total - filled} rows NULL"
+            # These generators nest loops, so a code keyed on a loop index would repeat.
+            assert distinct == total, f"{table}.{column} handed out duplicate codes"
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_joint_column_is_never_reported_as_a_code(engine_module):
+    """A joint group is written into the row before the per-column chain runs.
+
+    The membership test therefore has to come before the `id` branch, not after it: an id column
+    inside a joint group is claimed by the group whatever its semantic says.
+    """
+    ddl = (
+        "CREATE TABLE sites (site_id BIGINT PRIMARY KEY, region_no VARCHAR, city_ref VARCHAR, site_name VARCHAR);"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));"
+    )
+    profile = {
+        "semantics": {"sites.region_no": "text", "sites.city_ref": "id"},
+        "joint": {"sites": [{"cols": ["region_no", "city_ref"], "values": [["north", "c1"], ["south", "c2"]]}]},
+    }
+    eng = engine_module.DDLEngine(ddl, rows=3000, months=3, seed=1, profile=profile)
+
+    assert not eng._is_code_col("sites", "region_no"), "claimed by the joint group"
+    assert not eng._is_code_col("sites", "city_ref"), "claimed by the joint group, id semantic or not"

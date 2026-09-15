@@ -206,6 +206,7 @@ class DDLEngine:
         self.pools, self.refs = {}, {}
         self._enum_cache = {}
         self._fact_rows, self._pending_dim_rows, self._id_base = {}, {}, {}
+        self._code_seq = {}  # (table, column) -> codes handed out, so _fill_generic never repeats one
         self.schema = self._parse()
         self.synthetic = set()
         if self.extra_tables in ("date_dim", "all"):
@@ -1271,11 +1272,14 @@ class DDLEngine:
         sem = next((c["sem"] for c in self.schema[t] if c["name"] == col), None)
         if sem is None or sem in self.CODE_OWNED_SEM:
             return False
+        # Joint groups are written into the row before the per-column chain runs at all, so this
+        # test comes first: it holds whatever semantic the column carries, ``id`` included.
+        if any(col in g.get("cols", ()) for g in (self.profile.get("joint", {}) or {}).get(t, [])):
+            return False
         if sem == "id":
             # A foreign key is sampled from the parent pool; only a non-referencing id falls through.
             return self.pk_owner.get(col, t) == t
-        # Joint groups are written into the row before the per-column chain runs.
-        return not any(col in g.get("cols", ()) for g in (self.profile.get("joint", {}) or {}).get(t, []))
+        return True
 
     def _code_val(self, t, col, i, d=None):
         pre = re.sub(r"[^A-Za-z]", "", col).upper()[:3] or "CD"
@@ -1950,6 +1954,15 @@ class DDLEngine:
             return (pr["dt"] if pr else rng.choice(self.days)).isoformat()
         if sem == "name":
             return self._name_for(t, rng.randint(0, 99), rng)
+        if self._is_code_col(t, name):
+            # _gen_dim and _gen_fact call _code_val directly; the detail / downstream / event /
+            # metric generators reach a column only through here, so without this branch a
+            # code column on any of them landed NULL while report() promised a business code.
+            # The counter is per (table, column) rather than a loop index: these generators nest
+            # loops (a detail row per parent, an event row per stage), and a reused index would
+            # hand out duplicate codes.
+            seq = self._code_seq[(t, name)] = self._code_seq.get((t, name), 0) + 1
+            return self._code_val(t, name, seq - 1, (pr or {}).get("dt"))
         return ""
 
     def _gen_downstream(self, t, o):
