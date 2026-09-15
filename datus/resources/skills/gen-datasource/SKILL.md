@@ -94,11 +94,20 @@ Everything lives under `data/` so the directory can be handed over whole: databa
 Because `gen.py` sits next to the database, anchor paths to its own directory:
 
 ```python
-HERE = pathlib.Path(__file__).resolve().parent                                  # data/
-OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "datasource.duckdb"
-OUT.parent.mkdir(parents=True, exist_ok=True)                                   # never chain mkdir && python
-eng.generate(str(OUT))                                                          # absolute; never depends on cwd
+HERE = pathlib.Path(__file__).resolve().parent            # data/
+ARG = sys.argv[1] if len(sys.argv) > 1 else ""
+OUT = HERE / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
+
+eng = DDLEngine(DDL, rows=ROWS, profile=PROFILE)
+eng.report()                                              # always print the inference
+if ARG == "report":                                       # `gen.py report` stops here
+    raise SystemExit(0)
+OUT.parent.mkdir(parents=True, exist_ok=True)             # never chain `mkdir && python`
+eng.generate(str(OUT))                                    # absolute; never depends on cwd
 ```
+
+`python3 data/gen.py report` prints the inference without generating - that is the cheap first
+call. Any other argument is the output path.
 
 `README.md` is the datasource's **only** document, in two halves: a getting-started guide (connect and ask the first question within three minutes) and a field-level data dictionary (meaning and definition of every column of every table). Do not emit a separate `DATA_DICT.md`.
 
@@ -199,15 +208,8 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
 **Never try to generate directly into the datasource file.** The flow is:
 
 1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
-
-   `gen.py` therefore takes the output path as an optional first argument and creates its parent,
-   so the command stays a single invocation with no shell chaining:
-
-   ```python
-   OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "datasource.duckdb"
-   OUT.parent.mkdir(parents=True, exist_ok=True)
-   eng.generate(str(OUT))
-   ```
+   (`gen.py` takes the output path as its first argument and creates the parent itself, so the
+   command stays a single invocation with no shell chaining)
 2. Load it into the datasource with the built-in tool, which runs through the
    connection that already holds the lock and replays the source DDL so primary
    keys, unique and foreign keys survive:
