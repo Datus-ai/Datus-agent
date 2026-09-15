@@ -345,7 +345,10 @@ class CsvOut:
 
 
 def build_db(db_path, csv_dir, tables, dws_sql="", comments=(), drop_existing=True, types=None, create_sql=None):
-    """CSV -> create DuckDB tables -> run the summary-layer SQL -> write comments. Returns {table: rows}.
+    """CSV -> create DuckDB tables -> run the summary-layer SQL -> write comments.
+
+    Returns ({table: rows}, degraded) where `degraded` lists the tables that had to be created
+    without their declared constraints, one string per table with the reason.
 
     With types={table: [(column, type), ...]} the tables are created with the declared DDL types
     instead of letting read_csv guess - otherwise a BIGINT key becomes VARCHAR and DECIMAL(18,2)

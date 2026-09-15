@@ -2039,18 +2039,23 @@ class DBFuncTool:
             }
             if outcome["skipped"]:
                 result["skipped"] = outcome["skipped"]
+            # One import can hit both, and they are different problems with different fixes, so
+            # the notes accumulate - a single overwritten key would hide the more serious one.
+            notes = []
             if outcome.get("refused"):
                 result["refused"] = outcome["refused"]
-                result["note"] = (
+                notes.append(
                     "Some tables were NOT imported because their names are not plain identifiers; "
                     "see 'refused'. Rename them in the source database and import again."
                 )
             if outcome["degraded"]:
                 result["degraded"] = outcome["degraded"]
-                result["note"] = (
+                notes.append(
                     "Some tables were copied without their constraints; see 'degraded'. "
                     "The data is complete, but those keys are not declared in the datasource."
                 )
+            if notes:
+                result["note"] = " ".join(notes)
             return FuncToolResult(result=result)
 
         except (DatabaseImportError, DataFileError) as e:

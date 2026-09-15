@@ -318,3 +318,26 @@ class TestImportTool:
         assert result.result["refused"]
         assert "weird-name" in result.result["refused"][0]
         assert "NOT imported" in result.result["note"]
+
+    @pytest.mark.acceptance
+    def test_refused_and_degraded_notes_both_survive(self, tool, tmp_path):
+        """They are different problems with different fixes; one must not overwrite the other.
+
+        `weird-name` is refused outright, and `child`'s foreign key to it then cannot be created,
+        so the same import produces both outcomes.
+        """
+        build = tmp_path / "data" / "_build"
+        build.mkdir(parents=True, exist_ok=True)
+        con = duckdb.connect(str(build / "both.duckdb"))
+        con.execute('CREATE TABLE "weird-name" (id BIGINT PRIMARY KEY)')
+        con.execute('INSERT INTO "weird-name" VALUES (1)')
+        con.execute('CREATE TABLE child (cid BIGINT PRIMARY KEY, pid BIGINT REFERENCES "weird-name"(id))')
+        con.execute("INSERT INTO child VALUES (10, 1)")
+        con.close()
+
+        result = tool.import_database_file(path="data/_build/both.duckdb")
+
+        assert result.result["refused"], "the unsafe name must be reported"
+        assert result.result["degraded"], "the child lost its foreign key"
+        assert "NOT imported" in result.result["note"]
+        assert "without their constraints" in result.result["note"]
