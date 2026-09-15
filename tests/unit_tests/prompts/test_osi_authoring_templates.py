@@ -145,9 +145,10 @@ def test_semantic_modeling_template_delegates_result_set_strategy_to_required_sk
         **COMMON_VARS,
     )
 
-    assert "Treat SQL as evidence rather than a required persisted result shape" not in text
-    assert "durable reusable cohort/result set" not in text
-    assert "Choose a query-backed dataset" not in text
+    assert (
+        "The complete Dosi dataset and metric contracts are provided in the appended `<required_skill>` sections."
+        in text
+    )
     assert "Validate the final selected model" in text
 
 
