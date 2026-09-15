@@ -293,8 +293,8 @@ The DDL already states table names, column names, types and keys - none of that 
 ```python
 from ddl_engine import DDLEngine
 eng = DDLEngine(DDL_SQL, rows=80_000, profile=PROFILE)
-eng.report()      # 1. inspect inference: roles / row allocation / FK chains
-eng.generate()    # 2. generate, two-pass calibration, total within 6% of target
+eng.report()           # 1. inspect inference: roles / row allocation / FK chains
+eng.generate(str(OUT)) # 2. generate, two-pass calibration, total within 6% of target
 ```
 
 ### What the engine does for you
@@ -322,8 +322,11 @@ PROFILE = {
     "slows":  [("02-10", "02-20", 0.52, "Spring Festival shutdown")],
     "disruptions": [                       # `at` is a relative position 0-1 in the range
       {"at": .30, "days": 26, "factor": .45, "scope": {"site": "JP"}, "name": "JP payment outage"},
-      {"at": .62, "days": 30, "factor": 1.9, "scope": {"courier": "CR003"}, "name": "Hub relocation"}],
+      {"at": .62, "days": 30, "factor": .55, "scope": {"courier": "CR003"}, "name": "Hub relocation"}],
   },
+  #    Anomalies on a fact table only work in the suppressing direction: `factor < 1` drops rows
+  #    probabilistically. `factor > 1` has no effect there - express an amplifying anomaly with
+  #    `conditional` or, as a last resort, `pre_sql`.
   # 2. Real value domains and distributions for enum columns (matched by column name, cross-table)
   "enums": {
     "order_status": {"PAID": .845, "REFUNDED": .08, "CANCELLED": .05, "PENDING": .025},

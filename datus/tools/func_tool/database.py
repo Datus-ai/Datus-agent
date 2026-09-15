@@ -1954,6 +1954,18 @@ class DBFuncTool:
         connection is what ``exclusive_connection`` hands out, and its absence is exactly how a
         non-DuckDB datasource announces itself.
         """
+        # A scoped sub-agent is confined to named tables. Both of these operate on the datasource
+        # as a whole - one replaces tables, the other enumerates and reports on all of them - so
+        # there is no meaningful way to honour the scope, and silently ignoring it would let a
+        # scoped agent reach past its boundary. Refuse instead.
+        if self._scoped_patterns:
+            return None, FuncToolResult(
+                success=0,
+                error=(
+                    f"{operation} operates on the whole datasource and this agent is scoped to "
+                    f"specific tables, so it is not available here."
+                ),
+            )
         connector = self._get_connector(datasource or "", "")
         exclusive = getattr(connector, "exclusive_connection", None)
         if exclusive is None:

@@ -227,3 +227,48 @@ class TestQualityToolGate:
 
         assert result.success == 0
         assert "not found" in (result.error or "").lower()
+
+    @pytest.mark.acceptance
+    def test_multi_statement_assertion_is_refused_inside_the_checker(self, con):
+        """Defense in depth: the tool gates this too, but the checker must not execute a write
+        handed to it through any other caller."""
+        config = {"assertions": [{"name": "sneaky", "sql": "SELECT 1; DROP TABLE dim_product"}]}
+
+        results = QualityChecker(con, config).run()
+
+        assert _status(results, "sneaky") == "FAIL"
+        assert con.execute("SELECT count(*) FROM dim_product").fetchone()[0] > 0
+
+
+class _FlakyConnection:
+    """Wraps a real connection and fails one family of queries, the way an unsupported column
+    type or an unaggregatable view does in a live datasource."""
+
+    def __init__(self, con, failing_fragment):
+        self._con = con
+        self._fragment = failing_fragment
+
+    def execute(self, sql, *args, **kwargs):
+        if self._fragment in sql:
+            raise RuntimeError("boom")
+        return self._con.execute(sql, *args, **kwargs)
+
+
+@pytest.mark.acceptance
+def test_failed_queries_are_reported_not_silently_passed(con):
+    """A failed probe returns [] and every caller reads that as "no violations".
+
+    Without surfacing it, a schema the checker cannot address comes back all-PASS.
+    """
+    checker = QualityChecker(_FlakyConnection(con, "count(DISTINCT"))
+    results = checker.run()
+
+    assert checker.query_errors
+    assert _status(results, "all checks could run") == "WARN"
+
+
+@pytest.mark.acceptance
+def test_clean_run_has_no_query_health_entry(con):
+    results = QualityChecker(con).run()
+
+    assert not _has(results, "all checks could run")

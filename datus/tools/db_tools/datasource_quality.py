@@ -106,6 +106,7 @@ class QualityChecker:
         self.skip = set(self.cfg.get("skip", []))
         self.kind: Dict[str, str] = {}
         self.date_table: Optional[str] = None
+        self.query_errors: List[str] = []
 
     # ------------------------------------------------------------------ helpers
 
@@ -120,8 +121,12 @@ class QualityChecker:
     def q(self, sql: str) -> List[tuple]:
         try:
             return [tuple(self._num(v) for v in r) for r in self.con.execute(sql).fetchall()]
-        except Exception as e:  # a malformed column/table just means this check does not apply
+        except Exception as e:  # noqa: BLE001 - probing queries legitimately fail on some shapes
+            # Returning [] keeps a probe that does not apply from aborting the run, but every
+            # caller then reads the failure as "no violations found". Recording it means a
+            # degraded run is reported instead of silently passing - see check_query_health.
             logger.debug("quality check query failed: %s | %s", e, sql)
+            self.query_errors.append(f"{str(e).splitlines()[0][:120]} | {sql[:120]}")
             return []
 
     def one(self, sql: str, default=None):
@@ -673,6 +678,8 @@ class QualityChecker:
         )
 
     def check_config(self) -> None:
+        from datus.utils.sql_utils import validate_read_only_sql
+
         for i, a in enumerate(self.cfg.get("assertions", []) or []):
             # Assertions are hand-written JSON. A missing key or an unknown `expect` is a
             # configuration mistake and must be reported as one, not crash every other check.
@@ -680,6 +687,13 @@ class QualityChecker:
             sql = (a or {}).get("sql")
             if not isinstance(a, dict) or not sql:
                 self.add(name, False, "malformed assertion: needs at least a 'sql' key")
+                continue
+            # The tool layer gates this too; repeated here so the checker cannot be handed a
+            # write through another caller. parse_sql_type reads only the first statement, so the
+            # multi-statement rule this validator carries is the part that actually matters.
+            violation, _ = validate_read_only_sql(sql, "duckdb")
+            if violation:
+                self.add(name, False, f"assertion must be a single read-only query ({violation})")
                 continue
             exp = a.get("expect", "zero")
             v = self.one(sql)
@@ -709,7 +723,25 @@ class QualityChecker:
         self.check_density(ts)
         self.check_semantics(ts)
         self.check_config()
+        self.check_query_health()
         return [{"check": n, "status": s, "detail": d} for n, s, d in self.results]
+
+    def check_query_health(self) -> None:
+        """Surface queries that failed, so a run degraded by them is not read as a clean pass.
+
+        A failed probe yields [] and reads as "nothing wrong", so without this a schema the
+        checker cannot address (an unsupported type, a view it cannot aggregate) would come back
+        all-PASS. WARN rather than FAIL: some probes do not apply to some shapes by design.
+        """
+        if not self.query_errors:
+            return
+        self.add(
+            "all checks could run",
+            False,
+            f"{len(self.query_errors)} query(ies) failed, so the checks that depend on them "
+            f"proved nothing: " + "; ".join(self.query_errors[:3]) + (" ..." if len(self.query_errors) > 3 else ""),
+            warn=True,
+        )
 
 
 def summarize(results: Sequence[Dict[str, str]]) -> Dict[str, Any]:

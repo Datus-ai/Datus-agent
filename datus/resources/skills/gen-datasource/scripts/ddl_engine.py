@@ -1609,7 +1609,7 @@ class DDLEngine:
         summed back into the parent per document (invariant 2 / zero header-detail drift)."""
         rng, cols = self.rng, self.schema[t]
         names = [c["name"] for c in cols]
-        pk, (fk, par) = names[0], self._parent_of(t)
+        pk, (fk, par) = self.pk_of(t), self._parent_of(t)
         if not par:
             return self._gen_fact(t, o)
         prefs = self.refs[par]
@@ -1806,10 +1806,10 @@ class DDLEngine:
         """Downstream facts (shipment/claim/repayment): dated after the parent, status derived from the facts, promise dates may be in the future."""
         rng, cols = self.rng, self.schema[t]
         names = [c["name"] for c in cols]
-        pk, (fk, par) = names[0], self._parent_of(t)
+        pk, (fk, par) = self.pk_of(t), self._parent_of(t)
         if not par:
             return self._gen_fact(t, o)
-        prefix = re.sub(r"_id$", "", pk).upper()[:3]
+
         prefs = self.refs[par]
         keep = [p for p in prefs if not p["status"] or "CANCEL" not in str(p["status"]).upper()]
         n = min(self.nrows[t], len(keep))
@@ -1827,7 +1827,7 @@ class DDLEngine:
         )
         rows, refs = [], []
         for i, pr in enumerate(picks):
-            row = {pk: f"{prefix}{i + 1:08d}", fk: pr["pk"]}
+            row = {pk: self._pk_val(t, i), fk: pr["pk"]}
             for f in self.fks[t]:
                 if f == fk or f not in self.pk_owner:
                     continue
@@ -1890,10 +1890,9 @@ class DDLEngine:
         """Event stream: sequence times strictly monotonic, and a completed entity must reach its terminal state (invariants 4 and 9)."""
         rng, cols = self.rng, self.schema[t]
         names = [c["name"] for c in cols]
-        pk, (fk, par) = names[0], self._parent_of(t)
+        pk, (fk, par) = self.pk_of(t), self._parent_of(t)
         if not par:
             return self._gen_fact(t, o)
-        prefix = re.sub(r"_id$", "", pk).upper()[:2]
         prefs = self.refs[par]
         type_col = next((c["name"] for c in cols if c["sem"] == "enum"), None)
         seq_col = next((c["name"] for c in cols if c["sem"] == "seq"), None)
@@ -1924,7 +1923,7 @@ class DDLEngine:
                     else None
                 )
                 ts = chain.step(avg_hours=span * 24 / max(1, len(seq) - 1), cap=cap, pin=pin)
-                row = {pk: f"{prefix}{no:09d}", fk: pr["pk"]}
+                row = {pk: self._pk_val(t, no - 1), fk: pr["pk"]}
                 if seq_col:
                     row[seq_col] = j + 1
                 if type_col:

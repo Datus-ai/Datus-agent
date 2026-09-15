@@ -341,3 +341,36 @@ class TestImportTool:
         assert result.result["degraded"], "the child lost its foreign key"
         assert "NOT imported" in result.result["note"]
         assert "without their constraints" in result.result["note"]
+
+    @pytest.mark.acceptance
+    def test_replace_is_refused_when_an_outside_table_depends_on_the_target(self, tool, build_db):
+        """Detected before anything is dropped: discovering it mid-import leaves the datasource
+        half-replaced, and the CREATE OR REPLACE fallback is blocked by the same dependency."""
+        with tool.connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE products (product_id BIGINT PRIMARY KEY)")
+            con.execute("CREATE TABLE report (r BIGINT PRIMARY KEY, p BIGINT REFERENCES products(product_id))")
+            before = con.execute(
+                "SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database()"
+            ).fetchone()[0]
+
+        result = tool.import_database_file(path=build_db)
+
+        assert result.success == 0
+        assert "referenced by report" in (result.error or "")
+        with tool.connector.exclusive_connection() as con:
+            after = con.execute(
+                "SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database()"
+            ).fetchone()[0]
+        assert after == before, "nothing may be dropped when the import is refused"
+
+    @pytest.mark.acceptance
+    def test_meta_path_accepts_the_metadata_file_itself(self, tmp_path):
+        """The documented contract is the .meta.json path; deriving a sidecar from a sidecar
+        silently yielded nothing, so the roles and keys never reached the checker."""
+        from datus.tools.db_tools.database_import import read_generator_meta
+
+        (tmp_path / "datasource.duckdb").write_bytes(b"")
+        (tmp_path / ".datasource.meta.json").write_text(json.dumps({"roles": {"orders": "fact"}}), encoding="utf-8")
+
+        assert read_generator_meta(tmp_path / ".datasource.meta.json") == {"roles": {"orders": "fact"}}
+        assert read_generator_meta(tmp_path / "datasource.duckdb") == {"roles": {"orders": "fact"}}

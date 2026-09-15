@@ -293,6 +293,7 @@ class EventChain:
         self.ts = start_ts
         self.min_gap = timedelta(hours=min_gap_hours)
         self.first = True
+        self.exhausted = False  # set once the cap leaves no room for another step
 
     def step(self, avg_hours=6.0, cap: datetime = None, pin: datetime = None) -> datetime:
         if self.first:
@@ -308,10 +309,15 @@ class EventChain:
                 t = cap
         if t <= self.ts:  # monotonic backstop after a clamp
             t = self.ts + self.min_gap
-            if cap is not None and t > cap:  # the backstop must not breach the hard cap; fall back to minute-level gaps
+            if cap is not None and t > cap:  # the backstop must not breach the hard cap
                 t = min(cap, self.ts + timedelta(minutes=1))
                 if t <= self.ts:
-                    t = self.ts + timedelta(seconds=1)
+                    # The window is used up. The cap is the hard invariant (a fact dated after the
+                    # cut-off is a defect a quality check will fail on); strict monotonicity is the
+                    # soft one, so the chain stops advancing instead of stepping past the cap.
+                    # `exhausted` lets the caller stop emitting rather than repeat a timestamp.
+                    self.exhausted = True
+                    return self.ts
         self.ts = t
         return t
 

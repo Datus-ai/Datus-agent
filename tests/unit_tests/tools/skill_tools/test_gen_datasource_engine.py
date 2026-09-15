@@ -216,3 +216,88 @@ def test_comment_clause_carries_no_domain(engine_module):
     eng = engine_module.DDLEngine(ddl, rows=1000)
 
     assert "st" not in eng.ddl_enums
+
+
+EVENT_DDL = """
+CREATE TABLE visits (
+    visit_id BIGINT PRIMARY KEY,
+    admit_time TIMESTAMP,
+    total_charge DECIMAL(18, 2)
+);
+CREATE TABLE bills (
+    bill_id BIGINT PRIMARY KEY,
+    visit_id BIGINT REFERENCES visits(visit_id),
+    bill_dt DATE,
+    bill_amt DECIMAL(18, 2)
+);
+CREATE TABLE visit_events (
+    event_id BIGINT PRIMARY KEY,
+    visit_id BIGINT REFERENCES visits(visit_id),
+    event_seq INTEGER,
+    event_time TIMESTAMP,
+    event_type VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_event_and_downstream_keys_honour_the_declared_type(engine_module, tmp_path):
+    """They emitted a prefixed string regardless of the declared type, so a BIGINT key was
+    TRY_CAST to NULL and the table then lost every constraint."""
+    import duckdb
+
+    out = tmp_path / "ev.duckdb"
+    result = engine_module.DDLEngine(EVENT_DDL, rows=20_000).generate(str(out), verbose=False)
+
+    assert result["degraded"] == [], "no table should have to drop its constraints"
+    con = duckdb.connect(str(out), read_only=True)
+    for table, key in (("visit_events", "event_id"), ("bills", "bill_id")):
+        total, filled = con.execute(f"SELECT count(*), count({key}) FROM {table}").fetchone()
+        assert total > 0 and filled == total, f"{table}.{key} must be populated"
+    con.close()
+
+
+@pytest.mark.acceptance
+def test_event_times_never_pass_the_cut_off(engine_module, tmp_path):
+    """The monotonic backstop used to add a second past the cap when the window was used up,
+    which produced future-dated rows - a defect the quality check fails on."""
+    import duckdb
+
+    out = tmp_path / "ev.duckdb"
+    engine_module.DDLEngine(EVENT_DDL, rows=20_000).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out), read_only=True)
+    future = con.execute("SELECT count(*) FROM visit_events WHERE event_time > now()").fetchone()[0]
+    backwards = con.execute(
+        "SELECT count(*) FROM (SELECT event_time t, "
+        "lag(event_time) OVER (PARTITION BY visit_id ORDER BY event_seq) p FROM visit_events) "
+        "WHERE p IS NOT NULL AND t < p"
+    ).fetchone()[0]
+    con.close()
+
+    assert future == 0
+    assert backwards == 0
+
+
+@pytest.mark.acceptance
+def test_event_chain_never_steps_past_the_cap(engine_module):
+    """Directly: a chain started beyond its cap has no room, and the cap is the hard invariant."""
+    import datetime
+    import random
+    import sys
+
+    scripts = str(SKILL_DIR / "scripts")
+    sys.path.insert(0, scripts)
+    try:
+        from genlib import EventChain
+    finally:
+        sys.path.remove(scripts)
+
+    cap = datetime.datetime(2026, 9, 14, 20, 0, 0)
+    start = datetime.datetime(2026, 9, 14, 23, 30, 0)
+    chain = EventChain(random.Random(1), start)
+
+    stamps = [chain.step(avg_hours=6, cap=cap) for _ in range(4)]
+
+    assert all(t <= start for t in stamps), "the chain must not advance past its starting point"
+    assert chain.exhausted is True

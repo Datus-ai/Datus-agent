@@ -265,7 +265,8 @@ demo's credibility collapses.
 BRANDS = ["Lumora", "Nordvik", "Kaizen Field", "Volta Ridge", "Marisol", ...]  # fictional brands
 name = f"{brand} {rng.choice(['Flagship Store', 'Overseas Store', 'Select Store', 'Direct Store'])}"
 sku_name = f"{brand} {rng.choice(CAT_ITEMS[cat])}{rng.choice(['', ' Pro', ' Gen 2', ' Flagship'])}"
-wh_name  = "Shenzhen Bonded Warehouse" / "Ningbo Forward Warehouse" / "Los Angeles Overseas Warehouse"
+wh_name  = rng.choice(["Shenzhen Bonded Warehouse", "Ningbo Forward Warehouse",
+                       "Los Angeles Overseas Warehouse"])
 ```
 
 **Use fictional brand names.** Do not attach a real company name to a negative metric such as "the

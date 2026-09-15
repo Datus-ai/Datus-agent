@@ -123,6 +123,32 @@ def _source_metadata(
     return tables, create_sql, fks, table_comments, column_comments
 
 
+def _external_dependents(con: Any, importing: Set[str]) -> Dict[str, Set[str]]:
+    """Target tables in `importing` that something outside `importing` depends on.
+
+    Only foreign keys held by tables this import does not itself replace can block a DROP; the
+    ones inside the set are dropped children-first. Returns {blocked table: {referencing tables}}.
+    """
+    blocked: Dict[str, Set[str]] = {}
+    try:
+        rows = con.execute(
+            "SELECT table_name, constraint_type, constraint_text FROM duckdb_constraints() "
+            "WHERE database_name = current_database()"
+        ).fetchall()
+    except Exception as e:  # noqa: BLE001 - without introspection DuckDB still refuses the DROP itself
+        logger.debug("could not read target constraints: %s", e)
+        return blocked
+    for child, ctype, text in rows:
+        if ctype != "FOREIGN KEY" or child in importing:
+            continue
+        m = re.search(r"REFERENCES\s+[\"`]?([\w.]+)[\"`]?", text or "", re.IGNORECASE)
+        if m:
+            parent = m.group(1).split(".")[-1]
+            if parent in importing:
+                blocked.setdefault(parent, set()).add(child)
+    return blocked
+
+
 def import_duckdb_file(
     con: Any,
     source_path: Path,
@@ -203,10 +229,23 @@ def import_duckdb_file(
 
         ordered = _dependency_order(wanted, fks)
 
-        # Drop children before parents. A second import of the same dataset would otherwise fail
-        # on "Could not drop the table because this table is main key table of ...": the previous
-        # run's child table still holds a foreign key to the parent being replaced.
         if mode == "replace":
+            # A target table outside this import may hold a foreign key to one we are about to
+            # replace, and DuckDB then refuses the DROP. Detect that before touching anything:
+            # discovering it mid-import leaves the datasource half-replaced, and the CREATE OR
+            # REPLACE fallback cannot recover because it is blocked by the same dependency.
+            blockers = _external_dependents(con, set(ordered))
+            if blockers:
+                raise DatabaseImportError(
+                    "Cannot replace "
+                    + ", ".join(sorted(blockers))
+                    + ": "
+                    + "; ".join(f"{t} is referenced by {', '.join(sorted(d))}" for t, d in sorted(blockers.items()))
+                    + ". Drop the referencing table(s) first, or import with mode='skip_existing'."
+                )
+            # Drop children before parents. A second import of the same dataset would otherwise fail
+            # on "Could not drop the table because this table is main key table of ...": the previous
+            # run's child table still holds a foreign key to the parent being replaced.
             for t in reversed(ordered):
                 if _IDENT_RE.match(t) and t in existing:
                     try:
@@ -288,11 +327,15 @@ def read_generator_meta(source_path: Path) -> Optional[Dict[str, Any]]:
     ``gen-datasource`` writes ``.<stem>.meta.json`` (table roles, declared keys, strict-DDL
     flag) alongside the database. The quality check reuses it instead of inferring a second,
     conflicting view of the schema. Returns None when it is absent or unreadable.
+
+    Accepts either the database path (the sidecar is derived from it) or the metadata file
+    itself - the tool documents the latter, and deriving a sidecar from a sidecar silently
+    yielded nothing.
     """
     import json
 
     p = Path(source_path).resolve()
-    f = p.parent / f".{p.stem}.meta.json"
+    f = p if p.name.endswith(".meta.json") else p.parent / f".{p.stem}.meta.json"
     try:
         return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
     except Exception as e:  # noqa: BLE001 - metadata is an optimisation, never a requirement
