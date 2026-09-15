@@ -27,8 +27,15 @@ allowed_commands:
 
 ## Step 0: you do not need to locate this skill
 
-The skill ships inside the `datus` package, so `gen.py` resolves the engine itself at import time.
-Copy these four lines into `gen.py` and never search the filesystem for the skill directory:
+`load_skill` returned this file behind a `<skill_location>` line naming the directory it came from.
+**That path is the answer to "where is the engine / where are the references".** Use it verbatim.
+Never reconstruct it and never guess the interpreter version - a production run guessed
+`python3.11` on a `python3.12` install and paid a rejected `read_file` plus a `bash` round-trip to
+learn what the first line of its own context already said.
+
+For `gen.py` you do not need even that: the skill ships inside the `datus` package, so the file
+resolves the engine itself at import time. Copy these four lines and never search the filesystem
+for the skill directory:
 
 ```python
 import pathlib, sys
@@ -41,8 +48,9 @@ from ddl_engine import DDLEngine
 ### When this file does not answer your question
 
 This file is the contract, and it is complete for writing a profile - it arrives whole when the
-skill is loaded, so the normal path opens nothing. **Before opening anything, run `gen.py report`**:
-it prints the engine's plan, which is what most questions about the engine are really asking.
+skill is loaded, so the normal path opens nothing. **Before opening anything, call
+`plan_datasource(ddl=...)`**: it prints the engine's plan from the DDL alone, which is what most
+questions about the engine are really asking, and it needs no generator on disk.
 
 Two facts about the environment shape what to do when you still need more:
 
@@ -52,7 +60,7 @@ Two facts about the environment shape what to do when you still need more:
   `read_file`** - the skill bundle is a read-only whitelist anchor, so no copying is needed:
 
   ```
-  read_file("<the $SKILL path printed by Step 0>/references/profile-spec.md")
+  read_file("<skill_location>/references/profile-spec.md")
   ```
 
   `references/profile-spec.md` is every profile field in full; `references/pitfalls.md` is the 17
@@ -84,10 +92,15 @@ A complete run fits in roughly 40,000 output tokens:
 
 The three things that blow the budget, all measured on real runs:
 
-1. **Reading the engine to predict its behaviour.** `gen.py report` already prints every decision -
-   roles, row allocation, column semantics, name samples, the metric grid, which declarative rules
-   resolved. Read that output instead. Reconstructing the same facts from the implementation cost
-   one run 66% of its wall clock.
+1. **Reading the engine to predict its behaviour.** `plan_datasource(ddl=...)` already prints every
+   decision - roles, row allocation, column semantics, name samples, the metric grid, which
+   declarative rules resolved - from the DDL alone, before `gen.py` exists. Read that output
+   instead. Reconstructing the same facts from the implementation cost
+   one run 66% of its wall clock, and a second run **all** of it: it tried to divide the row budget
+   across the tables by hand, could not make the total come out, went into the engine to find the
+   allocator and never came back - 36 turns, zero rows. **Row allocation is the engine's job**
+   (Phase 1.2). The cost of one `gen.py report` is 0.3 seconds; the cost of predicting it is your
+   whole budget.
 2. **Continuing after the checks pass.** See "Stop as soon as it passes" in Phase 5 - 32% of one
    run's wall clock went into rounds that changed nothing.
 3. **Ad-hoc verification queries.** Assertions in `checks.json` re-run for free; a hand-written
@@ -165,6 +178,14 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
 
 **Never try to generate directly into the datasource file.** The flow is:
 
+0. **Plan before you write anything**, as soon as the DDL is in DuckDB syntax:
+   ```
+   plan_datasource(ddl=<the normalised DDL>, rows=80000, months=17)
+   ```
+   It returns the engine's whole plan - row allocation per table, table roles, column semantics,
+   the resolved date window, sample names, business codes, the daily-metric grid - and generates
+   nothing. **This is the answer to every "what will the engine do with my DDL" question, and it
+   is one call.** Read it, then write `gen.py` with a profile that corrects what it got wrong.
 1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
    (`gen.py` takes the output path as its first argument and creates the parent itself, so the
    command stays a single invocation with no shell chaining)
@@ -367,7 +388,7 @@ eng.generate(str(OUT)) # 2. generate, two-pass calibration, total within 6% of t
 |---|---|
 | Table roles | Iterative structural inference: `date_dim`/`dim`/`fact`/`detail`/`downstream`/`event`/`snapshot`. **Not based on name prefixes** - it reads what a table references, so `policy` or `ods_order` are classified correctly either way |
 | Column semantics | Name + type mapped to id/date/ts/amount/count/ratio/enum/flag/name/seq/measure via 12 rules |
-| Row allocation | Fact layer 65-75%; dimensions derived from business density (see 1.3); hard cap of 8% of total per table |
+| Row allocation | **Automatic** - you pass `rows=` and the engine splits it; `report()` prints the per-table result. Fact layer 65-75%; dimensions derived from business density (see 1.3); hard cap of 8% of total per table. Override with `table_rows` / `dim_rows` / `dim_kinds`, never by hand-computing |
 | Relationships | **Declared PRIMARY KEY / FOREIGN KEY / UNIQUE win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect |
 | Differentiation | `conditional` gives a column different enum weights or numeric ranges per group - no SQL post-processing |
 | Column formulas | `formulas` declares arithmetic identities (accounting identities, cost/margin); dependency-sorted and enforced row by row |
@@ -571,6 +592,20 @@ ads_*   application:1-2   cross-domain daily report, one row per day, preferred 
 ```
 
 ### 1.2 Row allocation
+
+> **On Path A you do not compute this.** The engine allocates every table from `rows=` on its
+> own - `_plan_rows` runs during inference, before you see anything - and
+> `plan_datasource(ddl=...)` prints the result per table without a generator existing yet. **Do not do this arithmetic by hand.** A measured production run tried to
+> divide an 80,000-row budget across five tables using the percentages below, reached 51,000,
+> could not reconcile the gap, opened `ddl_engine.py` to find the allocator - and spent the
+> remaining 30 turns in the source without generating a single row. The numbers below are for
+> *designing* a schema on Path B, and for *judging* the allocation `report()` prints. They are
+> not a worksheet.
+>
+> To change the allocation, do not reverse-engineer it: pin the table with
+> `profile["table_rows"]` / `profile["dim_rows"]`, or correct a dimension's kind with
+> `profile["dim_kinds"]`. Both override the engine outright. `references/profile-spec.md` §1.1
+> states the allocation rule the engine actually applies.
 
 **Core principle: the bulk of the data is the fact tables; a dimension table is only a list of entities.** Dimension row counts are decided by how many entities the business actually has and **do not scale with the total** - putting 25,000 users in a 100,000-row database leaves no room for facts.
 

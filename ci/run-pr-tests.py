@@ -92,10 +92,12 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/tools/func_tool/test_scheduler_tools.py",
     "tests/unit_tests/tools/func_tool/test_sub_agent_task_tool.py",
     "tests/unit_tests/tools/db_tools/test_database_import.py",
+    "tests/unit_tests/tools/db_tools/test_datasource_plan.py",
     "tests/unit_tests/tools/db_tools/test_datasource_quality.py",
     "tests/unit_tests/tools/skill_tools/test_gen_datasource_bundle.py",
     "tests/unit_tests/tools/skill_tools/test_gen_datasource_engine.py",
     "tests/unit_tests/tools/skill_tools/test_skill.py",
+    "tests/unit_tests/tools/skill_tools/test_skill_func_tool.py",
     "tests/unit_tests/utils/test_memory_loader.py",
 ]
 IMPACTED_TEST_MAPPING = [

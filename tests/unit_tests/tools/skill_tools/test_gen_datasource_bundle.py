@@ -144,3 +144,66 @@ def test_readme_template_is_lean():
     for boilerplate in ("## Connect", "## Regenerate"):
         assert boilerplate not in template, f"{boilerplate} is inferable and must not be templated"
     assert "describe_table" in template, "point the reader at the comments instead of repeating them"
+
+
+def _engine_ast():
+    import ast
+
+    return ast.parse((SKILL_DIR / "scripts" / "ddl_engine.py").read_text(encoding="utf-8"))
+
+
+def _docs() -> str:
+    return (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8") + (
+        SKILL_DIR / "references" / "profile-spec.md"
+    ).read_text(encoding="utf-8")
+
+
+@pytest.mark.acceptance
+def test_every_constructor_argument_is_documented():
+    """Profile keys are not the only knobs, and the scrape that only checked them missed the rest.
+
+    A measured production run needed to pin the last day of the data, found `end_date` in neither
+    document, opened `ddl_engine.py` to look for it - and spent the remaining thirty turns inside
+    the engine instead of generating anything. A constructor argument the documents never name is
+    exactly as expensive as an undocumented profile key.
+    """
+    import ast
+
+    engine = next(
+        node for node in ast.walk(_engine_ast()) if isinstance(node, ast.ClassDef) and node.name == "DDLEngine"
+    )
+    init = next(node for node in engine.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+    args = [a.arg for a in init.args.args if a.arg != "self"]
+    assert args, "the scrape found no arguments - it has drifted from the engine"
+
+    docs = _docs()
+    undocumented = sorted(a for a in args if f"`{a}`" not in docs)
+
+    assert not undocumented, (
+        f"DDLEngine arguments neither document names: {undocumented}. "
+        f"Add them to references/profile-spec.md section 1.2, or drop them from the signature."
+    )
+
+
+@pytest.mark.acceptance
+def test_every_dimension_kind_is_documented():
+    """`dim_kinds` is a documented profile key whose *values* come from a constant in genlib.
+
+    Naming the key without naming its domain still forces a trip into the source, which is the
+    trip these tests exist to prevent.
+    """
+    import ast
+
+    genlib = ast.parse((SKILL_DIR / "scripts" / "genlib.py").read_text(encoding="utf-8"))
+    density = next(
+        node.value
+        for node in genlib.body
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "DIM_DENSITY" for t in node.targets)
+    )
+    kinds = [k.value for k in density.keys]
+    assert kinds, "the scrape found no dimension kinds - it has drifted from genlib"
+
+    docs = _docs()
+    undocumented = sorted(k for k in kinds if f"`{k}`" not in docs)
+
+    assert not undocumented, f"dimension kinds `dim_kinds` accepts but no document names: {undocumented}"

@@ -1230,9 +1230,10 @@ class TestDBFuncToolEdgeCases:
             if connector_registry.support_schema(dialect):
                 expected_tool_count += 1
             # import_database_file / check_datasource_quality speak DuckDB directly
-            # (ATTACH, duckdb_tables(), CHECKPOINT) and mount only for that dialect.
+            # (ATTACH, duckdb_tables(), CHECKPOINT), and plan_datasource plans the database they
+            # act on, so the three mount together and only for that dialect.
             if str(getattr(dialect, "value", dialect)).lower() == "duckdb":
-                expected_tool_count += 2
+                expected_tool_count += 3  # plan_datasource, import_database_file, check_datasource_quality
 
             assert len(tools) == expected_tool_count, f"Failed for dialect {dialect}"
 
@@ -1986,3 +1987,41 @@ class TestReadQueryWithSqlFilePath:
         result = db_func_tool._resolve_workspace_root()
         assert result == os.path.expanduser("~/workspace")
         assert "~" not in result
+
+
+class TestPlanDatasource:
+    """``plan_datasource`` is the tool that makes "run report first" affordable.
+
+    It needs no datasource, no connection and no generator on disk - only the DDL - so its
+    failures must arrive as a refusal the model can act on rather than an exception.
+    """
+
+    PLAN_DDL = (
+        "CREATE TABLE customers (customer_id BIGINT PRIMARY KEY, customer_name VARCHAR);"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_no VARCHAR, "
+        "customer_id BIGINT REFERENCES customers(customer_id), order_time TIMESTAMP, "
+        "paid_amount DECIMAL(18,2));"
+    )
+
+    def test_returns_the_plan_text_and_the_knobs_it_used(self, db_func_tool):
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9)
+
+        assert result.success == 1
+        assert result.result["rows"] == 30_000
+        assert result.result["months"] == 9
+        plan = result.result["plan"]
+        assert "main fact table orders" in plan
+        assert "knobs: months=9" in plan
+
+    def test_a_bad_ddl_is_a_refusal_not_an_exception(self, db_func_tool):
+        result = db_func_tool.plan_datasource("CREATE TABLE", rows=1000)
+
+        assert result.success == 0
+        assert "could not plan this DDL" in result.error
+
+    def test_an_empty_end_date_means_the_default(self, db_func_tool):
+        """The tool signature defaults to "" the way the other database tools do."""
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=5000, end_date="")
+
+        assert result.success == 1
+        assert result.result["end_date"] is None

@@ -101,7 +101,10 @@ class SkillFuncTool:
             skill_name: Name of the skill to load (from <available_skills>)
 
         Returns:
-            FuncToolResult with skill content on success, error on failure
+            FuncToolResult whose result is the full SKILL.md content, prefixed with a
+            ``<skill_location>`` line naming the directory it was loaded from, so that
+            files the skill refers to relative to itself (``scripts/``, ``references/``)
+            can be opened without guessing the path. Error on failure.
 
         Example:
             load_skill(skill_name="sql-optimization")
@@ -150,7 +153,7 @@ class SkillFuncTool:
             logger.info(f"Skill '{skill_name}' loaded successfully for node '{self.node_name}'")
             return FuncToolResult(
                 success=1,
-                result=content,
+                result=self._with_location(skill_name, content),
             )
 
         except Exception as e:
@@ -159,6 +162,37 @@ class SkillFuncTool:
                 success=0,
                 error=f"Failed to load skill: {str(e)}",
             )
+
+    def _with_location(self, skill_name: str, content: str) -> str:
+        """Prefix the skill body with the directory it was loaded from.
+
+        SKILL.md routinely points at files that live beside it - ``scripts/``,
+        ``references/`` - but the body alone never says where "beside it" is.
+        A model that needs one of them has to reconstruct the absolute path,
+        and a measured production run guessed the interpreter version wrong
+        (``python3.11`` against a ``python3.12`` install), burning a rejected
+        ``read_file`` plus a ``bash`` round-trip just to rediscover a path the
+        loader already had in hand.
+
+        The header is informational: a skill that resolves its own paths at
+        import time is unaffected, and a missing location degrades to the
+        unprefixed body rather than failing the load.
+        """
+        try:
+            skill = self.manager.registry.get_skill(skill_name)
+            location = getattr(skill, "location", None)
+        except Exception:  # a registry hiccup must not fail an otherwise good load
+            logger.debug("Could not resolve the location of skill '%s'", skill_name, exc_info=True)
+            return content
+
+        if not location:
+            return content
+
+        return (
+            f"<skill_location>{location}</skill_location>\n"
+            "<!-- Files this skill refers to relative to itself (scripts/, references/, ...) "
+            "live under skill_location. Use that path verbatim; do not guess or search for it. -->\n\n"
+        ) + content
 
     def available_tools(self) -> List[Tool]:
         """Return the list of tools provided by this class.

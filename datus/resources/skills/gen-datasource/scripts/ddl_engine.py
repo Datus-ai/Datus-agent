@@ -132,6 +132,17 @@ EFFECTIVE_DATE = re.compile(
     r"open|opened|start|issue|issued|found|founded|entry)(_|$)"
 )
 
+# Columns a date dimension is allowed to carry: every one of them is a function of the date itself.
+# A daily metric table has the same shape - a date grain, no foreign key, a handful of measures -
+# and is told apart only by carrying something the date does not determine (channel, impressions,
+# gmv). Without that test the three most idiomatic names for a metric table's date column
+# (``stat_dt`` / ``dt`` / ``date_key``, all classified ``date_pk``) routed the whole table through
+# the date-dimension generator and every business column came out NULL.
+CALENDAR_ATTR = re.compile(
+    r"(^|_)(year|yr|month|mon|quarter|qtr|week|wk|day|dow|doy|date|dt|"
+    r"weekend|workday|holiday|season|period|fiscal|half|decade|epoch)(_|$)"
+)
+
 # Standard dim_date columns (added when the DDL has no date dimension: anomaly attribution and period comparison anchor on it)
 DATE_DIM_COLS = [
     ("date_key", "DATE"),
@@ -195,6 +206,7 @@ class DDLEngine:
         self.pools, self.refs = {}, {}
         self._enum_cache = {}
         self._fact_rows, self._pending_dim_rows, self._id_base = {}, {}, {}
+        self._code_seq = {}  # (table, column) -> codes handed out, so _fill_generic never repeats one
         self.schema = self._parse()
         self.synthetic = set()
         if self.extra_tables in ("date_dim", "all"):
@@ -212,6 +224,10 @@ class DDLEngine:
                 any(n in ("date_key", "stat_dt", "dt") for n in names)
                 and len(cols) <= 12
                 and not any(n.endswith("_id") for n in names)
+                # A daily metric table has all of the above and is not a date dimension. Without
+                # this a caller who asked for one with extra_tables="date_dim" silently got none,
+                # because `stat_dt` on the metric table was mistaken for a calendar already there.
+                and not self._carries_non_calendar_data(cols)
             ):
                 return
         name = self.profile.get("date_dim_name", "dim_date")
@@ -383,8 +399,12 @@ class DDLEngine:
         def _traits(t):
             cols = self.schema[t]
             sems = [c["sem"] for c in cols]
+            # ``date_pk`` counts: it is the strongest possible business date - the table's own grain.
+            # Leaving it out sent a demoted daily metric table to ROLE_DIM instead of ROLE_METRIC.
             biz_date = any(
-                c["sem"] in ("date", "ts") and not attr_date.search(c["name"]) and not AUDIT_TS.match(c["name"])
+                c["sem"] in ("date", "ts", "date_pk")
+                and not attr_date.search(c["name"])
+                and not AUDIT_TS.match(c["name"])
                 for c in cols
             )
             return biz_date, sems.count("amount"), "seq" in sems and "ts" in sems
@@ -396,7 +416,7 @@ class DDLEngine:
             sems = [c["sem"] for c in cols]
             if t in ov:
                 self.roles[t] = ov[t]
-            elif "date_pk" in sems and len(cols) <= 12 and not self.fks[t]:
+            elif self._is_date_dim(t, cols, sems):
                 self.roles[t] = ROLE_DATE
             elif _traits(t)[2]:
                 self.roles[t] = ROLE_EVENT
@@ -461,6 +481,36 @@ class DDLEngine:
                 self.roles[t] = ROLE_DOWNSTREAM
         self.pk_owner = pk
         self._plan_rows()
+
+    def _is_date_dim(self, t, cols, sems):
+        """Is this a date dimension, or a daily metric table wearing the same shape?
+
+        Both have a ``date_pk``, no foreign key and a small column list, so the original test
+        matched either. The difference is what the table is keyed by: a date dimension is keyed by
+        the date alone and every attribute follows from it, while a daily metric table is keyed by
+        date x dimension and carries measures the calendar cannot produce. So any enum, amount,
+        count, ratio or measure column that is not a calendar attribute rules a date dimension out.
+
+        Flags (``is_weekend``) and names (``event_name``) are not tested: they carry no grain and a
+        real date dimension has them.
+        """
+        if "date_pk" not in sems or len(cols) > 12 or self.fks[t]:
+            return False
+        return not self._carries_non_calendar_data(cols)
+
+    @staticmethod
+    def _carries_non_calendar_data(cols):
+        """Does this table hold anything the date alone does not determine?
+
+        The one test that separates a date dimension from a daily metric table, and the only part
+        of that decision `_ensure_date_dim` can make - it runs before `_infer`, so foreign keys are
+        not known yet. Flags and names are not tested: `is_weekend` and `event_name` belong to a
+        real date dimension and carry no grain.
+        """
+        return any(
+            c["sem"] in ("enum", "amount", "count", "ratio", "measure") and not CALENDAR_ATTR.search(c["name"])
+            for c in cols
+        )
 
     def _plan_rows(self):
         """Allocate rows per skill Phase 1.2/1.3: the fact layer takes the bulk, dimensions size by business density."""
@@ -878,10 +928,7 @@ class DDLEngine:
 
         # Generated business codes: answers CODE_COL / _code_val.
         codes = [
-            f"{t}.{c['name']}"
-            for t in sorted(self.schema)
-            for c in self.schema[t]
-            if c["name"] != self.pk_of(t) and self.CODE_COL.search(c["name"])
+            f"{t}.{c['name']}" for t in sorted(self.schema) for c in self.schema[t] if self._is_code_col(t, c["name"])
         ]
         if codes:
             print(f"generated business codes: {', '.join(codes[:10])}{' ...' if len(codes) > 10 else ''}")
@@ -947,7 +994,14 @@ class DDLEngine:
             print(f"  {t:<24}{body}")
         if ovr:
             print(f"  (* = set by profile['semantics'], {len(ovr)} column(s))")
-        unknown = [f"{t}.{c['name']}" for t in self.schema for c in self.schema[t] if c["sem"] == "text"]
+        # A text column matching CODE_COL is not unrecognised - it gets a business code, and the
+        # line below already says so. Listing it here too contradicted that line in the same report.
+        unknown = [
+            f"{t}.{c['name']}"
+            for t in self.schema
+            for c in self.schema[t]
+            if c["sem"] == "text" and not self._is_code_col(t, c["name"])
+        ]
         if unknown:
             print(f"  unrecognised, will be filled as free text: {unknown[:12]}{' ...' if len(unknown) > 12 else ''}")
 
@@ -1214,6 +1268,33 @@ class DDLEngine:
         return f"{prefix}{d.strftime('%y%m%d')}{i + 1:07d}" if d is not None else f"{prefix}{i + 1:07d}"
 
     CODE_COL = re.compile(r"(^|_)(no|code|sn|serial|sku|number|barcode|ref)$")
+    # Semantics whose own branch fills the column before the code fallback is reached, in both
+    # ``_gen_dim``'s elif chain and ``_gen_fact``'s per-semantic buckets. A code only ever fills
+    # what nothing more specific claimed.
+    CODE_OWNED_SEM = ("name", "enum", "date", "ts", "amount", "count", "ratio", "flag", "measure")
+
+    def _is_code_col(self, t, col):
+        """Will this column actually be filled with a generated business code?
+
+        ``CODE_COL`` alone is not the answer: it is the *last* branch both generators try, so a
+        ``sku_code`` that inference classified as an enum gets enum values and never sees a code.
+        Shared by the generators and ``report()`` so the two cannot disagree - a report that
+        predicts a code where enum values land is worse than no report at all, because it is the
+        surface the agent is told to trust instead of reading this file.
+        """
+        if col == self.pk_of(t) or not self.CODE_COL.search(col):
+            return False
+        sem = next((c["sem"] for c in self.schema[t] if c["name"] == col), None)
+        if sem is None or sem in self.CODE_OWNED_SEM:
+            return False
+        # Joint groups are written into the row before the per-column chain runs at all, so this
+        # test comes first: it holds whatever semantic the column carries, ``id`` included.
+        if any(col in g.get("cols", ()) for g in (self.profile.get("joint", {}) or {}).get(t, [])):
+            return False
+        if sem == "id":
+            # A foreign key is sampled from the parent pool; only a non-referencing id falls through.
+            return self.pk_owner.get(col, t) == t
+        return True
 
     def _code_val(self, t, col, i, d=None):
         pre = re.sub(r"[^A-Za-z]", "", col).upper()[:3] or "CD"
@@ -1406,7 +1487,7 @@ class DDLEngine:
                     ent[name] = 1 if rng.random() < self._col_profile(t, name).get("p", 0.93) else 0
                 elif sem == "measure":
                     ent[name] = round(lognorm_between(rng, 0.1, 50), 3)
-                elif self.CODE_COL.search(name):
+                elif self._is_code_col(t, name):
                     ent[name] = self._code_val(t, name, i)
                 else:
                     ent[name] = f"{name}_{i + 1}"
@@ -1649,7 +1730,7 @@ class DDLEngine:
             for c in other_cols:
                 row.setdefault(c["name"], self._fill_generic(t, c, rng, {"dt": d, "ts": t0}))
             for c in names:
-                if c not in row and self.CODE_COL.search(c):
+                if c not in row and self._is_code_col(t, c):
                     row[c] = self._code_val(t, c, i, d)
                 row.setdefault(c, "")
             self._apply_formulas(t, row)
@@ -1888,6 +1969,15 @@ class DDLEngine:
             return (pr["dt"] if pr else rng.choice(self.days)).isoformat()
         if sem == "name":
             return self._name_for(t, rng.randint(0, 99), rng)
+        if self._is_code_col(t, name):
+            # _gen_dim and _gen_fact call _code_val directly; the detail / downstream / event /
+            # metric generators reach a column only through here, so without this branch a
+            # code column on any of them landed NULL while report() promised a business code.
+            # The counter is per (table, column) rather than a loop index: these generators nest
+            # loops (a detail row per parent, an event row per stage), and a reused index would
+            # hand out duplicate codes.
+            seq = self._code_seq[(t, name)] = self._code_seq.get((t, name), 0) + 1
+            return self._code_val(t, name, seq - 1, (pr or {}).get("dt"))
         return ""
 
     def _gen_downstream(self, t, o):
