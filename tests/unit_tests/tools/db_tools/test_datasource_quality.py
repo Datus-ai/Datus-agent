@@ -1,6 +1,8 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
+import json
+
 import duckdb
 import pytest
 
@@ -150,3 +152,62 @@ def test_summarize_ok_when_only_warnings():
     out = summarize([{"check": "a", "status": "WARN", "detail": ""}])
 
     assert out["ok"] is True
+
+
+class TestQualityToolGate:
+    """The tool layer around the checker.
+
+    ``check_datasource_quality`` executes SQL supplied by a workspace JSON file, and it does so on
+    the connector's raw connection - which is writable and sees neither the read-only gate nor
+    PermissionHooks. The checker itself is a read operation and must stay available to a read-only
+    agent, so the gate is on the statements rather than on the tool.
+    """
+
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        with connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE keepme (id BIGINT)")
+            con.execute("INSERT INTO keepme VALUES (1)")
+        return DBFuncTool(connector)
+
+    def _write(self, tmp_path, name, assertions):
+        path = tmp_path / name
+        path.write_text(json.dumps({"assertions": assertions}), encoding="utf-8")
+        return name
+
+    @pytest.mark.acceptance
+    def test_write_assertion_is_refused(self, tool, tmp_path):
+        cfg = self._write(tmp_path, "bad.json", [{"name": "sneaky", "sql": "DROP TABLE IF EXISTS keepme"}])
+
+        result = tool.check_datasource_quality(config_path=cfg)
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        assert "sneaky" in (result.error or "")
+        with tool.connector.exclusive_connection() as con:
+            assert con.execute("SELECT count(*) FROM keepme").fetchone()[0] == 1
+
+    @pytest.mark.acceptance
+    def test_select_assertion_runs(self, tool, tmp_path):
+        cfg = self._write(
+            tmp_path, "ok.json", [{"name": "rows exist", "expect": "nonzero", "sql": "SELECT count(*) FROM keepme"}]
+        )
+
+        result = tool.check_datasource_quality(config_path=cfg)
+
+        assert result.success == 1
+        assert result.result["summary"]["total"] > 0
+        assert any(c["check"] == "rows exist" and c["status"] == "PASS" for c in result.result["checks"])
+
+    @pytest.mark.acceptance
+    def test_missing_config_is_reported(self, tool):
+        result = tool.check_datasource_quality(config_path="nope.json")
+
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()

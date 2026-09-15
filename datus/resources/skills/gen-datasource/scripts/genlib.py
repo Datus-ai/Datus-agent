@@ -398,6 +398,9 @@ def build_db(db_path, csv_dir, tables, dws_sql="", comments=(), drop_existing=Tr
         )
         for d in degraded:
             print("    - " + d)
+    # Returned as well as printed: generate() surfaces it to the caller, who would otherwise only
+    # learn about a silently constraint-free table by inspecting the database.
+    build_db.last_degraded = list(degraded)
     if dws_sql:
         con.execute(dws_sql)
     for obj, txt in comments:

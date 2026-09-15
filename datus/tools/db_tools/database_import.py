@@ -69,8 +69,12 @@ def _dependency_order(tables: Sequence[str], fks: Dict[str, Set[str]]) -> List[s
     will simply fall back to a constraint-free copy when their creation is rejected.
     """
     remaining, ordered, placed = list(tables), [], set()
+    in_scope = set(tables)
     while remaining:
-        ready = [t for t in remaining if not (fks.get(t, set()) - placed - {t})]
+        # Only dependencies that are themselves being imported can be waited on; a subset import
+        # whose parent is out of scope would otherwise never become ready and fall into the cycle
+        # branch, silently losing the parents-first guarantee for the tables that do have one.
+        ready = [t for t in remaining if not ((fks.get(t, set()) & in_scope) - placed - {t})]
         if not ready:  # cycle - emit the rest in the original order
             ordered.extend(remaining)
             break
@@ -162,8 +166,19 @@ def import_duckdb_file(
     imported: Dict[str, int] = {}
     skipped: List[str] = []
     degraded: List[str] = []
+    refused: List[str] = []
 
-    con.execute(f"ATTACH {_sql_literal(str(source_path.resolve()))} AS {alias} (READ_ONLY)")
+    try:
+        con.execute(f"ATTACH {_sql_literal(str(source_path.resolve()))} AS {alias} (READ_ONLY)")
+    except Exception as e:  # noqa: BLE001 - turn a configuration refusal into an actionable message
+        msg = str(e)
+        if "enable_external_access" in msg or "file system operations are disabled" in msg:
+            raise DatabaseImportError(
+                "This datasource runs with enable_external_access=false, so DuckDB refuses to "
+                "ATTACH any file and the database cannot be imported. Ask the operator to allow "
+                f"external access for this datasource, or load the tables another way. ({msg.splitlines()[0]})"
+            ) from e
+        raise DatabaseImportError(f"Cannot attach {source_path.name}: {msg.splitlines()[0]}") from e
     try:
         all_tables, create_sql, fks, table_comments, column_comments = _source_metadata(con, alias)
         if not all_tables:
@@ -182,7 +197,7 @@ def import_duckdb_file(
         existing = {
             r[0]
             for r in con.execute(
-                f"SELECT table_name FROM duckdb_tables() WHERE database_name <> {_sql_literal(alias)}"
+                "SELECT table_name FROM duckdb_tables() WHERE database_name = current_database()"
             ).fetchall()
         }
 
@@ -202,8 +217,9 @@ def import_duckdb_file(
         for t in ordered:
             if not _IDENT_RE.match(t):
                 # Everything below interpolates the name; refuse anything that is not a plain
-                # identifier rather than building SQL out of it.
-                degraded.append(f"{t}: skipped, not a plain identifier")
+                # identifier rather than building SQL out of it. This table is not imported at
+                # all, so it is reported separately from `degraded` (imported, constraints lost).
+                refused.append(f"{t}: not a plain identifier")
                 continue
             if t in existing and mode == "skip_existing":
                 skipped.append(t)
@@ -222,7 +238,10 @@ def import_duckdb_file(
                     reason = str(e).splitlines()[0][:160]
                     degraded.append(f"{t}: {reason}")
                     logger.info("constraint-preserving import failed for %s: %s", t, reason)
-                    con.execute(f"DROP TABLE IF EXISTS {_quote(t)}")
+                    try:
+                        con.execute(f"DROP TABLE IF EXISTS {_quote(t)}")
+                    except Exception as drop_err:  # noqa: BLE001 - CREATE OR REPLACE below still works
+                        logger.debug("cleanup drop of %s failed: %s", t, drop_err)
             if not done:
                 con.execute(f"CREATE OR REPLACE TABLE {_quote(t)} AS SELECT * FROM {src}")
 
@@ -259,6 +278,7 @@ def import_duckdb_file(
         "total_rows": sum(imported.values()),
         "skipped": skipped,
         "degraded": degraded,
+        "refused": refused,
     }
 
 

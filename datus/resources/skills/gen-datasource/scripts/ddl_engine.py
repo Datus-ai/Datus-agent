@@ -89,6 +89,25 @@ SEMANTIC = [
     (r"(_weight|_kg|_size|_length|_area|_score)$", NUM_T + INT_T, "measure"),
 ]
 
+# Every semantic a column may carry. The regex table above is a zero-cost default that is right
+# most of the time; anything it gets wrong is corrected per run through profile["semantics"],
+# which is why the table never needs to grow another industry's vocabulary.
+SEMANTICS = (
+    "id",
+    "date_pk",
+    "date",
+    "ts",
+    "amount",
+    "count",
+    "ratio",
+    "enum",
+    "flag",
+    "name",
+    "seq",
+    "measure",
+    "text",
+)
+
 ROLE_DATE, ROLE_DIM, ROLE_FACT, ROLE_DETAIL, ROLE_EVENT, ROLE_SNAPSHOT, ROLE_DOWNSTREAM = (
     "date_dim",
     "dim",
@@ -179,6 +198,7 @@ class DDLEngine:
         self.synthetic = set()
         if self.extra_tables in ("date_dim", "all"):
             self._ensure_date_dim()
+        self._apply_semantics()
         self._infer()
 
     def _ensure_date_dim(self):
@@ -197,6 +217,30 @@ class DDLEngine:
         self.schema[name] = [{"name": c, "type": d, "sem": _semantic(c, d)} for c, d in DATE_DIM_COLS]
         self.synthetic.add(name)
 
+    def _apply_semantics(self):
+        """Apply profile["semantics"] = {"table.column": semantic} over the inferred semantics.
+
+        The regex table is a naming heuristic, and naming conventions are per-industry: `paid_amount`
+        is recognised as money, `insurance_paid` and `copay` are not. Rather than growing the table
+        one vocabulary at a time, the caller states the semantics it disagrees with - an LLM reading
+        the DDL judges this far better than a regex, and freezing its judgement here in the profile
+        keeps the result reproducible and auditable instead of hidden in a pattern list.
+
+        Applied before inference so a corrected semantic also feeds role detection (main-fact choice
+        counts amount columns, fact detection looks for business dates). Explicitly set columns are
+        then exempt from the inference-time adjustments in ``_infer``, the same way profile["roles"]
+        beats role inference.
+        """
+        self._sem_override = {}
+        for key, sem in (self.profile.get("semantics") or {}).items():
+            if "." not in key:
+                continue
+            t, c = key.split(".", 1)
+            for col in self.schema.get(t, []):
+                if col["name"] == c and sem in SEMANTICS:
+                    col["sem"] = sem
+                    self._sem_override[(t, c)] = sem
+
     # ---------------------------------------------------------------- parsing
     def _parse(self):
         """Let DuckDB parse the DDL - no SQL parser to write, and common dialects just work."""
@@ -210,7 +254,14 @@ class DDLEngine:
                 try:
                     con.execute(cleaned)
                 except Exception:
-                    raise ValueError(f"Cannot parse DDL: {e}\nStatement: {stmt[:200]}")
+                    raise ValueError(
+                        f"Cannot parse DDL: {e}\nStatement: {stmt[:200]}\n"
+                        f"The engine parses DuckDB syntax. This looks like another dialect "
+                        f"(PostgreSQL/MySQL/StarRocks/Oracle/...): rewrite it to DuckDB first - drop the "
+                        f"schema prefix and backticks, map the types, strip PARTITION BY / DISTRIBUTED BY / "
+                        f"PROPERTIES / ENGINE / storage clauses and CREATE INDEX, and keep the inline "
+                        f"comments (the engine extracts enum domains from them)."
+                    )
         self.ddl_enums = self._scan_ddl_comments()
         self.decl_pk, self.decl_uniq, self.decl_fk = self._scan_constraints(con)
         # Normalised CREATE TABLE text, so the built database can carry the declared
@@ -263,10 +314,20 @@ class DDLEngine:
             if not m:
                 continue
             col, note = m.group(1), m.group(2)
-            if re.search(r"[\u4e00-\u9fff]{4,}", note) and "/" not in note:
+            # Real DDL usually labels the column before listing its values
+            # (`-- order status: pending / paid / shipped`). Keep only what follows the last
+            # colon, or the label joins the first value and the whole domain is discarded.
+            if re.search(r"[:\uff1a]", note):
+                tail = re.split(r"[:\uff1a]", note)[-1].strip()
+                if tail:
+                    note = tail
+            if re.search(r"[\u4e00-\u9fff]{4,}", note) and not re.search(r"[/|\u3001]", note):
                 continue  # prose description, not a value domain
             partial = "..." in note or "…" in note
-            parts = [x.strip().rstrip(".").strip() for x in re.split(r"\s*/\s*", note) if x.strip()]
+            # `/` is the documented separator; `|` and the CJK enumeration comma are accepted
+            # because hand-written DDL uses them just as often. `,` is deliberately not one -
+            # it is ambiguous with the column separator and appears inside values.
+            parts = [x.strip().rstrip(".").strip() for x in re.split(r"\s*[/|\u3001]\s*", note) if x.strip()]
             parts = [x for x in parts if x and len(x) <= 24]
             if len(parts) >= 2 and all(re.match(r"^[\w\u4e00-\u9fff +\-']{1,24}$", x) for x in parts):
                 out[col] = parts
@@ -288,15 +349,20 @@ class DDLEngine:
             ids = [c["name"] for c in cols if c["sem"] == "id"]
             if ids:
                 pk.setdefault(ids[0], t)
+        ovr = getattr(self, "_sem_override", {})
         # Columns whose domain is written in a DDL comment are always generated as enums (declared info beats naming conventions)
         for t, cols in self.schema.items():
             for c in cols:
-                if c["name"] in getattr(self, "ddl_enums", {}) and c["sem"] in ("text", "name"):
+                if (
+                    c["name"] in getattr(self, "ddl_enums", {})
+                    and c["sem"] in ("text", "name")
+                    and (t, c["name"]) not in ovr
+                ):
                     c["sem"] = "enum"
         # A declared PK/FK column must be generated with id semantics even when it is not named *_id (else it gets text placeholders)
         for t, col in list(self.decl_fk) + [(t, c[0]) for t, c in self.decl_pk.items() if len(c) == 1]:
             for c in self.schema.get(t, []):
-                if c["name"] == col:
+                if c["name"] == col and (t, col) not in ovr:
                     c["sem"] = "id"
         for t, cols in self.schema.items():
             declared = [col for (tt, col) in self.decl_fk if tt == t]
@@ -565,6 +631,23 @@ class DDLEngine:
 
         for k in self.profile.get("columns", {}):
             chk_ref("columns", k)
+
+        # A misspelled semantics key must never pass quietly: it would leave the column on its
+        # inferred semantic and the data would look plausible while being wrong, which no quality
+        # check can detect. Same reasoning as conditional silently doing nothing on a detail table.
+        for k, v in (self.profile.get("semantics") or {}).items():
+            chk_ref("semantics", k)
+            if v not in SEMANTICS:
+                err.append(f"semantics[{k}]: `{v}` is not a semantic; choose one of {', '.join(SEMANTICS)}")
+            elif "." in k:
+                t, c = k.split(".", 1)
+                if (t, c) in getattr(self, "_sem_override", {}):
+                    declared_key = c in self.decl_pk.get(t, []) or (t, c) in self.decl_fk
+                    if declared_key and v != "id":
+                        warn.append(
+                            f"semantics[{k}]: overriding a key column declared in the DDL to `{v}`; "
+                            f"foreign keys to it will not resolve"
+                        )
         for k in self.profile.get("column_comments", {}):
             chk_ref("column_comments", k, fatal=False)  # a bad comment only fails to be written; not fatal
         for k in self.profile.get("table_comments", {}):
@@ -755,10 +838,30 @@ class DDLEngine:
                     f"  {', '.join(sorted(part))} end in '...' (incomplete);"
                     f" list them fully in profile['enums'] if you need the whole domain"
                 )
+        self._print_semantics()
+        return self
+
+    def _print_semantics(self):
+        """Print the inferred semantic of every column, so the caller can correct what is wrong.
+
+        The regex table is a naming heuristic and naming is per-industry: it reads `paid_amount` as
+        money but not `insurance_paid` or `copay`. Printing the whole mapping turns that into a cheap
+        diff - the caller overrides the handful it disagrees with in profile["semantics"] instead of
+        the engine carrying another industry's vocabulary.
+        """
+        ovr = getattr(self, "_sem_override", {})
+        print("column semantics (override the wrong ones in profile['semantics']):")
+        for t in sorted(self.schema):
+            groups = {}
+            for c in self.schema[t]:
+                groups.setdefault(c["sem"], []).append(c["name"] + ("*" if (t, c["name"]) in ovr else ""))
+            body = "  ".join(f"{sem}: {', '.join(cs)}" for sem, cs in sorted(groups.items()))
+            print(f"  {t:<24}{body}")
+        if ovr:
+            print(f"  (* = set by profile['semantics'], {len(ovr)} column(s))")
         unknown = [f"{t}.{c['name']}" for t in self.schema for c in self.schema[t] if c["sem"] == "text"]
         if unknown:
-            print(f"unrecognised semantics (filled as text; override in profile['columns']): {unknown[:12]}")
-        return self
+            print(f"  unrecognised, will be filled as free text: {unknown[:12]}{' ...' if len(unknown) > 12 else ''}")
 
     # ---------------------------------------------------------------- generation
     DEFAULT_VOCAB = {
@@ -993,7 +1096,9 @@ class DDLEngine:
 
     def _name_for(self, t, i, rng, ent=None):
         p = self._col_profile(t, "__name__") or self.profile.get("naming", {}).get(t, {})
-        vocab = {**self.DEFAULT_VOCAB, **p.get("vocab", {})}
+        # Three layers: the built-in vocabulary, a dataset-wide profile["vocab"] (one override for
+        # every table - a hospital does not want retail brand names anywhere), then the per-table one.
+        vocab = {**self.DEFAULT_VOCAB, **(self.profile.get("vocab") or {}), **p.get("vocab", {})}
         kind = self.profile.get("dim_kinds", {}).get(t) or self._guess_kind(t)
         if "tpl" in p:
             # Only list-valued entries are drawn from; name_sep / name_order are scalars.
@@ -1335,6 +1440,9 @@ class DDLEngine:
         span_h = sum(gaps[: max(1, len(biz_ts))])
         hard_cap = datetime.combine(self.end, datetime.min.time()) + timedelta(hours=23, minutes=59, seconds=59)
         amt_cols = [c["name"] for c in cols if c["sem"] == "amount"]
+        # Measures (downtime_minutes, weight_kg) and names on a fact table have no dedicated branch
+        # below; without this they fall through to setdefault(c, "") and the whole column lands NULL.
+        other_cols = [c for c in cols if c["sem"] in ("measure", "name")]
         cnt_cols = [c["name"] for c in cols if c["sem"] == "count"]
         enum_cols = [c["name"] for c in cols if c["sem"] == "enum"]
         flag_cols = [c["name"] for c in cols if c["sem"] == "flag"]
@@ -1450,6 +1558,8 @@ class DDLEngine:
                 row[c] = round(bounded_gauss(rng, 0.04, 0.013, 0.008, 0.092), 4)
             for c in flag_cols:
                 row[c] = 1 if rng.random() < self._col_profile(t, c).get("p", 0.88) else 0
+            for c in other_cols:
+                row.setdefault(c["name"], self._fill_generic(t, c, rng, {"dt": d, "ts": t0}))
             for c in names:
                 if c not in row and self.CODE_COL.search(c):
                     row[c] = self._code_val(t, c, i, d)
@@ -1970,6 +2080,7 @@ class DDLEngine:
             return self.generate(out, verbose, tolerance, _attempt + 1, t_start)
         res = {
             "tables": sizes,
+            "degraded": list(getattr(build_db, "last_degraded", []) or []),
             "rows": total,
             "deviation": dev,
             "attempts": _attempt,

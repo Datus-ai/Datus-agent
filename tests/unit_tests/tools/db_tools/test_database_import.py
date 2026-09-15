@@ -179,3 +179,48 @@ def test_read_generator_meta(tmp_path):
 
     assert read_generator_meta(db) == {"roles": {"orders": "fact"}}
     assert read_generator_meta(tmp_path / "other.duckdb") is None
+
+
+@pytest.mark.acceptance
+def test_existing_table_probe_ignores_other_catalogs(source_db, target, tmp_path):
+    """A connector may ATTACH another catalog (an Iceberg REST catalog, a staging database).
+
+    Counting its tables as "already here" made skip_existing skip a table the target does not have,
+    and report success while importing nothing.
+    """
+    other = tmp_path / "other.duckdb"
+    con = duckdb.connect(str(other))
+    con.execute("CREATE TABLE products (x BIGINT)")
+    con.close()
+    target.execute(f"ATTACH '{other}' AS lake (READ_ONLY)")
+
+    out = import_duckdb_file(target, source_db, mode="skip_existing")
+
+    assert out["skipped"] == []
+    assert out["imported"] == {"products": 2, "orders": 3}
+
+
+@pytest.mark.acceptance
+def test_dependency_order_ignores_out_of_scope_parents():
+    """A subset import must not fall into the cycle branch because a parent was left out - the
+    tables that do have an in-scope parent still need parents-first ordering."""
+    order = _dependency_order(["order_items", "orders"], {"order_items": {"orders", "products"}})
+
+    assert order.index("orders") < order.index("order_items")
+
+
+@pytest.mark.acceptance
+def test_refused_table_is_not_reported_as_degraded(target, tmp_path):
+    """`degraded` means "imported, constraints lost". A table that was not imported at all is a
+    different outcome and the caller has to be able to tell them apart."""
+    src = tmp_path / "odd.duckdb"
+    con = duckdb.connect(str(src))
+    con.execute('CREATE TABLE "weird-name" (id BIGINT)')
+    con.execute('INSERT INTO "weird-name" VALUES (1)')
+    con.close()
+
+    out = import_duckdb_file(target, src)
+
+    assert out["imported"] == {}
+    assert out["degraded"] == []
+    assert out["refused"] and "weird-name" in out["refused"][0]

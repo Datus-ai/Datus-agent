@@ -57,7 +57,16 @@ def test_skill_content_is_english():
         if path.suffix not in (".md", ".py"):
             continue
         text = path.read_text(encoding="utf-8")
-        cjk = [ch for ch in text if "一" <= ch <= "鿿"]
+        # Ideographs plus the CJK punctuation and fullwidth-forms blocks - a stray fullwidth comma
+        # or colon is just as much a leftover as a Han character, and the narrower range misses it.
+        cjk = [
+            ch
+            for ch in text
+            if "\u4e00" <= ch <= "\u9fff"  # CJK unified ideographs
+            or "\u3000" <= ch <= "\u303f"  # CJK symbols and punctuation
+            or "\uff00" <= ch <= "\uffef"  # halfwidth and fullwidth forms
+            or "\u3400" <= ch <= "\u4dbf"  # extension A
+        ]
         assert not cjk, f"{path.relative_to(SKILL_DIR)} contains CJK characters: {''.join(cjk[:20])}"
 
 

@@ -22,17 +22,31 @@ allowed_commands:
 
 ---
 
-## Step 0: locate this skill's scripts
+## Step 0: you do not need to locate this skill
 
-This skill ships inside the `datus` package. Resolve its directory once, deterministically - **do not search the filesystem for it**:
+The skill ships inside the `datus` package, so `gen.py` resolves the engine itself at import time.
+Copy these four lines into `gen.py` and never search the filesystem for the skill directory:
 
-```bash
-python3 -c "import datus, pathlib; print(pathlib.Path(datus.__file__).parent / 'resources/skills/gen-datasource')"
+```python
+import pathlib, sys
+import datus
+SKILL = pathlib.Path(datus.__file__).resolve().parent / "resources" / "skills" / "gen-datasource"
+sys.path.insert(0, str(SKILL / "scripts"))
+from ddl_engine import DDLEngine
 ```
 
-Call that directory `$SKILL`. The engine is `$SKILL/scripts/ddl_engine.py` and the shared primitives are `$SKILL/scripts/genlib.py`.
+**Do not read the engine source.** Everything needed to write a profile is in this file; the engine
+is ~1900 lines and reading it was, by measurement, the single largest time sink in earlier runs
+(28% of end-to-end wall clock in one production trace).
 
-**Do not read the engine source.** `references/profile-spec.md` is the complete configuration reference; reading it is enough to write a working profile. The engine is ~1900 lines and reading it was, by measurement, the single largest time sink in earlier runs (28% of end-to-end wall clock in one production trace).
+The two deep-dive documents are optional and live next to the engine:
+`references/profile-spec.md` (every profile field) and `references/pitfalls.md` (the 17 invariants
+in full, plus the hand-written generator reference). **A built-in skill lives outside the project
+workspace, so `read_file` will refuse them** - read them with bash when you need them:
+
+```bash
+python3 -c "import datus,pathlib;print((pathlib.Path(datus.__file__).parent/'resources/skills/gen-datasource/references/profile-spec.md').read_text())"
+```
 
 ---
 
@@ -42,8 +56,8 @@ Call that directory `$SKILL`. The engine is `$SKILL/scripts/ddl_engine.py` and t
 
 ```python
 eng = DDLEngine(DDL_SQL, rows=80_000, profile=PROFILE)
-eng.report()                                     # inspect inference; override in profile if wrong
-eng.generate(str(HERE / "datasource.duckdb"))    # HERE is data/
+eng.report()              # inspect inference; override in the profile if wrong
+eng.generate(str(OUT))    # OUT defaults to data/datasource.duckdb, argv[1] overrides it
 ```
 
 **Forbidden**:
@@ -80,8 +94,10 @@ Everything lives under `data/` so the directory can be handed over whole: databa
 Because `gen.py` sits next to the database, anchor paths to its own directory:
 
 ```python
-HERE = pathlib.Path(__file__).resolve().parent        # data/
-eng.generate(str(HERE / "datasource.duckdb"))         # absolute; never depends on cwd
+HERE = pathlib.Path(__file__).resolve().parent                                  # data/
+OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "datasource.duckdb"
+OUT.parent.mkdir(parents=True, exist_ok=True)                                   # never chain mkdir && python
+eng.generate(str(OUT))                                                          # absolute; never depends on cwd
 ```
 
 `README.md` is the datasource's **only** document, in two halves: a getting-started guide (connect and ask the first question within three minutes) and a field-level data dictionary (meaning and definition of every column of every table). Do not emit a separate `DATA_DICT.md`.
@@ -183,8 +199,15 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
 **Never try to generate directly into the datasource file.** The flow is:
 
 1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
-   (`gen.py` takes the output path as its first argument and must `mkdir(parents=True, exist_ok=True)`
-   on the parent, so the command stays a single invocation with no shell chaining)
+
+   `gen.py` therefore takes the output path as an optional first argument and creates its parent,
+   so the command stays a single invocation with no shell chaining:
+
+   ```python
+   OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "datasource.duckdb"
+   OUT.parent.mkdir(parents=True, exist_ok=True)
+   eng.generate(str(OUT))
+   ```
 2. Load it into the datasource with the built-in tool, which runs through the
    connection that already holds the lock and replays the source DDL so primary
    keys, unique and foreign keys survive:
@@ -196,6 +219,55 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
 
 `import_database_file` copies table and column comments too, so the comments the
 engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
+
+---
+
+## Step 1: normalise the DDL to DuckDB syntax
+
+The engine parses the DDL with DuckDB itself, so **a DDL in any other dialect fails outright** -
+PostgreSQL, MySQL, StarRocks and Oracle all do, and the error is a parser error with no hint. Most
+users paste DDL exported from their real warehouse, so expect to rewrite it. This is the step where
+an LLM is genuinely better than the engine: you read the dialect, the engine only executes.
+
+Rewrite it yourself, then put the **rewritten** DDL into `gen.py` (not the original) so the result is
+reproducible:
+
+| Dialect | What to strip or map |
+|---|---|
+| All | `schema.table` -> `table`; backticks and `[brackets]` -> nothing or `"quotes"`; `CREATE INDEX` / `CREATE SEQUENCE` -> delete |
+| MySQL | `ENGINE=` / `DEFAULT CHARSET=` / `AUTO_INCREMENT` / `KEY idx (...)` -> delete; `UNSIGNED` -> delete; `DATETIME` -> `TIMESTAMP`; `TINYINT(1)` -> `BOOLEAN` |
+| StarRocks / Doris | `DUPLICATE KEY` / `PARTITION BY` / `DISTRIBUTED BY` / `PROPERTIES (...)` -> delete |
+| PostgreSQL | `BIGSERIAL` -> `BIGINT`; `TEXT[]` / `JSONB` -> `VARCHAR`; `USING btree` -> delete |
+| Oracle | `NUMBER(19)` -> `BIGINT`; `NUMBER(18,2)` -> `DECIMAL(18,2)`; `VARCHAR2(n)` -> `VARCHAR` |
+
+**Keep the keys.** `PRIMARY KEY`, `UNIQUE` and `REFERENCES` are the engine's strongest signal and they
+end up in the delivered database - do not drop them while cleaning up.
+
+### Enum comments have a format, and it is what the engine reads
+
+The engine extracts a column's value domain from its **inline comment**, which saves writing
+`profile["enums"]` by hand. Dialects that carry comments as a `COMMENT 'x'` clause must be converted,
+or the domain is lost silently:
+
+```sql
+-- WRONG (MySQL/StarRocks clause; DuckDB rejects it and the domain is lost)
+order_status VARCHAR(20) COMMENT 'pending / paid / shipped',
+
+-- RIGHT
+order_status VARCHAR, -- pending / paid / shipped
+```
+
+The accepted shape, exactly:
+
+| Rule | Accepted | Rejected |
+|---|---|---|
+| One column per line, comment on that same line | `st VARCHAR, -- a / b / c` | a `/* ... */` block, a comment on its own line, or two columns sharing a line (the first identifier on the line wins) |
+| Separator | `/`, `\|`, or the CJK enumeration comma | `,` (ambiguous with the column separator) |
+| A label before the values | `-- order status: a / b / c` (text before the last colon is dropped) | |
+| At least two values, each <= 24 chars | `-- a / b / c` | `-- some prose description` |
+| Trailing `...` marks the list incomplete | `-- a / b / ...` | |
+
+`report()` prints which columns yielded a domain and which ended in `...`.
 
 ---
 
@@ -281,13 +353,40 @@ PROFILE = {
   # 5. Dimension kinds (override when inference is wrong) and value ranges
   "dim_kinds": {"agent_master": "staff", "product_catalog": "enum"},
   "columns": {"dim_product.list_price_usd": {"range": (9, 320)}},
-  # 6. Name templates (placeholders come from DEFAULT_VOCAB; extend via `vocab`)
-  "naming": {"dim_seller": {"tpl": "{brand} {org_suffix}"}},
-  # 7. Optional: role overrides, table/column comments, extra SQL
+  # 6. Names. The built-in vocabulary is retail-flavoured (brands, store suffixes), so any other
+  #    industry must replace it once at dataset level or every name reads as a shop.
+  "vocab": {"brand": ["Cardiology", "Neurology"], "org_suffix": ["Ward", "Clinic"]},
+  "naming": {"dim_seller": {"tpl": "{brand} {org_suffix}"}},   # per-table template
+  # 7. Optional: role and column-semantic overrides, table/column comments, extra SQL
   "roles": {"some_table": "dim"},
+  "semantics": {"encounters.insurance_paid": "amount"},
   "table_comments": {"ods_order": "Order header; amounts in USD"},
 }
 ```
+
+### Correcting column semantics
+
+Every column is classified as one of `id / date / date_pk / ts / amount / count / ratio / enum /
+flag / name / seq / measure`, and that classification decides how it is filled. The engine guesses
+from the column name, which is a naming convention, and naming conventions are per-industry: it
+reads `paid_amount` as money but not `insurance_paid`, `copay`, `premium_received` or `principal`.
+
+`report()` prints the full mapping. **Read it and correct what is wrong** - this is the other place
+where you are better than the engine:
+
+```python
+"semantics": {
+    "encounters.insurance_paid": "amount",     # would otherwise be filled as a generic measure
+    "encounters.self_paid":      "amount",
+    "encounters.diagnosis_code": "enum",
+},
+```
+
+Only list the ones you disagree with; a correct guess costs nothing to leave alone. The override is
+applied before role detection, so a corrected amount column also counts towards picking the main
+fact table. A key declared in the DDL keeps `id` unless you say otherwise, and the pre-check rejects
+an unknown semantic or a column that does not exist - a typo here would otherwise leave the column
+on its wrong guess and produce plausible-looking wrong data that no quality check can detect.
 
 **The complete field reference is `references/profile-spec.md`** - reading that one file is enough to write a profile. You do not need the engine source.
 

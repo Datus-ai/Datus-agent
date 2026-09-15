@@ -60,6 +60,21 @@ FUTURE_OK_SUFFIX = ("promise_dt", "expire_dt", "due_dt", "end_dt", "renew_dt")
 
 PASS, FAIL, WARN = "PASS", "FAIL", "WARN"
 
+# Only the datasource's own catalog is in scope. A connector may ATTACH others (an Iceberg REST
+# catalog, an import staging database), and counting those tables would corrupt every ratio here.
+_OWN_CATALOG = "database_name = current_database()"
+
+
+def _q(name: str) -> str:
+    """Quote an identifier. Table and column names come from a live user datasource, where a
+    reserved word, mixed case or a hyphen is ordinary - unquoted they make the query fail, and a
+    failed query silently degrades into a default value and a wrong verdict."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _lit(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
 
 class QualityChecker:
     """Run the demo-datasource checks against an open DuckDB connection.
@@ -120,12 +135,13 @@ class QualityChecker:
         self.results.append((name, PASS if ok else (WARN if warn else FAIL), detail))
 
     def tables(self) -> List[str]:
-        return [r[0] for r in self.q("SELECT table_name FROM duckdb_tables() ORDER BY 1")]
+        return [r[0] for r in self.q(f"SELECT table_name FROM duckdb_tables() WHERE {_OWN_CATALOG} ORDER BY 1")]
 
     def cols(self, t: str) -> List[tuple]:
         return self.q(
             f"SELECT column_name, data_type FROM information_schema.columns "
-            f"WHERE table_name='{t}' ORDER BY ordinal_position"
+            f"WHERE table_catalog = current_database() AND table_name = {_lit(t)} "
+            f"ORDER BY ordinal_position"
         )
 
     def numeric_cols(self, t: str) -> List[str]:
@@ -138,7 +154,7 @@ class QualityChecker:
 
     def check_structure(self) -> List[str]:
         ts = self.tables()
-        rows = self.one("SELECT sum(estimated_size) FROM duckdb_tables()", 0)
+        rows = self.one(f"SELECT sum(estimated_size) FROM duckdb_tables() WHERE {_OWN_CATALOG}", 0)
         # Layering is inferred structurally, never from a dim_/ods_ prefix - user DDL names vary wildly.
         if self.meta and self.meta.get("roles"):
             syn = set(self.meta.get("synthetic_tables", []))
@@ -152,7 +168,7 @@ class QualityChecker:
         for t in ts:
             if t in self.kind:
                 continue
-            n = self.one(f"SELECT count(*) FROM {t}", 0)
+            n = self.one(f"SELECT count(*) FROM {_q(t)}", 0)
             cs = [c for c, _ in self.cols(t)]
             if (
                 any(c in ("date_key", "stat_dt", "dt") for c in cs)
@@ -212,8 +228,8 @@ class QualityChecker:
                 continue
             head = cs[0]
             if head.endswith("_id") and t.startswith(("dim_", "ods_")):
-                n = self.one(f"SELECT count(*) FROM {t}", 0)
-                d = self.one(f"SELECT count(DISTINCT {head}) FROM {t}", 0)
+                n = self.one(f"SELECT count(*) FROM {_q(t)}", 0)
+                d = self.one(f"SELECT count(DISTINCT {_q(head)}) FROM {_q(t)}", 0)
                 if n and n == d:
                     pk_owner.setdefault(head, t)
 
@@ -240,11 +256,11 @@ class QualityChecker:
         bad, detail = [], []
         for st, sc, tt, tc in pairs + auto:
             miss = self.one(
-                f"SELECT count(*) FROM {st} a LEFT JOIN {tt} b ON a.{sc}=b.{tc} "
-                f"WHERE a.{sc} IS NOT NULL AND b.{tc} IS NULL",
+                f"SELECT count(*) FROM {_q(st)} a LEFT JOIN {_q(tt)} b ON a.{_q(sc)}=b.{_q(tc)} "
+                f"WHERE a.{_q(sc)} IS NOT NULL AND b.{_q(tc)} IS NULL",
                 0,
             )
-            tot = self.one(f"SELECT count(*) FROM {st} WHERE {sc} IS NOT NULL", 0) or 1
+            tot = self.one(f"SELECT count(*) FROM {_q(st)} WHERE {_q(sc)} IS NOT NULL", 0) or 1
             if miss:
                 bad.append(f"{st}.{sc}->{tt} {miss:,} orphans ({100.0 * miss / tot:.1f}%)")
             else:
@@ -270,11 +286,11 @@ class QualityChecker:
             col = pks.get(t)
             if not col or col not in [c for c, _ in self.cols(t)]:
                 continue
-            n = self.one(f"SELECT count(*) FROM {t}", 0) or 0
+            n = self.one(f"SELECT count(*) FROM {_q(t)}", 0) or 0
             if not n:
                 continue
-            nul = self.one(f"SELECT count(*) FROM {t} WHERE {col} IS NULL", 0) or 0
-            dup = n - (self.one(f"SELECT count(DISTINCT {col}) FROM {t}", 0) or 0)
+            nul = self.one(f"SELECT count(*) FROM {_q(t)} WHERE {_q(col)} IS NULL", 0) or 0
+            dup = n - (self.one(f"SELECT count(DISTINCT {_q(col)}) FROM {_q(t)}", 0) or 0)
             if nul:
                 pk_bad.append(f"{t}.{col} has {nul:,}/{n:,} NULL keys")
             if dup:
@@ -292,38 +308,42 @@ class QualityChecker:
     def _main_daily(self):
         """Pick day-grain tables plus a main amount/count column to observe the time signal on."""
         out = []
+        # ROLE2KIND folds metric_daily into "fact" so the layering counts stay a closed set;
+        # everything fact-shaped is therefore reachable through "fact" alone.
         cands = [t for t, k in self.kind.items() if k == "summary"] + sorted(
-            [t for t, k in self.kind.items() if k in ("fact", "metric_daily")],
-            key=lambda t: -(self.one(f"SELECT count(*) FROM {t}", 0) or 0),
+            [t for t, k in self.kind.items() if k == "fact"],
+            key=lambda t: -(self.one(f"SELECT count(*) FROM {_q(t)}", 0) or 0),
         )
         for t in cands[:4]:
             dcs = []
             for c, d in self.cols(t):
                 if d.upper() not in ("DATE", "TIMESTAMP") or any(a in c for a in AUDIT_COLS):
                     continue  # audit timestamps are not business dates
-                expr = c if d.upper() == "DATE" else f"CAST({c} AS DATE)"
-                if (self.one(f"SELECT count(DISTINCT {expr}) FROM {t}", 0) or 0) > 60:
+                expr = _q(c) if d.upper() == "DATE" else f"CAST({_q(c)} AS DATE)"
+                if (self.one(f"SELECT count(DISTINCT {expr}) FROM {_q(t)}", 0) or 0) > 60:
                     dcs.append(expr)
             if not dcs:
                 continue
             ncs = [
                 c
                 for c in self.numeric_cols(t)
-                if not any(h in c for h in METRIC_EXCLUDE) and (self.one(f"SELECT sum({c}) FROM {t}", 0) or 0) > 0
+                if not any(h in c for h in METRIC_EXCLUDE)
+                and (self.one(f"SELECT sum({_q(c)}) FROM {_q(t)}", 0) or 0) > 0
             ]
             if not ncs:
                 continue
             pref = [c for c in ncs if any(h in c for h in METRIC_PREFER)]
-            pool = sorted(pref or ncs, key=lambda c: -(self.one(f"SELECT sum({c}) FROM {t}", 0) or 0))
+            pool = sorted(pref or ncs, key=lambda c: -(self.one(f"SELECT sum({_q(c)}) FROM {_q(t)}", 0) or 0))
             out.append((t, dcs[:2], pool[:4]))
         return out
 
     def _weekly_dev(self, t: str, dc: str, c: str) -> float:
         we = self.one(
-            f"SELECT avg(v) FROM (SELECT {dc} d, sum({c}) v FROM {t} GROUP BY 1) WHERE dayofweek(d) IN (0,6)", 0
+            f"SELECT avg(v) FROM (SELECT {dc} d, sum({_q(c)}) v FROM {_q(t)} GROUP BY 1) WHERE dayofweek(d) IN (0,6)", 0
         )
         wd = self.one(
-            f"SELECT avg(v) FROM (SELECT {dc} d, sum({c}) v FROM {t} GROUP BY 1) WHERE dayofweek(d) NOT IN (0,6)", 0
+            f"SELECT avg(v) FROM (SELECT {dc} d, sum({_q(c)}) v FROM {_q(t)} GROUP BY 1) WHERE dayofweek(d) NOT IN (0,6)",
+            0,
         )
         return (we / wd) if (we and wd) else 1.0
 
@@ -347,7 +367,11 @@ class QualityChecker:
             return
 
         t, dc, mc = best
-        span = self.q(f"SELECT min({dc}), max({dc}), count(DISTINCT {dc}) FROM {t}")[0]
+        span_rows = self.q(f"SELECT min({dc}), max({dc}), count(DISTINCT {dc}) FROM {_q(t)}")
+        if not span_rows or span_rows[0][0] is None or span_rows[0][1] is None:
+            self.add("time span", False, f"{t}: the date column holds no usable value")
+            return
+        span = span_rows[0]
         months = (span[1].year - span[0].year) * 12 + span[1].month - span[0].month + 1
         self.add(
             "time span",
@@ -357,7 +381,7 @@ class QualityChecker:
         )
 
         mm = self.q(
-            f"SELECT date_trunc('month', {dc}) m, sum({mc}) v FROM {t} GROUP BY 1 HAVING sum({mc})>0 ORDER BY 1"
+            f"SELECT date_trunc('month', {dc}) m, sum({_q(mc)}) v FROM {_q(t)} GROUP BY 1 HAVING sum({_q(mc)})>0 ORDER BY 1"
         )
         if len(mm) >= 3:
             vals = [r[1] for r in mm[1:-1]] or [r[1] for r in mm]  # drop partial first/last months
@@ -401,13 +425,13 @@ class QualityChecker:
         if self.date_table:
             dtbl = self.date_table
             ev = self.q(
-                f"SELECT d.event_name, avg(x.v) FROM (SELECT {dc} d, sum({mc}) v "
-                f"FROM {t} GROUP BY 1) x JOIN {dtbl} d ON d.date_key=x.d "
+                f"SELECT d.event_name, avg(x.v) FROM (SELECT {dc} d, sum({_q(mc)}) v "
+                f"FROM {_q(t)} GROUP BY 1) x JOIN {_q(dtbl)} d ON d.date_key=x.d "
                 f"WHERE d.day_type_cd='PROMO' AND d.event_name<>'' GROUP BY 1 ORDER BY 2 DESC LIMIT 3"
             )
             base = self.one(
-                f"SELECT avg(x.v) FROM (SELECT {dc} d, sum({mc}) v FROM {t} GROUP BY 1) x "
-                f"JOIN {dtbl} d ON d.date_key=x.d WHERE d.day_type_cd='NORMAL'",
+                f"SELECT avg(x.v) FROM (SELECT {dc} d, sum({_q(mc)}) v FROM {_q(t)} GROUP BY 1) x "
+                f"JOIN {_q(dtbl)} d ON d.date_key=x.d WHERE d.day_type_cd='NORMAL'",
                 0,
             )
             if ev and base:
@@ -424,9 +448,9 @@ class QualityChecker:
             for c in self.date_cols(t):
                 if c.endswith(FUTURE_OK_SUFFIX):
                     continue  # a promise/expiry/renewal date in the future is business semantics
-                n = self.one(f"SELECT count(*) FROM {t} WHERE {c} > DATE '{today}'", 0)
+                n = self.one(f"SELECT count(*) FROM {_q(t)} WHERE {_q(c)} > DATE '{today}'", 0)
                 if n:
-                    mx = self.one(f"SELECT max({c}) FROM {t}")
+                    mx = self.one(f"SELECT max({_q(c)}) FROM {_q(t)}")
                     bad.append(f"{t}.{c} has {n:,} rows after today (max {mx})")
         self.add("no future-dated rows", not bad, "; ".join(bad) if bad else f"every fact date is on or before {today}")
 
@@ -435,8 +459,8 @@ class QualityChecker:
         for t in ts:
             for c in self.numeric_cols(t):
                 if any(h in c for h in RATIO_HINTS) and not any(x in c for x in RATIO_EXCLUDE):
-                    mn = self.one(f"SELECT min({c}) FROM {t}")
-                    mx = self.one(f"SELECT max({c}) FROM {t}")
+                    mn = self.one(f"SELECT min({_q(c)}) FROM {_q(t)}")
+                    mx = self.one(f"SELECT max({_q(c)}) FROM {_q(t)}")
                     if mn is None:
                         continue
                     hi = 100.0 if ("_pct" in c or "_rate_pct" in c) else 1.0
@@ -451,7 +475,7 @@ class QualityChecker:
                             + ")"
                         )
                 if any(h in c for h in COUNT_HINTS):
-                    neg = self.one(f"SELECT count(*) FROM {t} WHERE {c} < 0", 0)
+                    neg = self.one(f"SELECT count(*) FROM {_q(t)} WHERE {_q(c)} < 0", 0)
                     if neg:
                         bad.append(f"{t}.{c} has {neg:,} negative values")
         self.add(
@@ -461,14 +485,14 @@ class QualityChecker:
     def check_dead_cols(self, ts: Sequence[str]) -> None:
         zero, const = [], []
         for t in ts:
-            n = self.one(f"SELECT count(*) FROM {t}", 0)
+            n = self.one(f"SELECT count(*) FROM {_q(t)}", 0)
             if not n:
                 continue
             for c in self.numeric_cols(t):
-                s = self.one(f"SELECT sum({c}) FROM {t}")
+                s = self.one(f"SELECT sum({_q(c)}) FROM {_q(t)}")
                 if s is not None and s == 0:
                     zero.append(f"{t}.{c}")
-                elif n > 50 and self.one(f"SELECT count(DISTINCT {c}) FROM {t}", 0) == 1:
+                elif n > 50 and self.one(f"SELECT count(DISTINCT {_q(c)}) FROM {_q(t)}", 0) == 1:
                     const.append(f"{t}.{c}")
         self.add("no dead columns", not zero, f"all-zero numeric columns: {zero if zero else 'none'}")
         self.add(
@@ -489,8 +513,8 @@ class QualityChecker:
                 continue
             gk = next((c for c in cs if c.endswith("_id") and c not in (key,)), key)
             n = self.one(
-                f"SELECT count(*) FROM (SELECT {tsc} ts, "
-                f"lag({tsc}) OVER (PARTITION BY {gk} ORDER BY {seq}) p FROM {t}) "
+                f"SELECT count(*) FROM (SELECT {_q(tsc)} ts, "
+                f"lag({_q(tsc)}) OVER (PARTITION BY {_q(gk)} ORDER BY {_q(seq)}) p FROM {_q(t)}) "
                 f"WHERE p IS NOT NULL AND ts < p",
                 0,
             )
@@ -513,7 +537,7 @@ class QualityChecker:
         for t in ts:
             if self.kind.get(t) not in ("fact", "event"):
                 continue
-            n = self.one(f"SELECT count(*) FROM {t}", 0)
+            n = self.one(f"SELECT count(*) FROM {_q(t)}", 0)
             if n < 1000 or n < best_rows:
                 continue
             ncs = [
@@ -527,7 +551,7 @@ class QualityChecker:
             fks = [
                 c
                 for c, _ in self.cols(t)
-                if c.endswith("_id") and (self.one(f"SELECT count(DISTINCT {c}) FROM {t}", 0) or n) < n * 0.2
+                if c.endswith("_id") and (self.one(f"SELECT count(DISTINCT {_q(c)}) FROM {_q(t)}", 0) or n) < n * 0.2
             ]
             if not ncs or not fks:
                 continue
@@ -538,20 +562,22 @@ class QualityChecker:
 
         t, dim, m = best
         share = self.one(
-            f"WITH x AS (SELECT {dim} k, sum({m}) v, "
-            f"row_number() OVER (ORDER BY sum({m}) DESC) rn, count(*) OVER () n FROM {t} GROUP BY 1) "
+            f"WITH x AS (SELECT {_q(dim)} k, sum({_q(m)}) v, "
+            f"row_number() OVER (ORDER BY sum({_q(m)}) DESC) rn, count(*) OVER () n FROM {_q(t)} GROUP BY 1) "
             f"SELECT 100.0*sum(CASE WHEN rn<=greatest(1,n/10) THEN v END)/sum(v) FROM x"
         )
 
         # Check every dimension, not just one: an insurance dataset with a healthy holder_id and an
         # agent_id holding 40% of premium is a real case this caught.
         head_bad, head_ok = [], []
-        total_rows = self.one(f"SELECT count(*) FROM {t}", 0) or 1
+        total_rows = self.one(f"SELECT count(*) FROM {_q(t)}", 0) or 1
         for d in [c for c, _ in self.cols(t) if c.endswith("_id")]:
-            k = self.one(f"SELECT count(DISTINCT {d}) FROM {t}", 0) or 0
+            k = self.one(f"SELECT count(DISTINCT {_q(d)}) FROM {_q(t)}", 0) or 0
             if k < 3 or k > total_rows * 0.2:
                 continue  # a near-unique column is not a dimension
-            v = self.one(f"WITH x AS (SELECT {d} k, sum({m}) v FROM {t} GROUP BY 1) SELECT 100.0*max(v)/sum(v) FROM x")
+            v = self.one(
+                f"WITH x AS (SELECT {_q(d)} k, sum({_q(m)}) v FROM {_q(t)} GROUP BY 1) SELECT 100.0*max(v)/sum(v) FROM x"
+            )
             if v is None:
                 continue
             (head_bad if v > self._head_cap(k) else head_ok).append(f"{d} top entity {v:.1f}% of {k:,}")
@@ -570,14 +596,24 @@ class QualityChecker:
         # The floor relaxes with cardinality: the Top 10% of a small dimension is two or three
         # entities, and forcing them to hold 50% produces an extreme head. The engine flattens its
         # long-tail target below 200 distinct values, and this must use the same standard.
-        n_dim = self.one(f"SELECT count(DISTINCT {dim}) FROM {t}", 0) or 1
+        n_dim = self.one(f"SELECT count(DISTINCT {_q(dim)}) FROM {_q(t)}", 0) or 1
         lo = 30.0 if n_dim < 60 else 40.0 if n_dim < 200 else 50.0
-        self.add(
-            "long-tail concentration",
-            share is not None and lo <= share <= 92,
-            f"{t} grouped by {dim} on {m}: Top 10% holds {share:.1f}% ({n_dim:,} entities, floor {lo:.0f}%)"
-            + ("" if lo <= (share or 0) <= 92 else "  <- too low = no head, too high = stacked Zipf weights"),
-        )
+        if share is None:
+            # The metric sums to NULL/0 - exactly the degenerate data this check exists to catch,
+            # so it must report a FAIL rather than crash the whole run on a format string.
+            self.add(
+                "long-tail concentration",
+                False,
+                f"{t} grouped by {dim}: {m} sums to NULL/0, so concentration cannot be measured "
+                f"(a dead metric column is itself the defect)",
+            )
+        else:
+            self.add(
+                "long-tail concentration",
+                lo <= share <= 92,
+                f"{t} grouped by {dim} on {m}: Top 10% holds {share:.1f}% ({n_dim:,} entities, floor {lo:.0f}%)"
+                + ("" if lo <= share <= 92 else "  <- too low = no head, too high = stacked Zipf weights"),
+            )
 
     def check_density(self, ts: Sequence[str]) -> None:
         rows = []
@@ -585,19 +621,21 @@ class QualityChecker:
             if self.kind.get(t) == "summary":
                 cc = next((c for c in self.numeric_cols(t) if c.endswith("_cnt")), None)
                 if cc:
-                    rows.append((t, cc, self.one(f"SELECT avg({cc}) FROM {t} WHERE {cc}>0", 0) or 0))
-            elif self.kind.get(t) in ("fact", "metric_daily"):
+                    rows.append((t, cc, self.one(f"SELECT avg({cc}) FROM {_q(t)} WHERE {cc}>0", 0) or 0))
+            elif self.kind.get(t) == "fact":
                 # Without a summary layer, measure the fact table's own per-day density.
                 expr = None
                 for c, d in self.cols(t):
                     if d.upper() not in ("DATE", "TIMESTAMP") or any(a in c for a in AUDIT_COLS):
                         continue
-                    expr = c if d.upper() == "DATE" else f"CAST({c} AS DATE)"
+                    expr = _q(c) if d.upper() == "DATE" else f"CAST({_q(c)} AS DATE)"
                     break
                 if expr:
-                    v = self.one(f"SELECT avg(n) FROM (SELECT {expr} d, count(*) n FROM {t} GROUP BY 1) WHERE n>0", 0)
+                    v = self.one(
+                        f"SELECT avg(n) FROM (SELECT {expr} d, count(*) n FROM {_q(t)} GROUP BY 1) WHERE n>0", 0
+                    )
                     rows.append((f"{t} (by day)", "rows/day", v or 0))
-        total = self.one("SELECT sum(estimated_size) FROM duckdb_tables()", 0) or 0
+        total = self.one(f"SELECT sum(estimated_size) FROM duckdb_tables() WHERE {_OWN_CATALOG}", 0) or 0
         thr = 20 if total >= 500_000 else 8  # a small dataset cannot reach 20 per cell at a fine grain
         ok = any(r[2] >= thr for r in rows)
         self.add(
@@ -609,7 +647,7 @@ class QualityChecker:
         )
 
     def check_semantics(self, ts: Sequence[str]) -> None:
-        nt = self.one("SELECT count(*) FROM duckdb_tables() WHERE comment IS NOT NULL", 0)
+        nt = self.one(f"SELECT count(*) FROM duckdb_tables() WHERE {_OWN_CATALOG} AND comment IS NOT NULL", 0)
         tt = len(ts)
         self.add(
             "metadata comments",
@@ -622,8 +660,10 @@ class QualityChecker:
                 continue
             for c, d in self.cols(t):
                 if c.endswith("_name") and d.upper().startswith("VARCHAR"):
-                    n = self.one(f"SELECT count(*) FROM {t} WHERE regexp_matches({c}, '^[a-zA-Z_]+[_ ]?[0-9]+$')", 0)
-                    tot = self.one(f"SELECT count(*) FROM {t}", 1)
+                    n = self.one(
+                        f"SELECT count(*) FROM {_q(t)} WHERE regexp_matches({_q(c)}, '^[a-zA-Z_]+[_ ]?[0-9]+$')", 0
+                    )
+                    tot = self.one(f"SELECT count(*) FROM {_q(t)}", 1)
                     if n and n > tot * 0.5:
                         bad.append(f"{t}.{c} {n}/{tot} look like xxx_123")
         self.add(
@@ -633,18 +673,27 @@ class QualityChecker:
         )
 
     def check_config(self) -> None:
-        for a in self.cfg.get("assertions", []):
-            v = self.one(a["sql"])
+        for i, a in enumerate(self.cfg.get("assertions", []) or []):
+            # Assertions are hand-written JSON. A missing key or an unknown `expect` is a
+            # configuration mistake and must be reported as one, not crash every other check.
+            name = (a or {}).get("name") or f"assertion #{i + 1}"
+            sql = (a or {}).get("sql")
+            if not isinstance(a, dict) or not sql:
+                self.add(name, False, "malformed assertion: needs at least a 'sql' key")
+                continue
             exp = a.get("expect", "zero")
+            v = self.one(sql)
             if exp == "zero":
                 ok, d = (v == 0), f"actual {v}"
             elif exp == "nonzero":
                 ok, d = bool(v), f"actual {v}"
-            else:
+            elif isinstance(exp, dict):
                 lo, hi = exp.get("min", float("-inf")), exp.get("max", float("inf"))
                 ok = v is not None and lo <= v <= hi
                 d = f"actual {v:.4g} (expected {lo}~{hi})" if v is not None else "query returned nothing"
-            self.add(a["name"], ok, d)
+            else:
+                ok, d = False, f"unknown expect {exp!r}: use 'zero', 'nonzero' or {{'min':x,'max':y}}"
+            self.add(name, ok, d)
 
     # ------------------------------------------------------------------ entry point
 

@@ -54,7 +54,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
-from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
+from datus.utils.sql_utils import parse_dialect, parse_sql_statement_kind, parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -1207,9 +1207,11 @@ class DBFuncTool:
         if LOCAL_FILES_DATASOURCE in self._datasources:
             methods_to_convert.append(self.load_file_as_table)
 
-        # Both of these speak DuckDB directly (ATTACH, duckdb_tables(), CHECKPOINT),
-        # so they are mounted only where the active datasource is DuckDB.
-        if self._dialect_name(getattr(self.connector, "dialect", "")) == "duckdb":
+        # Both of these speak DuckDB directly (ATTACH, duckdb_tables(), CHECKPOINT), so they are
+        # mounted wherever a DuckDB datasource is configured - not only when the one bound at build
+        # time happens to be DuckDB, which would hide them after a switch in a multi-datasource
+        # deployment. A call routed at a non-DuckDB datasource is refused by _duckdb_connection.
+        if "duckdb" in self._configured_tool_dialects():
             methods_to_convert.append(self.import_database_file)
             methods_to_convert.append(self.check_datasource_quality)
 
@@ -1971,6 +1973,7 @@ class DBFuncTool:
         mode: str = "replace",
         tables: Optional[List[str]] = None,
         keep_constraints: bool = True,
+        datasource: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Load every table of a DuckDB file in the workspace into the current datasource.
@@ -1993,6 +1996,7 @@ class DBFuncTool:
             tables: Import only these source tables. Omit to import all of them.
             keep_constraints: Replay the declared DDL so keys survive. Set False only when the
                 source constraints are known to conflict with the target.
+            datasource: Load into this datasource instead of the current one. It must be DuckDB.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -2013,7 +2017,7 @@ class DBFuncTool:
             if not target.exists():
                 return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
 
-            exclusive, refusal = self._duckdb_connection("", "import_database_file")
+            exclusive, refusal = self._duckdb_connection(datasource, "import_database_file")
             if refusal is not None:
                 return refusal
 
@@ -2027,7 +2031,7 @@ class DBFuncTool:
                 )
 
             result: Dict[str, Any] = {
-                "datasource": self._resolve_effective_datasource(""),
+                "datasource": self._resolve_effective_datasource(datasource),
                 "source": resolved.display,
                 "tables": outcome["imported"],
                 "table_count": outcome["table_count"],
@@ -2054,6 +2058,7 @@ class DBFuncTool:
         self,
         config_path: Optional[str] = "",
         meta_path: Optional[str] = "",
+        datasource: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Run the demo-datasource quality checks against the current DuckDB datasource.
@@ -2073,6 +2078,7 @@ class DBFuncTool:
             meta_path: Optional path to the generator's ``.<name>.meta.json``. Omit it when the
                 build database sits next to its metadata — passing the build file's path here
                 lets the check use the declared roles and keys instead of re-inferring them.
+            datasource: Check this datasource instead of the current one. It must be DuckDB.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -2095,12 +2101,35 @@ class DBFuncTool:
                         error=f"{resolved.display} must contain a JSON object, not a {type(config).__name__}.",
                     )
 
+            # The assertions are arbitrary SQL from a workspace file and they execute on the
+            # connector's raw connection, which is writable and sees neither the read-only gate
+            # nor PermissionHooks. Quality assertions are questions about the data, so anything
+            # that is not a read is refused here rather than given a writable connection.
+            offending = []
+            for i, a in enumerate(config.get("assertions") or []):
+                sql = (a or {}).get("sql") if isinstance(a, dict) else None
+                if not sql:
+                    continue
+                kind = parse_sql_statement_kind(sql, self._dialect_for_datasource(datasource))
+                if kind not in ("select", "explain", "metadata"):
+                    name = (a or {}).get("name") or f"assertion #{i + 1}"
+                    offending.append(f"{name} ({kind})")
+            if offending:
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "Quality assertions must be read-only queries; these are not: "
+                        + "; ".join(offending)
+                        + ". Rewrite them as SELECT."
+                    ),
+                )
+
             meta = None
             if meta_path:
                 meta_resolved = self._resolve_data_file(meta_path)
                 meta = read_generator_meta(meta_resolved.resolved)
 
-            exclusive, refusal = self._duckdb_connection("", "check_datasource_quality")
+            exclusive, refusal = self._duckdb_connection(datasource, "check_datasource_quality")
             if refusal is not None:
                 return refusal
 
@@ -2109,7 +2138,7 @@ class DBFuncTool:
 
             return FuncToolResult(
                 result={
-                    "datasource": self._resolve_effective_datasource(""),
+                    "datasource": self._resolve_effective_datasource(datasource),
                     "summary": {k: v for k, v in summarize(checks).items() if k not in ("failures", "warnings")},
                     "checks": checks,
                 }

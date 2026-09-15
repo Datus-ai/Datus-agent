@@ -38,10 +38,12 @@ data. The profile is what makes it look real.
 | `table_rows` / `dim_rows` | Pin a table's row count | The user asked for a specific row count |
 | `dim_kinds` | Dimension kind (drives cardinality) | Inference is wrong |
 | `columns` | Per-column value ranges | Amount/quantity magnitudes are unreasonable |
-| `naming` | Name templates | A specific naming style is needed |
+| `naming` | Name templates, per table | A specific naming style is needed |
+| `vocab` | Dataset-wide name vocabulary | **Any non-retail industry** - the built-in words are brands and store suffixes |
 | `head_share` | Top-10% concentration target | Default 0.74; change for more/less concentration |
 | `tier_cols` / `tier_bands` | Tier column and bands | **Required when a dimension has more than one column containing tier/level** (see pitfalls) |
 | `roles` | Force a table role | `report()` got it wrong and cannot self-correct |
+| `semantics` | Force a column's semantic | `report()` classified a column wrong - common outside retail naming |
 | `joint` | Joint distributions (region x city) | Combinations must stay legal |
 | `lifecycle` | Lifecycle timestamp chain | Multiple timestamps (created/paid/shipped/...) |
 | `derive` | Derive a quantity from a base quantity | Funnel metric tables |
@@ -136,6 +138,35 @@ cleanly separated.
 ```
 
 - **Supported on dimension, fact and detail tables alike.**
+
+### semantics - correcting what a column is
+
+```python
+"semantics": {
+    "encounters.insurance_paid": "amount",
+    "encounters.self_paid":      "amount",
+    "encounters.diagnosis_code": "enum",
+},
+```
+
+Legal values: `id`, `date_pk`, `date`, `ts`, `amount`, `count`, `ratio`, `enum`, `flag`, `name`,
+`seq`, `measure`, `text`.
+
+The engine classifies a column from its name, which is a naming convention, and naming conventions
+are per-industry. It reads `paid_amount` as money but not `insurance_paid`, `copay`,
+`premium_received` or `principal` - measured on a hospital schema it got 32 of 34 columns right, and
+the two it missed were both money. Rather than growing the pattern list one industry at a time, the
+caller states the ones it disagrees with; an LLM reading the DDL judges this far better than a
+regex, and freezing that judgement in the profile keeps the run reproducible and the decision
+auditable.
+
+- `report()` prints the full inferred mapping - read it and override only what is wrong
+- Applied **before** role detection, so a corrected amount column also counts towards choosing the
+  main fact table
+- A key declared in the DDL keeps `id` unless explicitly overridden (the pre-check warns if you do,
+  because foreign keys to it stop resolving)
+- The pre-check rejects an unknown semantic or a missing column. Without that a typo would leave the
+  column on its wrong guess and produce plausible-looking wrong data that no quality check can catch
 
 ### formulas - arithmetic between columns
 
@@ -280,8 +311,13 @@ Measured: email CTR 9.92% / paid_search 5.0% / social 1.25%, each inside its con
 ### Naming and tiering
 
 ```python
+# Dataset-wide vocabulary: the built-in words are retail-flavoured, so any other industry should
+# replace them once here rather than per table. Keys: brand / org_suffix / person / given / item,
+# plus name_sep and name_order for scripts that do not write "Given Family".
+"vocab": {"brand": ["Cardiology", "Neurology", "Oncology"], "org_suffix": ["Ward", "Unit", "Clinic"],
+          "item": ["Standard", "Extended", "Follow-up"]},
 "naming": {"dim_seller": {"tpl": "{brand} {org_suffix}",
-                          "vocab": {"brand": ["Lumora", "Nordvik"]}}},
+                          "vocab": {"brand": ["Lumora", "Nordvik"]}}},   # per-table override
 "tier_cols": {"customers": "member_level"},            # see pitfall 1 below
 "tier_bands": [(.05, "platinum"), (.2, "gold"), (.5, "silver"), (1.0, "normal")],
 ```
