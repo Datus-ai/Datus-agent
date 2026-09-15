@@ -467,3 +467,54 @@ class TestStrictModeRejectionMessage:
         assert str(roots[6].resolve()) in msg
         assert str(roots[7].resolve()) not in msg
         assert "... (+5 more)" in msg
+
+
+class TestBuiltinSkillBundle:
+    """A built-in skill's own files are readable, never writable.
+
+    They ship inside site-packages, so they were EXTERNAL to every filesystem tool - an agent
+    following such a skill could not open the reference documents the skill pointed it at, and
+    worked around it by copying them into the workspace first (measured: 16 seconds, four tool
+    calls, after `cat` returned an archived-output stub for a file that size).
+    """
+
+    @staticmethod
+    def _skill_file(*parts):
+        import datus
+
+        return Path(datus.__file__).resolve().parent.joinpath("resources", "skills", *parts)
+
+    @pytest.mark.acceptance
+    def test_reference_document_is_readable(self, tmp_path):
+        target = self._skill_file("gen-datasource", "references", "profile-spec.md")
+
+        resolved = classify_path(str(target), root_path=tmp_path, datus_home=tmp_path / "nohome")
+
+        assert resolved.zone is PathZone.WHITELIST
+        assert resolved.read_only is True
+
+    @pytest.mark.acceptance
+    def test_bundle_script_is_readable(self, tmp_path):
+        target = self._skill_file("gen-datasource", "scripts", "ddl_engine.py")
+
+        resolved = classify_path(str(target), root_path=tmp_path, datus_home=tmp_path / "nohome")
+
+        assert resolved.zone is PathZone.WHITELIST
+        assert resolved.read_only is True
+
+    @pytest.mark.acceptance
+    def test_nothing_else_outside_the_workspace_opens_up(self, tmp_path):
+        resolved = classify_path("/etc/passwd", root_path=tmp_path, datus_home=tmp_path / "nohome")
+
+        assert resolved.zone is PathZone.EXTERNAL
+
+    @pytest.mark.acceptance
+    def test_site_packages_sibling_of_the_bundle_stays_external(self, tmp_path):
+        """The allowance is the skills tree, not everything that ships beside it."""
+        import datus
+
+        target = Path(datus.__file__).resolve().parent / "tools" / "db_tools" / "db_manager.py"
+
+        resolved = classify_path(str(target), root_path=tmp_path, datus_home=tmp_path / "nohome")
+
+        assert resolved.zone is PathZone.EXTERNAL

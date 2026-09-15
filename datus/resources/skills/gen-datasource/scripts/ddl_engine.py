@@ -839,7 +839,89 @@ class DDLEngine:
                     f" list them fully in profile['enums'] if you need the whole domain"
                 )
         self._print_semantics()
+        self._print_plan()
         return self
+
+    def _print_plan(self):
+        """Print what the engine is about to do, not how it does it.
+
+        A measured production run spent 66% of its wall clock reading this file - eight greps for
+        `VOCAB`, `_joint_plan`, `_code_val`, `_enum_values`, `ROLE_METRIC`, `_cond_pick` and the
+        constructor - because it was trying to predict the output before spending a generation pass.
+        Every line below answers one of those greps directly. Showing the decision is far cheaper
+        than making the caller reconstruct it from the implementation.
+        """
+        import random as _r
+
+        p = self.profile
+        print(
+            f"knobs: months={len(self.days)}d ({self.start}~{self.end})  seed={self.seed}  "
+            f"extra_tables={self.extra_tables!r}  "
+            f"(override via DDLEngine(months=, end_date=, seed=, extra_tables=))"
+        )
+
+        # Sample names: answers VOCAB / _name_for / naming without reading either.
+        rng = _r.Random(self.seed)
+        named = []
+        for t in sorted(self.schema):
+            if self.roles.get(t) != ROLE_DIM:
+                continue
+            col = next((c["name"] for c in self.schema[t] if c["sem"] == "name"), None)
+            if col:
+                samples = ", ".join(self._name_for(t, i, rng) for i in range(2))
+                named.append(f"{t}.{col} -> {samples}")
+        if named:
+            print("name samples (change with profile['vocab'] or profile['naming']):")
+            for line in named[:8]:
+                print(f"  {line}")
+
+        # Generated business codes: answers CODE_COL / _code_val.
+        codes = [
+            f"{t}.{c['name']}"
+            for t in sorted(self.schema)
+            for c in self.schema[t]
+            if c["name"] != self.pk_of(t) and self.CODE_COL.search(c["name"])
+        ]
+        if codes:
+            print(f"generated business codes: {', '.join(codes[:10])}{' ...' if len(codes) > 10 else ''}")
+
+        # Daily metric grid: answers ROLE_METRIC / row allocation for those tables.
+        for t, role in sorted(self.roles.items()):
+            if role != ROLE_METRIC:
+                continue
+            combos = max(1, round(self.nrows[t] / max(1, len(self.days))))
+            print(
+                f"{t}: {len(self.days)} days x {combos} dimension combos = {len(self.days) * combos:,} rows "
+                f"(raise profile['table_rows']['{t}'] for more combos)"
+            )
+
+        # Which declarative blocks actually resolved: answers _cond_pick / _joint_plan / derive.
+        applied = []
+        for key, spec in (p.get("conditional") or {}).items():
+            if isinstance(spec, dict):
+                groups = [k for k in spec if not k.startswith("__")]
+                dflt = " + default" if "__default__" in spec else " (NO default: unlisted values use the engine's)"
+                applied.append(f"conditional {key} by {spec.get('__by__')} ({len(groups)} groups{dflt})")
+        for key, spec in (p.get("derive") or {}).items():
+            ratio = (spec or {}).get("ratio")
+            by = ratio.get("__by__") if isinstance(ratio, dict) else None
+            applied.append(f"derive {key} from {(spec or {}).get('from')}" + (f" by {by}" if by else ""))
+        for t, groups in (p.get("joint") or {}).items():
+            for grp in groups if isinstance(groups, list) else []:
+                applied.append(f"joint {t}({', '.join(grp.get('cols', []))}) {len(grp.get('values', []))} combos")
+        if applied:
+            print("declarative rules in effect:")
+            for line in applied[:12]:
+                print(f"  {line}")
+            if len(applied) > 12:
+                print(f"  ... and {len(applied) - 12} more")
+        for key in ("pre_sql", "extra_sql"):
+            block = self._sql_block(key)
+            if block.strip():
+                print(
+                    f"{key}: {block.count(';')} statement(s) will run "
+                    f"({'before' if key == 'pre_sql' else 'after'} the summary layer)"
+                )
 
     def _print_semantics(self):
         """Print the inferred semantic of every column, so the caller can correct what is wrong.

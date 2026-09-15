@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Tuple
 
@@ -210,6 +211,27 @@ def _resolve_home(datus_home: Optional[Path]) -> Path:
     return (Path.home() / ".datus").resolve(strict=False)
 
 
+@lru_cache(maxsize=1)
+def _builtin_skills_root() -> Optional[Path]:
+    """The packaged ``datus/resources/skills`` directory, or None if it cannot be located.
+
+    Built-in skills ship inside site-packages, which is outside every project workspace, so a
+    skill's own reference documents were EXTERNAL to the filesystem tools that read them. An agent
+    following such a skill had to copy them into the workspace first - measured at 16 seconds and
+    four tool calls, after `cat` returned an archived-output stub for a file that size.
+
+    Read-only and static: these files ship with the package, contain no user or tenant data, and
+    the agent is already told to read them by the skill it just loaded.
+    """
+    try:
+        import datus
+
+        root = Path(datus.__file__).resolve().parent / "resources" / "skills"
+        return root if root.is_dir() else None
+    except Exception:  # noqa: BLE001 - a missing package must not break path classification
+        return None
+
+
 def classify_path(
     path: str,
     *,
@@ -298,6 +320,8 @@ def classify_path(
     # silently reject valid writes.
     matched_writable = any(_is_relative_to(resolved, anchor) for anchor in writable_whitelist)
     matched_session_data = session_data_anchor is not None and _is_relative_to(resolved, session_data_anchor)
+    builtin_skills = _builtin_skills_root()
+    matched_builtin_skill = builtin_skills is not None and _is_relative_to(resolved, builtin_skills)
     if matched_writable:
         zone = PathZone.WHITELIST
         if _is_relative_to(resolved, root_resolved):
@@ -310,6 +334,13 @@ def classify_path(
             display = "~/.datus/" + resolved.relative_to(home_resolved).as_posix()
         else:
             display = str(resolved)
+    elif matched_builtin_skill:
+        # A built-in skill's own bundle: readable so the agent can open the reference documents
+        # the skill points it at, never writable - it is packaged, shared, and the same file for
+        # every tenant.
+        zone = PathZone.WHITELIST
+        read_only = True
+        display = str(resolved)
     elif matched_session_data:
         # Compact archive: read-only access for the current session only.
         # ``session_data_anchor`` lives under ``home_resolved`` (which is

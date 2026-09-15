@@ -41,14 +41,23 @@ from ddl_engine import DDLEngine
 ### When this file does not answer your question
 
 This file is the contract, and it is complete for writing a profile - it arrives whole when the
-skill is loaded, so the normal path opens nothing. Two facts about the environment shape what to do
-when you still need more:
+skill is loaded, so the normal path opens nothing. **Before opening anything, run `gen.py report`**:
+it prints the engine's plan, which is what most questions about the engine are really asking.
+
+Two facts about the environment shape what to do when you still need more:
 
 - **A packaged deployment strips Python source to `.pyc`.** `ddl_engine.py` may simply not exist on
   disk; the engine still imports and runs, but there is nothing to read.
-- The long-form documents next to the engine survive that strip. `references/profile-spec.md` (every
-  profile field, in full) and `references/pitfalls.md` (the 17 invariants, the distortion root-cause
-  table) can be read with bash - `cat` or `sed -n '1,200p'` - when this file leaves you unsure.
+- The long-form documents next to the engine survive that strip and are **readable directly with
+  `read_file`** - the skill bundle is a read-only whitelist anchor, so no copying is needed:
+
+  ```
+  read_file("<the $SKILL path printed by Step 0>/references/profile-spec.md")
+  ```
+
+  `references/profile-spec.md` is every profile field in full; `references/pitfalls.md` is the 17
+  invariants and the distortion root-cause table. Use `read_file`, not `cat` - a file this size
+  comes back from bash as an archived-output stub.
 
 **Never disassemble the engine.** A measured production run spent **10 minutes - 39% of its wall
 clock - running `marshal` and `dis` over `ddl_engine.pyc`** to work out one undocumented profile
@@ -58,15 +67,78 @@ in the delivery summary. Reverse-engineering bytecode is never the answer, and n
 
 ---
 
+## Your time budget
+
+**Your own output tokens are the clock.** Tool execution is ~2% of this job: generation takes a
+couple of seconds, import about one, the quality check under one. Everything else is you writing.
+At the measured throughput of a production run, **every 4,000 tokens you emit costs a minute**.
+
+A complete run fits in roughly 40,000 output tokens:
+
+| | budget |
+|---|---|
+| Read this file, decide the path, design the profile | ~12,000 |
+| Write `data/gen.py` (DDL + profile + main) | ~8,000 |
+| Write `data/checks.json` and `data/README.md` | ~10,000 |
+| Inspect the report, fix what the checks flag, deliver | ~10,000 |
+
+The three things that blow the budget, all measured on real runs:
+
+1. **Reading the engine to predict its behaviour.** `gen.py report` already prints every decision -
+   roles, row allocation, column semantics, name samples, the metric grid, which declarative rules
+   resolved. Read that output instead. Reconstructing the same facts from the implementation cost
+   one run 66% of its wall clock.
+2. **Continuing after the checks pass.** See "Stop as soon as it passes" in Phase 5 - 32% of one
+   run's wall clock went into rounds that changed nothing.
+3. **Ad-hoc verification queries.** Assertions in `checks.json` re-run for free; a hand-written
+   query is paid for every time. See the budget in Phase 6.
+
+---
+
 ## Hard constraint: data comes from the engine
 
-**The only legal way to generate**: write one `gen.py` that imports `DDLEngine` from `$SKILL/scripts/ddl_engine.py` and runs it. The core is three lines:
+**The only legal way to generate**: write one `data/gen.py` and run it. This is the whole file -
+copy it, replace the DDL and the profile, change nothing else:
 
 ```python
-eng = DDLEngine(DDL_SQL, rows=80_000, profile=PROFILE)
-eng.report()              # inspect inference; override in the profile if wrong
-eng.generate(str(OUT))    # OUT defaults to data/datasource.duckdb, argv[1] overrides it
+#!/usr/bin/env python3
+"""<business scenario> demo datasource. Fixed seed, re-runnable, all rules in PROFILE."""
+import pathlib
+import sys
+
+import datus
+
+SKILL = pathlib.Path(datus.__file__).resolve().parent / "resources" / "skills" / "gen-datasource"
+sys.path.insert(0, str(SKILL / "scripts"))
+from ddl_engine import DDLEngine  # noqa: E402
+
+HERE = pathlib.Path(__file__).resolve().parent            # data/
+ARG = sys.argv[1] if len(sys.argv) > 1 else ""
+OUT = HERE / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
+
+DDL = """
+CREATE TABLE ...;                                          -- DuckDB syntax; see Step 1
+"""
+
+PROFILE = {
+    "calendar": {...},                                     # always
+    "semantics": {...},                                    # whatever report() got wrong
+    "conditional": {...}, "derive": {...}, "formulas": {...},
+}
+
+eng = DDLEngine(DDL, rows=80_000, profile=PROFILE, months=17, seed=42)
+eng.report()                                               # always print the plan
+if ARG == "report":                                        # `gen.py report` stops here
+    raise SystemExit(0)
+OUT.parent.mkdir(parents=True, exist_ok=True)
+result = eng.generate(str(OUT))
+print(result["rows"], "rows |", len(result["tables"]), "tables |", result["degraded"] or "constraints kept")
 ```
+
+**`gen.py report` prints the engine's whole plan** - roles, row allocation per table, column
+semantics, sample generated names, which columns get business codes, the daily-metric grid, and
+which `conditional` / `derive` / `joint` rules resolved. **Read that instead of reading the engine.**
+It is the answer to "what will this actually produce", and it costs 0.3 seconds.
 
 **Forbidden**:
 
@@ -704,9 +776,40 @@ Business-specific rules (header/detail amount alignment, causal ordering, label 
 
 `expect` is `zero` | `nonzero` | `{"min": x, "max": y}`.
 
-**Pass criterion: zero FAIL. WARN is acceptable but every WARN must be explained in the delivery report.**
+**Pass criterion: `ok: true` in the result (zero FAIL). WARN is acceptable but every WARN must be
+explained in the delivery report.**
 
-On FAIL, locate the cause with the root-cause table in `references/pitfalls.md` and fix the generator - **never relax a threshold to make the data pass**.
+### Write the plausibility checks *before* the first check call
+
+The 19 built-in checks prove the data is structurally sound. They say nothing about whether the
+numbers are *believable* - whether ROAS is 5 or 26, whether attributed orders track actual orders,
+whether apparel refunds more than electronics. Those belong in `checks.json`, as assertions, and
+they must be there **before** you call `check_datasource_quality` the first time.
+
+Put every number from the believable-ranges table you care about into an assertion:
+
+```json
+{"name": "attributed orders track actual", "expect": {"min": 0.85, "max": 1.15},
+ "sql": "SELECT sum(attributed_orders)*1.0/(SELECT count(*) FROM orders) FROM daily_channel_metrics"},
+{"name": "paid-channel ROAS believable", "expect": {"min": 2, "max": 8},
+ "sql": "SELECT sum(attributed_revenue)/sum(ad_spend) FROM daily_channel_metrics WHERE ad_spend > 0"},
+{"name": "refund gradient by category", "expect": {"min": 1.5, "max": 4.0},
+ "sql": "WITH t AS (SELECT category, 1.0*sum(refund_quantity)/sum(quantity) r FROM order_items JOIN products USING(product_id) GROUP BY 1) SELECT max(r)/min(r) FROM t"}
+```
+
+**Then `ok: true` is the finish line.** Write `data/README.md` and deliver.
+
+Why this matters, measured: a run reached `ok: true` at 22 minutes and then spent **11 more minutes
+(32% of its wall clock)** hand-checking margins, refund gradients, ROAS and the attributed/actual
+ratio. It found a real defect - an impressions range three times too high - and fixed it. But the
+check result was **identical before and after**, so nothing recorded what had been verified or
+repaired. The work was worth doing; doing it as ad-hoc queries after the gate was what cost the time.
+
+If you do find something after a pass, **add the assertion first, then fix** - never fix without
+recording, or the next run repeats the same eleven minutes.
+
+On FAIL, locate the cause with the root-cause table in `references/pitfalls.md` and fix the
+generator - **never relax a threshold to make the data pass**.
 
 Reasonable WARNs (no fix needed, just explain):
 
@@ -719,18 +822,25 @@ Reasonable WARNs (no fix needed, just explain):
 
 ---
 
-## Phase 6: question validation (the last gate)
+## Phase 6: question validation
 
-Put yourself in the agent's seat and answer these with SQL. **Every answer must make business sense.**
+**Your `checks.json` assertions are this phase.** Write the business questions you care about as
+assertions, and `check_datasource_quality` answers all of them in one call - that is what the file
+is for. Aim for 8-12, covering:
 
-1. YoY growth of the core metric for a given month?
-2. Which promotions contributed most? How many times a normal day?
-3. A metric dropped in some window - which dimension explains it when you drill down?
-4. Top 5 entities and their concentration? Does an S/A/B/C tiering match actual contribution?
-5. Do differentiated metrics by category/region (refund rate, delivery time) rank the way the business would expect?
-6. Cross-domain: how much GMV did content drive? How does delivery time affect repurchase?
+1. YoY growth of the core metric
+2. Promotion contribution versus a normal day
+3. An anomaly window that drills down to one dimension
+4. Top-N concentration and whether a tiering matches contribution
+5. Differentiated metrics by category/region ranking the way the business would expect
+6. Any cross-domain question the schema supports
 
-If any answer is absurd (distorted ratios, one entity owning the head, dimensions with no spread), go back to Phase 2 and retune the signals. This step catches what the quality check cannot.
+**Budget: at most 5 ad-hoc `execute_sql` calls** beyond the assertions, and only to read something
+an assertion cannot express. A measured run issued 43; the extra 38 produced no change to the
+dataset. An assertion is cheaper than a query because it re-runs for free on the next check, and it
+ships with the dataset as documentation of what was verified.
+
+If an assertion fails, go back to Phase 2 and retune the signal - not the assertion.
 
 ---
 
