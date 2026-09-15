@@ -759,3 +759,222 @@ def test_report_says_the_plan_is_pre_calibration(engine_module, capsys):
     assert "aims for 80,000" in out
     assert "up to 3 passes" in out
     assert "reports the deviation it reached" in out
+
+
+SQL_BLOCK_DDL = """
+CREATE TABLE customers (
+    customer_id BIGINT PRIMARY KEY,
+    customer_name VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    customer_id BIGINT REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2),
+    is_first_order BOOLEAN,
+    coupon_code VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_column_that_does_not_exist_is_caught_before_generating(engine_module):
+    """A mistake in `pre_sql` used to cost a whole generate-import-check cycle to find.
+
+    So a production run hand-verified it instead: 221,000 characters of reasoning in one turn,
+    much of it walking DuckDB's type rules by hand. EXPLAIN needs no data, only the schema.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET coupon_amount = 0"]}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("coupon_amount" in e and e.startswith("pre_sql[1]") for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_a_syntax_error_is_caught_before_generating(engine_module):
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"extra_sql": ["UPDATE orders SET paid_amount = "]}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("extra_sql[1]") and "Parser Error" in e for e in errors), errors
+
+
+#: The shapes a real run writes: a window-function ``UPDATE ... FROM`` and a NULLIF division.
+SOUND_STATEMENTS = (
+    "UPDATE orders o SET is_first_order = (f.rn = 1) FROM ("
+    "SELECT order_id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_time, order_id) AS rn "
+    "FROM orders) f WHERE o.order_id = f.order_id",
+    "UPDATE orders SET paid_amount = ROUND(paid_amount / NULLIF(1, 0), 2) WHERE coupon_code IS NOT NULL",
+)
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "shape",
+    [
+        pytest.param(list, id="list"),
+        pytest.param(tuple, id="tuple"),
+        pytest.param(lambda stmts: ";\n".join(stmts) + ";", id="one-string"),
+    ],
+)
+@pytest.mark.parametrize("key", ["pre_sql", "extra_sql"])
+def test_sound_statements_raise_nothing(engine_module, shape, key):
+    """Sound SQL must pass in every accepted shape.
+
+    The validator splits a single string with DuckDB's own parser and takes list/tuple elements
+    verbatim, so the shapes are separate code paths and each needs its own evidence.
+    """
+    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={key: shape(SOUND_STATEMENTS)})
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith(("pre_sql", "extra_sql"))], errors
+
+
+@pytest.mark.acceptance
+def test_one_string_of_several_statements_is_split_and_numbered(engine_module):
+    """`pre_sql` also takes a single string; the finding still has to name which statement."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        profile={"pre_sql": "UPDATE orders SET paid_amount = 1; UPDATE orders SET nope = 2;"},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("pre_sql[2]") and "nope" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_a_statement_can_use_a_table_an_earlier_statement_created(engine_module):
+    """DDL in the block runs for real on the scratch schema, or the rest is planned against a lie."""
+    profile = {
+        "pre_sql": [
+            "CREATE TABLE tmp_first AS SELECT customer_id, min(order_time) AS t FROM orders GROUP BY 1",
+            "UPDATE orders o SET is_first_order = (o.order_time = f.t) FROM tmp_first f "
+            "WHERE o.customer_id = f.customer_id",
+            "DROP TABLE tmp_first",
+        ]
+    }
+    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile=profile)
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith("pre_sql")], errors
+
+
+@pytest.mark.acceptance
+def test_report_plans_the_statements_itself(engine_module, capsys):
+    """`report()` must not claim work `precheck()` did, because nothing has called `precheck()`.
+
+    `__init__` stops at `_infer()` and `generate()` is the only other caller, so on the
+    `gen.py report` path - the first thing the skill runs - the claim would describe validation
+    that had not happened. It plans them itself instead, which is also where the feedback is
+    cheapest.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET paid_amount = 1"]}
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "pre_sql: 1 statement(s) will run" in out
+    assert "planned against the schema" in out
+
+
+@pytest.mark.acceptance
+def test_report_shows_the_findings_instead_of_the_claim(engine_module, capsys):
+    """A broken statement must surface on the report path, not only inside generate()."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET nope = 1"]}
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "will not plan against the schema" in out
+    assert "pre_sql[1]" in out and "nope" in out
+    assert "columns and types check out" not in out, "do not claim a clean bill next to a finding"
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("extra_tables", ("summary", "all"))
+def test_extra_sql_may_reference_the_auto_summary_layer(engine_module, extra_tables):
+    """`extra_sql` runs *after* the summary layer, and post-processing it is its main use.
+
+    Those tables are built during `build_db` and never appear in `self.schema`, so validating
+    against the schema alone reported every legitimate reference as "table does not exist" - and
+    `generate()` calls `precheck` in strict mode, which made `extra_sql` unusable on these paths.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables=extra_tables,
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith("extra_sql")], errors
+
+
+@pytest.mark.acceptance
+def test_a_bad_column_on_a_summary_table_is_still_caught(engine_module):
+    """Staging the layer must not turn into waving it through."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET order_cnt = 1"]},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("extra_sql[1]") and "order_cnt" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_staging_the_summary_layer_leaves_the_engine_untouched(engine_module):
+    """`_auto_summary_sql` rewrites `_made`; a pre-check must not leave a trace."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+    before = "_made" in eng.__dict__
+
+    eng.precheck(strict=False)
+
+    assert ("_made" in eng.__dict__) == before
+
+
+@pytest.mark.acceptance
+def test_the_summary_path_still_generates_end_to_end(engine_module, tmp_path):
+    """The check that matters: strict precheck runs inside generate()."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=8000,
+        months=4,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+
+    result = eng.generate(str(tmp_path / "s.duckdb"), verbose=False)
+
+    assert "ads_business_daily" in result["tables"]

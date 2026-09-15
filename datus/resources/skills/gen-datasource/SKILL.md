@@ -497,6 +497,16 @@ on its wrong guess and produce plausible-looking wrong data that no quality chec
 
 **Order of work**: run `report()` -> override only what is wrong -> add the calendar and differentiation (`conditional`) -> declare identities with `formulas` -> generate -> run the quality check.
 
+**The first `gen.py` is a first draft, not a finished answer.** Put the calendar, the corrected
+semantics, the enums, the identities and *rough* `derive` bands in it, then generate and read the
+achieved numbers out of `check_datasource_quality`'s result - `result["summary"]` and the per-check
+details in `result["checks"]`, which carry the measured values. `data/checks.json` holds only the
+assertions you wrote; it never tells you what the data did. Do not compute in your head what one 9-second run will tell you: a
+measured production run emitted **70,000 output tokens in a single turn** - 59% of its wall clock -
+and spent it back-solving a marketing funnel so a ratio would land on target, and hand-checking SQL
+that `precheck()` now plans for you in milliseconds. Two extra generate-check rounds cost about
+100 seconds. Predicting them cost five minutes.
+
 Enum domains usually need no configuration: **values in DDL inline comments are extracted automatically** (`order_status VARCHAR, -- pending / paid / shipped`), and `report()` lists which columns were extracted and which look incomplete.
 
 ### Believable metric ranges
@@ -877,7 +887,13 @@ If an assertion fails, go back to Phase 2 and retune the signal - not the assert
 
 ## Delivery
 
-Confirm every artifact exists under `data/`: `README.md` (<=150 lines), `gen.py`, `checks.json`, `.datasource.meta.json`. The data itself lives in the datasource, not in a file beside them. Confirm there is **nothing extra**: no `_build/` left behind, no `datasource.duckdb` copy, no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
+Confirm every artifact exists under `data/`: `README.md` (<=150 lines), `gen.py`, `checks.json`, `.datasource.meta.json`. The data itself lives in the datasource, not in a file beside them. Confirm there is **nothing extra**: no `_build/` left behind, no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
+
+> **If `data/datasource.duckdb` exists, leave it alone.** It is not yours and it is not a leftover:
+> in a Datus deployment that is the datasource's own file, bound when the project was created, and
+> this process has it open. **Never delete it, never overwrite it, never pass it to
+> `import_database_file`.** You did not create it - your output went to `data/_build/`, which step 4
+> removed. A production run spent a turn deciding what to do about it; the answer is nothing.
 
 Report to the user: the datasource the tables were loaded into, table list with row counts, **the built-in business signals and anomaly calendar** (this is what the user needs to design dashboards and questions), the quality-check result, and an honest account of anything below target with the trade-off taken. If you built tables beyond the user's DDL (`extra_tables` other than `none`), list exactly which and why.
 
