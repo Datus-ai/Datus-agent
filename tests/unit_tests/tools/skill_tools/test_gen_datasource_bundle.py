@@ -100,3 +100,28 @@ def test_engine_imports_and_parses_ddl():
     assert engine.decl_fk[("orders", "customer_id")] == ("customers", "customer_id")
     # The declared CREATE TABLE text is what lets the built database keep its keys.
     assert "PRIMARY KEY" in engine.decl_sql["orders"]
+
+
+@pytest.mark.acceptance
+def test_every_profile_key_the_engine_reads_is_documented():
+    """An undocumented knob is worse than a missing one.
+
+    A measured production run spent ten minutes disassembling ddl_engine.pyc to work out what
+    `refund_rate` did, because it was a live profile key with zero mentions in either document.
+    """
+    import re
+
+    engine = (SKILL_DIR / "scripts" / "ddl_engine.py").read_text(encoding="utf-8")
+    keys = set(re.findall(r'self\.profile\.get\(\s*"([a-z_]+)"', engine))
+    keys |= set(re.findall(r'self\.profile\[\s*"([a-z_]+)"\s*\]', engine))
+    assert keys, "the scrape found nothing - it has drifted from the engine"
+
+    docs = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    docs += (SKILL_DIR / "references" / "profile-spec.md").read_text(encoding="utf-8")
+
+    undocumented = sorted(k for k in keys if f'"{k}"' not in docs and f"`{k}`" not in docs)
+
+    assert not undocumented, (
+        f"profile keys the engine reads but neither document mentions: {undocumented}. "
+        f"Add them to references/profile-spec.md, or stop reading them."
+    )

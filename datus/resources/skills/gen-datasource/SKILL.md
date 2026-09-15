@@ -38,14 +38,23 @@ sys.path.insert(0, str(SKILL / "scripts"))
 from ddl_engine import DDLEngine
 ```
 
-**Do not read the engine source.** Everything needed to write a profile is in this file; the engine
-is ~1900 lines and reading it was, by measurement, the single largest time sink in earlier runs
-(28% of end-to-end wall clock in one production trace).
+### When this file does not answer your question
 
-**Everything you need is in this file** - it arrives complete when the skill is loaded, so there is
-nothing to open. `references/profile-spec.md` and `references/pitfalls.md` next to the engine are
-the long-form versions for a human reader; a built-in skill lives outside the project workspace, so
-`read_file` refuses them and you should not go looking.
+This file is the contract, and it is complete for writing a profile - it arrives whole when the
+skill is loaded, so the normal path opens nothing. Two facts about the environment shape what to do
+when you still need more:
+
+- **A packaged deployment strips Python source to `.pyc`.** `ddl_engine.py` may simply not exist on
+  disk; the engine still imports and runs, but there is nothing to read.
+- The long-form documents next to the engine survive that strip. `references/profile-spec.md` (every
+  profile field, in full) and `references/pitfalls.md` (the 17 invariants, the distortion root-cause
+  table) can be read with bash - `cat` or `sed -n '1,200p'` - when this file leaves you unsure.
+
+**Never disassemble the engine.** A measured production run spent **10 minutes - 39% of its wall
+clock - running `marshal` and `dis` over `ddl_engine.pyc`** to work out one undocumented profile
+key. If a knob you need is not in this file or in `references/profile-spec.md`, it is not a knob:
+express the rule with `conditional` / `formulas` / `derive`, or fall back to `pre_sql`, and say so
+in the delivery summary. Reverse-engineering bytecode is never the answer, and neither is guessing.
 
 ---
 
@@ -70,6 +79,34 @@ eng.generate(str(OUT))    # OUT defaults to data/datasource.duckdb, argv[1] over
 The **only** place SQL is allowed is the profile's `pre_sql` / `extra_sql`, and only for business post-processing (metric restatement, cross-table backfill, derived summary tables) - never to produce primary data.
 
 The test is simple: **if you are writing SQL that decides how one row comes into existence, you are on the wrong path.** The engine makes the data; your job is to tell it the business rules through the profile.
+
+---
+
+## Running inside Datus: how the database reaches the datasource
+
+The active datasource's DuckDB file is held open by the agent process, so a second
+writer cannot take the lock:
+
+```
+IOException: Could not set lock on file "...": Conflicting lock is held in python (PID N)
+```
+
+**Never try to generate directly into the datasource file.** The flow is:
+
+1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
+   (`gen.py` takes the output path as its first argument and creates the parent itself, so the
+   command stays a single invocation with no shell chaining)
+2. Load it into the datasource with the built-in tool, which runs through the
+   connection that already holds the lock and replays the source DDL so primary
+   keys, unique and foreign keys survive:
+   ```
+   import_database_file(path="data/_build/datasource.duckdb", mode="replace")
+   ```
+3. Verify with `check_datasource_quality(config_path="data/checks.json")`
+4. Delete the build directory, keep `data/datasource.duckdb` as the reproducible artifact
+
+`import_database_file` copies table and column comments too, so the comments the
+engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
 
 ---
 
@@ -192,34 +229,6 @@ Then re-import with `import_database_file` and re-run `check_datasource_quality`
 ```
 
 > **This is not ETL test data.** ETL tests only require "the metric is non-zero", so random distributions suffice. Demo data requires "the metric is explainable" - a chart must have a trend and an inflection point, and when the agent is asked "why did February drop" there has to be an answer. The two are generated in almost opposite ways.
-
----
-
-## Running inside Datus: how the database reaches the datasource
-
-The active datasource's DuckDB file is held open by the agent process, so a second
-writer cannot take the lock:
-
-```
-IOException: Could not set lock on file "...": Conflicting lock is held in python (PID N)
-```
-
-**Never try to generate directly into the datasource file.** The flow is:
-
-1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
-   (`gen.py` takes the output path as its first argument and creates the parent itself, so the
-   command stays a single invocation with no shell chaining)
-2. Load it into the datasource with the built-in tool, which runs through the
-   connection that already holds the lock and replays the source DDL so primary
-   keys, unique and foreign keys survive:
-   ```
-   import_database_file(path="data/_build/datasource.duckdb", mode="replace")
-   ```
-3. Verify with `check_datasource_quality(config_path="data/checks.json")`
-4. Delete the build directory, keep `data/datasource.duckdb` as the reproducible artifact
-
-`import_database_file` copies table and column comments too, so the comments the
-engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
 
 ---
 
@@ -361,7 +370,10 @@ PROFILE = {
   #    industry must replace it once at dataset level or every name reads as a shop.
   "vocab": {"brand": ["Cardiology", "Neurology"], "org_suffix": ["Ward", "Clinic"]},
   "naming": {"dim_seller": {"tpl": "{brand} {org_suffix}"}},   # per-table template
-  # 7. Optional: role and column-semantic overrides, table/column comments, extra SQL
+  # 7. Odds and ends the engine reads but cannot infer
+  "refund_rate": 0.055,        # P(a detail line carries a refund); one global value, no per-group form
+  "effective_col": {"products": "launched_at"},   # which column makes an entity usable, when inference misses it
+  # 8. Optional: role and column-semantic overrides, table/column comments, extra SQL
   "roles": {"some_table": "dim"},
   "semantics": {"encounters.insurance_paid": "amount"},
   "table_comments": {"ods_order": "Order header; amounts in USD"},
