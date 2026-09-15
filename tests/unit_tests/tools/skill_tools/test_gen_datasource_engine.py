@@ -737,3 +737,21 @@ def test_a_real_date_dimension_is_not_duplicated(engine_module):
 
     assert eng.synthetic == set(), "the DDL already has a calendar"
     assert eng.roles["dim_date"] == "date_dim"
+
+
+@pytest.mark.acceptance
+def test_report_says_the_plan_is_pre_calibration(engine_module, capsys):
+    """The per-table plan does not add up to the target, and silence about that costs reasoning.
+
+    A production run spent a long stretch of one turn trying to reconcile a plan summing to 88,015
+    against a budget of 80,000 before concluding the engine would handle it.
+    """
+    eng = engine_module.DDLEngine(HOSPITAL_DDL, rows=80_000, months=17, seed=42)
+    eng.report()
+
+    out = capsys.readouterr().out
+    planned = sum(eng.nrows.get(t, 0) for t in eng.schema)
+
+    assert f"{planned:,}" in out, "print the planned total, not only the per-table rows"
+    assert "before calibration" in out
+    assert "80,000 +/-6%" in out, "and what it will be scaled to"

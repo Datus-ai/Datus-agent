@@ -72,7 +72,24 @@ the resulting plan without a generator existing, which is the cheapest way to ch
 `report()`'s first line prints the resolved window, so you can check `months` / `end_date` without
 computing dates: `knobs: months=17 (502 days, 2025-05-01~2026-09-14) seed=42`.
 
-### 1.3 Business codes
+### 1.3 Engine defaults you do not have to look up
+
+Every value below is what the engine does with no profile at all. A production run went into
+`ddl_engine.py` twelve times for exactly these, one question at a time, and the file being readable
+on disk made the "never read the engine" rule unenforceable - so here they are.
+
+| Question | Answer |
+|---|---|
+| Amount identity on a fact row | `paid = gross - discount + shipping + tax`. Discount is 0 for 38% of rows, otherwise 2-22% of gross, capped at 90%. Shipping is 0 for 42% of rows, otherwise a flat 3-22 (**additive, never a fraction of the goods**). Tax is 0-8.5% of `gross - discount`. **Coupon is not part of the identity** - it is 0 for 58% of rows, otherwise 30-85% *of the discount* |
+| Cost vs price | A cost column is never allowed above the price column. A `columns` bound `<= 1` reads as a cost *ratio*; `> 1` as an absolute range, still clamped to the price |
+| Flag columns | True with p = 0.93 on a dimension, p = 0.88 on a fact. Override per column with `columns: {"t.col": {"p": 0.7}}` |
+| Detail line quantities | Drawn 1-5 with weights 0.52 / 0.26 / 0.12 / 0.06 / 0.04 unless `derive` says otherwise |
+| Daily metric grid width | `days x dimension combinations`, capped at `row budget / number of days`, and capped again by what the schema allows. `report()` prints both the plan and the binding cap |
+| Same-named columns on a fact | Inherited from the FK'd dimension row rather than redrawn, so `category` on an order line matches the product's |
+| Effective dates | `before_start` and `baseline_share` apply to a **dimension's** date columns (invariant 16: 45% of entities exist before the window). They do not apply to fact dates |
+| Name column order | Within a dimension row, name columns are filled **last**, so a `naming` template can reference the other columns of that row (see `naming` below) |
+
+### 1.4 Business codes
 
 A column whose name ends in `no`, `code`, `sn`, `serial`, `sku`, `number`, `barcode` or `ref` (on a
 word boundary) can be filled with a generated code rather than a random string: the first three
@@ -117,7 +134,7 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 | `refund_rate` | Probability a detail line carries a refund | The default 5.5% is wrong for the industry |
 | `effective_col` | Which column makes an entity usable | Inference picked the wrong date, or there is none to find |
 | `no_date_dim` / `date_dim_name` | Suppress or rename the auto-built date dimension | Only with `extra_tables` including `date_dim` |
-| `pre_sql` / `extra_sql` | Business post-processing SQL | **Last resort**, when nothing above can express it |
+| `pre_sql` / `extra_sql` | Business post-processing SQL. **One SQL string, or a list of statements** (`["UPDATE ...", "UPDATE ..."]`); anything else is refused by `precheck()` before generating. `pre_sql` runs before the summary layer, `extra_sql` after | **Last resort**, when nothing above can express it |
 | `trend_mom` / `weekend_lift` | Trend and weekend coefficients | Defaults 0.031 / 1.33; B2B needs different values |
 | `table_comments` / `column_comments` | Comments | Recommended wherever a definition is not obvious |
 

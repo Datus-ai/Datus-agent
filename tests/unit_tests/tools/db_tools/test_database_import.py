@@ -374,3 +374,49 @@ class TestImportTool:
 
         assert read_generator_meta(tmp_path / ".datasource.meta.json") == {"roles": {"orders": "fact"}}
         assert read_generator_meta(tmp_path / "datasource.duckdb") == {"roles": {"orders": "fact"}}
+
+
+class TestImportingTheDatasourceItself:
+    """The source cannot be the file the datasource is already open on.
+
+    DuckDB answers with `Binder Error: Unique file handle conflict`, which names neither the cause
+    nor the fix. A production run generated its "canonical artifact" straight onto the live
+    datasource path, failed importing it back with that error, and left a 19 MB `.nfs*` orphan
+    where the old file had been unlinked while still open.
+    """
+
+    def test_importing_the_open_database_is_refused_with_a_reason(self, tmp_path):
+        import duckdb
+
+        from datus.tools.db_tools.database_import import DatabaseImportError, import_duckdb_file
+
+        live = tmp_path / "datasource.duckdb"
+        con = duckdb.connect(str(live))
+        try:
+            con.execute("CREATE TABLE t (id BIGINT)")
+
+            with pytest.raises(DatabaseImportError) as excinfo:
+                import_duckdb_file(con, live)
+
+            message = str(excinfo.value)
+            assert "IS the file this datasource is open on" in message
+            assert "data/_build/" in message, "say where to generate instead"
+        finally:
+            con.close()
+
+    def test_a_different_file_still_imports(self, tmp_path):
+        import duckdb
+
+        from datus.tools.db_tools.database_import import import_duckdb_file
+
+        source = tmp_path / "build.duckdb"
+        src = duckdb.connect(str(source))
+        src.execute("CREATE TABLE t (id BIGINT PRIMARY KEY); INSERT INTO t VALUES (1), (2)")
+        src.close()
+
+        con = duckdb.connect(str(tmp_path / "datasource.duckdb"))
+        try:
+            outcome = import_duckdb_file(con, source)
+            assert outcome["imported"] == {"t": 2}
+        finally:
+            con.close()

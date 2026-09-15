@@ -127,7 +127,7 @@ from ddl_engine import DDLEngine  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent            # data/
 ARG = sys.argv[1] if len(sys.argv) > 1 else ""
-OUT = HERE / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
+OUT = HERE / "_build" / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
 
 DDL = """
 CREATE TABLE ...;                                          -- DuckDB syntax; see Step 1
@@ -195,8 +195,16 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    ```
    import_database_file(path="data/_build/datasource.duckdb", mode="replace")
    ```
-3. Verify with `check_datasource_quality(config_path="data/checks.json")`
-4. Delete the build directory, keep `data/datasource.duckdb` as the reproducible artifact
+3. Verify with `check_datasource_quality(config_path="data/checks.json")` - it finds
+   `data/.datasource.meta.json` on its own, so do not pass `meta_path`
+4. Delete the build directory: `rm -rf data/_build`
+
+**Do not generate a second copy at `data/datasource.duckdb`.** The datasource already holds the
+data after step 2, and in a Datus deployment that path is often the datasource's own file - this
+process has it open, so writing it corrupts the handle and can strand the old copy on disk as an
+`.nfs*` orphan. A production run did exactly that, then failed importing it back with
+`Unique file handle conflict`, having spent a full extra generate cycle on it. **`data/gen.py` is
+what makes the database reproducible**, not a second copy of the bytes.
 
 `import_database_file` copies table and column comments too, so the comments the
 engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
@@ -208,7 +216,6 @@ engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
 ```
 ./
 └── data/
-    ├── datasource.duckdb       the database
     ├── README.md               <=150 lines: what the schema cannot say about itself
     ├── gen.py                  generator incl. profile; fixed seed, re-runnable
     ├── checks.json             business assertions for check_datasource_quality
@@ -225,7 +232,7 @@ Because `gen.py` sits next to the database, anchor paths to its own directory:
 ```python
 HERE = pathlib.Path(__file__).resolve().parent            # data/
 ARG = sys.argv[1] if len(sys.argv) > 1 else ""
-OUT = HERE / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
+OUT = HERE / "_build" / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
 
 eng = DDLEngine(DDL, rows=ROWS, profile=PROFILE)
 eng.report()                                              # always print the inference
@@ -864,7 +871,7 @@ If an assertion fails, go back to Phase 2 and retune the signal - not the assert
 
 ## Delivery
 
-Confirm every artifact exists under `data/`: `datasource.duckdb`, `README.md` (<=150 lines), `gen.py`, `checks.json`. Confirm there is **nothing extra**: no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
+Confirm every artifact exists under `data/`: `README.md` (<=150 lines), `gen.py`, `checks.json`, `.datasource.meta.json`. The data itself lives in the datasource, not in a file beside them. Confirm there is **nothing extra**: no `_build/` left behind, no `datasource.duckdb` copy, no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
 
 Report to the user: the datasource the tables were loaded into, table list with row counts, **the built-in business signals and anomaly calendar** (this is what the user needs to design dashboards and questions), the quality-check result, and an honest account of anything below target with the trade-off taken. If you built tables beyond the user's DDL (`extra_tables` other than `none`), list exactly which and why.
 

@@ -876,6 +876,14 @@ class DDLEngine:
         print(f"{'table':<26}{'role':<14}{'rows':>10}  foreign keys")
         for t in sorted(self.schema, key=lambda x: -self.nrows.get(x, 0)):
             print(f"{t:<26}{self.roles[t]:<10}{self.nrows.get(t, 0):>10,}  {','.join(self.fks.get(t, [])) or '-'}")
+        # These are pre-calibration figures and they do not add up to the target - generate() scales
+        # them and re-runs until the total lands within tolerance. Saying so costs one line; not
+        # saying it cost a production run a long stretch of reasoning spent reconciling the sum.
+        planned = sum(self.nrows.get(t, 0) for t in self.schema)
+        print(
+            f"{'':<26}{'':<10}{planned:>10,}  planned total before calibration; generate() scales to "
+            f"{self.rows:,} +/-6%"
+        )
         if getattr(self, "ddl_enums", None):
             part = getattr(self, "_partial_enums", set())
             print(

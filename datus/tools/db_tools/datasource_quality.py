@@ -273,14 +273,16 @@ class QualityChecker:
         n_decl = len(declared)
         self.add(
             "foreign key integrity",
-            not bad,
+            bool(detail) and not bad,
             "; ".join(bad)
             if bad
             else (
                 f"{len(detail)} path(s) resolve 100%" + (f" ({n_decl} from declared DDL)" if n_decl else "")
                 if detail
-                else "no foreign key relationship found"
+                else "no foreign key relationship found - nothing was verified. Declare REFERENCES "
+                "in the DDL, or pass the generator metadata so the declared keys are known"
             ),
+            warn=not detail,
         )
 
         # A primary key that is entirely NULL while foreign keys report a 100% hit rate is the
@@ -302,10 +304,15 @@ class QualityChecker:
                 pk_bad.append(f"{t}.{col} has {dup:,} duplicate keys")
         self.add(
             "primary key non-null and unique",
-            not pk_bad,
+            bool(pks) and not pk_bad,
             "; ".join(pk_bad)
             if pk_bad
-            else (f"{len(pks)} table(s) have a non-null unique key" if pks else "no metadata, skipped"),
+            else (
+                f"{len(pks)} table(s) have a non-null unique key"
+                if pks
+                else "no generator metadata, so no key was verified - see generator_meta in the result"
+            ),
+            warn=not pks,
         )
 
     # ------------------------------------------------------------------ time signal
@@ -357,21 +364,21 @@ class QualityChecker:
         if not groups:
             self.add("time signal", False, "no table with a business date; trend/cycle cannot be assessed")
             return
-        # A downstream fact (ship/settle date) smooths the weekday signal away, and a cumulative
-        # stock column does not reflect that day's intensity - so pick the strongest signal among
-        # all (table, date column, metric column) combinations.
-        best, best_dev = None, -1.0
-        for t, dcs, mcs in groups:
-            for dc in dcs:
-                for mc in mcs:
-                    dev = abs(self._weekly_dev(t, dc, mc) - 1.0)
-                    if dev > best_dev:
-                        best, best_dev = (t, dc, mc), dev
-        if not best:
+        # Span, trend, stock baseline and event attribution describe the BUSINESS, so they observe
+        # the headline series: ``_main_daily`` already ranks tables by row count and columns by
+        # magnitude with preferred names first, so the head of the first group is it.
+        #
+        # They used to observe whichever (table, date, metric) had the strongest weekday deviation,
+        # which is the right question for the weekday check alone and a lottery for the rest. A
+        # production run measured the trend on a discount column, then on ad revenue, then on
+        # discounts again - the winner moved whenever the data did - and got PASS, FAIL and PASS on
+        # what was substantially the same database. It spent four rounds chasing the flip.
+        headline = next(((t, dcs[0], mcs[0]) for t, dcs, mcs in groups if dcs and mcs), None)
+        if not headline:
             self.add("time signal", False, "no observable numeric metric found")
             return
 
-        t, dc, mc = best
+        t, dc, mc = headline
         span_rows = self.q(f"SELECT min({dc}), max({dc}), count(DISTINCT {dc}) FROM {_q(t)}")
         if not span_rows or span_rows[0][0] is None or span_rows[0][1] is None:
             self.add("time span", False, f"{t}: the date column holds no usable value")
@@ -392,12 +399,22 @@ class QualityChecker:
             vals = [r[1] for r in mm[1:-1]] or [r[1] for r in mm]  # drop partial first/last months
             ratio = max(vals) / min(vals) if min(vals) else 0
             first, last = vals[0], vals[-1]
+            # ``{ratio:.1f}`` printed 1.79 as "1.8x" and then failed it against a 1.8 floor, so the
+            # report argued with itself. Two decimals whenever the verdict is close.
+            shown = f"{ratio:.1f}" if ratio >= 2 or ratio < 1.5 else f"{ratio:.2f}"
             self.add(
                 "time trend",
                 1.8 <= ratio <= 12,
-                f"observing {t}.{mc}: monthly {min(vals):,.0f} ~ {max(vals):,.0f} ({ratio:.1f}x), "
+                f"observing {t}.{mc}: monthly {min(vals):,.0f} ~ {max(vals):,.0f} ({shown}x), "
                 f"first to last month {100.0 * (last / first - 1):+.0f}%"
-                + ("" if ratio <= 12 else "  <- too volatile, usually a missing stock baseline (cold start)"),
+                + (
+                    ""
+                    if 1.8 <= ratio <= 12
+                    else "  <- too volatile, usually a missing stock baseline (cold start)"
+                    if ratio > 12
+                    else "  <- flat: max/min across months must be >= 1.8x. Raise profile['trend_mom'] "
+                    "or add promotion windows to profile['calendar']['promos']"
+                ),
             )
             allv = [r[1] for r in mm]
             if len(allv) >= 4 and allv[1]:
@@ -412,12 +429,22 @@ class QualityChecker:
                     ),
                 )
 
-        r = self._weekly_dev(t, dc, mc)
+        # The weekday check is the one that legitimately hunts: a downstream fact (ship/settle date)
+        # smooths the weekly shape away and a cumulative stock column never had one, so a flat
+        # reading on the headline series says nothing until the alternatives have been tried.
+        wt, wmc, r = t, mc, self._weekly_dev(t, dc, mc)
+        if abs(r - 1.0) < 0.12:
+            for ct, cdcs, cmcs in groups:
+                for cdc in cdcs:
+                    for cmc in cmcs:
+                        cand = self._weekly_dev(ct, cdc, cmc)
+                        if abs(cand - 1.0) > abs(r - 1.0):
+                            wt, wmc, r = ct, cmc, cand
         if r:
             self.add(
                 "weekday cycle",
                 r >= 1.12 or r <= 0.88,
-                f"weekend/weekday = {r:.2f}x"
+                f"observing {wt}.{wmc}: weekend/weekday = {r:.2f}x"
                 + (
                     " (B2C shape: weekends busier)"
                     if r >= 1.12
