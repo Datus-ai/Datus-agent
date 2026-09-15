@@ -188,7 +188,7 @@ engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
 ./
 └── data/
     ├── datasource.duckdb       the database
-    ├── README.md               the only doc: getting started + data dictionary
+    ├── README.md               <=150 lines: what the schema cannot say about itself
     ├── gen.py                  generator incl. profile; fixed seed, re-runnable
     ├── checks.json             business assertions for check_datasource_quality
     └── .datasource.meta.json   structural metadata written by the engine; the
@@ -217,87 +217,70 @@ eng.generate(str(OUT))                                    # absolute; never depe
 `python3 data/gen.py report` prints the inference without generating - that is the cheap first
 call. Any other argument is the output path.
 
-`README.md` is the datasource's **only** document, in two halves: a getting-started guide (connect and ask the first question within three minutes) and a field-level data dictionary (meaning and definition of every column of every table). Do not emit a separate `DATA_DICT.md`.
+`README.md` carries **only what the database cannot say about itself**, and it has a hard budget:
+**150 lines.** Do not emit a separate `DATA_DICT.md`.
+
+The engine writes `COMMENT ON` for every table and every non-obvious column, and
+`import_database_file` copies those into the datasource - so `describe_table` already returns the
+field-level dictionary. **Repeating it in the README is duplication that goes stale.** Leave out
+anything a reader can get from the schema:
+
+| Leave out | Why |
+|---|---|
+| A "Connect" section | The tables are already in the datasource; the reader queries them with `execute_sql` |
+| A "Regenerate" section | `python3 data/gen.py` is one obvious line and `gen.py` is sitting right there |
+| Per-column tables | Already in the database as comments; `describe_table` returns them |
+| Row counts per table restated in prose | Already in the table above them |
+
+What is left is the part only this run knows: which table to start from, which questions were
+verified, the signal and anomaly calendar, and the definitions and trade-offs that no column comment
+can carry.
 
 ### data/README.md template
+
+Target ~60 lines for a five-table schema; **150 is the hard ceiling**.
 
 ```markdown
 # <business scenario> datasource
 
-DuckDB, <N> tables / <M> rows, covering YYYY-MM-DD to YYYY-MM-DD.
-For: AI agent Q&A / business reports / dashboards.
-
-## Connect
-
-Tables are loaded into the `<datasource>` datasource - query them with `execute_sql`.
-Direct file access:
-
-\`\`\`python
-import duckdb; con = duckdb.connect("data/datasource.duckdb", read_only=True)
-\`\`\`
+DuckDB in datasource `<name>`: <N> tables / <M> rows, YYYY-MM-DD to YYYY-MM-DD.
+Built for agent Q&A, business reports and dashboards. Column meanings are in the
+table/column comments - use `describe_table`.
 
 ## Where to start
 
-| Table | Rows | When to use |
+| Table | Rows | Use it for |
 |---|---|---|
-| <preferred entry table> | | Headline trend, YoY/MoM, daily report - **start here** |
-| <main fact table> | | Drilling down to document grain |
-| <dimensions...> | | |
+| <entry table> | | Headline trend, YoY/MoM - **start here** |
+| <main fact> | | Document-grain drill-down |
+| <dimension> | | |
 
-## Questions you can ask right away (all verified to have sensible answers)
+## Verified questions
 
-1. <YoY>  2. <promotion contribution>  3. <anomaly attribution>
-4. <Top-N concentration>  5. <dimension differences>  6. <cross-domain / marketing attribution>
+Each of these was checked against the data and returns a sensible answer:
 
-## Built-in business signals
+1. <YoY>   2. <promotion contribution>   3. <anomaly attribution>
+4. <Top-N concentration>   5. <dimension differences>   6. <cross-domain>
 
-| Type | When | Effect | Attribution dimension |
+## Built-in signals
+
+| Type | When | Effect | Attribute it with |
 |---|---|---|---|
-| Promotion | | GMV xN | dim_date.event_name='...' |
-| Anomaly | | metric A% -> B% | <dimension>='...', others unaffected |
+| Promotion | 11-27~11-30 | GMV x5.2 | `dim_date.event_name` |
+| Trough | 02-10~02-20 | GMV x0.52 | same |
+| Anomaly | <window> | <metric> A% -> B% | `<column>='<value>'`, others unaffected |
 
-## Known definitions and trade-offs
+## Differentiated by design
 
-- <currency unit, timezone, status semantics>
-- <anything below target and why, e.g. sparsity at the finest grain>
-
-## Regenerate
-
-\`\`\`bash
-python3 data/gen.py
-\`\`\`
-Then re-import with `import_database_file` and re-run `check_datasource_quality`.
-
----
-
-# Data dictionary
-
-## Tables
-
-| Table | Role | Rows | Description |
+| Dimension | Metric | Range | So that |
 |---|---|---|---|
+| category | refund rate | 6.1% ~ 14.7% | "which category refunds most" has an answer |
 
-## <table>
+## Definitions and trade-offs
 
-<one line: what one row of this table represents>
-
-| Column | Type | Meaning | Definition / values |
-|---|---|---|---|
-
-> The definition column must state: currency unit, the full value domain of an
-> enum, what NULL means, and how a derived column is computed (e.g.
-> `paid_amount = original - discount + shipping + tax`). Every table gets a
-> section; do not omit columns.
-
-## Aggregation density per grain
-
-| Grain | Avg rows/cell | Good for |
-|---|---|---|
-
-## Differentiated settings
-
-| Dimension | Metric | Gradient | Note |
-|---|---|---|---|
+- <currency, timezone, what a status means, how a derived column is computed>
+- <anything below target and why - e.g. seller x site x day is sparse at 4.6 rows/cell>
+- Grain density: <all-domain x day N> | <category x day N> | <finest grain N>
 ```
 
 > **This is not ETL test data.** ETL tests only require "the metric is non-zero", so random distributions suffice. Demo data requires "the metric is explainable" - a chart must have a trend and an inflection point, and when the agent is asked "why did February drop" there has to be an answer. The two are generated in almost opposite ways.
@@ -630,7 +613,7 @@ When the two disagree (the business wants 40 sellers, the density formula wants 
 2. Concentrate the secondary dimension (78% of a seller's orders land on their main site, which lowers effective cardinality naturally)
 3. Add a coarser summary table (`dws_xxx_month`)
 4. Raise the fact row count
-5. If it is still sparse, **accept it honestly** - real warehouses are sparse at the finest grain. Document per-grain density in the data dictionary section of `README.md`
+5. If it is still sparse, **accept it honestly** - real warehouses are sparse at the finest grain. Record per-grain density in the "Definitions and trade-offs" section of `README.md`
 
 ### 1.4 Cross-domain joins (mandatory for multi-domain sets)
 
@@ -846,7 +829,7 @@ If an assertion fails, go back to Phase 2 and retune the signal - not the assert
 
 ## Delivery
 
-Confirm every artifact exists under `data/`: `datasource.duckdb`, `README.md` (with the dictionary), `gen.py`, `checks.json`. Confirm there is **nothing extra**: no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
+Confirm every artifact exists under `data/`: `datasource.duckdb`, `README.md` (<=150 lines), `gen.py`, `checks.json`. Confirm there is **nothing extra**: no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
 
 Report to the user: the datasource the tables were loaded into, table list with row counts, **the built-in business signals and anomaly calendar** (this is what the user needs to design dashboards and questions), the quality-check result, and an honest account of anything below target with the trade-off taken. If you built tables beyond the user's DDL (`extra_tables` other than `none`), list exactly which and why.
 
