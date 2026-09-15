@@ -127,7 +127,7 @@ from ddl_engine import DDLEngine  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent            # data/
 ARG = sys.argv[1] if len(sys.argv) > 1 else ""
-OUT = HERE / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
+OUT = HERE / "_build" / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
 
 DDL = """
 CREATE TABLE ...;                                          -- DuckDB syntax; see Step 1
@@ -195,8 +195,22 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    ```
    import_database_file(path="data/_build/datasource.duckdb", mode="replace")
    ```
-3. Verify with `check_datasource_quality(config_path="data/checks.json")`
-4. Delete the build directory, keep `data/datasource.duckdb` as the reproducible artifact
+3. Verify with `check_datasource_quality(config_path="data/checks.json")` - it searches
+   `data/` and `data/_build/` for `.datasource.meta.json` itself and reports which one it used,
+   so do not pass `meta_path`
+4. Keep the metadata, then delete the build directory - the engine writes
+   `.datasource.meta.json` **next to the database**, so it is inside `_build/`, and
+   `check_datasource_quality` needs it to verify the declared keys:
+   ```
+   cp data/_build/.datasource.meta.json data/.datasource.meta.json && rm -rf data/_build
+   ```
+
+**Do not generate a second copy at `data/datasource.duckdb`.** The datasource already holds the
+data after step 2, and in a Datus deployment that path is often the datasource's own file - this
+process has it open, so writing it corrupts the handle and can strand the old copy on disk as an
+`.nfs*` orphan. A production run did exactly that, then failed importing it back with
+`Unique file handle conflict`, having spent a full extra generate cycle on it. **`data/gen.py` is
+what makes the database reproducible**, not a second copy of the bytes.
 
 `import_database_file` copies table and column comments too, so the comments the
 engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
@@ -208,7 +222,6 @@ engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
 ```
 ./
 └── data/
-    ├── datasource.duckdb       the database
     ├── README.md               <=150 lines: what the schema cannot say about itself
     ├── gen.py                  generator incl. profile; fixed seed, re-runnable
     ├── checks.json             business assertions for check_datasource_quality
@@ -225,7 +238,7 @@ Because `gen.py` sits next to the database, anchor paths to its own directory:
 ```python
 HERE = pathlib.Path(__file__).resolve().parent            # data/
 ARG = sys.argv[1] if len(sys.argv) > 1 else ""
-OUT = HERE / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
+OUT = HERE / "_build" / "datasource.duckdb" if ARG in ("", "report") else pathlib.Path(ARG)
 
 eng = DDLEngine(DDL, rows=ROWS, profile=PROFILE)
 eng.report()                                              # always print the inference
@@ -769,7 +782,7 @@ check_datasource_quality(config_path="data/checks.json")
 
 It runs 19 automatic checks: layering, mandatory date dimension, FK orphan rate, time span and YoY feasibility, time trend, stock baseline, weekday cycle (auto-detecting B2C weekend-heavy vs B2B weekend-light), event explainability, derived-ratio range and negative counts, dead and constant columns, event monotonicity, long-tail concentration, aggregation density (thresholds adapt to database size), comment coverage, semantic naming, primary-key non-null uniqueness, no single entity dominating the head, and no future-dated rows.
 
-It picks the **strongest-signal** metric column to observe (avoiding identifier columns like `month_key` and cumulative stock columns like `billed_usd`), and reads the `data/.datasource.meta.json` the engine wrote (roles, keys, strict-DDL mode) instead of re-inferring.
+Trend, span, stock baseline and event attribution observe the **headline** series - the largest fact table's highest-magnitude business metric (identifier columns like `month_key` and cumulative stock columns like `billed_usd` are excluded). Only the weekday check searches for the strongest signal, and it says which column it used. It finds the `.datasource.meta.json` the engine wrote (roles, keys, strict-DDL mode) instead of re-inferring, and reports which copy it used.
 
 Business-specific rules (header/detail amount alignment, causal ordering, label self-consistency, dimension gradients) go in `data/checks.json`:
 
@@ -864,7 +877,7 @@ If an assertion fails, go back to Phase 2 and retune the signal - not the assert
 
 ## Delivery
 
-Confirm every artifact exists under `data/`: `datasource.duckdb`, `README.md` (<=150 lines), `gen.py`, `checks.json`. Confirm there is **nothing extra**: no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
+Confirm every artifact exists under `data/`: `README.md` (<=150 lines), `gen.py`, `checks.json`, `.datasource.meta.json`. The data itself lives in the datasource, not in a file beside them. Confirm there is **nothing extra**: no `_build/` left behind, no `datasource.duckdb` copy, no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
 
 Report to the user: the datasource the tables were loaded into, table list with row counts, **the built-in business signals and anomaly calendar** (this is what the user needs to design dashboards and questions), the quality-check result, and an honest account of anything below target with the trade-off taken. If you built tables beyond the user's DDL (`extra_tables` other than `none`), list exactly which and why.
 

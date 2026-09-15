@@ -312,3 +312,286 @@ class TestQualityToolMalformedConfig:
         assert result.success == 0
         assert "broken" in (result.error or "")
         assert "non-empty string" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# The same database has to produce the same verdict
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def trend_con():
+    """A fact table whose headline metric and whose weekday-noisiest metric are different columns."""
+    connection = duckdb.connect(":memory:")
+    connection.execute(
+        """
+        CREATE TABLE ods_sales (
+            order_id BIGINT, stat_dt DATE,
+            gmv_amt DECIMAL(18, 2), discount_amt DECIMAL(18, 2)
+        );
+        """
+    )
+    # gmv grows ~4x across the window; the discount column is flat-but-jittery, so whichever
+    # column the weekday search happens to like decides the trend verdict if they are coupled.
+    connection.execute(
+        """
+        INSERT INTO ods_sales
+        SELECT i,
+               DATE '2024-01-01' + INTERVAL (i % 600) DAY,
+               100.0 + (i % 600) * 0.9,
+               50.0 + (i % 7) * 11
+        FROM range(1, 6000) t(i)
+        """
+    )
+    yield connection
+    connection.close()
+
+
+@pytest.mark.acceptance
+def test_the_trend_observes_the_headline_metric_not_the_weekday_winner(trend_con):
+    """The trend verdict must not depend on which column wiggles most within a week.
+
+    A production run measured the trend on a discount column, then on ad revenue, then on
+    discounts again - PASS, FAIL, PASS on substantially the same database - and spent four rounds
+    chasing the flip. `_main_daily` already ranks columns by magnitude with preferred names first,
+    so the headline series is decided, not searched for.
+    """
+    results = QualityChecker(trend_con).run()
+
+    trend = next(r["detail"] for r in results if r["check"] == "time trend")
+    assert "gmv_amt" in trend, f"the trend must observe the headline metric, got: {trend}"
+
+
+@pytest.mark.acceptance
+def test_repeated_runs_agree(trend_con):
+    """Two runs over one unchanged database must return identical verdicts."""
+    first = QualityChecker(trend_con).run()
+    second = QualityChecker(trend_con).run()
+
+    assert [(r["check"], r["status"]) for r in first] == [(r["check"], r["status"]) for r in second]
+
+
+@pytest.mark.acceptance
+def test_the_weekday_check_still_searches_and_says_what_it_used(trend_con):
+    """It is the one check for which hunting is the right behaviour - it measures exactly that."""
+    results = QualityChecker(trend_con).run()
+
+    weekday = next(r["detail"] for r in results if r["check"] == "weekday cycle")
+    assert weekday.startswith("observing "), weekday
+
+
+# ---------------------------------------------------------------------------
+# A check that verified nothing is not a pass
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.acceptance
+def test_no_foreign_keys_found_is_a_warning_not_a_pass(trend_con):
+    """`ok` gates delivery, so a green summary over an unverified structural check is a false green.
+
+    Uses the single-table fixture: the other one does infer a real path, and passing on a path it
+    actually checked is correct.
+    """
+    results = QualityChecker(trend_con).run()
+
+    fk = next(r for r in results if r["check"] == "foreign key integrity")
+    assert fk["status"] == "WARN", fk
+    assert "nothing was verified" in fk["detail"]
+
+
+@pytest.mark.acceptance
+def test_no_metadata_makes_the_key_check_warn(con):
+    results = QualityChecker(con).run()
+
+    pk = next(r for r in results if r["check"] == "primary key non-null and unique")
+    assert pk["status"] == "WARN", pk
+    assert "no key was verified" in pk["detail"]
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "ratio, shown",
+    [
+        (1.79, "1.79"),  # the case that failed a 1.8 floor while printing "1.8x"
+        (1.80, "1.80"),
+        (1.99, "1.99"),
+        (1.50, "1.50"),
+        (1.49, "1.5"),  # below the band: one decimal again
+        (2.00, "2.0"),
+        (4.60, "4.6"),
+    ],
+)
+def test_the_trend_ratio_is_never_rounded_across_its_own_threshold(ratio, shown):
+    """1.5-2.0 is the band where one decimal can round a FAIL into a number that reads as a PASS.
+
+    Tested on the formatter rather than through generated data: the rule is about the printed
+    digits, and steering a DuckDB fixture to an exact monthly ratio tests the fixture instead.
+    """
+    from datus.tools.db_tools.datasource_quality import _show_ratio
+
+    assert _show_ratio(ratio) == shown
+
+
+class TestGeneratorMetaDiscovery:
+    """The check has to find the generator metadata on its own.
+
+    Without it the primary-key and foreign-key checks verify nothing and the role map changes,
+    which changes which table the time checks observe. A production run got `ok: true` and then
+    `FAIL` on the same database, the only difference being that the later call happened to pass
+    `meta_path`. A check whose verdict depends on an optional argument is not reproducible.
+    """
+
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        with connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE orders (order_id BIGINT, stat_dt DATE, gmv_amt DECIMAL(18,2))")
+            con.execute(
+                "INSERT INTO orders SELECT i, DATE '2024-01-01' + INTERVAL (i % 600) DAY, 10.0 + i "
+                "FROM range(1, 2000) t(i)"
+            )
+        return DBFuncTool(connector), tmp_path
+
+    def _write_meta(self, root, where):
+        target = root / where
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps({"generator": "gen-datasource/ddl_engine", "pks": {"orders": "order_id"}, "roles": {}}),
+            encoding="utf-8",
+        )
+
+    @pytest.mark.parametrize(
+        "where",
+        ["data/.datasource.meta.json", "data/_build/.datasource.meta.json", ".datasource.meta.json"],
+    )
+    def test_the_metadata_is_found_without_being_named(self, tool, where):
+        db_tool, root = tool
+        self._write_meta(root, where)
+
+        result = db_tool.check_datasource_quality()
+
+        assert result.success == 1
+        assert result.result["generator_meta"] == where
+        pk = next(r for r in result.result["checks"] if r["check"] == "primary key non-null and unique")
+        assert pk["status"] == "PASS", pk
+
+    def test_an_absent_file_is_reported_rather_than_hidden(self, tool):
+        db_tool, _root = tool
+
+        result = db_tool.check_datasource_quality()
+
+        assert result.success == 1
+        assert "not found" in result.result["generator_meta"]
+        pk = next(r for r in result.result["checks"] if r["check"] == "primary key non-null and unique")
+        assert pk["status"] == "WARN", "an unverified key check must not read as a pass"
+
+    def test_an_explicit_path_that_does_not_resolve_is_the_caller_s_error(self, tool):
+        """Searching is for the default. A named path that goes nowhere is a mistake worth saying."""
+        db_tool, _root = tool
+
+        result = db_tool.check_datasource_quality(meta_path="../outside/the/workspace.meta.json")
+
+        assert result.success == 0
+        assert result.error
+
+    def test_naming_the_path_and_leaving_it_out_agree(self, tool):
+        """The whole point: both call shapes must produce the same verdicts."""
+        db_tool, root = tool
+        self._write_meta(root, "data/.datasource.meta.json")
+
+        found = db_tool.check_datasource_quality()
+        named = db_tool.check_datasource_quality(meta_path="data/.datasource.meta.json")
+
+        assert [(r["check"], r["status"]) for r in found.result["checks"]] == [
+            (r["check"], r["status"]) for r in named.result["checks"]
+        ]
+
+
+@pytest.mark.acceptance
+def test_a_flat_trend_says_which_knob_to_turn():
+    """A FAIL that only restates the measurement leaves the reader to guess the fix."""
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ods_flat (order_id BIGINT, stat_dt DATE, gmv_amt DECIMAL(18,2))")
+        # Same amount every day: max/min across months is 1.0x, far under the 1.8 floor.
+        connection.execute(
+            "INSERT INTO ods_flat SELECT i, DATE '2024-01-01' + INTERVAL (i % 600) DAY, 100.0 FROM range(1, 3000) t(i)"
+        )
+        results = QualityChecker(connection).run()
+    finally:
+        connection.close()
+
+    trend = next(r for r in results if r["check"] == "time trend")
+    assert trend["status"] == "FAIL"
+    assert "trend_mom" in trend["detail"] and "promos" in trend["detail"], trend["detail"]
+
+
+@pytest.mark.acceptance
+def test_a_wildly_volatile_trend_names_the_usual_cause():
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ods_spiky (order_id BIGINT, stat_dt DATE, gmv_amt DECIMAL(18,2))")
+        # One month carries almost everything, so max/min lands far above the 12x ceiling.
+        connection.execute(
+            "INSERT INTO ods_spiky SELECT i, DATE '2024-01-01' + INTERVAL (i % 600) DAY, "
+            "CASE WHEN (i % 600) BETWEEN 300 AND 330 THEN 90000.0 ELSE 1.0 END FROM range(1, 3000) t(i)"
+        )
+        results = QualityChecker(connection).run()
+    finally:
+        connection.close()
+
+    trend = next(r for r in results if r["check"] == "time trend")
+    assert trend["status"] == "FAIL"
+    assert "stock baseline" in trend["detail"], trend["detail"]
+
+
+@pytest.mark.acceptance
+def test_a_table_with_no_observable_metric_is_reported():
+    """The guard for "nothing to observe" must still produce a named check, not silence."""
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ods_textonly (order_id BIGINT, note VARCHAR)")
+        connection.execute("INSERT INTO ods_textonly SELECT i, 'x' FROM range(1, 50) t(i)")
+        results = QualityChecker(connection).run()
+    finally:
+        connection.close()
+
+    signal = next(r for r in results if r["check"] == "time signal")
+    assert signal["status"] == "FAIL"
+
+
+@pytest.mark.acceptance
+def test_orphaned_keys_fail_even_when_they_are_the_only_finding():
+    """`warn=not detail` alone downgraded a fully broken database to a warning.
+
+    With every path orphaned there is no resolving path to report, so `detail` is empty - the
+    same shape as "nothing to check". They are opposite verdicts and `ok` gates delivery.
+    """
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute(
+            """
+            CREATE TABLE dim_thing (thing_id BIGINT, thing_name VARCHAR);
+            CREATE TABLE ods_use (use_id BIGINT, thing_id BIGINT, stat_dt DATE, gmv_amt DECIMAL(18,2));
+            """
+        )
+        connection.execute("INSERT INTO dim_thing SELECT i, 'T' || i FROM range(1, 10) t(i)")
+        # Every thing_id points at a row that does not exist.
+        connection.execute(
+            "INSERT INTO ods_use SELECT i, 9000 + i, DATE '2024-01-01' + INTERVAL (i % 600) DAY, 10.0 "
+            "FROM range(1, 500) t(i)"
+        )
+        # Declared through the config so the test pins the severity, not the inference.
+        results = QualityChecker(connection, {"fk": [["ods_use.thing_id", "dim_thing.thing_id"]]}).run()
+    finally:
+        connection.close()
+
+    fk = next(r for r in results if r["check"] == "foreign key integrity")
+    assert fk["status"] == "FAIL", fk
+    assert "orphans" in fk["detail"]
+    assert summarize(results)["ok"] is False

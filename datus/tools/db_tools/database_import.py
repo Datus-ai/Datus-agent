@@ -149,6 +149,40 @@ def _external_dependents(con: Any, importing: Set[str]) -> Dict[str, Set[str]]:
     return blocked
 
 
+def _refuse_importing_the_target_itself(con: Any, source_path: Path) -> None:
+    """Stop an import whose source IS the datasource's own file.
+
+    DuckDB answers this with ``Binder Error: Unique file handle conflict: Cannot attach
+    "datus_import_..." - the database file "..." is already attached by database "datasource"``,
+    which names neither the cause nor the fix. A production run hit it after generating the
+    "canonical artifact" straight onto the live datasource path, and the same overwrite left a
+    19 MB ``.nfs*`` orphan behind because the file was unlinked while this process held it open.
+
+    Best-effort: a connection that cannot answer the question is left to ATTACH and fail as before.
+    """
+    try:
+        rows = con.execute("SELECT path FROM duckdb_databases() WHERE database_name = current_database()").fetchall()
+    except Exception as e:  # noqa: BLE001 - this is a better error message, never a requirement
+        logger.debug("could not resolve the current database file: %s", e)
+        return
+
+    current = next((r[0] for r in rows if r and r[0]), None)
+    if not current:
+        return
+    try:
+        same = Path(current).resolve() == source_path.resolve()
+    except OSError:
+        return
+    if same:
+        raise DatabaseImportError(
+            f"{source_path.name} IS the file this datasource is open on, so there is nothing to "
+            "import - the rows are already served. Generate to a separate path (the skill uses "
+            "data/_build/) and import that, and never write the datasource file directly: this "
+            "process holds it open, so overwriting it corrupts the handle and can strand the old "
+            "copy on disk."
+        )
+
+
 def import_duckdb_file(
     con: Any,
     source_path: Path,
@@ -194,6 +228,7 @@ def import_duckdb_file(
     degraded: List[str] = []
     refused: List[str] = []
 
+    _refuse_importing_the_target_itself(con, source_path)
     try:
         con.execute(f"ATTACH {_sql_literal(str(source_path.resolve()))} AS {alias} (READ_ONLY)")
     except Exception as e:  # noqa: BLE001 - turn a configuration refusal into an actionable message

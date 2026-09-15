@@ -2136,6 +2136,51 @@ class DBFuncTool:
             logger.error(f"import_database_file failed for {path}: {e}", exc_info=True)
             return FuncToolResult(success=0, error=f"Failed to import {path}: {e}")
 
+    #: Where the generator drops its structural metadata, relative to the workspace. Searched
+    #: when the caller does not name a path; the most recently written one wins.
+    _GENERATOR_META_CANDIDATES = (
+        "data/.datasource.meta.json",
+        "data/_build/.datasource.meta.json",
+        ".datasource.meta.json",
+    )
+
+    def _generator_meta(self, meta_path: Optional[str]) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """Find the generator's metadata, searching when the caller did not name it.
+
+        Without it the primary-key and foreign-key checks have nothing to check and report
+        "no metadata, skipped"; the role map also changes, which changes which table the time
+        checks observe. A production run got ``ok: true`` and then ``FAIL`` on the same database,
+        the only difference being that the second call happened to pass ``meta_path`` - the check
+        has to find the file on its own or it is not reproducible.
+
+        Returns ``(metadata, where it came from)``; both None when nothing was found.
+        """
+        if meta_path:
+            resolved = self._resolve_data_file(meta_path)  # an explicit path that fails is the caller's error
+            return read_generator_meta(resolved.resolved), resolved.display
+
+        # Fixed order would let a stale file win: the previous version of the skill wrote to
+        # ``data/``, so a workspace that ran it before this change keeps an out-of-date copy that
+        # would shadow the one the current build just produced. Newest on disk wins instead.
+        found = []
+        for candidate in self._GENERATOR_META_CANDIDATES:
+            try:
+                resolved = self._resolve_data_file(candidate)
+            except DataFileError:
+                continue
+            meta = read_generator_meta(resolved.resolved)
+            if meta is None:
+                continue
+            try:
+                mtime = resolved.resolved.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            found.append((mtime, meta, resolved.display))
+        if not found:
+            return None, None
+        _, meta, display = max(found, key=lambda item: item[0])
+        return meta, display
+
     @mcp_tool()
     def check_datasource_quality(
         self,
@@ -2158,9 +2203,12 @@ class DBFuncTool:
                 (the ``gen-datasource`` skill writes ``data/checks.json``). Supports ``fk``,
                 ``assertions`` ({name, sql, expect}, where expect is ``zero`` / ``nonzero`` /
                 {min, max}), ``skip`` and ``strict_ddl``.
-            meta_path: Optional path to the generator's ``.<name>.meta.json``. Omit it when the
-                build database sits next to its metadata — passing the build file's path here
-                lets the check use the declared roles and keys instead of re-inferring them.
+            meta_path: Optional path to the generator's ``.<name>.meta.json`` (or to the
+                database beside it). Normally omit it: the usual locations are searched, and
+                the result reports which one was used under ``generator_meta``. Pass it only
+                when the metadata sits somewhere unusual. Without metadata the primary-key and
+                foreign-key checks have nothing to verify and the time checks observe a
+                different table, so the two modes do not give the same verdict.
             datasource: Check this datasource instead of the current one. It must be DuckDB.
 
         Returns:
@@ -2212,10 +2260,7 @@ class DBFuncTool:
                     error=("Quality assertions must be single read-only queries. " + " | ".join(offending)),
                 )
 
-            meta = None
-            if meta_path:
-                meta_resolved = self._resolve_data_file(meta_path)
-                meta = read_generator_meta(meta_resolved.resolved)
+            meta, meta_source = self._generator_meta(meta_path)
 
             exclusive, refusal = self._duckdb_connection(datasource, "check_datasource_quality")
             if refusal is not None:
@@ -2224,13 +2269,16 @@ class DBFuncTool:
             with exclusive() as connection:
                 checks = QualityChecker(connection, config, meta).run()
 
-            return FuncToolResult(
-                result={
-                    "datasource": self._resolve_effective_datasource(datasource),
-                    "summary": {k: v for k, v in summarize(checks).items() if k not in ("failures", "warnings")},
-                    "checks": checks,
-                }
-            )
+            result: Dict[str, Any] = {
+                "datasource": self._resolve_effective_datasource(datasource),
+                "summary": {k: v for k, v in summarize(checks).items() if k not in ("failures", "warnings")},
+                "checks": checks,
+            }
+            # Whether the structural metadata was found decides whether the key checks verify
+            # anything at all, so the caller is told which it got rather than having to infer it
+            # from a check detail reading "no metadata, skipped".
+            result["generator_meta"] = meta_source or "not found - roles and keys were re-inferred"
+            return FuncToolResult(result=result)
 
         except DataFileError as e:
             return FuncToolResult(success=0, error=str(e))

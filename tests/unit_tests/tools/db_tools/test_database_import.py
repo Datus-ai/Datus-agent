@@ -374,3 +374,128 @@ class TestImportTool:
 
         assert read_generator_meta(tmp_path / ".datasource.meta.json") == {"roles": {"orders": "fact"}}
         assert read_generator_meta(tmp_path / "datasource.duckdb") == {"roles": {"orders": "fact"}}
+
+
+class TestImportingTheDatasourceItself:
+    """The source cannot be the file the datasource is already open on.
+
+    DuckDB answers with `Binder Error: Unique file handle conflict`, which names neither the cause
+    nor the fix. A production run generated its "canonical artifact" straight onto the live
+    datasource path, failed importing it back with that error, and left a 19 MB `.nfs*` orphan
+    where the old file had been unlinked while still open.
+    """
+
+    def test_importing_the_open_database_is_refused_with_a_reason(self, tmp_path):
+        import duckdb
+
+        from datus.tools.db_tools.database_import import DatabaseImportError, import_duckdb_file
+
+        live = tmp_path / "datasource.duckdb"
+        con = duckdb.connect(str(live))
+        try:
+            con.execute("CREATE TABLE t (id BIGINT)")
+
+            with pytest.raises(DatabaseImportError) as excinfo:
+                import_duckdb_file(con, live)
+
+            message = str(excinfo.value)
+            assert "IS the file this datasource is open on" in message
+            assert "data/_build/" in message, "say where to generate instead"
+        finally:
+            con.close()
+
+    def test_a_different_file_still_imports(self, tmp_path):
+        import duckdb
+
+        from datus.tools.db_tools.database_import import import_duckdb_file
+
+        source = tmp_path / "build.duckdb"
+        src = duckdb.connect(str(source))
+        src.execute("CREATE TABLE t (id BIGINT PRIMARY KEY); INSERT INTO t VALUES (1), (2)")
+        src.close()
+
+        con = duckdb.connect(str(tmp_path / "datasource.duckdb"))
+        try:
+            outcome = import_duckdb_file(con, source)
+            assert outcome["imported"] == {"t": 2}
+        finally:
+            con.close()
+
+
+class TestTheSelfImportGuardDegrades:
+    """The guard produces a better error message; it must never become a new failure mode.
+
+    Each case asserts the observable consequence rather than "nothing was raised": the import
+    proceeds past the guard, so what comes back is the ATTACH-stage failure - or a successful
+    import - and never the guard's own refusal.
+    """
+
+    def _con_answering(self, rows):
+        """A connection that answers ``duckdb_databases()`` with ``rows`` and refuses to ATTACH."""
+
+        class _Result:
+            def __init__(self, data):
+                self._data = data
+
+            def fetchall(self):
+                return self._data
+
+        class _Stub:
+            def execute(self, sql):
+                if "duckdb_databases" in sql:
+                    return _Result(rows)
+                raise RuntimeError("ATTACH reached")
+
+        return _Stub()
+
+    def _a_real_source(self, tmp_path):
+        """The source has to exist: the not-found check runs before the guard."""
+        import duckdb
+
+        source = tmp_path / "build.duckdb"
+        con = duckdb.connect(str(source))
+        con.execute("CREATE TABLE t (id BIGINT)")
+        con.close()
+        return source
+
+    def test_a_connection_that_cannot_answer_reaches_the_attach(self, tmp_path):
+        from datus.tools.db_tools.database_import import DatabaseImportError, import_duckdb_file
+
+        class _Stub:
+            def execute(self, sql):
+                if "duckdb_databases" in sql:
+                    raise RuntimeError("duckdb_databases() unavailable")
+                raise RuntimeError("ATTACH reached")
+
+        with pytest.raises(DatabaseImportError) as excinfo:
+            import_duckdb_file(_Stub(), self._a_real_source(tmp_path))
+
+        assert "Cannot attach" in str(excinfo.value), "the guard must not swallow the real failure"
+        assert "IS the file this datasource is open on" not in str(excinfo.value)
+
+    def test_a_database_with_no_file_path_reaches_the_attach(self, tmp_path):
+        from datus.tools.db_tools.database_import import DatabaseImportError, import_duckdb_file
+
+        with pytest.raises(DatabaseImportError) as excinfo:
+            import_duckdb_file(self._con_answering([(None,)]), self._a_real_source(tmp_path))
+
+        assert "Cannot attach" in str(excinfo.value)
+        assert "IS the file this datasource is open on" not in str(excinfo.value)
+
+    def test_an_in_memory_database_still_imports(self, tmp_path):
+        """``:memory:`` is not a path; resolving it must not stop a perfectly valid import."""
+        import duckdb
+
+        from datus.tools.db_tools.database_import import import_duckdb_file
+
+        source = tmp_path / "build.duckdb"
+        src = duckdb.connect(str(source))
+        src.execute("CREATE TABLE t (id BIGINT PRIMARY KEY); INSERT INTO t VALUES (1), (2), (3)")
+        src.close()
+
+        con = duckdb.connect(":memory:")
+        try:
+            outcome = import_duckdb_file(con, source)
+            assert outcome["imported"] == {"t": 3}
+        finally:
+            con.close()
