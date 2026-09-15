@@ -1414,9 +1414,43 @@ class DDLEngine:
             try:
                 con.execute(sql)
             except Exception as e:  # noqa: BLE001 - a table we cannot build is one we cannot check
-                logger_msg = str(e).splitlines()[0]
+                logger_msg = (str(e).splitlines() or [""])[0]
                 print(f"  ! pre-check could not stage a table for SQL validation: {logger_msg}")
         return con
+
+    def _stage_summary_layer(self, con):
+        """Build the auto summary layer on the scratch database, so ``extra_sql`` can reference it.
+
+        ``extra_sql`` runs *after* the summary layer and post-processing those tables is its main
+        use, but they are created during ``build_db`` and never appear in ``self.schema`` - so
+        validating against the schema alone reported every legitimate reference as "table does not
+        exist", and ``generate()`` calls ``precheck`` in strict mode. That made ``extra_sql``
+        unusable on the ``summary`` / ``all`` paths, which is worse than not validating it.
+
+        Returns True when ``extra_sql`` can be validated. On any failure it says so and returns
+        False: a statement this cannot stage is one it has no business judging.
+        """
+        if self.extra_tables not in ("summary", "all"):
+            return True
+        made = getattr(self, "_made", None)
+        try:
+            # ``_auto_summary_sql`` rewrites ``self._made``; generate() recomputes it, but precheck
+            # must not leave a trace either way.
+            sql = self._auto_summary_sql()
+            for statement in con.extract_statements(sql) if sql.strip() else []:
+                con.execute(statement.query)
+            return True
+        except Exception as e:  # noqa: BLE001 - never block generating on a staging problem
+            print(
+                "  ! pre-check could not stage the summary layer, so extra_sql was not validated: "
+                + (str(e).splitlines() or [""])[0]
+            )
+            return False
+        finally:
+            if made is None:
+                self.__dict__.pop("_made", None)
+            else:
+                self._made = made
 
     def _validate_sql_blocks(self):
         """Plan every pre_sql / extra_sql statement against the empty schema.
@@ -1435,12 +1469,16 @@ class DDLEngine:
         try:
             con = self._scratch_schema()
         except Exception as e:  # noqa: BLE001 - validation is a convenience, never a gate on generating
-            print(f"  ! pre-check could not stage the schema for SQL validation: {str(e).splitlines()[0]}")
+            print("  ! pre-check could not stage the schema for SQL validation: " + (str(e).splitlines() or [""])[0])
             return []
 
         problems = []
         try:
             for key, value in blocks:
+                if key == "extra_sql" and not self._stage_summary_layer(con):
+                    # The summary layer could not be staged, so every reference to it would read as
+                    # "table does not exist". Skipping beats blocking a configuration that is actually fine.
+                    break
                 if not value:
                     continue
                 if isinstance(value, (list, tuple)):
@@ -1449,7 +1487,7 @@ class DDLEngine:
                     try:
                         statements = [st.query.strip().rstrip(";") for st in con.extract_statements(str(value))]
                     except Exception as e:  # noqa: BLE001 - a parse error IS the finding
-                        problems.append(f"{key}: cannot be parsed as SQL - {str(e).splitlines()[0]}")
+                        problems.append(f"{key}: cannot be parsed as SQL - " + (str(e).splitlines() or [""])[0])
                         continue
                 for i, stmt in enumerate(statements, 1):
                     if not stmt:
@@ -1461,7 +1499,7 @@ class DDLEngine:
                         con.execute(stmt if mutates_schema else "EXPLAIN " + stmt)
                     except Exception as e:  # noqa: BLE001 - this is what we came for
                         head = " ".join(stmt.split())[:80]
-                        problems.append(f"{key}[{i}]: {str(e).splitlines()[0]}  <-  {head}")
+                        problems.append(f"{key}[{i}]: " + (str(e).splitlines() or [""])[0] + f"  <-  {head}")
         finally:
             con.close()
         return problems

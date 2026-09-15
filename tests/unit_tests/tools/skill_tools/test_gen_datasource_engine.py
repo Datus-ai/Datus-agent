@@ -867,3 +867,78 @@ def test_report_says_the_statements_were_planned(engine_module, capsys):
 
     assert "pre_sql: 1 statement(s) will run" in out
     assert "planned against the schema by precheck()" in out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("extra_tables", ("summary", "all"))
+def test_extra_sql_may_reference_the_auto_summary_layer(engine_module, extra_tables):
+    """`extra_sql` runs *after* the summary layer, and post-processing it is its main use.
+
+    Those tables are built during `build_db` and never appear in `self.schema`, so validating
+    against the schema alone reported every legitimate reference as "table does not exist" - and
+    `generate()` calls `precheck` in strict mode, which made `extra_sql` unusable on these paths.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables=extra_tables,
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith("extra_sql")], errors
+
+
+@pytest.mark.acceptance
+def test_a_bad_column_on_a_summary_table_is_still_caught(engine_module):
+    """Staging the layer must not turn into waving it through."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET order_cnt = 1"]},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("extra_sql[1]") and "order_cnt" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_staging_the_summary_layer_leaves_the_engine_untouched(engine_module):
+    """`_auto_summary_sql` rewrites `_made`; a pre-check must not leave a trace."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+    before = "_made" in eng.__dict__
+
+    eng.precheck(strict=False)
+
+    assert ("_made" in eng.__dict__) == before
+
+
+@pytest.mark.acceptance
+def test_the_summary_path_still_generates_end_to_end(engine_module, tmp_path):
+    """The check that matters: strict precheck runs inside generate()."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=8000,
+        months=4,
+        seed=1,
+        extra_tables="summary",
+        profile={"extra_sql": ["UPDATE ads_business_daily SET row_cnt = row_cnt WHERE 1=0"]},
+    )
+
+    result = eng.generate(str(tmp_path / "s.duckdb"), verbose=False)
+
+    assert "ads_business_daily" in result["tables"]

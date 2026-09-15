@@ -501,7 +501,7 @@ on its wrong guess and produce plausible-looking wrong data that no quality chec
 semantics, the enums, the identities and *rough* `derive` bands in it, then generate and read the
 numbers off `checks.json`. Do not compute in your head what one 9-second run will tell you: a
 measured production run emitted **70,000 output tokens in a single turn** - 59% of its wall clock -
-much of it back-solving a marketing funnel so a ratio would land on target, and hand-checking SQL
+and spent it back-solving a marketing funnel so a ratio would land on target, and hand-checking SQL
 that `precheck()` now plans for you in milliseconds. Two extra generate-check rounds cost about
 100 seconds. Predicting them cost five minutes.
 
