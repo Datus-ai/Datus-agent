@@ -74,7 +74,7 @@ class ImageSequenceModel(Model):
                 input_tokens=100,
                 output_tokens=10,
                 total_tokens=110,
-                input_tokens_details={"cached_tokens": 0},
+                input_tokens_details={"cached_tokens": 0, "cache_write_tokens": 0},
                 output_tokens_details={"reasoning_tokens": 0},
             ),
         )
@@ -262,7 +262,12 @@ async def test_native_claude_delivers_query_data_to_model_and_history(tmp_path, 
     )
     assert json.loads(saved["content"]) == expected
     displayed = next(action.output for action in actions if action.action_id == "complete_query_1")
-    displayed_payload = json.loads(displayed["raw_output"])
+    if result_shape == "mapping":
+        assert isinstance(displayed["raw_output"], dict)
+        displayed_payload = displayed["raw_output"]
+    else:
+        assert isinstance(displayed["raw_output"], str)
+        displayed_payload = json.loads(displayed["raw_output"])
     redacted_payload = copy.deepcopy(payload)
     redacted_payload["result"]["preview"] = "[image data omitted]"
     expected_display = {"mapping": redacted_payload, "rows": rows, "text": redacted_payload}[result_shape]
@@ -317,7 +322,7 @@ async def _run_litellm_image_roundtrip(tmp_path, image_tools, monkeypatch, provi
     import litellm
     from agents import Agent, Runner
 
-    from datus.models.litellm_image import ImageToolLitellmModel
+    from datus.models.litellm_model import DatusLitellmModel
 
     requests = []
 
@@ -347,7 +352,7 @@ async def _run_litellm_image_roundtrip(tmp_path, image_tools, monkeypatch, provi
     monkeypatch.setattr(litellm, "acompletion", respond)
     agent = Agent(
         name="Image reader",
-        model=ImageToolLitellmModel(model=f"{provider}/test", api_key="test-key"),
+        model=DatusLitellmModel(model=f"{provider}/test", api_key="test-key"),
         tools=image_tools,
     )
     session = DatusSQLiteSession(create_tables=True, session_id="litellm", db_path=str(tmp_path / "session.db"))

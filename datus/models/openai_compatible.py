@@ -28,7 +28,11 @@ from pydantic import AnyUrl
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.base import LLMBaseModel
-from datus.models.litellm_adapter import LiteLLMAdapter, is_official_openai_endpoint
+from datus.models.litellm_adapter import (
+    LiteLLMAdapter,
+    is_official_anthropic_endpoint,
+    is_official_openai_endpoint,
+)
 from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.observability.manager import get_observability_manager
@@ -334,6 +338,15 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _is_official_openai_api(self) -> bool:
         """Return True only for official OpenAI API endpoints."""
         return is_official_openai_endpoint(self.model_config.type, self.base_url)
+
+    def _supports_cache_write_usage(self) -> bool:
+        """Return whether provider-reported cache writes are billable here."""
+        routed_provider = getattr(self.litellm_adapter, "provider", self.model_config.type)
+        if is_official_openai_endpoint(routed_provider, self.base_url):
+            return True
+        return routed_provider in (LLMProvider.CLAUDE, LLMProvider.ANTHROPIC) and is_official_anthropic_endpoint(
+            self.base_url
+        )
 
     def _default_prompt_cache_retention(self) -> Optional[str]:
         """Set known OpenAI retention policies; otherwise defer to the API default."""
@@ -1751,8 +1764,11 @@ class OpenAICompatibleModel(LLMBaseModel):
         total_tokens = getattr(usage, "total_tokens", 0)
 
         cached_tokens = 0
+        cache_write_tokens = 0
         if hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
             cached_tokens = getattr(usage.input_tokens_details, "cached_tokens", 0)
+            if self._supports_cache_write_usage():
+                cache_write_tokens = getattr(usage.input_tokens_details, "cache_write_tokens", 0)
 
         reasoning_tokens = 0
         if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
@@ -1776,6 +1792,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
             "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
             "reasoning_tokens": reasoning_tokens,
             "cache_hit_rate": cache_hit_rate,
             "context_usage_ratio": context_usage_ratio,

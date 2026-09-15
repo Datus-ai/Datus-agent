@@ -99,6 +99,7 @@ def build_token_usage_content(action: ActionHistory) -> Optional[List[MessageCon
         "output_tokens": _i(cumulative, "output_tokens"),
         "total_tokens": _i(cumulative, "total_tokens"),
         "cached_tokens": _i(cumulative, "cached_tokens"),
+        "cache_write_tokens": _i(cumulative, "cache_write_tokens"),
         "reasoning_tokens": _i(cumulative, "reasoning_tokens"),
         "last_call_input_tokens": _i(output, "last_call_input_tokens"),
         "context_length": _i(output, "context_length"),
@@ -108,6 +109,7 @@ def build_token_usage_content(action: ActionHistory) -> Optional[List[MessageCon
             "output_tokens": _i(delta, "output_tokens"),
             "total_tokens": _i(delta, "total_tokens"),
             "cached_tokens": _i(delta, "cached_tokens"),
+            "cache_write_tokens": _i(delta, "cache_write_tokens"),
             "reasoning_tokens": _i(delta, "reasoning_tokens"),
         },
     }

@@ -322,6 +322,53 @@ def test_streamed_response_exports_messages_and_openinference_tool_calls(streame
         provider.shutdown()
 
 
+def test_openai_response_exports_cache_write_tokens():
+    from agents.tracing.span_data import ResponseSpanData
+    from openai.types.responses import Response, ResponseUsage
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
+    from openinference.instrumentation import OITracer, TraceConfig
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    processor = DatusOpenInferenceTracingProcessor(OITracer(provider.get_tracer(__name__), config=TraceConfig()))
+    response = Response(
+        id="resp_cache_write",
+        created_at=0.0,
+        model="gpt-test",
+        object="response",
+        output=[],
+        parallel_tool_calls=False,
+        tool_choice="auto",
+        tools=[],
+        usage=ResponseUsage(
+            input_tokens=100,
+            input_tokens_details=InputTokensDetails(cached_tokens=30, cache_write_tokens=20),
+            output_tokens=10,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+            total_tokens=110,
+        ),
+    )
+    data = ResponseSpanData(input=[{"role": "user", "content": "hello"}], response=response)
+    span = FakeSpan(span_data=data, span_id="span_response_usage", started_at=_now_iso())
+    try:
+        processor.on_trace_start(FakeTrace())
+        processor.on_span_start(span)
+        span.ended_at = _now_iso()
+        processor.on_span_end(span)
+        processor.on_trace_end(FakeTrace())
+
+        exported_span = next(
+            item for item in exporter.get_finished_spans() if item.attributes.get("openinference.span.kind") == "LLM"
+        )
+        attrs = exported_span.attributes
+        assert attrs["llm.token_count.prompt_details.cache_read"] == 30
+        assert attrs["llm.token_count.prompt_details.cache_write"] == 20
+    finally:
+        processor.shutdown()
+        provider.shutdown()
+
+
 def test_streamed_response_masks_normalized_tool_calls_and_reasoning(streamed_generation_output):
     from agents.tracing.span_data import GenerationSpanData
     from openinference.instrumentation import OITracer, TraceConfig

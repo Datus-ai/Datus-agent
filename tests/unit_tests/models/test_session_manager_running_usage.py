@@ -14,10 +14,13 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterator
 
 import pytest
+from agents import Usage
 from agents.extensions.memory import AdvancedSQLiteSession
+from agents.usage import InputTokensDetails
 
 from datus.models.session_manager import SessionManager
 
@@ -37,6 +40,27 @@ def _bootstrap_session(sm: SessionManager, session_id: str) -> str:
     return db_path
 
 
+@pytest.mark.asyncio
+async def test_sdk_cache_write_tokens_persist_in_turn_usage(sm: SessionManager) -> None:
+    """The SDK's standard field must survive AdvancedSQLiteSession storage."""
+    session_id = "chat_session_sdk_usage"
+    session = sm.get_session(session_id)
+    usage = Usage(
+        requests=1,
+        input_tokens=100,
+        output_tokens=25,
+        total_tokens=125,
+        input_tokens_details=InputTokensDetails(cached_tokens=30, cache_write_tokens=17),
+    )
+    result = SimpleNamespace(context_wrapper=SimpleNamespace(usage=usage))
+
+    await session.store_run_usage(result)
+
+    detailed = sm.get_detailed_usage(session_id)
+    assert detailed["total"]["cache_write_tokens"] == 17
+    assert detailed["turns"][0]["input_tokens_details"]["cache_write_tokens"] == 17
+
+
 class TestUpsertAndGet:
     def test_upsert_then_get_round_trip(self, sm: SessionManager) -> None:
         session_id = "chat_session_aaa"
@@ -50,6 +74,7 @@ class TestUpsertAndGet:
                 "output_tokens": 200,
                 "total_tokens": 1000,
                 "cached_tokens": 100,
+                "cache_write_tokens": 40,
             },
             context_length=200_000,
         )
@@ -59,6 +84,7 @@ class TestUpsertAndGet:
         assert running["context_length"] == 200_000
         assert running["cumulative"]["total_tokens"] == 1000
         assert running["cumulative"]["cached_tokens"] == 100
+        assert running["cumulative"]["cache_write_tokens"] == 40
         # ISO-8601 UTC stamp produced by ``to_utc_iso`` — pins the date /
         # time separator so a regression that strips the time component
         # (and would still pass a bare truthiness check) is caught.
@@ -150,6 +176,7 @@ class TestGetDetailedUsageMerges:
                 "output_tokens": 100,
                 "total_tokens": 500,
                 "cached_tokens": 20,
+                "cache_write_tokens": 15,
             },
             context_length=200_000,
         )
@@ -167,6 +194,7 @@ class TestGetDetailedUsageMerges:
         assert detailed["total"]["total_tokens"] == 150 + 500
         assert detailed["total"]["requests"] == 1 + 2
         assert detailed["total"]["cached_tokens"] == 0 + 20
+        assert detailed["total"]["cache_write_tokens"] == 0 + 15
 
     def test_running_absent_returns_none_running_field(self, sm: SessionManager) -> None:
         session_id = "chat_session_iii"

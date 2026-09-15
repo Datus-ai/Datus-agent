@@ -42,6 +42,13 @@ def _mock_agent_config(**attrs) -> Mock:
     """
     config = Mock()
     config.sql_read_only = False
+    # PolicyRuntime treats ``active_plugin_names`` as an optional AgentConfig
+    # protocol method.  A bare Mock fabricates that method and returns another
+    # Mock, which is not a valid iterable once an earlier test has populated
+    # the plugin registry.  Pin the protocol result just as we pin boolean
+    # security switches above so this helper behaves like an AgentConfig with
+    # no active plugins.
+    config.active_plugin_names.return_value = set()
     for key, value in attrs.items():
         setattr(config, key, value)
     return config

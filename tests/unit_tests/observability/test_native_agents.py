@@ -65,8 +65,10 @@ async def test_native_agent_stream_exports_agent_generation_tool_tree(monkeypatc
             "input_tokens": 120,
             "output_tokens": 30,
             "total_tokens": 150,
-            "cache_read_input_tokens": 100,
-            "cache_creation_input_tokens": 10,
+            "input_tokens_details": {
+                "cached_tokens": 100,
+                "cache_write_tokens": 10,
+            },
         }
         finish_native_span(
             generation,

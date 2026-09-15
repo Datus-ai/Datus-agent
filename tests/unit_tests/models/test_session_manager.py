@@ -1942,7 +1942,16 @@ class TestGetDetailedUsage:
                 "INSERT INTO turn_usage (session_id, user_turn_number, requests, input_tokens, "
                 "output_tokens, total_tokens, input_tokens_details, output_tokens_details) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (session_id, 1, 2, 1000, 200, 1200, '{"cached_tokens": 500}', '{"reasoning_tokens": 10}'),
+                (
+                    session_id,
+                    1,
+                    2,
+                    1000,
+                    200,
+                    1200,
+                    '{"cached_tokens": 500, "cache_write_tokens": 125}',
+                    '{"reasoning_tokens": 10}',
+                ),
             )
             conn.commit()
 
@@ -1952,9 +1961,13 @@ class TestGetDetailedUsage:
         assert result["total"]["output_tokens"] == 200
         assert result["total"]["total_tokens"] == 1200
         assert result["total"]["cached_tokens"] == 500
+        assert result["total"]["cache_write_tokens"] == 125
         assert result["total"]["requests"] == 2
         assert len(result["turns"]) == 1
-        assert result["turns"][0]["input_tokens_details"] == {"cached_tokens": 500}
+        assert result["turns"][0]["input_tokens_details"] == {
+            "cached_tokens": 500,
+            "cache_write_tokens": 125,
+        }
         assert result["turns"][0]["output_tokens_details"] == {"reasoning_tokens": 10}
 
     def test_multiple_turns_aggregated(self, sm):

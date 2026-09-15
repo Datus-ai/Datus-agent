@@ -22,6 +22,7 @@ from typing import Any, Optional
 import litellm
 
 _KIMI_MARKERS = ("kimi", "moonshot", "k2.5", "k2-")
+_KIMI_REASONING_MODEL_IDS = frozenset({"kimi-for-coding"})
 REASONING_ENDPOINT_KEY = "datus_reasoning_endpoint"
 
 
@@ -58,11 +59,18 @@ def reasoning_provider_family(model_name: Optional[str]) -> Optional[str]:
 
 
 def is_reasoning_echo_provider(model_name: Optional[str]) -> bool:
-    """Return True for a LiteLLM-known reasoning model that echoes reasoning content."""
+    """Return True for a verified reasoning model that echoes reasoning content."""
     family = reasoning_provider_family(model_name)
     if family is None:
         return False
     name = model_name or ""
+    model_id = name.rsplit("/", 1)[-1].lower()
+    # Kimi Code rolls the backing model forward behind this stable model ID.
+    # It currently serves K2.8 Preview and requires reasoning_content on
+    # thinking-mode tool-call replay, but LiteLLM does not yet advertise that
+    # capability for either the bare or Anthropic-qualified model name.
+    if family == "kimi" and model_id in _KIMI_REASONING_MODEL_IDS:
+        return True
     if "/" not in name:
         name = f"{'deepseek' if family == 'deepseek' else 'moonshot'}/{name}"
     try:

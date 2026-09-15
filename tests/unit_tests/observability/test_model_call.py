@@ -19,17 +19,21 @@ from datus.observability.tool_calls import observe_tool_hooks
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def close_model_test_clients():
+async def close_model_test_clients(monkeypatch):
     # These tests make real local HTTP calls in separate pytest event loops.
-    # Drain LiteLLM's process-wide logging worker before each loop closes.
+    # Give each test its own LiteLLM logging worker so an impacted-suite xdist
+    # worker cannot inherit a task bound to an event loop from an earlier test.
     from litellm import close_litellm_async_clients
-    from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
+    from litellm.litellm_core_utils import logging_worker
+
+    test_logging_worker = logging_worker.LoggingWorker()
+    monkeypatch.setattr(logging_worker, "GLOBAL_LOGGING_WORKER", test_logging_worker)
 
     yield
     try:
-        await asyncio.wait_for(GLOBAL_LOGGING_WORKER.flush(), timeout=2)
+        await asyncio.wait_for(test_logging_worker.flush(), timeout=2)
     finally:
-        await GLOBAL_LOGGING_WORKER.stop()
+        await test_logging_worker.stop()
         await close_litellm_async_clients()
 
 

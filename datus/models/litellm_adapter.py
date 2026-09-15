@@ -394,8 +394,9 @@ class LiteLLMAdapter:
           gpt-5* reasoning models.
         - **Every other OpenAI-compatible provider** (Anthropic Claude,
           DeepSeek, Kimi, Qwen, Gemini, OpenRouter, GLM, MiniMax, vLLM, and
-          self-hosted proxies) uses :class:`ImageToolLitellmModel`, which adds
-          image-tool transport on top of the observed SDK model.
+          self-hosted proxies) uses :class:`DatusLitellmModel`, which adds
+          Datus image, reasoning, and provider compatibility on top of the
+          observed SDK model.
 
         Every LiteLLM-path model receives
         :func:`datus.models.reasoning_replay.should_replay_reasoning_content`
@@ -407,7 +408,7 @@ class LiteLLMAdapter:
             Model instance configured for this adapter
         """
         try:
-            from datus.models.litellm_image import ImageToolLitellmModel, register_image_model_capabilities
+            from datus.models.litellm_model import DatusLitellmModel, register_image_model_capabilities
         except ImportError as err:
             raise ImportError(
                 "LitellmModel not found. Please install openai-agents with litellm support: "
@@ -440,7 +441,7 @@ class LiteLLMAdapter:
 
         logger.debug(f"Creating LitellmModel with model={self.litellm_model_name}")
         register_image_model_capabilities(self.litellm_model_name)
-        return ImageToolLitellmModel(**model_kwargs)
+        return DatusLitellmModel(**model_kwargs)
 
     def _build_openai_responses_model(self) -> "Model":
         """Construct an :class:`OpenAIResponsesModel` bound to this adapter.

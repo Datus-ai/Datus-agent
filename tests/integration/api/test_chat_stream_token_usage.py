@@ -87,6 +87,7 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
             "output_tokens": 100,
             "total_tokens": 600,
             "cached_tokens": 50,
+            "cache_write_tokens": 100,
             "last_call_input_tokens": 500,
         },
         {
@@ -95,6 +96,7 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
             "output_tokens": 250,
             "total_tokens": 1350,
             "cached_tokens": 50,
+            "cache_write_tokens": 150,
             "last_call_input_tokens": 600,
         },
         {
@@ -103,6 +105,7 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
             "output_tokens": 450,
             "total_tokens": 2150,
             "cached_tokens": 50,
+            "cache_write_tokens": 180,
             "last_call_input_tokens": 600,
         },
     ]
@@ -136,6 +139,7 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
     last_usage = usage_events[-1].data
     assert last_usage.total_tokens == 2150
     assert last_usage.requests == 3
+    assert last_usage.cache_write_tokens == 180
 
     # Deltas across all three usage events sum to the turn cumulative total.
     delta_total = sum(ev.data.delta.total_tokens for ev in usage_events)
@@ -143,22 +147,25 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
 
     delta_input = sum(ev.data.delta.input_tokens for ev in usage_events)
     delta_output = sum(ev.data.delta.output_tokens for ev in usage_events)
+    delta_cache_write = sum(ev.data.delta.cache_write_tokens for ev in usage_events)
     assert delta_input == 1700
     assert delta_output == 450
+    assert delta_cache_write == 180
 
     # Each individual delta must match the expected per-call increment, not
     # just sum to the cumulative total — a regression that reported all usage
     # in the first event (or mis-attributed tokens across calls) would still
     # pass the aggregate checks above but fail here.
     expected_deltas = [
-        (600, 500, 100),  # Call 1: first call, full cumulative
-        (750, 600, 150),  # Call 2: 1350-600, 1100-500, 250-100
-        (800, 600, 200),  # Call 3: 2150-1350, 1700-1100, 450-250
+        (600, 500, 100, 100),  # Call 1: first call, full cumulative
+        (750, 600, 150, 50),  # Call 2: cumulative minus call 1
+        (800, 600, 200, 30),  # Call 3: cumulative minus call 2
     ]
-    for idx, (exp_total, exp_input, exp_output) in enumerate(expected_deltas):
+    for idx, (exp_total, exp_input, exp_output, exp_cache_write) in enumerate(expected_deltas):
         assert usage_events[idx].data.delta.total_tokens == exp_total
         assert usage_events[idx].data.delta.input_tokens == exp_input
         assert usage_events[idx].data.delta.output_tokens == exp_output
+        assert usage_events[idx].data.delta.cache_write_tokens == exp_cache_write
 
     # Each per-call delta must be non-negative — UI consumers display this
     # to the user and a negative delta would be confusing nonsense.
@@ -185,6 +192,7 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
         output_tokens=last_usage.output_tokens,
         total_tokens=last_usage.total_tokens,
         cached_tokens=last_usage.cached_tokens,
+        cache_write_tokens=last_usage.cache_write_tokens,
         session_total_tokens=last_usage.last_call_input_tokens,
         context_length=last_usage.context_length,
     )
@@ -198,6 +206,7 @@ async def test_three_llm_calls_emit_three_usage_events_aligned_with_end(session_
     # Wire-level invariant: ``end.total_tokens`` == final ``usage.total_tokens``.
     assert end_event.data.total_tokens == usage_events[-1].data.total_tokens
     assert end_event.data.requests == usage_events[-1].data.requests
+    assert end_event.data.cache_write_tokens == usage_events[-1].data.cache_write_tokens
     assert end_event.data.session_total_tokens == usage_events[-1].data.last_call_input_tokens
 
 

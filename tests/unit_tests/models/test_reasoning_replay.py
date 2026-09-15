@@ -44,7 +44,17 @@ class TestProviderDetection:
         assert reasoning_provider_family(name) is None
         assert is_reasoning_echo_provider(name) is False
 
-    @pytest.mark.parametrize("name", ["deepseek/deepseek-v4-pro", "deepseek-reasoner", "moonshot/kimi-k3", "kimi-k2.6"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "deepseek/deepseek-v4-pro",
+            "deepseek-reasoner",
+            "moonshot/kimi-k3",
+            "kimi-k2.6",
+            "kimi-for-coding",
+            "anthropic/kimi-for-coding",
+        ],
+    )
     def test_thinking_models_echo_reasoning(self, name):
         assert is_reasoning_echo_provider(name) is True
 
@@ -78,8 +88,12 @@ class TestShouldReplayReasoningContent:
     def test_deepseek_target_with_deepseek_origin(self):
         assert should_replay_reasoning_content(_context("deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro")) is True
 
-    def test_kimi_target_with_kimi_origin(self):
-        assert should_replay_reasoning_content(_context("moonshot/kimi-k2.6", "moonshot/kimi-k2.6")) is True
+    @pytest.mark.parametrize(
+        "model",
+        ["moonshot/kimi-k2.6", "moonshot/kimi-k3", "anthropic/kimi-for-coding"],
+    )
+    def test_kimi_target_with_same_route_origin(self, model):
+        assert should_replay_reasoning_content(_context(model, model)) is True
 
     def test_cross_family_origin_is_not_replayed(self):
         assert should_replay_reasoning_content(_context("deepseek/deepseek-v4-pro", "moonshot/kimi-k2.6")) is False

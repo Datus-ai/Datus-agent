@@ -738,7 +738,11 @@ class TestExplorerServicePreviewMetric:
         """Stub SemanticTools(...) with an ``adapter`` and sync ``query_metrics``."""
         from types import SimpleNamespace
 
-        tools_stub = SimpleNamespace(adapter=adapter, query_metrics=query_metrics)
+        tools_stub = SimpleNamespace(
+            adapter=adapter,
+            query_metrics=query_metrics,
+            metric_datasets=lambda: {},
+        )
 
         def fake_semantic_tools(*args, **kwargs):
             tools_stub.args = args

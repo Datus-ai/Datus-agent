@@ -215,10 +215,6 @@ def _response_headers(response: Any) -> Mapping[str, Any] | None:
             if candidate:
                 return candidate
             empty_headers = candidate
-    logging_obj = getattr(response, "logging_obj", None)
-    details = getattr(logging_obj, "model_call_details", None)
-    if isinstance(details, Mapping) and isinstance(details.get("_datus_response_headers"), Mapping):
-        return details["_datus_response_headers"]
     return empty_headers
 
 

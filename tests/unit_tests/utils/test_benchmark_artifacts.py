@@ -76,14 +76,31 @@ def _success_workflow(task: SqlTask) -> SimpleNamespace:
             {
                 "role": "assistant",
                 "action_type": "message",
-                "output": {"usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14}},
+                "output": {
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                        "cache_write_tokens": 3,
+                        "total_tokens": 14,
+                    }
+                },
             },
             {
                 "role": "workflow",
                 "action_type": "token_usage",
                 "output": {
-                    "delta": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
-                    "cumulative": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+                    "delta": {
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                        "cache_write_tokens": 3,
+                        "total_tokens": 14,
+                    },
+                    "cumulative": {
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                        "cache_write_tokens": 3,
+                        "total_tokens": 14,
+                    },
                 },
             },
         ],
@@ -180,7 +197,12 @@ def test_success_manifest_validates_and_does_not_inline_query_result(tmp_path: P
     _validator().validate(payload)
     assert payload["status"] == "completed"
     assert payload["attempt_id"] == "attempt-1"
-    assert payload["usage"] == {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14}
+    assert payload["usage"] == {
+        "input_tokens": 10,
+        "output_tokens": 4,
+        "cache_write_tokens": 3,
+        "total_tokens": 14,
+    }
     assert payload["model"] == {
         "provider": "openai",
         "name": "gpt-5.5",
@@ -271,6 +293,7 @@ def test_manifest_uses_token_event_deltas_when_actions_have_no_usage(tmp_path: P
                     "input_tokens": 10,
                     "output_tokens": 4,
                     "cached_tokens": 3,
+                    "cache_write_tokens": 2,
                     "total_tokens": 14,
                 }
             },
@@ -290,6 +313,7 @@ def test_manifest_uses_token_event_deltas_when_actions_have_no_usage(tmp_path: P
         "input_tokens": 10,
         "output_tokens": 4,
         "cached_input_tokens": 3,
+        "cache_write_tokens": 2,
         "total_tokens": 14,
     }
 

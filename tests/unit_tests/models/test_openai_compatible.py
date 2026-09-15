@@ -13,10 +13,13 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agents import Usage
 from agents.exceptions import ModelBehaviorError
+from agents.usage import InputTokensDetails
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 from opentelemetry.sdk.trace import TracerProvider
 
+from datus.models.litellm_adapter import LiteLLMAdapter
 from datus.models.openai_compatible import (
     OpenAICompatibleModel,
     _agents_trace_baggage,
@@ -1914,6 +1917,91 @@ class TestBuildAgent:
 
 
 class TestExtractUsageInfo:
+    def test_uses_sdk_aggregated_cache_write_tokens(self):
+        model = _make_model()
+        usage = Usage(
+            requests=1,
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+        usage.add(
+            Usage(
+                requests=1,
+                input_tokens=200,
+                output_tokens=20,
+                total_tokens=220,
+                input_tokens_details=InputTokensDetails(cached_tokens=17, cache_write_tokens=19),
+            )
+        )
+
+        info = model._extract_usage_info(usage)
+
+        assert info["cache_write_tokens"] == 32
+        assert info["cached_tokens"] == 28
+
+    def test_uses_cache_write_tokens_for_official_anthropic(self):
+        model = _make_model(_make_model_config(model_type="claude"))
+        model.litellm_adapter.provider = "claude"
+        usage = Usage(
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+
+        assert model._extract_usage_info(usage)["cache_write_tokens"] == 13
+
+    @pytest.mark.parametrize("base_url", [None, "https://api.anthropic.com"])
+    def test_uses_cache_write_tokens_when_openai_config_auto_routes_to_anthropic(self, base_url):
+        config = _make_model_config(
+            model="claude-sonnet-4-6",
+            model_type="openai",
+            base_url=base_url,
+        )
+        model = _make_model(config)
+        model.litellm_adapter = LiteLLMAdapter(
+            provider=config.type,
+            model=config.model,
+            api_key=config.api_key,
+            base_url=config.base_url,
+        )
+        usage = Usage(
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+
+        assert model.litellm_adapter.provider == "claude"
+        assert model._extract_usage_info(usage)["cache_write_tokens"] == 13
+
+    @pytest.mark.parametrize(
+        ("model_type", "base_url"),
+        [
+            ("glm", "https://open.bigmodel.cn/api/paas/v4"),
+            ("kimi", "https://api.moonshot.cn/v1"),
+            ("deepseek", "https://api.deepseek.com"),
+            ("openai", "https://openrouter.ai/api/v1"),
+            ("claude", "https://api.kimi.com/coding"),
+        ],
+    )
+    def test_ignores_cache_write_tokens_from_other_compatible_providers(self, model_type, base_url):
+        model = _make_model(_make_model_config(model_type=model_type, base_url=base_url))
+        model.litellm_adapter.provider = model_type
+        usage = Usage(
+            input_tokens=100,
+            output_tokens=10,
+            total_tokens=110,
+            input_tokens_details=InputTokensDetails(cached_tokens=11, cache_write_tokens=13),
+        )
+
+        info = model._extract_usage_info(usage)
+
+        assert info["cache_write_tokens"] == 0
+        assert info["cached_tokens"] == 11
+
     def test_normal_usage(self):
         model = _make_model()
         usage = MagicMock()
@@ -1923,6 +2011,7 @@ class TestExtractUsageInfo:
         usage.total_tokens = 150
         usage.input_tokens_details = MagicMock()
         usage.input_tokens_details.cached_tokens = 20
+        usage.input_tokens_details.cache_write_tokens = 30
         usage.output_tokens_details = MagicMock()
         usage.output_tokens_details.reasoning_tokens = 10
         usage.request_usage_entries = None
@@ -1935,6 +2024,7 @@ class TestExtractUsageInfo:
         assert info["output_tokens"] == 50
         assert info["total_tokens"] == 150
         assert info["cached_tokens"] == 20
+        assert info["cache_write_tokens"] == 30
         assert info["reasoning_tokens"] == 10
         assert info["cache_hit_rate"] == round(20 / 100, 3)
         assert info["context_usage_ratio"] == 0
@@ -1955,6 +2045,7 @@ class TestExtractUsageInfo:
 
         assert info["cache_hit_rate"] == 0
         assert info["cached_tokens"] == 0
+        assert info["cache_write_tokens"] == 0
         assert info["reasoning_tokens"] == 0
 
     def test_missing_details_attributes(self):
@@ -1969,6 +2060,7 @@ class TestExtractUsageInfo:
             info = model._extract_usage_info(usage)
 
         assert info["cached_tokens"] == 0
+        assert info["cache_write_tokens"] == 0
         assert info["reasoning_tokens"] == 0
 
     def test_unknown_model_context_length_none(self):

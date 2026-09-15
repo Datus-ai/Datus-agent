@@ -28,7 +28,7 @@ import httpx
 from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdio
 from agents.tool_context import ToolContext
-from agents.usage import InputTokensDetails, OutputTokensDetails, RequestUsage
+from agents.usage import InputTokensDetails, OutputTokensDetails, RequestUsage, model_usage_to_span_usage
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.litellm_adapter import is_official_anthropic_endpoint
@@ -111,23 +111,32 @@ def _anthropic_trace_output(response: Any) -> List[Dict[str, Any]]:
     return [output]
 
 
-def _anthropic_trace_usage(response: Any) -> Dict[str, int]:
-    """Return per-call token usage, including Anthropic prompt-cache tokens."""
+def _anthropic_trace_usage(response: Any, *, cache_write_supported: bool = True) -> Dict[str, Any]:
+    """Return per-call token usage in the Agents SDK's standard shape."""
     usage = getattr(response, "usage", None)
     if usage is None:
         return {}
     fresh_input = int(getattr(usage, "input_tokens", 0) or 0)
     cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
-    cache_write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    raw_cache_write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    cache_write = raw_cache_write if cache_write_supported else 0
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    input_tokens = fresh_input + cache_read + cache_write
-    return {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens,
-        "cache_read_input_tokens": cache_read,
-        "cache_creation_input_tokens": cache_write,
-    }
+    input_tokens = fresh_input + cache_read + raw_cache_write
+    return model_usage_to_span_usage(
+        Usage(
+            requests=1,
+            input_tokens=input_tokens,
+            input_tokens_details=InputTokensDetails.model_validate(
+                {
+                    "cached_tokens": cache_read,
+                    "cache_write_tokens": cache_write,
+                }
+            ),
+            output_tokens=output_tokens,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+            total_tokens=input_tokens + output_tokens,
+        )
+    )
 
 
 def _anthropic_trace_model_config(request_kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -872,7 +881,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 # Accumulate token usage across all turns
                 cumulative_input_tokens = 0
                 cumulative_output_tokens = 0
-                cache_creation_tokens = 0
+                cache_write_tokens = 0
                 cache_read_tokens = 0
                 last_call_input_tokens = 0
 
@@ -1107,11 +1116,12 @@ class ClaudeModel(OpenAICompatibleModel):
                     if hasattr(response, "usage") and response.usage:
                         call_input = getattr(response.usage, "input_tokens", 0)
                         call_cache_read = getattr(response.usage, "cache_read_input_tokens", 0)
-                        call_cache_creation = getattr(response.usage, "cache_creation_input_tokens", 0)
-                        call_total_input = call_input + call_cache_read + call_cache_creation
+                        raw_call_cache_write = getattr(response.usage, "cache_creation_input_tokens", 0)
+                        call_total_input = call_input + call_cache_read + raw_call_cache_write
+                        call_cache_write = raw_call_cache_write if self._supports_cache_write_usage() else 0
                         cumulative_input_tokens += call_total_input
                         cumulative_output_tokens += getattr(response.usage, "output_tokens", 0)
-                        cache_creation_tokens += call_cache_creation
+                        cache_write_tokens += call_cache_write
                         cache_read_tokens += call_cache_read
                         last_call_input_tokens = call_total_input
 
@@ -1126,11 +1136,17 @@ class ClaudeModel(OpenAICompatibleModel):
                             cumulative_input_tokens=cumulative_input_tokens,
                             cumulative_output_tokens=cumulative_output_tokens,
                             cache_read_tokens=cache_read_tokens,
+                            cache_write_tokens=cache_write_tokens,
                             last_call_input_tokens=last_call_input_tokens,
+                            last_call_cache_read_tokens=call_cache_read,
+                            last_call_cache_write_tokens=call_cache_write,
                         )
                         await self._invoke_hook(hooks, "on_llm_end", run_ctx, hook_agent, response)
 
-                    active_generation_span.span_data.usage = _anthropic_trace_usage(response)
+                    active_generation_span.span_data.usage = _anthropic_trace_usage(
+                        response,
+                        cache_write_supported=self._supports_cache_write_usage(),
+                    )
                     generation_output = capture_native_trace_content("responses", _anthropic_trace_output(response))
                     finish_native_span(active_generation_span, output=generation_output)
                     active_generation_span = None
@@ -1294,6 +1310,7 @@ class ClaudeModel(OpenAICompatibleModel):
                             # FuncToolResult (or raw return value) unchanged; MCP tools pass
                             # the first content block's text.
                             hook_result: Any = None
+                            image_content = None
 
                             # Try function tools first
                             if block.name in func_tool_map:
@@ -1369,13 +1386,17 @@ class ClaudeModel(OpenAICompatibleModel):
                                 "summary": result_summary,
                                 "status_message": result_summary,
                             }
-                            # Keep the structured records (raw_output is stringified
-                            # for the Anthropic message). Unwrap the FuncToolResult
-                            # envelope so benchmark trajectory evaluation can read
-                            # source_context_id provenance.
+                            # Keep the Anthropic-facing tool_result string in
+                            # ``tool_call_cache`` while recording ordinary structured
+                            # function-tool results in ActionHistory using the same
+                            # envelope shape as the OpenAI-compatible path. Native image
+                            # results and MCP/plain-text tools retain their existing text
+                            # representation.
                             structured_result = None
                             display_result = image_result_for_display(hook_result)
                             if isinstance(display_result, dict):
+                                if image_content is None:
+                                    tool_output["raw_output"] = display_result
                                 structured_result = display_result.get("result", display_result)
                             elif isinstance(display_result, list):
                                 structured_result = display_result
@@ -1540,14 +1561,7 @@ class ClaudeModel(OpenAICompatibleModel):
                     # assistant result. This notice is a final response, never a
                     # fabricated model delta.
                     final_content = "" if last_assistant_text else max_turns_notice
-                usage_info = self._build_native_usage_info(
-                    requests=turn + 1,
-                    cumulative_input_tokens=cumulative_input_tokens,
-                    cumulative_output_tokens=cumulative_output_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                    last_call_input_tokens=last_call_input_tokens,
-                )
+                usage_info = self._extract_usage_info(run_ctx.usage)
                 logger.debug(f"Native API cumulative token usage: {usage_info}")
 
                 final_action = ActionHistory(
@@ -1596,7 +1610,7 @@ class ClaudeModel(OpenAICompatibleModel):
                     # drives ``store_run_usage``), so commit the durable usage
                     # only after every message in this turn is safely stored.
                     try:
-                        await self._store_native_turn_usage(session, usage_info)
+                        await self._store_native_turn_usage(session, run_ctx.usage)
                     except Exception as e:
                         logger.warning(f"Failed to persist usage for native Claude turn: {e}")
 
@@ -1794,45 +1808,6 @@ class ClaudeModel(OpenAICompatibleModel):
             items.append({"role": "assistant", "content": [{"type": "text", "text": fallback_text or "[empty turn]"}]})
         return items
 
-    def _build_native_usage_info(
-        self,
-        *,
-        requests: int,
-        cumulative_input_tokens: int,
-        cumulative_output_tokens: int,
-        cache_read_tokens: int,
-        cache_creation_tokens: int,
-        last_call_input_tokens: int,
-    ) -> dict:
-        """Build the standardized usage dict for the native Anthropic loop.
-
-        Shared by the mid-turn per-call updates and the final action so the
-        cumulative numbers reported to the status bar / SSE never drift from
-        what is attached to the final assistant action. ``cached_tokens``
-        maps to Anthropic's ``cache_read_input_tokens`` (the portion served
-        from cache), matching :meth:`OpenAICompatibleModel._extract_usage_info`.
-
-        ``cumulative_input_tokens`` here already includes the cache_read /
-        cache_creation components (folded in by the caller) so that
-        ``input_tokens``, ``total_tokens``, ``cache_hit_rate`` and
-        ``context_usage_ratio`` share OpenAI's "input includes cached" semantics.
-        """
-        total_tokens = cumulative_input_tokens + cumulative_output_tokens
-        cached_tokens = cache_read_tokens
-        context_length = self.context_length()
-        return {
-            "requests": requests,
-            "input_tokens": cumulative_input_tokens,
-            "output_tokens": cumulative_output_tokens,
-            "total_tokens": total_tokens,
-            "cached_tokens": cached_tokens,
-            "cache_creation_tokens": cache_creation_tokens,
-            "reasoning_tokens": 0,
-            "cache_hit_rate": (round(cached_tokens / cumulative_input_tokens, 3) if cumulative_input_tokens > 0 else 0),
-            "context_usage_ratio": (round(last_call_input_tokens / context_length, 3) if context_length else 0),
-            "last_call_input_tokens": last_call_input_tokens,
-        }
-
     def _build_sdk_usage(
         self,
         *,
@@ -1840,7 +1815,10 @@ class ClaudeModel(OpenAICompatibleModel):
         cumulative_input_tokens: int,
         cumulative_output_tokens: int,
         cache_read_tokens: int,
+        cache_write_tokens: int,
         last_call_input_tokens: int,
+        last_call_cache_read_tokens: int,
+        last_call_cache_write_tokens: int,
     ) -> Usage:
         """Build an SDK ``Usage`` snapshot from the native loop's counters.
 
@@ -1848,18 +1826,25 @@ class ClaudeModel(OpenAICompatibleModel):
         feed :class:`TokenUsageHook` (via ``on_llm_end``) the same shape the
         Runner would. ``TokenUsageHook._emit`` reads ``context.usage`` and calls
         :meth:`OpenAICompatibleModel._extract_usage_info` (inherited here), which
-        consumes ``input_tokens`` / ``output_tokens`` / ``total_tokens``,
-        ``input_tokens_details.cached_tokens`` and ``request_usage_entries[-1]``
-        for the last-call input. ``cumulative_input_tokens`` already folds in the
-        cache_read / cache_creation components (done by the caller) so the OpenAI
-        "input includes cached" semantics carry through cache-hit-rate and
-        context-usage-ratio derivation.
+        consumes the standard SDK token-detail fields and
+        ``request_usage_entries[-1]`` for the last-call input.
+        ``cumulative_input_tokens`` already folds in the cache-read/cache-write
+        components (done by the caller) so the OpenAI "input includes cached"
+        semantics carry through cache-hit-rate and context-usage-ratio derivation.
         """
         total_tokens = cumulative_input_tokens + cumulative_output_tokens
+        if not self._supports_cache_write_usage():
+            cache_write_tokens = 0
+            last_call_cache_write_tokens = 0
         return Usage(
             requests=requests,
             input_tokens=cumulative_input_tokens,
-            input_tokens_details=InputTokensDetails(cached_tokens=cache_read_tokens),
+            input_tokens_details=InputTokensDetails.model_validate(
+                {
+                    "cached_tokens": cache_read_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                }
+            ),
             output_tokens=cumulative_output_tokens,
             output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
             total_tokens=total_tokens,
@@ -1871,7 +1856,12 @@ class ClaudeModel(OpenAICompatibleModel):
                     input_tokens=last_call_input_tokens,
                     output_tokens=0,
                     total_tokens=last_call_input_tokens,
-                    input_tokens_details=InputTokensDetails(cached_tokens=cache_read_tokens),
+                    input_tokens_details=InputTokensDetails.model_validate(
+                        {
+                            "cached_tokens": last_call_cache_read_tokens,
+                            "cache_write_tokens": last_call_cache_write_tokens,
+                        }
+                    ),
                     output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
                 )
             ],
@@ -1904,26 +1894,16 @@ class ClaudeModel(OpenAICompatibleModel):
         except Exception:  # noqa: BLE001 — best-effort hooks never break the loop
             logger.debug("Hook '%s' raised; ignoring", method_name, exc_info=True)
 
-    async def _store_native_turn_usage(self, session, usage_info: dict) -> None:
+    async def _store_native_turn_usage(self, session, usage: Usage) -> None:
         """Persist the native turn's cumulative usage into ``turn_usage``.
 
-        Constructs an SDK :class:`Usage` and feeds it through the session's
-        ``store_run_usage`` via a minimal result shim so the durable schema
-        and turn-numbering match the Runner-driven models exactly.
+        Feeds the same SDK :class:`Usage` snapshot used by ``TokenUsageHook``
+        through the session's ``store_run_usage`` so the durable schema and
+        turn-numbering match the Runner-driven models exactly.
         """
         if session is None or not hasattr(session, "store_run_usage"):
             return
         try:
-            usage = Usage(
-                requests=int(usage_info.get("requests", 0) or 0),
-                input_tokens=int(usage_info.get("input_tokens", 0) or 0),
-                output_tokens=int(usage_info.get("output_tokens", 0) or 0),
-                total_tokens=int(usage_info.get("total_tokens", 0) or 0),
-                input_tokens_details=InputTokensDetails(cached_tokens=int(usage_info.get("cached_tokens", 0) or 0)),
-                output_tokens_details=OutputTokensDetails(
-                    reasoning_tokens=int(usage_info.get("reasoning_tokens", 0) or 0)
-                ),
-            )
 
             class _NativeUsageResult:
                 """Minimal ``RunResult`` stand-in exposing ``context_wrapper.usage``."""
