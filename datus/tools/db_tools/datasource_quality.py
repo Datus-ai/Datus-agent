@@ -684,9 +684,11 @@ class QualityChecker:
             # Assertions are hand-written JSON. A missing key or an unknown `expect` is a
             # configuration mistake and must be reported as one, not crash every other check.
             name = (a or {}).get("name") or f"assertion #{i + 1}"
-            sql = (a or {}).get("sql")
-            if not isinstance(a, dict) or not sql:
-                self.add(name, False, "malformed assertion: needs at least a 'sql' key")
+            sql = (a or {}).get("sql") if isinstance(a, dict) else None
+            if not isinstance(sql, str) or not sql.strip():
+                # The validators below assume a string; a number or a list would raise out of
+                # this loop and take every remaining check with it.
+                self.add(name, False, "malformed assertion: 'sql' must be a non-empty string")
                 continue
             # The tool layer gates this too; repeated here so the checker cannot be handed a
             # write through another caller. parse_sql_type reads only the first statement, so the

@@ -272,3 +272,43 @@ def test_clean_run_has_no_query_health_entry(con):
     results = QualityChecker(con).run()
 
     assert not _has(results, "all checks could run")
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("bad_sql", [123, ["SELECT 1"], {"a": 1}, "", "   ", None])
+def test_non_string_assertion_sql_is_reported_not_raised(con, bad_sql):
+    """validate_read_only_sql assumes a string; a number or a list raised out of the loop and
+    took every remaining check with it."""
+    results = QualityChecker(con, {"assertions": [{"name": "broken", "sql": bad_sql}]}).run()
+
+    assert _status(results, "broken") == "FAIL"
+    assert "non-empty string" in next(r["detail"] for r in results if r["check"] == "broken")
+    assert _has(results, "layering"), "the rest of the run must still complete"
+
+
+class TestQualityToolMalformedConfig:
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        with connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE keepme (id BIGINT)")
+        return DBFuncTool(connector)
+
+    @pytest.mark.acceptance
+    def test_non_string_sql_is_a_named_configuration_error(self, tool, tmp_path):
+        """It used to reach a validator that assumes a string, and the caller saw an opaque
+        "Quality check failed" instead of which assertion is wrong."""
+        (tmp_path / "bad.json").write_text(
+            json.dumps({"assertions": [{"name": "broken", "sql": 123}]}), encoding="utf-8"
+        )
+
+        result = tool.check_datasource_quality(config_path="bad.json")
+
+        assert result.success == 0
+        assert "broken" in (result.error or "")
+        assert "non-empty string" in (result.error or "")

@@ -2131,8 +2131,13 @@ class DBFuncTool:
             connector = self._get_connector(datasource or "", "")
             offending = []
             for i, a in enumerate(config.get("assertions") or []):
+                name = (a or {}).get("name") if isinstance(a, dict) else None
+                name = name or f"assertion #{i + 1}"
                 sql = (a or {}).get("sql") if isinstance(a, dict) else None
-                if not sql:
+                if not isinstance(sql, str) or not sql.strip():
+                    # _validate_read_sql assumes a string; a number or a list would raise and the
+                    # caller would see an opaque "Quality check failed" instead of the real cause.
+                    offending.append(f"{name}: 'sql' must be a non-empty string")
                     continue
                 # The same validator the read path uses. Classifying the statement kind alone is
                 # not enough: it looks at the FIRST statement only, so `SELECT 1; DROP TABLE t`
@@ -2140,7 +2145,6 @@ class DBFuncTool:
                 # the multi-statement rule that is the actual backstop.
                 violation, _ = self._validate_read_sql(sql, connector)
                 if violation is not None:
-                    name = (a or {}).get("name") or f"assertion #{i + 1}"
                     offending.append(f"{name}: {violation.error}")
             if offending:
                 return FuncToolResult(

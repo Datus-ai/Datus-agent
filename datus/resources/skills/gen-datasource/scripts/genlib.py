@@ -300,6 +300,12 @@ class EventChain:
             self.first = False
             if pin is not None:
                 self.ts = max(pin, self.ts)
+            if cap is not None and self.ts > cap:
+                # The parent moment already sits past the cap (a last-day entity whose hour is
+                # later than the cut-off hour). The cap is the hard invariant, so the chain starts
+                # at it rather than emitting a whole sequence beyond it.
+                self.ts = cap
+                self.exhausted = True
             return self.ts
         if pin is not None:
             t = pin

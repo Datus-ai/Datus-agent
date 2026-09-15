@@ -299,5 +299,30 @@ def test_event_chain_never_steps_past_the_cap(engine_module):
 
     stamps = [chain.step(avg_hours=6, cap=cap) for _ in range(4)]
 
-    assert all(t <= start for t in stamps), "the chain must not advance past its starting point"
+    assert all(t <= cap for t in stamps), "the cap is the hard invariant, including on the first step"
+    assert stamps[0] == cap, "a start beyond the cap is clamped to it"
     assert chain.exhausted is True
+
+
+@pytest.mark.acceptance
+def test_event_chain_is_unaffected_within_the_cap(engine_module):
+    """The clamp must not disturb a chain that fits: still strictly increasing, still capped."""
+    import datetime
+    import random
+    import sys
+
+    scripts = str(SKILL_DIR / "scripts")
+    sys.path.insert(0, scripts)
+    try:
+        from genlib import EventChain
+    finally:
+        sys.path.remove(scripts)
+
+    cap = datetime.datetime(2026, 9, 14, 20, 0, 0)
+    chain = EventChain(random.Random(1), datetime.datetime(2026, 9, 10, 8, 0, 0))
+
+    stamps = [chain.step(avg_hours=6, cap=cap) for _ in range(5)]
+
+    assert stamps == sorted(stamps)
+    assert all(t <= cap for t in stamps)
+    assert chain.exhausted is False
