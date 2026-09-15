@@ -804,18 +804,32 @@ def test_a_syntax_error_is_caught_before_generating(engine_module):
     assert any(e.startswith("extra_sql[1]") and "Parser Error" in e for e in errors), errors
 
 
+#: The shapes a real run writes: a window-function ``UPDATE ... FROM`` and a NULLIF division.
+SOUND_STATEMENTS = (
+    "UPDATE orders o SET is_first_order = (f.rn = 1) FROM ("
+    "SELECT order_id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_time, order_id) AS rn "
+    "FROM orders) f WHERE o.order_id = f.order_id",
+    "UPDATE orders SET paid_amount = ROUND(paid_amount / NULLIF(1, 0), 2) WHERE coupon_code IS NOT NULL",
+)
+
+
 @pytest.mark.acceptance
-def test_sound_statements_raise_nothing(engine_module):
-    """The shapes a real run writes - a window function, a NULLIF division - must pass untouched."""
-    profile = {
-        "pre_sql": [
-            "UPDATE orders o SET is_first_order = (f.rn = 1) FROM ("
-            "SELECT order_id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_time, order_id) AS rn "
-            "FROM orders) f WHERE o.order_id = f.order_id",
-            "UPDATE orders SET paid_amount = ROUND(paid_amount / NULLIF(1, 0), 2) WHERE coupon_code IS NOT NULL",
-        ]
-    }
-    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile=profile)
+@pytest.mark.parametrize(
+    "shape",
+    [
+        pytest.param(list, id="list"),
+        pytest.param(tuple, id="tuple"),
+        pytest.param(lambda stmts: ";\n".join(stmts) + ";", id="one-string"),
+    ],
+)
+@pytest.mark.parametrize("key", ["pre_sql", "extra_sql"])
+def test_sound_statements_raise_nothing(engine_module, shape, key):
+    """Sound SQL must pass in every accepted shape.
+
+    The validator splits a single string with DuckDB's own parser and takes list/tuple elements
+    verbatim, so the shapes are separate code paths and each needs its own evidence.
+    """
+    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={key: shape(SOUND_STATEMENTS)})
 
     errors, _warnings = eng.precheck(strict=False)
 
@@ -857,7 +871,14 @@ def test_a_statement_can_use_a_table_an_earlier_statement_created(engine_module)
 
 
 @pytest.mark.acceptance
-def test_report_says_the_statements_were_planned(engine_module, capsys):
+def test_report_plans_the_statements_itself(engine_module, capsys):
+    """`report()` must not claim work `precheck()` did, because nothing has called `precheck()`.
+
+    `__init__` stops at `_infer()` and `generate()` is the only other caller, so on the
+    `gen.py report` path - the first thing the skill runs - the claim would describe validation
+    that had not happened. It plans them itself instead, which is also where the feedback is
+    cheapest.
+    """
     eng = engine_module.DDLEngine(
         SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET paid_amount = 1"]}
     )
@@ -866,7 +887,22 @@ def test_report_says_the_statements_were_planned(engine_module, capsys):
     out = capsys.readouterr().out
 
     assert "pre_sql: 1 statement(s) will run" in out
-    assert "planned against the schema by precheck()" in out
+    assert "planned against the schema" in out
+
+
+@pytest.mark.acceptance
+def test_report_shows_the_findings_instead_of_the_claim(engine_module, capsys):
+    """A broken statement must surface on the report path, not only inside generate()."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET nope = 1"]}
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "will not plan against the schema" in out
+    assert "pre_sql[1]" in out and "nope" in out
+    assert "columns and types check out" not in out, "do not claim a clean bill next to a finding"
 
 
 @pytest.mark.acceptance

@@ -499,7 +499,9 @@ on its wrong guess and produce plausible-looking wrong data that no quality chec
 
 **The first `gen.py` is a first draft, not a finished answer.** Put the calendar, the corrected
 semantics, the enums, the identities and *rough* `derive` bands in it, then generate and read the
-numbers off `checks.json`. Do not compute in your head what one 9-second run will tell you: a
+achieved numbers out of `check_datasource_quality`'s result - `result["summary"]` and the per-check
+details in `result["checks"]`, which carry the measured values. `data/checks.json` holds only the
+assertions you wrote; it never tells you what the data did. Do not compute in your head what one 9-second run will tell you: a
 measured production run emitted **70,000 output tokens in a single turn** - 59% of its wall clock -
 and spent it back-solving a marketing funnel so a ratio would land on target, and hand-checking SQL
 that `precheck()` now plans for you in milliseconds. Two extra generate-check rounds cost about

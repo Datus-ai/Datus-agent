@@ -683,7 +683,7 @@ class DDLEngine:
                 err.append(f"{k}: every list element must be a str")
                 sql_types_ok = False
         if sql_types_ok:
-            err.extend(self._validate_sql_blocks())
+            err.extend(self._sql_problems())
 
         for k in self.profile.get("columns", {}):
             chk_ref("columns", k)
@@ -994,9 +994,17 @@ class DDLEngine:
                     f"({'before' if key == 'pre_sql' else 'after'} the summary layer)"
                 )
         if planned_sql:
-            # Say that DuckDB has already planned them. Otherwise the only way to know a statement
-            # is sound is to reason it through by hand, which one production run did at length.
-            print("  every statement above was planned against the schema by precheck(); columns and types check out")
+            # Plan them here rather than claiming precheck did: report() is the first thing the
+            # skill runs, and generate() is the only other caller. Reporting the findings at the
+            # cheap end is the whole point - the alternative is reasoning them through by hand,
+            # which one production run did at length.
+            problems = self._sql_problems()
+            if problems:
+                print(f"  {len(problems)} statement(s) will not plan against the schema:")
+                for problem in problems:
+                    print(f"  x {problem}")
+            else:
+                print("  every statement above planned against the schema; columns and types check out")
 
     def _print_semantics(self):
         """Print the inferred semantic of every column, so the caller can correct what is wrong.
@@ -1397,8 +1405,6 @@ class DDLEngine:
         rebuilt from the inferred column list. Foreign keys force an order, so creation retries
         once after everything else exists.
         """
-        import duckdb
-
         con = duckdb.connect(":memory:")
         pending = []
         for t, cols in self.schema.items():
@@ -1452,6 +1458,18 @@ class DDLEngine:
             else:
                 self._made = made
 
+    def _sql_problems(self):
+        """Validate the SQL blocks once per engine and remember the answer.
+
+        ``precheck()`` and ``report()`` both need it and must not disagree, and ``report()`` is
+        the surface the skill tells the agent to run first - a claim there that validation
+        happened, printed by an engine whose ``__init__`` stops at ``_infer()``, would be a
+        statement about work nobody had done.
+        """
+        if not hasattr(self, "_sql_problem_cache"):
+            self._sql_problem_cache = self._validate_sql_blocks()
+        return self._sql_problem_cache
+
     def _validate_sql_blocks(self):
         """Plan every pre_sql / extra_sql statement against the empty schema.
 
@@ -1477,8 +1495,10 @@ class DDLEngine:
             for key, value in blocks:
                 if key == "extra_sql" and not self._stage_summary_layer(con):
                     # The summary layer could not be staged, so every reference to it would read as
-                    # "table does not exist". Skipping beats blocking a configuration that is actually fine.
-                    break
+                    # "table does not exist". Skipping beats blocking a configuration that is
+                    # actually fine. ``continue`` rather than ``break``: skipping this block should
+                    # not depend on it happening to be the last one in the list.
+                    continue
                 if not value:
                     continue
                 if isinstance(value, (list, tuple)):
