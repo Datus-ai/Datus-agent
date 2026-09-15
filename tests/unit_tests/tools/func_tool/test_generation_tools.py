@@ -1445,6 +1445,41 @@ class TestOsiSync:
         assert '["customer_id", "store_id"]' in relationship["to_columns_json"]
         assert result["semantic_dataset_rows"] == len(rows)
 
+    def test_sync_osi_semantic_objects_projects_datatype_time_role_without_new_schema(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="events", schema=""
+        )
+        semantic_file = tmp_path / "events.yml"
+        semantic_file.write_text(
+            """
+version: 0.2.0.dev0
+semantic_model:
+  - name: events_model
+    datasets:
+      - name: events
+        source: events
+        fields:
+          - name: occurred_at
+            datatype: DateTime
+          - name: date_label
+            datatype: Date
+            dimension: {is_time: false}
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        result = generation_tools._sync_osi_semantic_objects_to_db(str(semantic_file), prepare_only=True)
+
+        assert result["success"] is True
+        fields = {row["name"]: row for row in result["semantic_dataset_rows"] if row["kind"] == "field"}
+        assert fields["occurred_at"]["field_type"] == "time"
+        assert fields["occurred_at"]["is_time"] is True
+        assert fields["occurred_at"]["is_dimension"] is True
+        assert fields["date_label"]["field_type"] == "categorical"
+        assert fields["date_label"]["is_time"] is False
+        assert fields["date_label"]["is_dimension"] is True
+        assert "datatype" not in fields["occurred_at"]
+
     def test_load_osi_document_selects_only_artifact_model(self, generation_tools, tmp_path):
         (tmp_path / "sales.yml").write_text(
             "version: 0.2.0.dev0\n"

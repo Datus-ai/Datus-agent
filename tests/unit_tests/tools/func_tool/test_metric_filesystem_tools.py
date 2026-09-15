@@ -126,6 +126,7 @@ class TestMetricFilesystemFuncTool:
             {
                 "name": "order_id",
                 "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "order_id"}]},
+                "datatype": "Integer",
             },
         ]
 
@@ -134,9 +135,11 @@ class TestMetricFilesystemFuncTool:
             str(target.relative_to(tmp_path)),
             ["obsolete_orders_query"],
         )
+        order_count = _osi_metric("order_count", "COUNT(DISTINCT orders.order_id)")
+        order_count["datatype"] = "Integer"
         metric_result = tool.upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
-            json.dumps([_osi_metric("order_count", "COUNT(DISTINCT orders.order_id)")]),
+            json.dumps([order_count]),
         )
 
         assert dataset_result.success == 1
@@ -148,7 +151,9 @@ class TestMetricFilesystemFuncTool:
         model = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]
         assert [dataset["name"] for dataset in model["datasets"]] == ["orders"]
         assert [field["name"] for field in model["datasets"][0]["fields"]] == ["ordered_at", "order_id"]
+        assert model["datasets"][0]["fields"][1]["datatype"] == "Integer"
         assert [metric["name"] for metric in model["metrics"]] == ["order_count"]
+        assert model["metrics"][0]["datatype"] == "Integer"
         assert osi_schema_validator.call_count == 3
 
     def test_osi_semantic_model_dataset_upsert_preserves_metrics_and_relationships(

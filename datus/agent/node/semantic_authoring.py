@@ -946,9 +946,13 @@ def authoring_prompt_snapshot_meta(agent_config: Any, node_name: str) -> Dict[st
         contract_text = authoring_spec.datus_extension_authoring_spec_text("<osi_dialect>")
         contract_digest = f"sha256:{hashlib.sha256(contract_text.encode('utf-8')).hexdigest()}"
 
+    core_spec = authoring_spec.authoring_spec_text("<osi_dialect>")
+    core_spec_digest = f"sha256:{hashlib.sha256(core_spec.encode('utf-8')).hexdigest()}"
+
     return {
         "datus_extension_version": datus_extension_version(),
         "datus_authoring_contract_digest": contract_digest,
+        "osi_core_authoring_spec_digest": core_spec_digest,
     }
 
 

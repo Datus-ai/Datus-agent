@@ -126,7 +126,7 @@ semantic_model:
           - name: created_at
             dimension: {is_time: true}
           - name: completed_at
-            dimension: {is_time: true}
+            datatype: DateTime
           - name: invalid_dimension_marker
             dimension: true
 """.lstrip(),
@@ -141,6 +141,67 @@ semantic_model:
         "completed_at",
     ]
     assert document.datasets[0].fields[-1].is_dimension is False
+
+
+def test_load_osi_document_infers_single_time_field_from_datatype(tmp_path):
+    model = tmp_path / "events.yml"
+    model.write_text(
+        """
+version: 0.2.0.dev0
+semantic_model:
+  - name: events_model
+    datasets:
+      - name: events
+        source: events
+        fields:
+          - name: occurred_at
+            datatype: DateTimeTz
+          - name: event_name
+            datatype: String
+            dimension: {}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    dataset = load_osi_document(str(model), "events_model").datasets[0]
+
+    assert dataset.time_dimension is not None
+    assert dataset.time_dimension.name == "occurred_at"
+    assert dataset.time_dimension.type == "time"
+    assert dataset.time_dimension.is_dimension is True
+    assert [item.name for item in dataset.dimensions] == ["event_name"]
+
+
+def test_load_osi_document_explicit_time_role_overrides_datatype(tmp_path):
+    model = tmp_path / "periods.yml"
+    model.write_text(
+        """
+version: 0.2.0.dev0
+semantic_model:
+  - name: periods_model
+    datasets:
+      - name: periods
+        source: periods
+        fields:
+          - name: date_label
+            datatype: Date
+            dimension: {is_time: false}
+          - name: fiscal_year
+            datatype: Integer
+            dimension: {is_time: true}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    dataset = load_osi_document(str(model), "periods_model").datasets[0]
+
+    assert dataset.time_dimension is not None
+    assert dataset.time_dimension.name == "fiscal_year"
+    fields = {field.name: field for field in dataset.fields}
+    assert fields["date_label"].type == "categorical"
+    assert fields["date_label"].is_dimension is True
+    assert fields["fiscal_year"].type == "time"
+    assert [item.name for item in dataset.dimensions] == ["date_label"]
 
 
 def test_load_osi_document_rejects_duplicate_model_declarations(tmp_path):

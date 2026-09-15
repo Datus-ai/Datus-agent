@@ -21,6 +21,8 @@ import yaml
 
 from datus.utils.exceptions import DatusException, ErrorCode
 
+_TEMPORAL_DATATYPES = frozenset({"Date", "Time", "DateTime", "DateTimeTz"})
+
 
 @dataclass
 class OsiSource:
@@ -170,9 +172,16 @@ def _source(value: Any, source_type: Any = None) -> OsiSource:
 
 def _dimension(field_node: dict[str, Any]) -> OsiDimension:
     payload = _extension_payload(field_node)
-    dimension = field_node.get("dimension") or {}
-    is_dimension = "dimension" in field_node and isinstance(field_node.get("dimension"), dict)
-    is_time = is_dimension and bool(dimension.get("is_time"))
+    dimension_node = field_node.get("dimension")
+    dimension = dimension_node if isinstance(dimension_node, dict) else {}
+    explicit_is_time = dimension.get("is_time")
+    is_time = (
+        explicit_is_time if isinstance(explicit_is_time, bool) else field_node.get("datatype") in _TEMPORAL_DATATYPES
+    )
+    # Ossie gives temporal datatypes a time-dimension role even without an
+    # explicit dimension block. An explicit false keeps the field available
+    # as an ordinary dimension when a dimension block is present.
+    is_dimension = isinstance(dimension_node, dict) or is_time
     name = str(field_node.get("name") or "")
     return OsiDimension(
         name=name,
@@ -207,29 +216,25 @@ def _unique_keys(value: Any) -> list[list[str]]:
 def _dataset(node: dict[str, Any]) -> OsiDataset:
     payload = _extension_payload(node)
     fields = [item for item in node.get("fields") or [] if isinstance(item, dict) and item.get("name")]
-    time_fields = [
-        item for item in fields if isinstance(item.get("dimension"), dict) and bool(item["dimension"].get("is_time"))
-    ]
+    field_views = [_dimension(field_node) for field_node in fields]
+    time_fields = [field for field in field_views if field.type == "time"]
     explicit_time = payload.get("time_dimension")
     if isinstance(explicit_time, dict):
         explicit_time = explicit_time.get("name")
     primary_time_name = str(explicit_time or "").rsplit(".", 1)[-1]
     if not primary_time_name and len(time_fields) == 1:
-        primary_time_name = str(time_fields[0].get("name") or "")
+        primary_time_name = time_fields[0].name
 
     primary_time: OsiDimension | None = None
     dimensions: list[OsiDimension] = []
-    field_views: list[OsiDimension] = []
     primary_keys = _names(node.get("primary_key"))
     unique_keys = _unique_keys(node.get("unique_keys"))
-    for field_node in fields:
-        name = str(field_node.get("name") or "")
-        dimension = _dimension(field_node)
-        field_views.append(dimension)
-        if name == primary_time_name:
+    for dimension in field_views:
+        if dimension.name == primary_time_name:
             dimension.is_dimension = True
+            dimension.type = "time"
             primary_time = dimension
-        if dimension.is_dimension and name != primary_time_name and name not in primary_keys:
+        if dimension.is_dimension and dimension.name != primary_time_name and dimension.name not in primary_keys:
             dimensions.append(dimension)
 
     return OsiDataset(

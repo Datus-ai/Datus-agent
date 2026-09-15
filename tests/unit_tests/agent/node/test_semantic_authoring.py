@@ -90,14 +90,14 @@ def test_dosi_prompt_rendering_reports_missing_adapter_package(monkeypatch):
         semantic_authoring.render_required_authoring_skill("dosi-semantic-authoring", "authoring")
 
 
-def test_dosi_prompt_uses_engine_owned_extension_contract(monkeypatch):
+def test_dosi_prompt_uses_engine_owned_d_format_contract(monkeypatch):
     package_module = ModuleType("datus_semantic_dosi")
     package_module.__path__ = []
     authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
     authoring_module.authoring_spec_text = lambda dialect: f"core dialect: {dialect}"
-    authoring_module.datus_extension_authoring_spec_text = lambda _dialect: "engine contract"
+    authoring_module.datus_extension_authoring_spec_text = lambda _dialect: "engine D-FORMAT contract"
     engine_module = ModuleType("datus_semantic_dosi.engine")
-    engine_module.datus_extension_version = lambda: "1.5"
+    engine_module.datus_extension_version = lambda: "1.6"
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
@@ -108,9 +108,9 @@ def test_dosi_prompt_uses_engine_owned_extension_contract(monkeypatch):
         include_osi_core=True,
     )
 
-    assert 'extension version: "1.5"' in rendered
+    assert 'extension version: "1.6"' in rendered
     assert "core dialect: <osi_dialect>" in rendered
-    assert "engine contract" in rendered
+    assert "engine D-FORMAT contract" in rendered
 
 
 def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
@@ -120,20 +120,23 @@ def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
         semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
 
 
-def test_dosi_prompt_snapshot_includes_engine_contract_digest(monkeypatch):
+def test_dosi_prompt_snapshot_includes_engine_and_core_contract_digests(monkeypatch):
     package_module = ModuleType("datus_semantic_dosi")
     package_module.__path__ = []
     authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
+    authoring_module.authoring_spec_text = lambda dialect: f"core {dialect}"
     authoring_module.datus_extension_authoring_spec_digest = lambda: "sha256:contract"
     engine_module = ModuleType("datus_semantic_dosi.engine")
-    engine_module.datus_extension_version = lambda: "1.5"
+    engine_module.datus_extension_version = lambda: "1.6"
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
     monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
 
+    core_digest = hashlib.sha256(b"core <osi_dialect>").hexdigest()
     assert semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling") == {
-        "datus_extension_version": "1.5",
+        "datus_extension_version": "1.6",
         "datus_authoring_contract_digest": "sha256:contract",
+        "osi_core_authoring_spec_digest": f"sha256:{core_digest}",
     }
 
 
@@ -141,6 +144,7 @@ def test_dosi_prompt_snapshot_hashes_legacy_adapter_spec(monkeypatch):
     package_module = ModuleType("datus_semantic_dosi")
     package_module.__path__ = []
     authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
+    authoring_module.authoring_spec_text = lambda dialect: f"core {dialect}"
     authoring_module.datus_extension_authoring_spec_text = lambda dialect: f"legacy {dialect}"
     package_module.authoring_spec = authoring_module
     engine_module = ModuleType("datus_semantic_dosi.engine")
@@ -154,6 +158,8 @@ def test_dosi_prompt_snapshot_hashes_legacy_adapter_spec(monkeypatch):
     assert meta["datus_extension_version"] == "1.4"
     expected_digest = hashlib.sha256(b"legacy <osi_dialect>").hexdigest()
     assert meta["datus_authoring_contract_digest"] == f"sha256:{expected_digest}"
+    core_digest = hashlib.sha256(b"core <osi_dialect>").hexdigest()
+    assert meta["osi_core_authoring_spec_digest"] == f"sha256:{core_digest}"
 
 
 def test_legacy_node_config_fields_are_ignored():
