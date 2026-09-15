@@ -182,6 +182,7 @@ class DDLEngine:
         for _ in range(months - 1):
             start = (start - timedelta(days=1)).replace(day=1)
         self.start = start
+        self.months = months
         self.days = date_range(start, self.end)
         self.cal = self._calendar()
         self.day_w = day_weights(
@@ -839,7 +840,94 @@ class DDLEngine:
                     f" list them fully in profile['enums'] if you need the whole domain"
                 )
         self._print_semantics()
+        self._print_plan()
         return self
+
+    def _print_plan(self):
+        """Print what the engine is about to do, not how it does it.
+
+        A measured production run spent 66% of its wall clock reading this file - eight greps for
+        `VOCAB`, `_joint_plan`, `_code_val`, `_enum_values`, `ROLE_METRIC`, `_cond_pick` and the
+        constructor - because it was trying to predict the output before spending a generation pass.
+        Every line below answers one of those greps directly. Showing the decision is far cheaper
+        than making the caller reconstruct it from the implementation.
+        """
+        import random as _r
+
+        p = self.profile
+        print(
+            f"knobs: months={self.months} ({len(self.days)} days, {self.start}~{self.end})  seed={self.seed}  "
+            f"extra_tables={self.extra_tables!r}  "
+            f"(override via DDLEngine(months=, end_date=, seed=, extra_tables=))"
+        )
+
+        # Sample names: answers VOCAB / _name_for / naming without reading either.
+        rng = _r.Random(self.seed)
+        named = []
+        for t in sorted(self.schema):
+            if self.roles.get(t) != ROLE_DIM:
+                continue
+            col = next((c["name"] for c in self.schema[t] if c["sem"] == "name"), None)
+            if col:
+                samples = ", ".join(self._name_for(t, i, rng) for i in range(2))
+                named.append(f"{t}.{col} -> {samples}")
+        if named:
+            print("name samples (change with profile['vocab'] or profile['naming']):")
+            for line in named[:8]:
+                print(f"  {line}")
+
+        # Generated business codes: answers CODE_COL / _code_val.
+        codes = [
+            f"{t}.{c['name']}"
+            for t in sorted(self.schema)
+            for c in self.schema[t]
+            if c["name"] != self.pk_of(t) and self.CODE_COL.search(c["name"])
+        ]
+        if codes:
+            print(f"generated business codes: {', '.join(codes[:10])}{' ...' if len(codes) > 10 else ''}")
+
+        # Daily metric grid: answers ROLE_METRIC / row allocation for those tables.
+        for t, role in sorted(self.roles.items()):
+            if role != ROLE_METRIC:
+                continue
+            planned, _ = self._metric_combos(t)
+            budget = max(1, round(self.nrows[t] / max(1, len(self.days))))
+            limited = (
+                " (all the schema allows; the row budget had room for %d)" % budget if len(planned) < budget else ""
+            )
+            print(
+                f"{t}: {len(self.days)} days x {len(planned)} dimension combos = "
+                f"{len(self.days) * len(planned):,} rows{limited}"
+                + ("" if limited else f" (raise profile['table_rows']['{t}'] for more combos)")
+            )
+
+        # Which declarative blocks actually resolved: answers _cond_pick / _joint_plan / derive.
+        applied = []
+        for key, spec in (p.get("conditional") or {}).items():
+            if isinstance(spec, dict):
+                groups = [k for k in spec if not k.startswith("__")]
+                dflt = " + default" if "__default__" in spec else " (NO default: unlisted values use the engine's)"
+                applied.append(f"conditional {key} by {spec.get('__by__')} ({len(groups)} groups{dflt})")
+        for key, spec in (p.get("derive") or {}).items():
+            ratio = (spec or {}).get("ratio")
+            by = ratio.get("__by__") if isinstance(ratio, dict) else None
+            applied.append(f"derive {key} from {(spec or {}).get('from')}" + (f" by {by}" if by else ""))
+        for t, groups in (p.get("joint") or {}).items():
+            for grp in groups if isinstance(groups, list) else []:
+                applied.append(f"joint {t}({', '.join(grp.get('cols', []))}) {len(grp.get('values', []))} combos")
+        if applied:
+            print("declarative rules in effect:")
+            for line in applied[:12]:
+                print(f"  {line}")
+            if len(applied) > 12:
+                print(f"  ... and {len(applied) - 12} more")
+        for key in ("pre_sql", "extra_sql"):
+            block = self._sql_block(key)
+            if block.strip():
+                print(
+                    f"{key}: {block.count(';')} statement(s) will run "
+                    f"({'before' if key == 'pre_sql' else 'after'} the summary layer)"
+                )
 
     def _print_semantics(self):
         """Print the inferred semantic of every column, so the caller can correct what is wrong.
@@ -1942,20 +2030,19 @@ class DDLEngine:
                 rows.append([row[c] for c in names])
         o.write(t, names, rows)
 
-    def _gen_metric(self, t, o):
-        """Daily metric table (traffic/spend/headline table with no FK): fills a day x dimension-combination
-        grid so the grain is unique with no gaps or duplicates. Magnitudes follow calendar intensity
-        (trend/weekend/promotion/anomaly) and derived columns come from base quantities (invariants 1 and 2)."""
-        rng, cols = self.rng, self.schema[t]
-        names = [c["name"] for c in cols]
-        pk = self.pk_of(t)  # declared PK wins; never assume it is the first column
-        date_c = next((c["name"] for c in cols if c["sem"] in ("date", "date_pk")), None)
+    def _metric_combos(self, t):
+        """Plan the dimension combinations of a daily metric table: (combos, weights).
+
+        Shared by ``_gen_metric`` and ``report()`` so the projection cannot drift from what is
+        actually built. The row budget is only a cap: when the business has fewer legal
+        combinations than the budget allows - three channels against room for eleven - the grid is
+        that much smaller, and reporting the budget would over-state both the combinations and the
+        resulting row count.
+        """
+        cols = self.schema[t]
         enum_cols = [c["name"] for c in cols if c["sem"] == "enum"]
-        cnt_cols = [c["name"] for c in cols if c["sem"] == "count"]
-        amt_cols = [c["name"] for c in cols if c["sem"] == "amount"]
-        ratio_cols = [c["name"] for c in cols if c["sem"] == "ratio"]
-        ts_cols = [c["name"] for c in cols if c["sem"] == "ts"]
-        # Combination source: the profile joint distribution (combinations the business really has) wins; otherwise fall back to the enum cartesian product
+        # The profile's joint distribution wins (combinations the business really has); without one,
+        # fall back to the cartesian product of the enum domains.
         combos, weights = [], []
         groups = (self.profile.get("joint", {}) or {}).get(t, [])
         if groups:
@@ -1964,15 +2051,27 @@ class DDLEngine:
                 combos.append(dict(zip(g["cols"], v[: len(g["cols"])])))
                 weights.append(float(v[len(g["cols"])]) if len(v) > len(g["cols"]) else 1.0)
         else:
-            import itertools
-
             vals = [self._enum_values(t, c)[0] for c in enum_cols] or [[""]]
             for combo in itertools.product(*vals):
                 combos.append(dict(zip(enum_cols, combo)))
                 weights.append(1.0)
         cap = max(1, round(self.nrows[t] / max(1, len(self.days))))
         order = sorted(range(len(combos)), key=lambda i: -weights[i])[:cap]
-        combos, weights = [combos[i] for i in order], [weights[i] for i in order]
+        return [combos[i] for i in order], [weights[i] for i in order]
+
+    def _gen_metric(self, t, o):
+        """Daily metric table (traffic/spend/headline table with no FK): fills a day x dimension-combination
+        grid so the grain is unique with no gaps or duplicates. Magnitudes follow calendar intensity
+        (trend/weekend/promotion/anomaly) and derived columns come from base quantities (invariants 1 and 2)."""
+        rng, cols = self.rng, self.schema[t]
+        names = [c["name"] for c in cols]
+        pk = self.pk_of(t)  # declared PK wins; never assume it is the first column
+        date_c = next((c["name"] for c in cols if c["sem"] in ("date", "date_pk")), None)
+        cnt_cols = [c["name"] for c in cols if c["sem"] == "count"]
+        amt_cols = [c["name"] for c in cols if c["sem"] == "amount"]
+        ratio_cols = [c["name"] for c in cols if c["sem"] == "ratio"]
+        ts_cols = [c["name"] for c in cols if c["sem"] == "ts"]
+        combos, weights = self._metric_combos(t)
         wm = sum(weights) / len(weights)
         dwm = sum(self.day_w) / len(self.day_w)
         lo, hi = self._col_profile(t, cnt_cols[0] if cnt_cols else "").get("range", (400, 9000))

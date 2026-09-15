@@ -125,3 +125,22 @@ def test_every_profile_key_the_engine_reads_is_documented():
         f"profile keys the engine reads but neither document mentions: {undocumented}. "
         f"Add them to references/profile-spec.md, or stop reading them."
     )
+
+
+@pytest.mark.acceptance
+def test_readme_template_is_lean():
+    """The README duplicated what the database already carries as comments.
+
+    The engine writes COMMENT ON and import_database_file copies it across, so a per-column table
+    in the README goes stale the moment the profile changes. A production run produced a README
+    with boilerplate Connect and Regenerate sections on top of that.
+    """
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    start = text.index("### data/README.md template")
+    template = text[start : text.index("> **This is not ETL test data.**")]
+
+    assert "150" in template, "the template has to state its line ceiling"
+    assert template.count("\n") < 70, "the template itself must stay small"
+    for boilerplate in ("## Connect", "## Regenerate"):
+        assert boilerplate not in template, f"{boilerplate} is inferable and must not be templated"
+    assert "describe_table" in template, "point the reader at the comments instead of repeating them"
