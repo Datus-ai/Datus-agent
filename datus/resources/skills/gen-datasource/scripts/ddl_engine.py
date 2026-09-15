@@ -182,6 +182,7 @@ class DDLEngine:
         for _ in range(months - 1):
             start = (start - timedelta(days=1)).replace(day=1)
         self.start = start
+        self.months = months
         self.days = date_range(start, self.end)
         self.cal = self._calendar()
         self.day_w = day_weights(
@@ -855,7 +856,7 @@ class DDLEngine:
 
         p = self.profile
         print(
-            f"knobs: months={len(self.days)}d ({self.start}~{self.end})  seed={self.seed}  "
+            f"knobs: months={self.months} ({len(self.days)} days, {self.start}~{self.end})  seed={self.seed}  "
             f"extra_tables={self.extra_tables!r}  "
             f"(override via DDLEngine(months=, end_date=, seed=, extra_tables=))"
         )
@@ -889,10 +890,15 @@ class DDLEngine:
         for t, role in sorted(self.roles.items()):
             if role != ROLE_METRIC:
                 continue
-            combos = max(1, round(self.nrows[t] / max(1, len(self.days))))
+            planned, _ = self._metric_combos(t)
+            budget = max(1, round(self.nrows[t] / max(1, len(self.days))))
+            limited = (
+                " (all the schema allows; the row budget had room for %d)" % budget if len(planned) < budget else ""
+            )
             print(
-                f"{t}: {len(self.days)} days x {combos} dimension combos = {len(self.days) * combos:,} rows "
-                f"(raise profile['table_rows']['{t}'] for more combos)"
+                f"{t}: {len(self.days)} days x {len(planned)} dimension combos = "
+                f"{len(self.days) * len(planned):,} rows{limited}"
+                + ("" if limited else f" (raise profile['table_rows']['{t}'] for more combos)")
             )
 
         # Which declarative blocks actually resolved: answers _cond_pick / _joint_plan / derive.
@@ -2024,20 +2030,19 @@ class DDLEngine:
                 rows.append([row[c] for c in names])
         o.write(t, names, rows)
 
-    def _gen_metric(self, t, o):
-        """Daily metric table (traffic/spend/headline table with no FK): fills a day x dimension-combination
-        grid so the grain is unique with no gaps or duplicates. Magnitudes follow calendar intensity
-        (trend/weekend/promotion/anomaly) and derived columns come from base quantities (invariants 1 and 2)."""
-        rng, cols = self.rng, self.schema[t]
-        names = [c["name"] for c in cols]
-        pk = self.pk_of(t)  # declared PK wins; never assume it is the first column
-        date_c = next((c["name"] for c in cols if c["sem"] in ("date", "date_pk")), None)
+    def _metric_combos(self, t):
+        """Plan the dimension combinations of a daily metric table: (combos, weights).
+
+        Shared by ``_gen_metric`` and ``report()`` so the projection cannot drift from what is
+        actually built. The row budget is only a cap: when the business has fewer legal
+        combinations than the budget allows - three channels against room for eleven - the grid is
+        that much smaller, and reporting the budget would over-state both the combinations and the
+        resulting row count.
+        """
+        cols = self.schema[t]
         enum_cols = [c["name"] for c in cols if c["sem"] == "enum"]
-        cnt_cols = [c["name"] for c in cols if c["sem"] == "count"]
-        amt_cols = [c["name"] for c in cols if c["sem"] == "amount"]
-        ratio_cols = [c["name"] for c in cols if c["sem"] == "ratio"]
-        ts_cols = [c["name"] for c in cols if c["sem"] == "ts"]
-        # Combination source: the profile joint distribution (combinations the business really has) wins; otherwise fall back to the enum cartesian product
+        # The profile's joint distribution wins (combinations the business really has); without one,
+        # fall back to the cartesian product of the enum domains.
         combos, weights = [], []
         groups = (self.profile.get("joint", {}) or {}).get(t, [])
         if groups:
@@ -2046,15 +2051,27 @@ class DDLEngine:
                 combos.append(dict(zip(g["cols"], v[: len(g["cols"])])))
                 weights.append(float(v[len(g["cols"])]) if len(v) > len(g["cols"]) else 1.0)
         else:
-            import itertools
-
             vals = [self._enum_values(t, c)[0] for c in enum_cols] or [[""]]
             for combo in itertools.product(*vals):
                 combos.append(dict(zip(enum_cols, combo)))
                 weights.append(1.0)
         cap = max(1, round(self.nrows[t] / max(1, len(self.days))))
         order = sorted(range(len(combos)), key=lambda i: -weights[i])[:cap]
-        combos, weights = [combos[i] for i in order], [weights[i] for i in order]
+        return [combos[i] for i in order], [weights[i] for i in order]
+
+    def _gen_metric(self, t, o):
+        """Daily metric table (traffic/spend/headline table with no FK): fills a day x dimension-combination
+        grid so the grain is unique with no gaps or duplicates. Magnitudes follow calendar intensity
+        (trend/weekend/promotion/anomaly) and derived columns come from base quantities (invariants 1 and 2)."""
+        rng, cols = self.rng, self.schema[t]
+        names = [c["name"] for c in cols]
+        pk = self.pk_of(t)  # declared PK wins; never assume it is the first column
+        date_c = next((c["name"] for c in cols if c["sem"] in ("date", "date_pk")), None)
+        cnt_cols = [c["name"] for c in cols if c["sem"] == "count"]
+        amt_cols = [c["name"] for c in cols if c["sem"] == "amount"]
+        ratio_cols = [c["name"] for c in cols if c["sem"] == "ratio"]
+        ts_cols = [c["name"] for c in cols if c["sem"] == "ts"]
+        combos, weights = self._metric_combos(t)
         wm = sum(weights) / len(weights)
         dwm = sum(self.day_w) / len(self.day_w)
         lo, hi = self._col_profile(t, cnt_cols[0] if cnt_cols else "").get("range", (400, 9000))

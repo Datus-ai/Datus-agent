@@ -386,3 +386,55 @@ def test_report_flags_a_conditional_without_a_default(engine_module, capsys):
     engine_module.DDLEngine(ddl, rows=5_000, profile=profile).report()
 
     assert "NO default" in capsys.readouterr().out
+
+
+METRIC_DDL = """
+CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, amt DECIMAL(18, 2));
+CREATE TABLE daily_channel_metrics (
+    metric_id BIGINT PRIMARY KEY,
+    metric_date DATE,
+    channel VARCHAR, -- paid_search / social / organic
+    impressions BIGINT,
+    clicks BIGINT
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_report_metric_grid_matches_what_is_generated(engine_module, tmp_path):
+    """The row budget is a cap, not the count.
+
+    With three channels and room in the budget for eight combinations, the grid is three wide.
+    Reporting the budget would over-state both the combinations and the row count, which is the
+    opposite of what report() is for.
+    """
+    eng = engine_module.DDLEngine(METRIC_DDL, rows=60_000, profile={"roles": {"daily_channel_metrics": "metric_daily"}})
+    planned, _ = eng._metric_combos("daily_channel_metrics")
+    assert len(planned) == 3, "three channels, whatever the budget allows"
+
+    result = eng.generate(str(tmp_path / "m.duckdb"), verbose=False)
+
+    assert result["tables"]["daily_channel_metrics"] == len(eng.days) * len(planned)
+
+
+@pytest.mark.acceptance
+def test_report_says_when_the_schema_limits_the_grid(engine_module, capsys):
+    engine_module.DDLEngine(
+        METRIC_DDL, rows=60_000, profile={"roles": {"daily_channel_metrics": "metric_daily"}}
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "3 dimension combos" in out
+    assert "all the schema allows" in out, "say why the grid is smaller than the budget"
+
+
+@pytest.mark.acceptance
+def test_report_knob_line_separates_months_from_days(engine_module, capsys):
+    """`months` is a constructor argument; the day count is what it works out to."""
+    engine_module.DDLEngine(HOSPITAL_DDL, rows=2000, months=11).report()
+
+    out = capsys.readouterr().out
+
+    assert "months=11 (" in out
+    assert "days," in out
