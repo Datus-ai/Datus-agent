@@ -307,6 +307,12 @@ Measured: email CTR 9.92% / paid_search 5.0% / social 1.25%, each inside its con
   and the chain forms automatically
 - Without `derive`, every count column is randomised independently and the funnel does not converge
   at all (measured: CTR reaching 43% under defaults)
+- **Do not back-solve the top of the funnel.** A chain is relative: it says clicks are 1-3% of
+  impressions, not what impressions should be so that `attributed_revenue` matches the order
+  table's GMV. That is a cross-table constraint the chain cannot express, and arithmetic in your
+  head is the expensive way to approximate it. Set the head column with a plain `columns` range,
+  generate, and read the achieved ratio out of an assertion - one 9-second run answers it exactly.
+  Adjust the range once if it is off; a `pre_sql` restatement is the last resort if it is not
 
 ### refund_rate, effective_col, no_date_dim, date_dim_name
 

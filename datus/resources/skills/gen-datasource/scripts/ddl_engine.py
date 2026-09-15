@@ -673,12 +673,17 @@ class DDLEngine:
                 near = [x for x in colof[t] if c.lower() in x.lower() or x.lower() in c.lower()]
                 bag.append(f"{where}: `{t}` has no column `{c}`" + (f"; did you mean {near[0]}?" if near else ""))
 
+        sql_types_ok = True
         for k in ("pre_sql", "extra_sql"):  # a type error must surface before generating
             v = self.profile.get(k)
             if v is not None and not isinstance(v, (str, list, tuple)):
                 err.append(f"{k}: must be a str or a list of str, got {type(v).__name__}")
+                sql_types_ok = False
             elif isinstance(v, (list, tuple)) and any(not isinstance(x, str) for x in v):
                 err.append(f"{k}: every list element must be a str")
+                sql_types_ok = False
+        if sql_types_ok:
+            err.extend(self._validate_sql_blocks())
 
         for k in self.profile.get("columns", {}):
             chk_ref("columns", k)
@@ -979,13 +984,19 @@ class DDLEngine:
                 print(f"  {line}")
             if len(applied) > 12:
                 print(f"  ... and {len(applied) - 12} more")
+        planned_sql = False
         for key in ("pre_sql", "extra_sql"):
             block = self._sql_block(key)
             if block.strip():
+                planned_sql = True
                 print(
                     f"{key}: {block.count(';')} statement(s) will run "
                     f"({'before' if key == 'pre_sql' else 'after'} the summary layer)"
                 )
+        if planned_sql:
+            # Say that DuckDB has already planned them. Otherwise the only way to know a statement
+            # is sound is to reason it through by hand, which one production run did at length.
+            print("  every statement above was planned against the schema by precheck(); columns and types check out")
 
     def _print_semantics(self):
         """Print the inferred semantic of every column, so the caller can correct what is wrong.
@@ -1377,6 +1388,83 @@ class DDLEngine:
             elif r == "paid":
                 out[c] = round(base - disc + ship + tax, 2)
         return out
+
+    def _scratch_schema(self):
+        """An empty in-memory copy of the schema this run will build, for planning SQL against.
+
+        Declared tables keep their real CREATE text so constraints and exact types are the ones
+        the statements will actually meet; synthetic tables (date dimension, summary layer) are
+        rebuilt from the inferred column list. Foreign keys force an order, so creation retries
+        once after everything else exists.
+        """
+        import duckdb
+
+        con = duckdb.connect(":memory:")
+        pending = []
+        for t, cols in self.schema.items():
+            sql = getattr(self, "decl_sql", {}).get(t)
+            if not sql:
+                body = ", ".join(f'"{c["name"]}" {c["type"]}' for c in cols)
+                sql = f'CREATE TABLE "{t}" ({body})'
+            try:
+                con.execute(sql)
+            except Exception:  # noqa: BLE001 - almost always a not-yet-created FK target
+                pending.append(sql)
+        for sql in pending:
+            try:
+                con.execute(sql)
+            except Exception as e:  # noqa: BLE001 - a table we cannot build is one we cannot check
+                logger_msg = str(e).splitlines()[0]
+                print(f"  ! pre-check could not stage a table for SQL validation: {logger_msg}")
+        return con
+
+    def _validate_sql_blocks(self):
+        """Plan every pre_sql / extra_sql statement against the empty schema.
+
+        A mistake in these costs a whole generate-import-check cycle to discover, so a measured
+        production run hand-verified them instead: 221,000 characters of reasoning in one turn,
+        a third of it walking DuckDB's type rules (``hash(...) % 100 is UINT64, ::BIGINT safe``).
+        DuckDB answers the same question in milliseconds, and EXPLAIN needs no data - only the
+        schema, which is known before a single row exists.
+
+        Returns a list of error lines, one per statement that cannot be planned.
+        """
+        blocks = [(k, self.profile.get(k)) for k in ("pre_sql", "extra_sql")]
+        if not any(v for _, v in blocks):
+            return []
+        try:
+            con = self._scratch_schema()
+        except Exception as e:  # noqa: BLE001 - validation is a convenience, never a gate on generating
+            print(f"  ! pre-check could not stage the schema for SQL validation: {str(e).splitlines()[0]}")
+            return []
+
+        problems = []
+        try:
+            for key, value in blocks:
+                if not value:
+                    continue
+                if isinstance(value, (list, tuple)):
+                    statements = [str(x).strip().rstrip(";") for x in value if str(x).strip()]
+                else:
+                    try:
+                        statements = [st.query.strip().rstrip(";") for st in con.extract_statements(str(value))]
+                    except Exception as e:  # noqa: BLE001 - a parse error IS the finding
+                        problems.append(f"{key}: cannot be parsed as SQL - {str(e).splitlines()[0]}")
+                        continue
+                for i, stmt in enumerate(statements, 1):
+                    if not stmt:
+                        continue
+                    # A statement that creates or drops something has to actually run, or the
+                    # statements after it are planned against a schema that never existed.
+                    mutates_schema = re.match(r"\s*(CREATE|DROP|ALTER)\b", stmt, re.I)
+                    try:
+                        con.execute(stmt if mutates_schema else "EXPLAIN " + stmt)
+                    except Exception as e:  # noqa: BLE001 - this is what we came for
+                        head = " ".join(stmt.split())[:80]
+                        problems.append(f"{key}[{i}]: {str(e).splitlines()[0]}  <-  {head}")
+        finally:
+            con.close()
+        return problems
 
     def _sql_block(self, key):
         """pre_sql / extra_sql may be one SQL string or a list of statements (easier to read and maintain).

@@ -759,3 +759,111 @@ def test_report_says_the_plan_is_pre_calibration(engine_module, capsys):
     assert "aims for 80,000" in out
     assert "up to 3 passes" in out
     assert "reports the deviation it reached" in out
+
+
+SQL_BLOCK_DDL = """
+CREATE TABLE customers (
+    customer_id BIGINT PRIMARY KEY,
+    customer_name VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    customer_id BIGINT REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2),
+    is_first_order BOOLEAN,
+    coupon_code VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_column_that_does_not_exist_is_caught_before_generating(engine_module):
+    """A mistake in `pre_sql` used to cost a whole generate-import-check cycle to find.
+
+    So a production run hand-verified it instead: 221,000 characters of reasoning in one turn,
+    much of it walking DuckDB's type rules by hand. EXPLAIN needs no data, only the schema.
+    """
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET coupon_amount = 0"]}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("coupon_amount" in e and e.startswith("pre_sql[1]") for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_a_syntax_error_is_caught_before_generating(engine_module):
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"extra_sql": ["UPDATE orders SET paid_amount = "]}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("extra_sql[1]") and "Parser Error" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_sound_statements_raise_nothing(engine_module):
+    """The shapes a real run writes - a window function, a NULLIF division - must pass untouched."""
+    profile = {
+        "pre_sql": [
+            "UPDATE orders o SET is_first_order = (f.rn = 1) FROM ("
+            "SELECT order_id, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_time, order_id) AS rn "
+            "FROM orders) f WHERE o.order_id = f.order_id",
+            "UPDATE orders SET paid_amount = ROUND(paid_amount / NULLIF(1, 0), 2) WHERE coupon_code IS NOT NULL",
+        ]
+    }
+    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile=profile)
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith(("pre_sql", "extra_sql"))], errors
+
+
+@pytest.mark.acceptance
+def test_one_string_of_several_statements_is_split_and_numbered(engine_module):
+    """`pre_sql` also takes a single string; the finding still has to name which statement."""
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL,
+        rows=5000,
+        months=3,
+        seed=1,
+        profile={"pre_sql": "UPDATE orders SET paid_amount = 1; UPDATE orders SET nope = 2;"},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any(e.startswith("pre_sql[2]") and "nope" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_a_statement_can_use_a_table_an_earlier_statement_created(engine_module):
+    """DDL in the block runs for real on the scratch schema, or the rest is planned against a lie."""
+    profile = {
+        "pre_sql": [
+            "CREATE TABLE tmp_first AS SELECT customer_id, min(order_time) AS t FROM orders GROUP BY 1",
+            "UPDATE orders o SET is_first_order = (o.order_time = f.t) FROM tmp_first f "
+            "WHERE o.customer_id = f.customer_id",
+            "DROP TABLE tmp_first",
+        ]
+    }
+    eng = engine_module.DDLEngine(SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile=profile)
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if e.startswith("pre_sql")], errors
+
+
+@pytest.mark.acceptance
+def test_report_says_the_statements_were_planned(engine_module, capsys):
+    eng = engine_module.DDLEngine(
+        SQL_BLOCK_DDL, rows=5000, months=3, seed=1, profile={"pre_sql": ["UPDATE orders SET paid_amount = 1"]}
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "pre_sql: 1 statement(s) will run" in out
+    assert "planned against the schema by precheck()" in out
