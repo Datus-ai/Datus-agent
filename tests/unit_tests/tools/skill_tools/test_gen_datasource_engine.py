@@ -754,4 +754,8 @@ def test_report_says_the_plan_is_pre_calibration(engine_module, capsys):
 
     assert f"{planned:,}" in out, "print the planned total, not only the per-table rows"
     assert "before calibration" in out
-    assert "80,000 +/-6%" in out, "and what it will be scaled to"
+    # A target, not a promise: calibration is capped at three passes and cannot move pinned or
+    # role-fixed tables, so a fully pinned schema lands outside the band and generate() says so.
+    assert "aims for 80,000" in out
+    assert "up to 3 passes" in out
+    assert "reports the deviation it reached" in out

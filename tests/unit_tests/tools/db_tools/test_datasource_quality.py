@@ -452,7 +452,10 @@ class TestGeneratorMetaDiscovery:
             encoding="utf-8",
         )
 
-    @pytest.mark.parametrize("where", ["data/.datasource.meta.json", "data/_build/.datasource.meta.json"])
+    @pytest.mark.parametrize(
+        "where",
+        ["data/.datasource.meta.json", "data/_build/.datasource.meta.json", ".datasource.meta.json"],
+    )
     def test_the_metadata_is_found_without_being_named(self, tool, where):
         db_tool, root = tool
         self._write_meta(root, where)
@@ -474,6 +477,15 @@ class TestGeneratorMetaDiscovery:
         pk = next(r for r in result.result["checks"] if r["check"] == "primary key non-null and unique")
         assert pk["status"] == "WARN", "an unverified key check must not read as a pass"
 
+    def test_an_explicit_path_that_does_not_resolve_is_the_caller_s_error(self, tool):
+        """Searching is for the default. A named path that goes nowhere is a mistake worth saying."""
+        db_tool, _root = tool
+
+        result = db_tool.check_datasource_quality(meta_path="../outside/the/workspace.meta.json")
+
+        assert result.success == 0
+        assert result.error
+
     def test_naming_the_path_and_leaving_it_out_agree(self, tool):
         """The whole point: both call shapes must produce the same verdicts."""
         db_tool, root = tool
@@ -485,3 +497,88 @@ class TestGeneratorMetaDiscovery:
         assert [(r["check"], r["status"]) for r in found.result["checks"]] == [
             (r["check"], r["status"]) for r in named.result["checks"]
         ]
+
+
+@pytest.mark.acceptance
+def test_a_flat_trend_says_which_knob_to_turn():
+    """A FAIL that only restates the measurement leaves the reader to guess the fix."""
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ods_flat (order_id BIGINT, stat_dt DATE, gmv_amt DECIMAL(18,2))")
+        # Same amount every day: max/min across months is 1.0x, far under the 1.8 floor.
+        connection.execute(
+            "INSERT INTO ods_flat SELECT i, DATE '2024-01-01' + INTERVAL (i % 600) DAY, 100.0 FROM range(1, 3000) t(i)"
+        )
+        results = QualityChecker(connection).run()
+    finally:
+        connection.close()
+
+    trend = next(r for r in results if r["check"] == "time trend")
+    assert trend["status"] == "FAIL"
+    assert "trend_mom" in trend["detail"] and "promos" in trend["detail"], trend["detail"]
+
+
+@pytest.mark.acceptance
+def test_a_wildly_volatile_trend_names_the_usual_cause():
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ods_spiky (order_id BIGINT, stat_dt DATE, gmv_amt DECIMAL(18,2))")
+        # One month carries almost everything, so max/min lands far above the 12x ceiling.
+        connection.execute(
+            "INSERT INTO ods_spiky SELECT i, DATE '2024-01-01' + INTERVAL (i % 600) DAY, "
+            "CASE WHEN (i % 600) BETWEEN 300 AND 330 THEN 90000.0 ELSE 1.0 END FROM range(1, 3000) t(i)"
+        )
+        results = QualityChecker(connection).run()
+    finally:
+        connection.close()
+
+    trend = next(r for r in results if r["check"] == "time trend")
+    assert trend["status"] == "FAIL"
+    assert "stock baseline" in trend["detail"], trend["detail"]
+
+
+@pytest.mark.acceptance
+def test_a_table_with_no_observable_metric_is_reported():
+    """The guard for "nothing to observe" must still produce a named check, not silence."""
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ods_textonly (order_id BIGINT, note VARCHAR)")
+        connection.execute("INSERT INTO ods_textonly SELECT i, 'x' FROM range(1, 50) t(i)")
+        results = QualityChecker(connection).run()
+    finally:
+        connection.close()
+
+    signal = next(r for r in results if r["check"] == "time signal")
+    assert signal["status"] == "FAIL"
+
+
+@pytest.mark.acceptance
+def test_orphaned_keys_fail_even_when_they_are_the_only_finding():
+    """`warn=not detail` alone downgraded a fully broken database to a warning.
+
+    With every path orphaned there is no resolving path to report, so `detail` is empty - the
+    same shape as "nothing to check". They are opposite verdicts and `ok` gates delivery.
+    """
+    connection = duckdb.connect(":memory:")
+    try:
+        connection.execute(
+            """
+            CREATE TABLE dim_thing (thing_id BIGINT, thing_name VARCHAR);
+            CREATE TABLE ods_use (use_id BIGINT, thing_id BIGINT, stat_dt DATE, gmv_amt DECIMAL(18,2));
+            """
+        )
+        connection.execute("INSERT INTO dim_thing SELECT i, 'T' || i FROM range(1, 10) t(i)")
+        # Every thing_id points at a row that does not exist.
+        connection.execute(
+            "INSERT INTO ods_use SELECT i, 9000 + i, DATE '2024-01-01' + INTERVAL (i % 600) DAY, 10.0 "
+            "FROM range(1, 500) t(i)"
+        )
+        # Declared through the config so the test pins the severity, not the inference.
+        results = QualityChecker(connection, {"fk": [["ods_use.thing_id", "dim_thing.thing_id"]]}).run()
+    finally:
+        connection.close()
+
+    fk = next(r for r in results if r["check"] == "foreign key integrity")
+    assert fk["status"] == "FAIL", fk
+    assert "orphans" in fk["detail"]
+    assert summarize(results)["ok"] is False

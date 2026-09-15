@@ -877,12 +877,15 @@ class DDLEngine:
         for t in sorted(self.schema, key=lambda x: -self.nrows.get(x, 0)):
             print(f"{t:<26}{self.roles[t]:<10}{self.nrows.get(t, 0):>10,}  {','.join(self.fks.get(t, [])) or '-'}")
         # These are pre-calibration figures and they do not add up to the target - generate() scales
-        # them and re-runs until the total lands within tolerance. Saying so costs one line; not
-        # saying it cost a production run a long stretch of reasoning spent reconciling the sum.
+        # them and re-runs toward it. Saying so costs one line; not saying it cost a production run
+        # a long stretch of reasoning spent reconciling the sum. It is a target and not a promise:
+        # calibration gets at most three attempts and can only move tables that are neither pinned
+        # by ``table_rows`` nor fixed by their role, so a fully pinned schema lands where it lands
+        # and generate() says so.
         planned = sum(self.nrows.get(t, 0) for t in self.schema)
         print(
-            f"{'':<26}{'':<10}{planned:>10,}  planned total before calibration; generate() scales to "
-            f"{self.rows:,} +/-6%"
+            f"{'':<26}{'':<10}{planned:>10,}  planned total before calibration; generate() aims for "
+            f"{self.rows:,} (+/-6%, up to 3 passes) and reports the deviation it reached"
         )
         if getattr(self, "ddl_enums", None):
             part = getattr(self, "_partial_enums", set())

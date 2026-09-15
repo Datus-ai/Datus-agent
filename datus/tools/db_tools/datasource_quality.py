@@ -282,7 +282,10 @@ class QualityChecker:
                 else "no foreign key relationship found - nothing was verified. Declare REFERENCES "
                 "in the DDL, or pass the generator metadata so the declared keys are known"
             ),
-            warn=not detail,
+            # WARN only for "there was nothing to check". Orphans are a FAIL even when they are
+            # the ONLY finding - with every path broken, `detail` is empty and `warn=not detail`
+            # alone downgraded a broken database to a warning that `ok` still passes.
+            warn=not detail and not bad,
         )
 
         # A primary key that is entirely NULL while foreign keys report a 100% hit rate is the

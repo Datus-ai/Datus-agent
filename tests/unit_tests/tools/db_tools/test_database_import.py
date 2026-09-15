@@ -420,3 +420,45 @@ class TestImportingTheDatasourceItself:
             assert outcome["imported"] == {"t": 2}
         finally:
             con.close()
+
+
+class TestTheSelfImportGuardDegrades:
+    """The guard produces a better error message; it must never become a new failure mode."""
+
+    def _con(self, behaviour):
+        class _Stub:
+            def execute(self, sql):
+                return behaviour(sql)
+
+        return _Stub()
+
+    def test_a_connection_that_cannot_answer_is_left_alone(self, tmp_path):
+        from datus.tools.db_tools.database_import import _refuse_importing_the_target_itself
+
+        def boom(_sql):
+            raise RuntimeError("duckdb_databases() unavailable")
+
+        # No exception: the caller goes on to ATTACH and fails there as it did before.
+        _refuse_importing_the_target_itself(self._con(boom), tmp_path / "build.duckdb")
+
+    def test_a_database_with_no_file_path_is_left_alone(self, tmp_path):
+        from datus.tools.db_tools.database_import import _refuse_importing_the_target_itself
+
+        class _Result:
+            @staticmethod
+            def fetchall():
+                return [(None,)]
+
+        _refuse_importing_the_target_itself(self._con(lambda _sql: _Result()), tmp_path / "build.duckdb")
+
+    def test_an_in_memory_database_is_left_alone(self, tmp_path):
+        """``:memory:`` is not a path; resolving it must not raise out of the guard."""
+        import duckdb
+
+        from datus.tools.db_tools.database_import import _refuse_importing_the_target_itself
+
+        con = duckdb.connect(":memory:")
+        try:
+            _refuse_importing_the_target_itself(con, tmp_path / "build.duckdb")
+        finally:
+            con.close()

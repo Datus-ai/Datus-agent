@@ -195,9 +195,15 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    ```
    import_database_file(path="data/_build/datasource.duckdb", mode="replace")
    ```
-3. Verify with `check_datasource_quality(config_path="data/checks.json")` - it finds
-   `data/.datasource.meta.json` on its own, so do not pass `meta_path`
-4. Delete the build directory: `rm -rf data/_build`
+3. Verify with `check_datasource_quality(config_path="data/checks.json")` - it searches
+   `data/` and `data/_build/` for `.datasource.meta.json` itself and reports which one it used,
+   so do not pass `meta_path`
+4. Keep the metadata, then delete the build directory - the engine writes
+   `.datasource.meta.json` **next to the database**, so it is inside `_build/`, and
+   `check_datasource_quality` needs it to verify the declared keys:
+   ```
+   cp data/_build/.datasource.meta.json data/.datasource.meta.json && rm -rf data/_build
+   ```
 
 **Do not generate a second copy at `data/datasource.duckdb`.** The datasource already holds the
 data after step 2, and in a Datus deployment that path is often the datasource's own file - this
