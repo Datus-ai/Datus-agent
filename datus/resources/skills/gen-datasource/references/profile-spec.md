@@ -48,6 +48,9 @@ data. The profile is what makes it look real.
 | `lifecycle` | Lifecycle timestamp chain | Multiple timestamps (created/paid/shipped/...) |
 | `derive` | Derive a quantity from a base quantity | Funnel metric tables |
 | `summary_dims` | Dimensions of the summary layer | `extra_tables="summary"` is on and the defaults do not fit |
+| `refund_rate` | Probability a detail line carries a refund | The default 5.5% is wrong for the industry |
+| `effective_col` | Which column makes an entity usable | Inference picked the wrong date, or there is none to find |
+| `no_date_dim` / `date_dim_name` | Suppress or rename the auto-built date dimension | Only with `extra_tables` including `date_dim` |
 | `pre_sql` / `extra_sql` | Business post-processing SQL | **Last resort**, when nothing above can express it |
 | `trend_mom` / `weekend_lift` | Trend and weekend coefficients | Defaults 0.031 / 1.33; B2B needs different values |
 | `table_comments` / `column_comments` | Comments | Recommended wherever a definition is not obvious |
@@ -221,6 +224,30 @@ Measured: email CTR 9.92% / paid_search 5.0% / social 1.25%, each inside its con
   and the chain forms automatically
 - Without `derive`, every count column is randomised independently and the funnel does not converge
   at all (measured: CTR reaching 43% under defaults)
+
+### refund_rate, effective_col, no_date_dim, date_dim_name
+
+Four scalars the engine reads and cannot infer. They are small, but an undocumented knob is worse
+than a missing one: a measured production run spent ten minutes disassembling the engine's bytecode
+to work out what `refund_rate` did.
+
+```python
+"refund_rate": 0.055,                            # default 0.055
+"effective_col": {"products": "launched_at"},    # per table; "__auto__" (the default) infers it
+"no_date_dim": False,                            # skip the auto-built date dimension entirely
+"date_dim_name": "dim_date",                     # name it something else
+```
+
+- **`refund_rate`** is the probability that one detail line carries a refund quantity, applied when
+  generating the detail table. **It is a single global value - there is no per-group form.** A
+  parent already in a refund status refunds at 0.82 regardless. To vary the rate by category or
+  region, restate it afterwards with `pre_sql`; `conditional` does not reach this field.
+- **`effective_col`** names the column that makes an entity usable - registered / hired / listed /
+  opened - so facts referencing it cannot predate it (invariant 3). The engine infers it from the
+  column name; set this when it picks the wrong date, or when the name is one it does not know.
+  `"__auto__"` restores inference for a single table.
+- **`no_date_dim`** and **`date_dim_name`** only matter when `extra_tables` includes `date_dim`:
+  the first suppresses the auto-built dimension, the second renames it from `dim_date`.
 
 ### joint - joint distributions (keeping combinations legal)
 
