@@ -2053,7 +2053,7 @@ class DDLEngine:
             + (self._auto_summary_sql() if self.extra_tables in ("summary", "all") else "")
             + self._sql_block("extra_sql")
         )
-        sizes = build_db(
+        sizes, degraded = build_db(
             out,
             tmp,
             list(o.counts),
@@ -2080,7 +2080,7 @@ class DDLEngine:
             return self.generate(out, verbose, tolerance, _attempt + 1, t_start)
         res = {
             "tables": sizes,
-            "degraded": list(getattr(build_db, "last_degraded", []) or []),
+            "degraded": list(degraded),
             "rows": total,
             "deviation": dev,
             "attempts": _attempt,

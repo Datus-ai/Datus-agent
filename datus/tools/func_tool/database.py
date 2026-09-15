@@ -54,7 +54,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
-from datus.utils.sql_utils import parse_dialect, parse_sql_statement_kind, parse_table_name_parts
+from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -2039,6 +2039,12 @@ class DBFuncTool:
             }
             if outcome["skipped"]:
                 result["skipped"] = outcome["skipped"]
+            if outcome.get("refused"):
+                result["refused"] = outcome["refused"]
+                result["note"] = (
+                    "Some tables were NOT imported because their names are not plain identifiers; "
+                    "see 'refused'. Rename them in the source database and import again."
+                )
             if outcome["degraded"]:
                 result["degraded"] = outcome["degraded"]
                 result["note"] = (
@@ -2105,23 +2111,24 @@ class DBFuncTool:
             # connector's raw connection, which is writable and sees neither the read-only gate
             # nor PermissionHooks. Quality assertions are questions about the data, so anything
             # that is not a read is refused here rather than given a writable connection.
+            connector = self._get_connector(datasource or "", "")
             offending = []
             for i, a in enumerate(config.get("assertions") or []):
                 sql = (a or {}).get("sql") if isinstance(a, dict) else None
                 if not sql:
                     continue
-                kind = parse_sql_statement_kind(sql, self._dialect_for_datasource(datasource))
-                if kind not in ("select", "explain", "metadata"):
+                # The same validator the read path uses. Classifying the statement kind alone is
+                # not enough: it looks at the FIRST statement only, so `SELECT 1; DROP TABLE t`
+                # reads as a select and the driver then runs both. validate_read_only_sql carries
+                # the multi-statement rule that is the actual backstop.
+                violation, _ = self._validate_read_sql(sql, connector)
+                if violation is not None:
                     name = (a or {}).get("name") or f"assertion #{i + 1}"
-                    offending.append(f"{name} ({kind})")
+                    offending.append(f"{name}: {violation.error}")
             if offending:
                 return FuncToolResult(
                     success=0,
-                    error=(
-                        "Quality assertions must be read-only queries; these are not: "
-                        + "; ".join(offending)
-                        + ". Rewrite them as SELECT."
-                    ),
+                    error=("Quality assertions must be single read-only queries. " + " | ".join(offending)),
                 )
 
             meta = None

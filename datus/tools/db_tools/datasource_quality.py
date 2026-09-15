@@ -621,7 +621,7 @@ class QualityChecker:
             if self.kind.get(t) == "summary":
                 cc = next((c for c in self.numeric_cols(t) if c.endswith("_cnt")), None)
                 if cc:
-                    rows.append((t, cc, self.one(f"SELECT avg({cc}) FROM {_q(t)} WHERE {cc}>0", 0) or 0))
+                    rows.append((t, cc, self.one(f"SELECT avg({_q(cc)}) FROM {_q(t)} WHERE {_q(cc)}>0", 0) or 0))
             elif self.kind.get(t) == "fact":
                 # Without a summary layer, measure the fact table's own per-day density.
                 expr = None

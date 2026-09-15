@@ -194,6 +194,22 @@ class TestQualityToolGate:
             assert con.execute("SELECT count(*) FROM keepme").fetchone()[0] == 1
 
     @pytest.mark.acceptance
+    def test_multi_statement_assertion_is_refused(self, tool, tmp_path):
+        """Classifying the statement kind is not enough on its own.
+
+        parse_sql_type looks at the FIRST statement, so `SELECT 1; DROP TABLE t` reads as a select
+        while the driver runs both - the gate has to carry the multi-statement rule too.
+        """
+        cfg = self._write(tmp_path, "sneak.json", [{"name": "sneaky", "sql": "SELECT 1; DROP TABLE keepme"}])
+
+        result = tool.check_datasource_quality(config_path=cfg)
+
+        assert result.success == 0
+        assert "Multi-statement" in (result.error or "")
+        with tool.connector.exclusive_connection() as con:
+            assert con.execute("SELECT count(*) FROM keepme").fetchone()[0] == 1
+
+    @pytest.mark.acceptance
     def test_select_assertion_runs(self, tool, tmp_path):
         cfg = self._write(
             tmp_path, "ok.json", [{"name": "rows exist", "expect": "nonzero", "sql": "SELECT count(*) FROM keepme"}]

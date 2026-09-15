@@ -230,6 +230,14 @@ ci = [
 [tool.coverage.run]
 source = ["datus"]
 omit = [
+    # Skill bundles are payload shipped to an agent, not library code: the engine is driven by a
+    # profile an LLM writes, so its branches are business permutations rather than call sites a
+    # unit test would reach. It is covered by end-to-end contract tests
+    # (tests/unit_tests/tools/skill_tools/test_gen_datasource_engine.py) that assert behaviour -
+    # semantics overrides, constraint survival, dialect refusal, enum extraction - which is the
+    # property that matters. Line coverage here would only measure how many industries a fixture
+    # happens to model.
+    "datus/resources/skills/*/scripts/*.py",
     "datus/prompts/prompt_templates/*",
     "datus/cli/screen/*",
     "datus/cli/sub_agent_wizard.py",

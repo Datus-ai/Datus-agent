@@ -9,9 +9,12 @@ tags:
 version: "1.0.0"
 user_invocable: true
 disable_model_invocation: false
+# Claude Code compatibility metadata. Datus does not wire this into BashTool - it mounts bash with
+# agent_config.bash_allowed_patterns - so on Datus the real gate is PermissionManager. Declared so
+# the skill behaves the same on a host that does enforce it, and kept in step with the commands this
+# file actually asks for. Both spellings: the matcher compares argv[0] literally, so a "python:"
+# rule alone would never match the "python3 ..." an agent types.
 allowed_commands:
-  # Both spellings: the matcher compares argv[0] literally, so a "python:" rule
-  # alone would never match the "python3 ..." an agent actually types.
   - "python:data/gen.py"
   - "python3:data/gen.py"
 ---
@@ -39,14 +42,10 @@ from ddl_engine import DDLEngine
 is ~1900 lines and reading it was, by measurement, the single largest time sink in earlier runs
 (28% of end-to-end wall clock in one production trace).
 
-The two deep-dive documents are optional and live next to the engine:
-`references/profile-spec.md` (every profile field) and `references/pitfalls.md` (the 17 invariants
-in full, plus the hand-written generator reference). **A built-in skill lives outside the project
-workspace, so `read_file` will refuse them** - read them with bash when you need them:
-
-```bash
-python3 -c "import datus,pathlib;print((pathlib.Path(datus.__file__).parent/'resources/skills/gen-datasource/references/profile-spec.md').read_text())"
-```
+**Everything you need is in this file** - it arrives complete when the skill is loaded, so there is
+nothing to open. `references/profile-spec.md` and `references/pitfalls.md` next to the engine are
+the long-form versions for a human reader; a built-in skill lives outside the project workspace, so
+`read_file` refuses them and you should not go looking.
 
 ---
 
@@ -395,6 +394,34 @@ on its wrong guess and produce plausible-looking wrong data that no quality chec
 **Order of work**: run `report()` -> override only what is wrong -> add the calendar and differentiation (`conditional`) -> declare identities with `formulas` -> generate -> run the quality check.
 
 Enum domains usually need no configuration: **values in DDL inline comments are extracted automatically** (`order_status VARCHAR, -- pending / paid / shipped`), and `report()` lists which columns were extracted and which look incomplete.
+
+### Believable metric ranges
+
+The engine does not own metric magnitudes: under defaults ROAS reaches 26, CTR reaches 43% and
+attributed orders come out 68x actual orders. **These can only be calibrated by hand.** Use this
+when configuring `derive` and `conditional` - following it removes most of the rework.
+
+| Metric | Believable range | Note |
+|---|---|---|
+| Display ad CTR | 0.5% - 3% | Search ads 3-6%, feeds 0.8-2% |
+| Click -> session | 80% - 95% | |
+| Session -> product view | 2.5 - 4.0 per session | Expands, does not converge |
+| Session -> add to cart | 8% - 15% | |
+| Add to cart -> checkout | 30% - 45% | |
+| Checkout -> payment | 45% - 65% | |
+| **Site-wide CVR** (orders/sessions) | **1% - 3%** | Direct 3-4%, social 1-1.5% |
+| **ROAS** | **2 - 8** | Affiliate/email 6-9, paid search 3-6, social 3-5; organic has no spend -> NULL |
+| **CAC** | 0.2 - 0.4 x average order value | Above 1x means the model is wrong |
+| Marketing cost ratio (spend/GMV) | 8% - 15% | |
+| Attributed / actual orders | 0.85 - 1.15 | |
+| E-commerce refund rate | 5% - 12% | Apparel 15-18%, 3C 4-5% |
+| Gross margin | 15% - 65% | Beauty 55-70%, 3C 10-20%, FMCG 15-25% |
+| Repurchase | 2 - 6 orders per customer | B2B 8-15 |
+| Top-10% customers' GMV share | 50% - 70% | Above 80% means Zipf is over-concentrated |
+| Order status mix | completed 75-85%, cancelled 8-13%, refunded 5-12% | |
+
+Calibrate outside-in: fix the outermost base quantity (impressions/visitors), configure the `derive`
+ratios level by level, then read CTR/CVR/ROAS back out. Do not wait until everything is configured.
 
 ### Measured
 

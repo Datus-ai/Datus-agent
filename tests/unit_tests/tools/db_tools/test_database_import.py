@@ -224,3 +224,97 @@ def test_refused_table_is_not_reported_as_degraded(target, tmp_path):
     assert out["imported"] == {}
     assert out["degraded"] == []
     assert out["refused"] and "weird-name" in out["refused"][0]
+
+
+class TestImportTool:
+    """The tool layer around ``import_duckdb_file``.
+
+    The function itself is covered above; this covers the wrapper an agent actually calls - path
+    resolution, the DuckDB-only gate, and the shape of what comes back.
+    """
+
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        return DBFuncTool(connector)
+
+    @pytest.fixture
+    def build_db(self, tmp_path):
+        """A generated database sitting where the skill puts it, relative to the workspace."""
+        build = tmp_path / "data" / "_build"
+        build.mkdir(parents=True)
+        con = duckdb.connect(str(build / "datasource.duckdb"))
+        con.execute(SOURCE_DDL)
+        con.execute("INSERT INTO products VALUES (1, 'SKU-1', 'Widget', 9.90)")
+        con.execute("INSERT INTO orders VALUES (10, 1, 9.90)")
+        con.execute("COMMENT ON TABLE orders IS 'Order header'")
+        con.close()
+        return "data/_build/datasource.duckdb"
+
+    @pytest.mark.acceptance
+    def test_import_reports_what_landed(self, tool, build_db):
+        result = tool.import_database_file(path=build_db)
+
+        assert result.success == 1
+        assert result.result["tables"] == {"products": 1, "orders": 1}
+        assert result.result["table_count"] == 2
+        assert result.result["total_rows"] == 2
+        assert "degraded" not in result.result
+        with tool.connector.exclusive_connection() as con:
+            assert con.execute("SELECT count(*) FROM orders").fetchone()[0] == 1
+
+    @pytest.mark.acceptance
+    def test_import_preserves_keys_through_the_tool(self, tool, build_db):
+        tool.import_database_file(path=build_db)
+
+        with tool.connector.exclusive_connection() as con:
+            found = {
+                (t, k)
+                for t, k in con.execute(
+                    "SELECT table_name, constraint_type FROM duckdb_constraints() "
+                    "WHERE database_name = current_database()"
+                ).fetchall()
+            }
+        assert ("products", "PRIMARY KEY") in found
+        assert ("orders", "FOREIGN KEY") in found
+
+    @pytest.mark.acceptance
+    def test_subset_and_mode_are_passed_through(self, tool, build_db):
+        result = tool.import_database_file(path=build_db, tables=["products"], mode="replace")
+
+        assert list(result.result["tables"]) == ["products"]
+
+    @pytest.mark.acceptance
+    def test_missing_file_is_reported(self, tool):
+        result = tool.import_database_file(path="data/_build/absent.duckdb")
+
+        assert result.success == 0
+        assert "not found" in (result.error or "").lower()
+
+    @pytest.mark.acceptance
+    def test_unknown_table_is_reported(self, tool, build_db):
+        result = tool.import_database_file(path=build_db, tables=["nope"])
+
+        assert result.success == 0
+        assert "nope" in (result.error or "")
+
+    @pytest.mark.acceptance
+    def test_refused_table_is_surfaced_to_the_caller(self, tool, tmp_path):
+        """A table left out has to reach the agent, or it silently ships an incomplete datasource."""
+        build = tmp_path / "data" / "_build"
+        build.mkdir(parents=True, exist_ok=True)
+        con = duckdb.connect(str(build / "odd.duckdb"))
+        con.execute('CREATE TABLE "weird-name" (id BIGINT)')
+        con.close()
+
+        result = tool.import_database_file(path="data/_build/odd.duckdb")
+
+        assert result.success == 1
+        assert result.result["refused"]
+        assert "weird-name" in result.result["refused"][0]
+        assert "NOT imported" in result.result["note"]

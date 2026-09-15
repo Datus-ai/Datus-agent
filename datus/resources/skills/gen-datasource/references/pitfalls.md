@@ -422,7 +422,7 @@ def generate():
 
 if __name__ == "__main__":
     t0 = time.perf_counter(); out = generate(); t1 = time.perf_counter()
-    sizes = build_db(DB, CSV_DIR, list(out.counts), DWS_SQL, COMMENTS)
+    sizes, degraded = build_db(DB, CSV_DIR, list(out.counts), DWS_SQL, COMMENTS)
     shutil.rmtree(CSV_DIR)
     print(f"{len(sizes)} tables / {sum(sizes.values()):,} rows | generate {t1-t0:.1f}s "
           f"build {time.perf_counter()-t1:.1f}s | {DB.stat().st_size/1e6:.1f} MB")
