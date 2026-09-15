@@ -273,9 +273,9 @@ cryptography==46.0.7 ; platform_machine != 'ppc64le' and platform_machine != 's3
     --hash=sha256:fdd1736fed309b4300346f88f74cd120c27c56852c3838cab416e7a166f67298 \
     --hash=sha256:ffca7aa1d00cf7d6469b988c581598f2259e46215e0140af408966a24cf086ce
     # via secretstorage
-datus-semantic-core==0.2.3 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
-    --hash=sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d \
-    --hash=sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42
+datus-semantic-core==0.2.4 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
+    --hash=sha256:6d9a117b32fbc776fb08e78f418e492725a95664823eef90cf826f395b0c6100 \
+    --hash=sha256:be6957eb6f1d8dda559055d3382a4fc390b6403195f7efb3c2684b1786a701ef
     # via datus-semantic-dosi
 datus-semantic-dosi==0.1.9 ; (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
     --hash=sha256:2bc1888d914385b41fb6ad5c57b8bf532a0fe612b2040ad969110cb92c4c8222 \
