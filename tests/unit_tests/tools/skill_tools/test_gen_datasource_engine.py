@@ -438,3 +438,88 @@ def test_report_knob_line_separates_months_from_days(engine_module, capsys):
 
     assert "months=11 (" in out
     assert "days," in out
+
+
+CODE_DDL = """
+CREATE TABLE products (
+    product_id BIGINT PRIMARY KEY,
+    brand VARCHAR,
+    product_name VARCHAR,
+    sku_code VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_no VARCHAR,
+    product_id BIGINT REFERENCES products(product_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_report_lists_only_the_columns_that_really_get_a_code(engine_module, tmp_path, capsys):
+    """`CODE_COL` is the generators' last branch, not their rule.
+
+    `sku_code` matches the pattern but inference classifies it as an enum, so the enum branch
+    fills it and no code is ever generated. Reporting it as a business code sent a production run
+    into the engine source to find out which line was lying.
+    """
+    eng = engine_module.DDLEngine(CODE_DDL, rows=3000, months=3, seed=1)
+    eng.report()
+    out = capsys.readouterr().out
+
+    codes = next(ln for ln in out.splitlines() if ln.startswith("generated business codes:"))
+    assert "orders.order_no" in codes
+    assert "sku_code" not in codes, "an enum column is filled by the enum branch, never by a code"
+
+    eng.generate(str(tmp_path / "c.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "c.duckdb"))
+    try:
+        assert con.execute("SELECT order_no FROM orders LIMIT 1").fetchone()[0].startswith("ORD")
+        assert not con.execute("SELECT sku_code FROM products LIMIT 1").fetchone()[0].startswith("SKU0")
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_code_column_is_not_also_reported_as_unrecognised(engine_module, capsys):
+    """Two adjacent report lines used to contradict each other about the same column."""
+    engine_module.DDLEngine(CODE_DDL, rows=3000, months=3, seed=1).report()
+
+    out = capsys.readouterr().out
+    unrecognised = [ln for ln in out.splitlines() if "unrecognised" in ln]
+
+    assert not any("order_no" in ln for ln in unrecognised), "it gets a code; the next line says so"
+
+
+@pytest.mark.acceptance
+def test_semantics_can_force_a_code_onto_an_enum_looking_column(engine_module, tmp_path):
+    """The documented escape hatch: declare it text and the code fallback takes over."""
+    eng = engine_module.DDLEngine(
+        CODE_DDL, rows=3000, months=3, seed=1, profile={"semantics": {"products.sku_code": "text"}}
+    )
+    assert eng._is_code_col("products", "sku_code")
+
+    eng.generate(str(tmp_path / "f.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "f.duckdb"))
+    try:
+        assert con.execute("SELECT sku_code FROM products LIMIT 1").fetchone()[0].startswith("SKU0")
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_primary_key_matching_the_code_pattern_is_not_a_code_column(engine_module):
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE tickets (ticket_no VARCHAR PRIMARY KEY, note VARCHAR, ref_no VARCHAR);",
+        rows=500,
+        months=3,
+    )
+
+    assert not eng._is_code_col("tickets", "ticket_no"), "the PK is filled by _pk_val"
+    assert eng._is_code_col("tickets", "ref_no")

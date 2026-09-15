@@ -250,3 +250,54 @@ class TestSkillFuncToolEdgeCases:
         assert result2.success == 1
         # Content should be the same
         assert result1.result == result2.result
+
+
+class TestSkillFuncToolLocationHeader:
+    """``load_skill`` must say where the skill it just returned lives.
+
+    SKILL.md bodies point at sibling files (``scripts/``, ``references/``) that only
+    resolve against the skill directory, and the body never names that directory. A
+    measured production run reconstructed it by guessing the interpreter version,
+    guessed ``python3.11`` against a ``python3.12`` install, and paid a rejected
+    ``read_file`` plus a ``bash`` round-trip to rediscover a path the loader held all
+    along.
+    """
+
+    @pytest.mark.acceptance
+    def test_load_skill_reports_where_the_skill_lives(self, skill_func_tool, temp_skills_dir):
+        result = skill_func_tool.load_skill("simple-skill")
+
+        assert result.success == 1
+        expected = temp_skills_dir / "simple-skill"
+        assert f"<skill_location>{expected}</skill_location>" in result.result
+
+    @pytest.mark.acceptance
+    def test_location_precedes_the_body_and_keeps_it_intact(self, skill_func_tool):
+        result = skill_func_tool.load_skill("simple-skill")
+
+        assert result.result.startswith("<skill_location>")
+        # The body must survive the prefix verbatim, frontmatter included.
+        assert "---\nname: simple-skill" in result.result
+        assert result.result.rstrip().endswith("2. Do that")
+
+    @pytest.mark.acceptance
+    def test_a_lookup_failure_degrades_to_the_plain_body(self, skill_func_tool, monkeypatch):
+        """The location is a convenience; it must never cost the caller the content.
+
+        Exercised on the helper rather than through ``load_skill``: the load path
+        resolves the skill through the same registry before any content exists, so a
+        registry broken there fails earlier and for a different reason.
+        """
+
+        def boom(_name):
+            raise RuntimeError("registry unavailable")
+
+        monkeypatch.setattr(skill_func_tool.manager.registry, "get_skill", boom)
+
+        assert skill_func_tool._with_location("simple-skill", "# body") == "# body"
+
+    @pytest.mark.acceptance
+    def test_a_skill_without_a_location_degrades_to_the_plain_body(self, skill_func_tool, monkeypatch):
+        monkeypatch.setattr(skill_func_tool.manager.registry, "get_skill", lambda _name: object())
+
+        assert skill_func_tool._with_location("simple-skill", "# body") == "# body"

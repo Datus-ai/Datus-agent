@@ -24,6 +24,70 @@ data. The profile is what makes it look real.
 
 **Run `eng.report()` first and override only what is wrong.**
 
+### 1.1 Row allocation: the engine does it, you do not
+
+`_plan_rows` runs during inference and `report()` prints the result per table. **Never compute the
+split by hand** - it is the single most expensive way to burn a run. The rule it applies:
+
+| Step | What the engine does |
+|---|---|
+| Budget | `rows * 0.94`; the remaining 6% is headroom for dimensions |
+| Fact layer | Split by role share: main fact `0.52` when there is no event/snapshot table, `0.32` when there is; detail `0.28`; event stream `0.34`; snapshot `0.20`. Shares are renormalised over the roles that actually exist, so a DDL with no detail table gives its share to the main fact |
+| Dimensions | `main_fact_rows / DIM_DENSITY[kind]`, then clamped to `[4, 8% of rows]` |
+| Daily metric table | `max(number of days, 7% of rows)`; the real count is `days x dimension combinations`, and `report()` prints the combinations it will build |
+| Date dimension | Exactly the number of days |
+| Pinned | `table_rows` / `dim_rows` win over all of the above |
+
+`DIM_DENSITY` is fact rows per entity, keyed by dimension kind. These are the exact constants;
+the kind is guessed from the table name and corrected with `dim_kinds`:
+
+| kind | density | Meaning |
+|---|---|---|
+| `enum` | 1500 | Carrier / channel / payment / plan / product line - the business has only a few |
+| `org` | 600 | Seller / store / warehouse / line / department / team. **Also the fallback when the name matches nothing** |
+| `staff` | 300 | Driver / doctor / support rep / agent / teacher |
+| `item` | 60 | SKU / course / item / procedure |
+| `customer` | 4 | B2C buyer / patient / student - this number *is* the repurchase rate |
+| `customer_b2b` | 10 | B2B account |
+
+The total lands within 6% of `rows` after two-pass calibration. If a table's count is wrong, pin
+it or fix its kind - do not go looking for the formula.
+
+### 1.2 Constructor arguments
+
+These are arguments to `DDLEngine(...)`, not profile fields. The profile cannot set them:
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `ddl` | - | The CREATE TABLE statements, DuckDB syntax |
+| `rows` | `80_000` | Total row budget across all tables; see 1.1 |
+| `profile` | `{}` | Everything in section 2 |
+| `months` | `17` | Length of the window, counted back in whole months from the month containing `end_date` |
+| `end_date` | **yesterday** | Last day of data, a `datetime.date`. The window is `[first day of the month, months-1 months back .. end_date]`. Pass it when the data must end on a fixed day - a demo that has to look the same next week, or a business description that names a cut-off |
+| `seed` | `42` | Fixed seed; same inputs produce the same database |
+| `extra_tables` | `"none"` | `"none"` builds exactly the DDL tables. `"date_dim"` adds a date dimension, `"summary"` a dws/ads layer, `"all"` both. Extra tables carry no user DDL constraints and give the agent competing definitions, hence off by default |
+
+`report()`'s first line prints the resolved window, so you can check `months` / `end_date` without
+computing dates: `knobs: months=17 (502 days, 2025-05-01~2026-09-14) seed=42`.
+
+### 1.3 Business codes
+
+A column whose name ends in `no`, `code`, `sn`, `serial`, `sku`, `number`, `barcode` or `ref` (on a
+word boundary) can be filled with a generated code rather than a random string: the first three
+letters of the column name upper-cased, then the row's date as `yymmdd` when the table has one, then
+a 1-based 6-digit counter - `ORD260718000001`, or `SKU000117` on a table with no date.
+
+**It is a fallback, not a rule.** The code fills a column only when nothing more specific claimed
+it: the primary key, a foreign key, a joint group, and every column carrying a `name` / `enum` /
+`date` / `ts` / `amount` / `count` / `ratio` / `flag` / `measure` semantic are all filled by their
+own branch first. So `sku_code` classified as an enum gets enum values, and only a column left as
+free text ends up with a code.
+
+`report()` lists exactly the columns that will get one (`generated business codes: ...`) - it uses
+the same predicate the generators do, so trust the line rather than the name pattern. There is no
+knob: to force a different shape, set the column's semantic to `name` in `semantics` and template it
+with `naming`; to force a code onto an enum-looking column, set it to `text` in `semantics`.
+
 ---
 
 ## 2. Field index
@@ -348,6 +412,30 @@ to work out what `refund_rate` did.
 "tier_cols": {"customers": "member_level"},            # see pitfall 1 below
 "tier_bands": [(.05, "platinum"), (.2, "gold"), (.5, "silver"), (1.0, "normal")],
 ```
+
+**Vocabulary resolution** is three layers, later wins: the engine's built-in words, then
+`profile["vocab"]` (one override for the whole dataset), then `naming[table]["vocab"]`. Override at
+the widest layer that is correct - a hospital dataset wants `profile["vocab"]`, not one entry per
+table.
+
+**Without `tpl`** the shape follows the table's dimension kind: `customer` / `staff` produce a
+person name (`person` + `given`, joined per `name_sep` / `name_order`), `item` produces
+`{brand} {item}`, and everything else `{brand} {org_suffix}`, with a `(#2)`, `(#3)` suffix once the
+brand list is exhausted so names stay unique.
+
+**With `tpl`** it is a `str.format` template, and the fields come from two places:
+
+| Source | What it contributes |
+|---|---|
+| The merged vocabulary | One random pick per list-valued key. Scalars (`name_sep`, `name_order`) are not offered as fields |
+| The row being built (`ent`) | Every string column already generated on that row, **overriding the vocabulary under the same key** |
+| The engine | `{i}` and `{n}`, both the 1-based row number |
+
+That override is the useful part: name columns are generated *last* within a dimension row, so
+`"tpl": "{brand} {item}"` on a table that also has a `brand` column produces a name carrying that
+row's actual brand, not an unrelated draw. If the table has no such column, the same template
+still works and draws `brand` from the vocabulary. A key missing from both raises `KeyError` - the
+template is not tolerant of typos.
 
 ---
 

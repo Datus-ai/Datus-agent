@@ -878,10 +878,7 @@ class DDLEngine:
 
         # Generated business codes: answers CODE_COL / _code_val.
         codes = [
-            f"{t}.{c['name']}"
-            for t in sorted(self.schema)
-            for c in self.schema[t]
-            if c["name"] != self.pk_of(t) and self.CODE_COL.search(c["name"])
+            f"{t}.{c['name']}" for t in sorted(self.schema) for c in self.schema[t] if self._is_code_col(t, c["name"])
         ]
         if codes:
             print(f"generated business codes: {', '.join(codes[:10])}{' ...' if len(codes) > 10 else ''}")
@@ -947,7 +944,14 @@ class DDLEngine:
             print(f"  {t:<24}{body}")
         if ovr:
             print(f"  (* = set by profile['semantics'], {len(ovr)} column(s))")
-        unknown = [f"{t}.{c['name']}" for t in self.schema for c in self.schema[t] if c["sem"] == "text"]
+        # A text column matching CODE_COL is not unrecognised - it gets a business code, and the
+        # line below already says so. Listing it here too contradicted that line in the same report.
+        unknown = [
+            f"{t}.{c['name']}"
+            for t in self.schema
+            for c in self.schema[t]
+            if c["sem"] == "text" and not self._is_code_col(t, c["name"])
+        ]
         if unknown:
             print(f"  unrecognised, will be filled as free text: {unknown[:12]}{' ...' if len(unknown) > 12 else ''}")
 
@@ -1214,6 +1218,30 @@ class DDLEngine:
         return f"{prefix}{d.strftime('%y%m%d')}{i + 1:07d}" if d is not None else f"{prefix}{i + 1:07d}"
 
     CODE_COL = re.compile(r"(^|_)(no|code|sn|serial|sku|number|barcode|ref)$")
+    # Semantics whose own branch fills the column before the code fallback is reached, in both
+    # ``_gen_dim``'s elif chain and ``_gen_fact``'s per-semantic buckets. A code only ever fills
+    # what nothing more specific claimed.
+    CODE_OWNED_SEM = ("name", "enum", "date", "ts", "amount", "count", "ratio", "flag", "measure")
+
+    def _is_code_col(self, t, col):
+        """Will this column actually be filled with a generated business code?
+
+        ``CODE_COL`` alone is not the answer: it is the *last* branch both generators try, so a
+        ``sku_code`` that inference classified as an enum gets enum values and never sees a code.
+        Shared by the generators and ``report()`` so the two cannot disagree - a report that
+        predicts a code where enum values land is worse than no report at all, because it is the
+        surface the agent is told to trust instead of reading this file.
+        """
+        if col == self.pk_of(t) or not self.CODE_COL.search(col):
+            return False
+        sem = next((c["sem"] for c in self.schema[t] if c["name"] == col), None)
+        if sem is None or sem in self.CODE_OWNED_SEM:
+            return False
+        if sem == "id":
+            # A foreign key is sampled from the parent pool; only a non-referencing id falls through.
+            return self.pk_owner.get(col, t) == t
+        # Joint groups are written into the row before the per-column chain runs.
+        return not any(col in g.get("cols", ()) for g in (self.profile.get("joint", {}) or {}).get(t, []))
 
     def _code_val(self, t, col, i, d=None):
         pre = re.sub(r"[^A-Za-z]", "", col).upper()[:3] or "CD"
@@ -1406,7 +1434,7 @@ class DDLEngine:
                     ent[name] = 1 if rng.random() < self._col_profile(t, name).get("p", 0.93) else 0
                 elif sem == "measure":
                     ent[name] = round(lognorm_between(rng, 0.1, 50), 3)
-                elif self.CODE_COL.search(name):
+                elif self._is_code_col(t, name):
                     ent[name] = self._code_val(t, name, i)
                 else:
                     ent[name] = f"{name}_{i + 1}"
@@ -1649,7 +1677,7 @@ class DDLEngine:
             for c in other_cols:
                 row.setdefault(c["name"], self._fill_generic(t, c, rng, {"dt": d, "ts": t0}))
             for c in names:
-                if c not in row and self.CODE_COL.search(c):
+                if c not in row and self._is_code_col(t, c):
                     row[c] = self._code_val(t, c, i, d)
                 row.setdefault(c, "")
             self._apply_formulas(t, row)
