@@ -531,9 +531,16 @@ def test_a_primary_key_matching_the_code_pattern_is_not_a_code_column(engine_mod
     assert eng._is_code_col("tickets", "ref_no")
 
 
-DAILY_METRIC_DDL = """
+#: The three column names ``date_pk`` matches (``^(date_key|stat_dt|dt)$``). All three are
+#: idiomatic for a daily metric table's date column, so all three have to be covered - testing
+#: only ``stat_dt`` would leave two thirds of the rule unexercised.
+DATE_GRAIN_NAMES = ("stat_dt", "dt", "date_key")
+
+
+def _daily_metric_ddl(date_col="stat_dt"):
+    return f"""
 CREATE TABLE daily_channel_metrics (
-    stat_dt DATE,
+    {date_col} DATE,
     channel VARCHAR,
     impressions BIGINT,
     clicks BIGINT,
@@ -548,29 +555,40 @@ CREATE TABLE orders (
 """
 
 
+DAILY_METRIC_DDL = _daily_metric_ddl()
+
+
 @pytest.mark.acceptance
-def test_a_daily_metric_table_is_not_mistaken_for_a_date_dimension(engine_module, tmp_path):
+@pytest.mark.parametrize("date_col", DATE_GRAIN_NAMES)
+def test_a_daily_metric_table_is_not_mistaken_for_a_date_dimension(engine_module, tmp_path, date_col):
     """`stat_dt` / `dt` / `date_key` are the idiomatic names for a daily metric table's date column.
 
     All three classify as `date_pk`, and the date-dimension branch matched on that alone - so the
     whole table went through the date-dimension generator, came out one row per day, and left every
     business column NULL. A headline metric table silently emptied is worse than a crash.
     """
-    eng = engine_module.DDLEngine(DAILY_METRIC_DDL, rows=20_000, months=6, seed=42)
+    eng = engine_module.DDLEngine(_daily_metric_ddl(date_col), rows=20_000, months=6, seed=42)
 
     assert eng.roles["daily_channel_metrics"] == "metric_daily"
     assert eng.nrows["daily_channel_metrics"] > len(eng.days), "date x dimension, not one row per day"
 
-    eng.generate(str(tmp_path / "m.duckdb"), verbose=False)
+    out = tmp_path / f"m_{date_col}.duckdb"
+    eng.generate(str(out), verbose=False)
     import duckdb
 
-    con = duckdb.connect(str(tmp_path / "m.duckdb"))
+    con = duckdb.connect(str(out))
     try:
         empty = con.execute(
             "SELECT count(*) FROM daily_channel_metrics "
             "WHERE channel IS NULL OR channel = '' OR gmv IS NULL OR impressions IS NULL"
         ).fetchone()[0]
         assert empty == 0, "every business column must carry a value"
+        # The date column itself must still be a real, in-window date on every row.
+        nulls, lo, hi = con.execute(
+            f"SELECT count(*) - count({date_col}), min({date_col}), max({date_col}) FROM daily_channel_metrics"  # noqa: S608
+        ).fetchone()
+        assert nulls == 0
+        assert eng.start <= lo and hi <= eng.end
     finally:
         con.close()
 
@@ -690,3 +708,32 @@ def test_a_joint_column_is_never_reported_as_a_code(engine_module):
 
     assert not eng._is_code_col("sites", "region_no"), "claimed by the joint group"
     assert not eng._is_code_col("sites", "city_ref"), "claimed by the joint group, id semantic or not"
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", DATE_GRAIN_NAMES)
+@pytest.mark.parametrize("extra_tables", ("date_dim", "all"))
+def test_a_metric_table_does_not_satisfy_a_request_for_a_date_dimension(engine_module, date_col, extra_tables):
+    """`_ensure_date_dim` runs before `_infer`, and had its own, older notion of a date dimension.
+
+    So a caller who explicitly asked for one got none: the metric table's `stat_dt` was read as a
+    calendar that already existed. Both sites now share the one test that separates them.
+    """
+    eng = engine_module.DDLEngine(_daily_metric_ddl(date_col), rows=9000, months=3, seed=1, extra_tables=extra_tables)
+
+    assert "dim_date" in eng.schema, "the caller asked for a date dimension and must get one"
+    assert "dim_date" in eng.synthetic
+    assert eng.roles["daily_channel_metrics"] == "metric_daily"
+
+
+@pytest.mark.acceptance
+def test_a_real_date_dimension_is_not_duplicated(engine_module):
+    """The other direction: a calendar already in the DDL must not get a second one beside it."""
+    ddl = (
+        "CREATE TABLE dim_date (date_key DATE, year_num INTEGER, quarter_cd VARCHAR, "
+        "week_of_year INTEGER, is_weekend INTEGER);" + _daily_metric_ddl()
+    )
+    eng = engine_module.DDLEngine(ddl, rows=9000, months=3, seed=1, extra_tables="date_dim")
+
+    assert eng.synthetic == set(), "the DDL already has a calendar"
+    assert eng.roles["dim_date"] == "date_dim"

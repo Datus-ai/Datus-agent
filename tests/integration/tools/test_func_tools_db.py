@@ -449,6 +449,7 @@ class TestAllToolsNameContract:
             "describe_table",
             "execute_sql",
             "load_file_as_table",
+            "plan_datasource",
             "import_database_file",
             "check_datasource_quality",
         }
@@ -493,6 +494,7 @@ class TestAllToolsNameContract:
             "describe_table",
             "execute_sql",
             "load_file_as_table",
+            "plan_datasource",
             "import_database_file",
             "check_datasource_quality",
             # mounted directly by gen_job

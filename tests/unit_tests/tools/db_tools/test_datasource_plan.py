@@ -130,3 +130,57 @@ def test_loading_the_engine_leaves_sys_path_alone(monkeypatch):
 
     assert sys.path == before
     assert datasource_plan._engine_module is not None, "the load must have actually happened"
+
+
+@pytest.mark.acceptance
+def test_concurrent_plans_do_not_interleave():
+    """``redirect_stdout`` swaps ``sys.stdout`` for the whole process.
+
+    The agent framework can dispatch tool calls concurrently, so two planning calls have to be
+    serialised around the capture or they read each other's output - and an out-of-order restore
+    leaves the host's stdout pointed at a dead buffer.
+    """
+    import threading
+
+    def ddl_for(name):
+        return (
+            f"CREATE TABLE {name}_customers (customer_id BIGINT PRIMARY KEY, customer_name VARCHAR);"
+            f"CREATE TABLE {name}_orders (order_id BIGINT PRIMARY KEY, "
+            f"customer_id BIGINT REFERENCES {name}_customers(customer_id), "
+            "order_time TIMESTAMP, paid_amount DECIMAL(18,2));"
+        )
+
+    names = [f"t{i}" for i in range(8)]
+    plans, errors = {}, []
+    start = threading.Barrier(len(names))
+
+    def run(name):
+        try:
+            start.wait(timeout=10)
+            plans[name] = plan_from_ddl(ddl_for(name), rows=5000, months=3)
+        except Exception as e:  # noqa: BLE001 - surfaced by the assertion below
+            errors.append(e)
+
+    threads = [threading.Thread(target=run, args=(name,)) for name in names]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert not errors, errors
+    assert set(plans) == set(names)
+    for name, plan in plans.items():
+        assert f"{name}_orders" in plan
+        # The decisive part: no other thread's tables leaked into this plan.
+        for other in names:
+            if other != name:
+                assert f"{other}_orders" not in plan, f"{other}'s plan bled into {name}'s"
+
+
+@pytest.mark.acceptance
+def test_capture_restores_stdout(capsys):
+    """A print after planning must reach the caller's stdout, not a discarded buffer."""
+    plan_from_ddl(DDL, rows=5000, months=3)
+    print("back on the real stdout")
+
+    assert "back on the real stdout" in capsys.readouterr().out

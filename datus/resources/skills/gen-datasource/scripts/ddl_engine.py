@@ -224,6 +224,10 @@ class DDLEngine:
                 any(n in ("date_key", "stat_dt", "dt") for n in names)
                 and len(cols) <= 12
                 and not any(n.endswith("_id") for n in names)
+                # A daily metric table has all of the above and is not a date dimension. Without
+                # this a caller who asked for one with extra_tables="date_dim" silently got none,
+                # because `stat_dt` on the metric table was mistaken for a calendar already there.
+                and not self._carries_non_calendar_data(cols)
             ):
                 return
         name = self.profile.get("date_dim_name", "dim_date")
@@ -492,7 +496,18 @@ class DDLEngine:
         """
         if "date_pk" not in sems or len(cols) > 12 or self.fks[t]:
             return False
-        return not any(
+        return not self._carries_non_calendar_data(cols)
+
+    @staticmethod
+    def _carries_non_calendar_data(cols):
+        """Does this table hold anything the date alone does not determine?
+
+        The one test that separates a date dimension from a daily metric table, and the only part
+        of that decision `_ensure_date_dim` can make - it runs before `_infer`, so foreign keys are
+        not known yet. Flags and names are not tested: `is_weekend` and `event_name` belong to a
+        real date dimension and carry no grain.
+        """
+        return any(
             c["sem"] in ("enum", "amount", "count", "ratio", "measure") and not CALENDAR_ATTR.search(c["name"])
             for c in cols
         )

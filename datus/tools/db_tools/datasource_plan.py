@@ -49,6 +49,12 @@ SKILL_NAME = "gen-datasource"
 _engine_lock = threading.Lock()
 _engine_module: Optional[ModuleType] = None
 
+#: ``report()`` writes to stdout, and ``redirect_stdout`` swaps ``sys.stdout`` for the whole
+#: process. Two planning calls running at once - the agent framework can dispatch tool calls
+#: concurrently - would otherwise interleave into each other's buffer, or restore stdout out of
+#: order and leave the host's own output pointed at a dead StringIO.
+_capture_lock = threading.Lock()
+
 
 class DatasourcePlanError(Exception):
     """Raised when the plan cannot be produced."""
@@ -134,17 +140,19 @@ def plan_from_ddl(
         raise DatasourcePlanError(f"months must be positive, got {months}.")
 
     engine_module = load_engine()
+    resolved_end = _parse_end_date(end_date)  # validate before taking the capture lock
     captured = io.StringIO()
     try:
         # report() writes to stdout: it is normally read back from a subprocess. Here the caller
-        # wants the text, and a stray print must not reach the host process's stdout.
-        with contextlib.redirect_stdout(captured):
+        # wants the text, and a stray print must not reach the host process's stdout. The lock
+        # covers construction as well - the engine prints warnings from __init__ too.
+        with _capture_lock, contextlib.redirect_stdout(captured):
             engine = engine_module.DDLEngine(
                 ddl,
                 rows=rows,
                 profile={},
                 months=months,
-                end_date=_parse_end_date(end_date),
+                end_date=resolved_end,
                 seed=seed,
             )
             engine.report()
