@@ -132,6 +132,17 @@ EFFECTIVE_DATE = re.compile(
     r"open|opened|start|issue|issued|found|founded|entry)(_|$)"
 )
 
+# Columns a date dimension is allowed to carry: every one of them is a function of the date itself.
+# A daily metric table has the same shape - a date grain, no foreign key, a handful of measures -
+# and is told apart only by carrying something the date does not determine (channel, impressions,
+# gmv). Without that test the three most idiomatic names for a metric table's date column
+# (``stat_dt`` / ``dt`` / ``date_key``, all classified ``date_pk``) routed the whole table through
+# the date-dimension generator and every business column came out NULL.
+CALENDAR_ATTR = re.compile(
+    r"(^|_)(year|yr|month|mon|quarter|qtr|week|wk|day|dow|doy|date|dt|"
+    r"weekend|workday|holiday|season|period|fiscal|half|decade|epoch)(_|$)"
+)
+
 # Standard dim_date columns (added when the DDL has no date dimension: anomaly attribution and period comparison anchor on it)
 DATE_DIM_COLS = [
     ("date_key", "DATE"),
@@ -383,8 +394,12 @@ class DDLEngine:
         def _traits(t):
             cols = self.schema[t]
             sems = [c["sem"] for c in cols]
+            # ``date_pk`` counts: it is the strongest possible business date - the table's own grain.
+            # Leaving it out sent a demoted daily metric table to ROLE_DIM instead of ROLE_METRIC.
             biz_date = any(
-                c["sem"] in ("date", "ts") and not attr_date.search(c["name"]) and not AUDIT_TS.match(c["name"])
+                c["sem"] in ("date", "ts", "date_pk")
+                and not attr_date.search(c["name"])
+                and not AUDIT_TS.match(c["name"])
                 for c in cols
             )
             return biz_date, sems.count("amount"), "seq" in sems and "ts" in sems
@@ -396,7 +411,7 @@ class DDLEngine:
             sems = [c["sem"] for c in cols]
             if t in ov:
                 self.roles[t] = ov[t]
-            elif "date_pk" in sems and len(cols) <= 12 and not self.fks[t]:
+            elif self._is_date_dim(t, cols, sems):
                 self.roles[t] = ROLE_DATE
             elif _traits(t)[2]:
                 self.roles[t] = ROLE_EVENT
@@ -461,6 +476,25 @@ class DDLEngine:
                 self.roles[t] = ROLE_DOWNSTREAM
         self.pk_owner = pk
         self._plan_rows()
+
+    def _is_date_dim(self, t, cols, sems):
+        """Is this a date dimension, or a daily metric table wearing the same shape?
+
+        Both have a ``date_pk``, no foreign key and a small column list, so the original test
+        matched either. The difference is what the table is keyed by: a date dimension is keyed by
+        the date alone and every attribute follows from it, while a daily metric table is keyed by
+        date x dimension and carries measures the calendar cannot produce. So any enum, amount,
+        count, ratio or measure column that is not a calendar attribute rules a date dimension out.
+
+        Flags (``is_weekend``) and names (``event_name``) are not tested: they carry no grain and a
+        real date dimension has them.
+        """
+        if "date_pk" not in sems or len(cols) > 12 or self.fks[t]:
+            return False
+        return not any(
+            c["sem"] in ("enum", "amount", "count", "ratio", "measure") and not CALENDAR_ATTR.search(c["name"])
+            for c in cols
+        )
 
     def _plan_rows(self):
         """Allocate rows per skill Phase 1.2/1.3: the fact layer takes the bulk, dimensions size by business density."""

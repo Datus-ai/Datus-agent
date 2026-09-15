@@ -523,3 +523,89 @@ def test_a_primary_key_matching_the_code_pattern_is_not_a_code_column(engine_mod
 
     assert not eng._is_code_col("tickets", "ticket_no"), "the PK is filled by _pk_val"
     assert eng._is_code_col("tickets", "ref_no")
+
+
+DAILY_METRIC_DDL = """
+CREATE TABLE daily_channel_metrics (
+    stat_dt DATE,
+    channel VARCHAR,
+    impressions BIGINT,
+    clicks BIGINT,
+    orders_cnt BIGINT,
+    gmv DECIMAL(18, 2)
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_daily_metric_table_is_not_mistaken_for_a_date_dimension(engine_module, tmp_path):
+    """`stat_dt` / `dt` / `date_key` are the idiomatic names for a daily metric table's date column.
+
+    All three classify as `date_pk`, and the date-dimension branch matched on that alone - so the
+    whole table went through the date-dimension generator, came out one row per day, and left every
+    business column NULL. A headline metric table silently emptied is worse than a crash.
+    """
+    eng = engine_module.DDLEngine(DAILY_METRIC_DDL, rows=20_000, months=6, seed=42)
+
+    assert eng.roles["daily_channel_metrics"] == "metric_daily"
+    assert eng.nrows["daily_channel_metrics"] > len(eng.days), "date x dimension, not one row per day"
+
+    eng.generate(str(tmp_path / "m.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "m.duckdb"))
+    try:
+        empty = con.execute(
+            "SELECT count(*) FROM daily_channel_metrics "
+            "WHERE channel IS NULL OR channel = '' OR gmv IS NULL OR impressions IS NULL"
+        ).fetchone()[0]
+        assert empty == 0, "every business column must carry a value"
+    finally:
+        con.close()
+
+
+@pytest.mark.acceptance
+def test_a_real_date_dimension_is_still_a_date_dimension(engine_module):
+    """The other direction: a genuine calendar table has four measures and two enums of its own.
+
+    Discriminating on the count of measures would demote it; discriminating on whether those
+    columns are calendar attributes keeps it.
+    """
+    cols = ", ".join(f"{name} {dtype}" for name, dtype in engine_module.DATE_DIM_COLS)
+    eng = engine_module.DDLEngine(
+        f"CREATE TABLE dim_date ({cols});"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+    )
+
+    assert eng.roles["dim_date"] == "date_dim"
+    assert eng.nrows["dim_date"] == len(eng.days), "exactly one row per day"
+
+
+@pytest.mark.acceptance
+def test_a_daily_summary_without_a_dimension_column_still_carries_measures(engine_module, tmp_path):
+    """The same swallow happened with no enum column at all - date plus measures was enough."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE ads_daily_summary (dt DATE, gmv DECIMAL(18,2), orders_cnt BIGINT, uv BIGINT);"
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));",
+        rows=8000,
+        months=3,
+        seed=1,
+    )
+
+    assert eng.roles["ads_daily_summary"] == "metric_daily"
+
+    eng.generate(str(tmp_path / "s.duckdb"), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    try:
+        assert con.execute("SELECT count(*) FROM ads_daily_summary WHERE gmv IS NULL").fetchone()[0] == 0
+    finally:
+        con.close()
