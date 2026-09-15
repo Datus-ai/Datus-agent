@@ -48,8 +48,9 @@ from ddl_engine import DDLEngine
 ### When this file does not answer your question
 
 This file is the contract, and it is complete for writing a profile - it arrives whole when the
-skill is loaded, so the normal path opens nothing. **Before opening anything, run `gen.py report`**:
-it prints the engine's plan, which is what most questions about the engine are really asking.
+skill is loaded, so the normal path opens nothing. **Before opening anything, call
+`plan_datasource(ddl=...)`**: it prints the engine's plan from the DDL alone, which is what most
+questions about the engine are really asking, and it needs no generator on disk.
 
 Two facts about the environment shape what to do when you still need more:
 
@@ -91,9 +92,10 @@ A complete run fits in roughly 40,000 output tokens:
 
 The three things that blow the budget, all measured on real runs:
 
-1. **Reading the engine to predict its behaviour.** `gen.py report` already prints every decision -
-   roles, row allocation, column semantics, name samples, the metric grid, which declarative rules
-   resolved. Read that output instead. Reconstructing the same facts from the implementation cost
+1. **Reading the engine to predict its behaviour.** `plan_datasource(ddl=...)` already prints every
+   decision - roles, row allocation, column semantics, name samples, the metric grid, which
+   declarative rules resolved - from the DDL alone, before `gen.py` exists. Read that output
+   instead. Reconstructing the same facts from the implementation cost
    one run 66% of its wall clock, and a second run **all** of it: it tried to divide the row budget
    across the tables by hand, could not make the total come out, went into the engine to find the
    allocator and never came back - 36 turns, zero rows. **Row allocation is the engine's job**
@@ -176,6 +178,14 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
 
 **Never try to generate directly into the datasource file.** The flow is:
 
+0. **Plan before you write anything**, as soon as the DDL is in DuckDB syntax:
+   ```
+   plan_datasource(ddl=<the normalised DDL>, rows=80000, months=17)
+   ```
+   It returns the engine's whole plan - row allocation per table, table roles, column semantics,
+   the resolved date window, sample names, business codes, the daily-metric grid - and generates
+   nothing. **This is the answer to every "what will the engine do with my DDL" question, and it
+   is one call.** Read it, then write `gen.py` with a profile that corrects what it got wrong.
 1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
    (`gen.py` takes the output path as its first argument and creates the parent itself, so the
    command stays a single invocation with no shell chaining)
@@ -584,8 +594,8 @@ ads_*   application:1-2   cross-domain daily report, one row per day, preferred 
 ### 1.2 Row allocation
 
 > **On Path A you do not compute this.** The engine allocates every table from `rows=` on its
-> own - `_plan_rows` runs during inference, before you see anything - and `gen.py report` prints
-> the result per table. **Do not do this arithmetic by hand.** A measured production run tried to
+> own - `_plan_rows` runs during inference, before you see anything - and
+> `plan_datasource(ddl=...)` prints the result per table without a generator existing yet. **Do not do this arithmetic by hand.** A measured production run tried to
 > divide an 80,000-row budget across five tables using the percentages below, reached 51,000,
 > could not reconcile the gap, opened `ddl_engine.py` to find the allocator - and spent the
 > remaining 30 turns in the source without generating a single row. The numbers below are for

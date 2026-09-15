@@ -55,7 +55,9 @@ it or fix its kind - do not go looking for the formula.
 
 ### 1.2 Constructor arguments
 
-These are arguments to `DDLEngine(...)`, not profile fields. The profile cannot set them:
+These are arguments to `DDLEngine(...)`, not profile fields. The profile cannot set them. The
+built-in `plan_datasource(ddl=, rows=, months=, end_date=)` tool takes the first four and prints
+the resulting plan without a generator existing, which is the cheapest way to check them:
 
 | Argument | Default | Meaning |
 |---|---|---|

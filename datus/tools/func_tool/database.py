@@ -45,6 +45,7 @@ from datus.tools.db_tools.database_import import (
     import_duckdb_file,
     read_generator_meta,
 )
+from datus.tools.db_tools.datasource_plan import DatasourcePlanError, plan_from_ddl
 from datus.tools.db_tools.datasource_quality import QualityChecker, summarize
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
@@ -1212,6 +1213,7 @@ class DBFuncTool:
         # time happens to be DuckDB, which would hide them after a switch in a multi-datasource
         # deployment. A call routed at a non-DuckDB datasource is refused by _duckdb_connection.
         if "duckdb" in self._configured_tool_dialects():
+            methods_to_convert.append(self.plan_datasource)
             methods_to_convert.append(self.import_database_file)
             methods_to_convert.append(self.check_datasource_quality)
 
@@ -1977,6 +1979,64 @@ class DBFuncTool:
                 ),
             )
         return exclusive, None
+
+    @mcp_tool()
+    def plan_datasource(
+        self,
+        ddl: str,
+        rows: int = 80_000,
+        months: int = 17,
+        end_date: Optional[str] = "",
+    ) -> FuncToolResult:
+        """
+        Show what the ``gen-datasource`` engine will build from a DDL, generating nothing.
+
+        Call this **before** writing ``data/gen.py``, as soon as the DDL is in DuckDB syntax.
+        It returns the engine's whole plan - the row allocation per table, the table roles, the
+        column semantics, the resolved date window, sample generated names, which columns get a
+        business code, and the daily-metric grid - which is the answer to "what will this
+        actually produce" and to every question about how the engine decides.
+
+        Do not work the row allocation out by hand and do not read the engine source to predict
+        it: the engine allocates from ``rows`` on its own and this is where it says how. Then
+        write ``gen.py`` with a profile that corrects what the plan got wrong.
+
+        The profile is deliberately not an argument. This is the inference from the DDL alone,
+        which is what the skill's order of work asks you to inspect first; a profile then
+        overrides only what is wrong.
+
+        Args:
+            ddl: The CREATE TABLE statements, in DuckDB syntax.
+            rows: Total row budget across all tables. The engine splits it and calibrates the
+                total to within 6%.
+            months: Length of the data window, counted back in whole months from the month
+                containing ``end_date``.
+            end_date: Last day of data as ``YYYY-MM-DD``. Defaults to yesterday.
+
+        Returns:
+            dict: A dictionary with the execution result, containing these keys:
+                  - 'success' (int): 1 for success, 0 for failure.
+                  - 'error' (Optional[str]): Error message on failure, including the DDL the
+                    engine could not parse and whatever it managed to plan first.
+                  - 'result' (Optional[dict]): On success, ``plan`` - the report text, to be
+                    read as-is - plus the ``rows``, ``months`` and ``end_date`` it was planned
+                    with.
+        """
+        try:
+            plan = plan_from_ddl(ddl, rows=rows, months=months, end_date=end_date or None)
+            return FuncToolResult(
+                result={
+                    "plan": plan,
+                    "rows": rows,
+                    "months": months,
+                    "end_date": end_date or None,
+                }
+            )
+        except DatasourcePlanError as e:
+            return FuncToolResult(success=0, error=str(e))
+        except Exception as e:
+            logger.error(f"plan_datasource failed: {e}", exc_info=True)
+            return FuncToolResult(success=0, error=f"Failed to plan the datasource: {e}")
 
     @mcp_tool()
     def import_database_file(
