@@ -76,6 +76,16 @@ def _lit(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _show_ratio(ratio: float) -> str:
+    """Print a monthly max/min ratio without rounding it across its own threshold.
+
+    ``{:.1f}`` printed 1.79 as "1.8x" and then failed it against the 1.8 floor, so the report
+    argued with itself. Near the boundary the extra digit is the difference between a verdict a
+    reader can act on and one they have to distrust; away from it, it is noise.
+    """
+    return f"{ratio:.1f}" if ratio >= 2 or ratio < 1.5 else f"{ratio:.2f}"
+
+
 class QualityChecker:
     """Run the demo-datasource checks against an open DuckDB connection.
 
@@ -402,9 +412,7 @@ class QualityChecker:
             vals = [r[1] for r in mm[1:-1]] or [r[1] for r in mm]  # drop partial first/last months
             ratio = max(vals) / min(vals) if min(vals) else 0
             first, last = vals[0], vals[-1]
-            # ``{ratio:.1f}`` printed 1.79 as "1.8x" and then failed it against a 1.8 floor, so the
-            # report argued with itself. Two decimals whenever the verdict is close.
-            shown = f"{ratio:.1f}" if ratio >= 2 or ratio < 1.5 else f"{ratio:.2f}"
+            shown = _show_ratio(ratio)
             self.add(
                 "time trend",
                 1.8 <= ratio <= 12,

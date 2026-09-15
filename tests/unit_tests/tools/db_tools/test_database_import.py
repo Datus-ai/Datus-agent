@@ -423,42 +423,79 @@ class TestImportingTheDatasourceItself:
 
 
 class TestTheSelfImportGuardDegrades:
-    """The guard produces a better error message; it must never become a new failure mode."""
+    """The guard produces a better error message; it must never become a new failure mode.
 
-    def _con(self, behaviour):
+    Each case asserts the observable consequence rather than "nothing was raised": the import
+    proceeds past the guard, so what comes back is the ATTACH-stage failure - or a successful
+    import - and never the guard's own refusal.
+    """
+
+    def _con_answering(self, rows):
+        """A connection that answers ``duckdb_databases()`` with ``rows`` and refuses to ATTACH."""
+
+        class _Result:
+            def __init__(self, data):
+                self._data = data
+
+            def fetchall(self):
+                return self._data
+
         class _Stub:
             def execute(self, sql):
-                return behaviour(sql)
+                if "duckdb_databases" in sql:
+                    return _Result(rows)
+                raise RuntimeError("ATTACH reached")
 
         return _Stub()
 
-    def test_a_connection_that_cannot_answer_is_left_alone(self, tmp_path):
-        from datus.tools.db_tools.database_import import _refuse_importing_the_target_itself
-
-        def boom(_sql):
-            raise RuntimeError("duckdb_databases() unavailable")
-
-        # No exception: the caller goes on to ATTACH and fails there as it did before.
-        _refuse_importing_the_target_itself(self._con(boom), tmp_path / "build.duckdb")
-
-    def test_a_database_with_no_file_path_is_left_alone(self, tmp_path):
-        from datus.tools.db_tools.database_import import _refuse_importing_the_target_itself
-
-        class _Result:
-            @staticmethod
-            def fetchall():
-                return [(None,)]
-
-        _refuse_importing_the_target_itself(self._con(lambda _sql: _Result()), tmp_path / "build.duckdb")
-
-    def test_an_in_memory_database_is_left_alone(self, tmp_path):
-        """``:memory:`` is not a path; resolving it must not raise out of the guard."""
+    def _a_real_source(self, tmp_path):
+        """The source has to exist: the not-found check runs before the guard."""
         import duckdb
 
-        from datus.tools.db_tools.database_import import _refuse_importing_the_target_itself
+        source = tmp_path / "build.duckdb"
+        con = duckdb.connect(str(source))
+        con.execute("CREATE TABLE t (id BIGINT)")
+        con.close()
+        return source
+
+    def test_a_connection_that_cannot_answer_reaches_the_attach(self, tmp_path):
+        from datus.tools.db_tools.database_import import DatabaseImportError, import_duckdb_file
+
+        class _Stub:
+            def execute(self, sql):
+                if "duckdb_databases" in sql:
+                    raise RuntimeError("duckdb_databases() unavailable")
+                raise RuntimeError("ATTACH reached")
+
+        with pytest.raises(DatabaseImportError) as excinfo:
+            import_duckdb_file(_Stub(), self._a_real_source(tmp_path))
+
+        assert "Cannot attach" in str(excinfo.value), "the guard must not swallow the real failure"
+        assert "IS the file this datasource is open on" not in str(excinfo.value)
+
+    def test_a_database_with_no_file_path_reaches_the_attach(self, tmp_path):
+        from datus.tools.db_tools.database_import import DatabaseImportError, import_duckdb_file
+
+        with pytest.raises(DatabaseImportError) as excinfo:
+            import_duckdb_file(self._con_answering([(None,)]), self._a_real_source(tmp_path))
+
+        assert "Cannot attach" in str(excinfo.value)
+        assert "IS the file this datasource is open on" not in str(excinfo.value)
+
+    def test_an_in_memory_database_still_imports(self, tmp_path):
+        """``:memory:`` is not a path; resolving it must not stop a perfectly valid import."""
+        import duckdb
+
+        from datus.tools.db_tools.database_import import import_duckdb_file
+
+        source = tmp_path / "build.duckdb"
+        src = duckdb.connect(str(source))
+        src.execute("CREATE TABLE t (id BIGINT PRIMARY KEY); INSERT INTO t VALUES (1), (2), (3)")
+        src.close()
 
         con = duckdb.connect(":memory:")
         try:
-            _refuse_importing_the_target_itself(con, tmp_path / "build.duckdb")
+            outcome = import_duckdb_file(con, source)
+            assert outcome["imported"] == {"t": 3}
         finally:
             con.close()

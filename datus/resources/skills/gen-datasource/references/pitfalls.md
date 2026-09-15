@@ -398,7 +398,7 @@ from genlib import (Calendar, date_range, day_weights, zipf_weights, tune_alpha,
                     plan_scale)
 
 ROOT, SEED = Path(__file__).parent, 42
-CSV_DIR, DB = ROOT / "_csv", ROOT / "data" / "datasource.duckdb"
+CSV_DIR, DB = ROOT / "_csv", ROOT / "data" / "_build" / "datasource.duckdb"
 TOTAL_ROWS = 80_000                               # default when the user did not specify
 END_DT   = date(2026, 5, 31)                      # cut-off: yesterday or last month's end, never the future
 START_DT = date(2025, 1, 1)                       # >= 13 months, otherwise YoY is impossible

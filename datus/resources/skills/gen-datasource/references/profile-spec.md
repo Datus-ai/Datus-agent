@@ -20,7 +20,7 @@ data. The profile is what makes it look real.
 | The 17 invariants | Weighted calendar sampling, derived-from-base quantities, child events anchored to parents, monotonic sequences, complete terminal states, FKs sampled from upstream only, layer backfill, stock baseline, zero header/detail amount drift |
 | Type contract | Tables are created with the declared types (a BIGINT key stays BIGINT; DECIMAL(18,2) does not become DOUBLE) |
 | Table/column comments | Written per role; overridable in the profile |
-| Structural metadata | Written to `data/.datasource.meta.json`; the quality check reuses it instead of re-inferring |
+| Structural metadata | Written as `.<db stem>.meta.json` **beside the database**, so a build at `data/_build/` puts it there; the skill copies it to `data/.datasource.meta.json` during cleanup. The quality check searches both and reports which it used, instead of re-inferring |
 
 **Run `eng.report()` first and override only what is wrong.**
 
@@ -83,7 +83,7 @@ on disk made the "never read the engine" rule unenforceable - so here they are.
 | Amount identity on a fact row | `paid = gross - discount + shipping + tax`. Discount is 0 for 38% of rows, otherwise 2-22% of gross, capped at 90%. Shipping is 0 for 42% of rows, otherwise a flat 3-22 (**additive, never a fraction of the goods**). Tax is 0-8.5% of `gross - discount`. **Coupon is not part of the identity** - it is 0 for 58% of rows, otherwise 30-85% *of the discount* |
 | Cost vs price | A cost column is never allowed above the price column. A `columns` bound `<= 1` reads as a cost *ratio*; `> 1` as an absolute range, still clamped to the price |
 | Flag columns | True with p = 0.93 on a dimension, p = 0.88 on a fact. Override per column with `columns: {"t.col": {"p": 0.7}}` |
-| Detail line quantities | Drawn 1-5 with weights 0.52 / 0.26 / 0.12 / 0.06 / 0.04 unless `derive` says otherwise |
+| Detail line quantities | A detail row draws 1-4 with weights 0.71 / 0.19 / 0.07 / 0.03. **Not the same as a generic `count` column on a fact table**, which draws 1-5 with 0.52 / 0.26 / 0.12 / 0.06 / 0.04. Either is overridden by `derive` |
 | Daily metric grid width | `days x dimension combinations`, capped at `row budget / number of days`, and capped again by what the schema allows. `report()` prints both the plan and the binding cap |
 | Same-named columns on a fact | Inherited from the FK'd dimension row rather than redrawn, so `category` on an order line matches the product's |
 | Effective dates | `before_start` and `baseline_share` apply to a **dimension's** date columns (invariant 16: 45% of entities exist before the window). They do not apply to fact dates |
@@ -580,5 +580,5 @@ PROFILE = {
 
 eng = DDLEngine(DDL, rows=110_000, profile=PROFILE, months=17)
 eng.report()                                            # inspect inference first
-eng.generate(str(HERE / "datasource.duckdb"))
+eng.generate(str(HERE / "_build" / "datasource.duckdb"))   # never the datasource's own file
 ```

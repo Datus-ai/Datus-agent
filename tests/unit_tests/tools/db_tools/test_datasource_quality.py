@@ -409,14 +409,27 @@ def test_no_metadata_makes_the_key_check_warn(con):
 
 
 @pytest.mark.acceptance
-def test_a_close_trend_ratio_is_printed_to_two_decimals(trend_con):
-    """`{:.1f}` printed 1.79 as "1.8x" and then failed it against a 1.8 floor."""
-    results = QualityChecker(trend_con).run()
+@pytest.mark.parametrize(
+    "ratio, shown",
+    [
+        (1.79, "1.79"),  # the case that failed a 1.8 floor while printing "1.8x"
+        (1.80, "1.80"),
+        (1.99, "1.99"),
+        (1.50, "1.50"),
+        (1.49, "1.5"),  # below the band: one decimal again
+        (2.00, "2.0"),
+        (4.60, "4.6"),
+    ],
+)
+def test_the_trend_ratio_is_never_rounded_across_its_own_threshold(ratio, shown):
+    """1.5-2.0 is the band where one decimal can round a FAIL into a number that reads as a PASS.
 
-    trend = next(r for r in results if r["check"] == "time trend")
-    ratio = float(trend["detail"].split("(")[1].split("x")[0])
-    decimals = len(trend["detail"].split("(")[1].split("x")[0].split(".")[1])
-    assert decimals == 1 if (ratio >= 2 or ratio < 1.5) else decimals == 2, trend["detail"]
+    Tested on the formatter rather than through generated data: the rule is about the printed
+    digits, and steering a DuckDB fixture to an exact monthly ratio tests the fixture instead.
+    """
+    from datus.tools.db_tools.datasource_quality import _show_ratio
+
+    assert _show_ratio(ratio) == shown
 
 
 class TestGeneratorMetaDiscovery:

@@ -2136,8 +2136,8 @@ class DBFuncTool:
             logger.error(f"import_database_file failed for {path}: {e}", exc_info=True)
             return FuncToolResult(success=0, error=f"Failed to import {path}: {e}")
 
-    #: Where the generator drops its structural metadata, relative to the workspace. Tried in
-    #: order when the caller does not name a path.
+    #: Where the generator drops its structural metadata, relative to the workspace. Searched
+    #: when the caller does not name a path; the most recently written one wins.
     _GENERATOR_META_CANDIDATES = (
         "data/.datasource.meta.json",
         "data/_build/.datasource.meta.json",
@@ -2155,20 +2155,31 @@ class DBFuncTool:
 
         Returns ``(metadata, where it came from)``; both None when nothing was found.
         """
-        candidates = [meta_path] if meta_path else list(self._GENERATOR_META_CANDIDATES)
-        for candidate in candidates:
-            if not candidate:
-                continue
+        if meta_path:
+            resolved = self._resolve_data_file(meta_path)  # an explicit path that fails is the caller's error
+            return read_generator_meta(resolved.resolved), resolved.display
+
+        # Fixed order would let a stale file win: the previous version of the skill wrote to
+        # ``data/``, so a workspace that ran it before this change keeps an out-of-date copy that
+        # would shadow the one the current build just produced. Newest on disk wins instead.
+        found = []
+        for candidate in self._GENERATOR_META_CANDIDATES:
             try:
                 resolved = self._resolve_data_file(candidate)
             except DataFileError:
-                if meta_path:
-                    raise  # an explicit path that does not resolve is the caller's error
                 continue
             meta = read_generator_meta(resolved.resolved)
-            if meta is not None:
-                return meta, resolved.display
-        return None, None
+            if meta is None:
+                continue
+            try:
+                mtime = resolved.resolved.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            found.append((mtime, meta, resolved.display))
+        if not found:
+            return None, None
+        _, meta, display = max(found, key=lambda item: item[0])
+        return meta, display
 
     @mcp_tool()
     def check_datasource_quality(

@@ -782,7 +782,7 @@ check_datasource_quality(config_path="data/checks.json")
 
 It runs 19 automatic checks: layering, mandatory date dimension, FK orphan rate, time span and YoY feasibility, time trend, stock baseline, weekday cycle (auto-detecting B2C weekend-heavy vs B2B weekend-light), event explainability, derived-ratio range and negative counts, dead and constant columns, event monotonicity, long-tail concentration, aggregation density (thresholds adapt to database size), comment coverage, semantic naming, primary-key non-null uniqueness, no single entity dominating the head, and no future-dated rows.
 
-It picks the **strongest-signal** metric column to observe (avoiding identifier columns like `month_key` and cumulative stock columns like `billed_usd`), and reads the `data/.datasource.meta.json` the engine wrote (roles, keys, strict-DDL mode) instead of re-inferring.
+Trend, span, stock baseline and event attribution observe the **headline** series - the largest fact table's highest-magnitude business metric (identifier columns like `month_key` and cumulative stock columns like `billed_usd` are excluded). Only the weekday check searches for the strongest signal, and it says which column it used. It finds the `.datasource.meta.json` the engine wrote (roles, keys, strict-DDL mode) instead of re-inferring, and reports which copy it used.
 
 Business-specific rules (header/detail amount alignment, causal ordering, label self-consistency, dimension gradients) go in `data/checks.json`:
 
