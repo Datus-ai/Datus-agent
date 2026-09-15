@@ -129,7 +129,7 @@ def test_loading_the_engine_leaves_sys_path_alone(monkeypatch):
     plan_from_ddl(DDL, rows=5000)
 
     assert sys.path == before
-    assert datasource_plan._engine_module is not None, "the load must have actually happened"
+    assert datasource_plan._engine_module.__name__ == "_datus_gen_datasource_engine"
 
 
 @pytest.mark.acceptance
@@ -169,18 +169,18 @@ def test_concurrent_plans_do_not_interleave():
 
     assert not errors, errors
     assert set(plans) == set(names)
+    every_table = {f"{other}_orders" for other in names}
     for name, plan in plans.items():
-        assert f"{name}_orders" in plan
-        # The decisive part: no other thread's tables leaked into this plan.
-        for other in names:
-            if other != name:
-                assert f"{other}_orders" not in plan, f"{other}'s plan bled into {name}'s"
+        # Each plan must name its own fact table and no other thread's: one equality states both
+        # "the plan arrived" and "nothing bled into it".
+        mentioned = {table for table in every_table if table in plan}
+        assert mentioned == {f"{name}_orders"}, f"{name}'s plan mentions {sorted(mentioned)}"
 
 
 @pytest.mark.acceptance
 def test_capture_restores_stdout(capsys):
-    """A print after planning must reach the caller's stdout, not a discarded buffer."""
+    """Output written after planning must reach the caller's stdout, not a discarded buffer."""
     plan_from_ddl(DDL, rows=5000, months=3)
-    print("back on the real stdout")
+    sys.stdout.write("back on the real stdout\n")
 
-    assert "back on the real stdout" in capsys.readouterr().out
+    assert capsys.readouterr().out == "back on the real stdout\n"
