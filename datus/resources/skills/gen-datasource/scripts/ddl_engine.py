@@ -923,6 +923,21 @@ class DDLEngine:
         undefined = sorted({c for _t, c in enum_cols if c not in known} | set(partial))
         fact_enums = sorted({c for t, c in enum_cols if self.roles.get(t) in (ROLE_FACT, ROLE_DETAIL)})
 
+        import json as _json
+
+        def lit(value):
+            """Emit an identifier as a Python string literal.
+
+            Table and column names come from the caller's DDL, where DuckDB allows quotes and
+            newlines inside a quoted identifier. Interpolating them raw produced a skeleton that
+            would not parse - and the skeleton exists to be copied into `gen.py` and run.
+
+            ``json.dumps`` rather than ``repr``: its output is a valid Python string literal too,
+            and it keeps the double quotes the rest of the skeleton uses instead of switching to
+            single ones on the entries that happen to need escaping.
+            """
+            return _json.dumps(str(value))
+
         out = ["PROFILE = {"]
         out.append("    # --- The only section the engine cannot infer at all. Write it first. ---")
         out.append('    "calendar": {')
@@ -945,7 +960,7 @@ class DDLEngine:
             out.append("        #   An empty list changes nothing: the DDL domain or the default still applies.")
             out.append("        #   Fill one in only to override what is listed above.")
             for col in undefined[:12]:
-                out.append(f'        "{col}": [],')
+                out.append(f"        {lit(col)}: [],")
             out.append("    },")
 
         if fact_enums:
@@ -963,13 +978,14 @@ class DDLEngine:
                 continue
             out.append(f'    "derive": {{   # {t}: the funnel. Without these the counts do not converge')
             for i in range(1, len(counts)):
-                out.append(f'        "{t}.{counts[i]}": {{"from": "{counts[i - 1]}", "ratio": (0.0, 0.0)}},')
+                out.append(f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": (0.0, 0.0)}},')
             ordered = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
             for name in [c["name"] for c in self.schema[t] if c["sem"] == "amount"]:
                 before = [c for c in ordered[: ordered.index(name)] if c in counts]
                 if before:
                     out.append(
-                        f'        "{t}.{name}": {{"from": "{before[-1]}", "ratio": (0.0, 0.0)}},  # money per step'
+                        f'        {lit(f"{t}.{name}")}: {{"from": {lit(before[-1])}, '
+                        f'"ratio": (0.0, 0.0)}},  # money per step'
                     )
             out.append("    },")
             break
@@ -1107,7 +1123,13 @@ class DDLEngine:
                 print(f"  ... and {len(applied) - 12} more")
         for t in sorted(self.schema):
             amts = [c["name"] for c in self.schema[t] if c["sem"] == "amount"]
-            if len(amts) < 2 or self.roles.get(t) in (ROLE_DATE, ROLE_DIM):
+            # An allow-list, not an exclusion list: only ``_gen_fact`` (fact and snapshot) and
+            # ``_gen_detail``'s backfill call ``_settle_amounts``. Metric, event, downstream, dim
+            # and date tables fill amounts independently, and claiming an identity they do not hold
+            # is the failure this line was added to prevent - measured on a metric table whose
+            # "paid_revenue = gross - discount + tax" was off by hundreds per row. A role added
+            # later defaults to silence, which is the safe direction.
+            if len(amts) < 2 or self.roles.get(t) not in (ROLE_FACT, ROLE_SNAPSHOT, ROLE_DETAIL):
                 continue
             roles = {self._amt_role(c): c for c in amts}
             if not ({"discount", "tax", "ship", "cost", "profit"} & set(roles)):

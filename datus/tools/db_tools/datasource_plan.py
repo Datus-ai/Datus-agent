@@ -123,7 +123,7 @@ def plan_from_ddl(
     months: int = 17,
     end_date: Optional[str] = None,
     seed: int = 42,
-) -> str:
+) -> tuple[str, str]:
     """Return ``(plan, profile skeleton)`` for this DDL, generating nothing.
 
     The skeleton is the second half of the answer: the plan says what the engine inferred, and

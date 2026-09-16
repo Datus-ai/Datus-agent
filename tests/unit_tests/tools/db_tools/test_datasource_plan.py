@@ -296,3 +296,27 @@ def test_the_skeleton_invents_no_domain_it_could_not_read():
 
     member_level_line = next(line for line in skeleton.splitlines() if '"member_level"' in line)
     assert member_level_line.strip() == '"member_level": [],'
+
+
+@pytest.mark.acceptance
+def test_a_quoted_identifier_does_not_break_the_skeleton():
+    """Identifiers come from the caller's DDL, where DuckDB allows quotes inside a quoted name.
+
+    Interpolated raw, `it's_type` closed the string early and the skeleton would not parse - and
+    the skeleton exists to be copied into `gen.py` and run.
+    """
+    import ast
+
+    ddl = (
+        'CREATE TABLE metrics ("stat_dt" DATE, "it\'s_type" VARCHAR, impressions BIGINT, '
+        'clicks BIGINT, sessions BIGINT, "gm\'v" DECIMAL(18,2));'
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "paid_amount DECIMAL(18,2));"
+    )
+
+    _plan, skeleton = plan_from_ddl(ddl, rows=9000, months=6)
+
+    ast.parse(skeleton)
+    namespace = {}
+    exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
+    assert "it's_type" in namespace["PROFILE"]["enums"]

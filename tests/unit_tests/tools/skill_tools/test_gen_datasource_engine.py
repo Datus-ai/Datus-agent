@@ -1171,3 +1171,27 @@ def test_the_profit_identity_names_a_real_column(engine_module, capsys):
 
     assert "gross_profit = sales_amount - total_cost" in out
     assert "revenue -" not in out
+
+
+@pytest.mark.acceptance
+def test_a_metric_table_does_not_claim_an_identity_the_engine_never_enforces(engine_module, capsys):
+    """Only `_gen_fact` and `_gen_detail`'s backfill call `_settle_amounts`.
+
+    A metric table fills its amounts independently, so the claimed
+    `paid = gross - discount + tax` was off by hundreds per row - the report asserting work the
+    engine does not do, which is the failure the line was added to prevent.
+    """
+    engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));"
+        "CREATE TABLE daily_channel_metrics (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, gross_revenue DECIMAL(18,2), discount_amount DECIMAL(18,2), "
+        "tax_amount DECIMAL(18,2), paid_revenue DECIMAL(18,2));",
+        rows=9000,
+        months=6,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "daily_channel_metrics" in out, "the table is still in the plan"
+    assert "amount identity enforced" not in out
