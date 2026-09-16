@@ -320,3 +320,29 @@ def test_a_quoted_identifier_does_not_break_the_skeleton():
     namespace = {}
     exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
     assert "it's_type" in namespace["PROFILE"]["enums"]
+
+
+@pytest.mark.acceptance
+def test_every_metric_table_contributes_its_funnel():
+    """Stopping after the first one dropped the second table's chain entirely.
+
+    Emitting a second `"derive"` block instead would be a duplicate key that silently overwrites
+    the first, so they go into one mapping.
+    """
+    ddl = (
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "paid_amount DECIMAL(18,2));"
+        "CREATE TABLE channel_daily (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, sessions BIGINT, gmv DECIMAL(18,2));"
+        "CREATE TABLE campaign_daily (stat_dt DATE, campaign VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, purchasers BIGINT, revenue DECIMAL(18,2));"
+    )
+
+    _plan, skeleton = plan_from_ddl(ddl, rows=12_000, months=6)
+
+    assert skeleton.count('"derive": {') == 1, "one mapping, or the later block wins and the first is lost"
+    namespace = {}
+    exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
+    derive = namespace["PROFILE"]["derive"]
+    assert {"channel_daily.clicks", "channel_daily.sessions"} <= set(derive)
+    assert {"campaign_daily.clicks", "campaign_daily.purchasers"} <= set(derive)

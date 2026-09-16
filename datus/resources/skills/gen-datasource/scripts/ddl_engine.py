@@ -968,7 +968,12 @@ class DDLEngine:
             out.append(f"        # Grouping columns available on the fact layer: {', '.join(fact_enums[:8])}")
             out.append("    },")
 
-        for t in [t for t, r in self.roles.items() if r == ROLE_METRIC]:
+        # Every metric table, not just the first: one "derive" block holding all of them. Emitting
+        # a second block would be a duplicate key that silently overwrites the first, and stopping
+        # after one dropped the second table's funnel entirely - a schema with a channel table and
+        # a campaign table got a chain for one and zeros for the other.
+        derive_lines = []
+        for t in sorted(t for t, r in self.roles.items() if r == ROLE_METRIC):
             # Counts form the funnel and chain to each other; amounts are money *about* a step, so
             # each takes the nearest count before it. Chaining them by raw column order produced
             # "attributed_revenue from ad_spend", which means nothing - and a cap of 8 cut off
@@ -976,19 +981,23 @@ class DDLEngine:
             counts = [c["name"] for c in self.schema[t] if c["sem"] == "count"]
             if len(counts) < 3:
                 continue
-            out.append(f'    "derive": {{   # {t}: the funnel. Without these the counts do not converge')
+            derive_lines.append(f"        # {t}: the funnel. Without these the counts do not converge")
             for i in range(1, len(counts)):
-                out.append(f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": (0.0, 0.0)}},')
+                derive_lines.append(
+                    f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": (0.0, 0.0)}},'
+                )
             ordered = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
             for name in [c["name"] for c in self.schema[t] if c["sem"] == "amount"]:
                 before = [c for c in ordered[: ordered.index(name)] if c in counts]
                 if before:
-                    out.append(
+                    derive_lines.append(
                         f'        {lit(f"{t}.{name}")}: {{"from": {lit(before[-1])}, '
                         f'"ratio": (0.0, 0.0)}},  # money per step'
                     )
+        if derive_lines:
+            out.append('    "derive": {')
+            out.extend(derive_lines)
             out.append("    },")
-            break
 
         out.append('    "semantics": {},   # only the columns report() got wrong, above')
         out.append('    "vocab": {},       # any non-retail industry: brand / org_suffix / person / given / item')
