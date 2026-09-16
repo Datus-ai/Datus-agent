@@ -235,6 +235,35 @@ def test_the_skeleton_is_valid_python_that_defines_a_profile():
 
 
 @pytest.mark.acceptance
+def test_copying_the_skeleton_unfilled_is_refused_before_generating():
+    """Its `(0.0, 0.0)` ratios multiply the base to zero, so an unfilled chain is all zeros.
+
+    Left to the quality check that costs a generate, an import and a check to discover - which is
+    the cycle the skeleton exists to avoid. precheck names the key instead.
+    """
+    import sys
+
+    from datus.tools.db_tools.datasource_plan import load_engine
+
+    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+    namespace = {}
+    exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
+
+    scripts = str(load_engine().__file__).rsplit("/", 1)[0]
+    sys.path.insert(0, scripts)
+    try:
+        engine = load_engine().DDLEngine(SKELETON_DDL, rows=80_000, months=17, profile=namespace["PROFILE"])
+    finally:
+        sys.path.remove(scripts)
+
+    errors, _warnings = engine.precheck(strict=False)
+
+    placeholders = [e for e in errors if "placeholder" in e]
+    assert placeholders, errors
+    assert "derive[daily_channel_metrics.clicks]" in placeholders[0]
+
+
+@pytest.mark.acceptance
 def test_the_skeleton_carries_what_the_engine_inferred():
     _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
 
@@ -246,6 +275,9 @@ def test_the_skeleton_carries_what_the_engine_inferred():
     # The funnel chain, in column order, with the ratios left to the caller.
     assert '"daily_channel_metrics.clicks": {"from": "impressions"' in skeleton
     assert '"daily_channel_metrics.sessions": {"from": "clicks"' in skeleton
+    # An amount takes the nearest count before it. Chaining it by raw column order gave
+    # "attributed_revenue from ad_spend", which means nothing.
+    assert '"daily_channel_metrics.gmv": {"from": "purchasers"' in skeleton
 
 
 @pytest.mark.acceptance

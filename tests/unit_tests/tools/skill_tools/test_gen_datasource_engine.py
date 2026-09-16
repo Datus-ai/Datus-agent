@@ -1114,3 +1114,60 @@ def test_report_states_the_amount_identity_the_engine_enforces(engine_module, ca
     assert "amount identity enforced on orders: paid_amount = original_amount - discount_amount" in out
     assert "coupon is not part of it" in out
     assert "do not restate these in profile['formulas']" in out
+
+
+@pytest.mark.acceptance
+def test_a_schema_with_nothing_to_calibrate_is_not_blamed_on_the_pin(engine_module):
+    """Dimensions and metric tables have nothing calibration can scale, pinned or not.
+
+    Refusing there blames the caller for their DDL, and the message named `table_rows` when only
+    `dim_rows` had been set.
+    """
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE customers (customer_id BIGINT PRIMARY KEY, customer_name VARCHAR);"
+        "CREATE TABLE daily_metrics (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, gmv DECIMAL(18,2));",
+        rows=9000,
+        months=6,
+        seed=1,
+        profile={"dim_rows": {"customers": 500}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "pins every table" in e], errors
+
+
+@pytest.mark.acceptance
+def test_the_pin_message_names_the_key_that_was_set(engine_module):
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 20_000, "order_items": 30_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    message = next(e for e in errors if "pins every table" in e)
+    assert message.startswith("table_rows pins")
+    # and names the tables it is talking about
+    assert "order_items, orders" in message
+
+
+@pytest.mark.acceptance
+def test_the_profit_identity_names_a_real_column(engine_module, capsys):
+    """Every other term on that line is a column; "revenue" was the internal role name."""
+    engine_module.DDLEngine(
+        "CREATE TABLE order_items (item_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "sales_amount DECIMAL(18,2), total_cost DECIMAL(18,2), gross_profit DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "gross_profit = sales_amount - total_cost" in out
+    assert "revenue -" not in out

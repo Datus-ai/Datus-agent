@@ -783,6 +783,18 @@ class DDLEngine:
 
         for key, d in (self.profile.get("derive", {}) or {}).items():
             chk_ref("derive", key)
+            # (0.0, 0.0) is the placeholder profile_skeleton() writes. `_derive` multiplies the base
+            # by it, so leaving it turns the whole chain to zeros - visible only after a generate,
+            # an import and a check. It is never a legitimate ratio either way.
+            if isinstance(d, dict):
+                ratios = [d.get("ratio")] if not isinstance(d.get("ratio"), dict) else list(d["ratio"].values())
+                for r in ratios:
+                    if isinstance(r, (list, tuple)) and len(r) == 2 and r[0] == 0 and r[1] == 0:
+                        err.append(
+                            f"derive[{key}]: ratio is still the skeleton's (0.0, 0.0) placeholder, which "
+                            f"generates a column of zeros. Fill in the real range"
+                        )
+                        break
             if "." not in key or not isinstance(d, dict):
                 continue
             t, _c = key.split(".", 1)
@@ -841,17 +853,17 @@ class DDLEngine:
                 if not any(sk in cs for cs in colof.values()):
                     warn.append(f"disruption `{d.get('name')}` scope column `{sk}` does not exist; it will never match")
 
+        pin_keys = [k for k in ("table_rows", "dim_rows") if self.profile.get(k)]
         pinned_names = set(self.profile.get("table_rows", {}) or {}) | set(self.profile.get("dim_rows", {}) or {})
-        scalable = [
-            t
-            for t in self.nrows
-            if self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC) and t not in pinned_names
-        ]
-        if pinned_names and not scalable:
+        # What calibration could scale if nothing were pinned. A schema of dimensions and metric
+        # tables has none of its own, and refusing a pin there would blame the caller for the DDL.
+        calibratable = [t for t in self.nrows if self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC)]
+        if calibratable and pinned_names and not [t for t in calibratable if t not in pinned_names]:
             err.append(
-                "table_rows pins every table calibration could scale, so the total is whatever the pins "
-                "add up to and rows= stops meaning anything. A production run shipped 90,004 rows against "
-                "a requested 80,000 this way. Leave the main fact or the detail table unpinned."
+                f"{' and '.join(pin_keys)} pins every table calibration could scale "
+                f"({', '.join(sorted(calibratable))}), so the total is whatever the pins add up to and "
+                f"rows= stops meaning anything. A production run shipped 90,004 rows against a requested "
+                f"80,000 this way. Leave one of them unpinned."
             )
 
         pinned = self.profile.get("table_rows", {}) or {}
@@ -929,7 +941,9 @@ class DDLEngine:
                 flag = "  <- looks incomplete, finish it in enums" if col in partial else ""
                 out.append(f"    #   {col}: {', '.join(str(v) for v in vals[:6])}{flag}")
         if undefined:
-            out.append('    "enums": {   # no domain found - without these the engine invents CODE1..CODEn')
+            out.append('    "enums": {   # no domain found, or the DDL comment looked truncated.')
+            out.append("        #   An empty list changes nothing: the DDL domain or the default still applies.")
+            out.append("        #   Fill one in only to override what is listed above.")
             for col in undefined[:12]:
                 out.append(f'        "{col}": [],')
             out.append("    },")
@@ -939,15 +953,26 @@ class DDLEngine:
             out.append(f"        # Grouping columns available on the fact layer: {', '.join(fact_enums[:8])}")
             out.append("    },")
 
-        metrics = [t for t, r in self.roles.items() if r == ROLE_METRIC]
-        for t in metrics:
-            counts = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
-            if len(counts) >= 3:
-                out.append(f'    "derive": {{   # {t}: chain these in business order, or the funnel will not converge')
-                for i in range(1, min(len(counts), 8)):
-                    out.append(f'        "{t}.{counts[i]}": {{"from": "{counts[i - 1]}", "ratio": (0.0, 0.0)}},')
-                out.append("    },")
-                break
+        for t in [t for t, r in self.roles.items() if r == ROLE_METRIC]:
+            # Counts form the funnel and chain to each other; amounts are money *about* a step, so
+            # each takes the nearest count before it. Chaining them by raw column order produced
+            # "attributed_revenue from ad_spend", which means nothing - and a cap of 8 cut off
+            # attributed_orders, the one ratio profile-spec names as the tuning point.
+            counts = [c["name"] for c in self.schema[t] if c["sem"] == "count"]
+            if len(counts) < 3:
+                continue
+            out.append(f'    "derive": {{   # {t}: the funnel. Without these the counts do not converge')
+            for i in range(1, len(counts)):
+                out.append(f'        "{t}.{counts[i]}": {{"from": "{counts[i - 1]}", "ratio": (0.0, 0.0)}},')
+            ordered = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
+            for name in [c["name"] for c in self.schema[t] if c["sem"] == "amount"]:
+                before = [c for c in ordered[: ordered.index(name)] if c in counts]
+                if before:
+                    out.append(
+                        f'        "{t}.{name}": {{"from": "{before[-1]}", "ratio": (0.0, 0.0)}},  # money per step'
+                    )
+            out.append("    },")
+            break
 
         out.append('    "semantics": {},   # only the columns report() got wrong, above')
         out.append('    "vocab": {},       # any non-retail industry: brand / org_suffix / person / given / item')
@@ -1098,7 +1123,8 @@ class DDLEngine:
                 print(f"amount identity enforced on {t}: {roles['paid']} = {' '.join(parts)}")
                 said = True
             if "cost" in roles and "profit" in roles:
-                print(f"amount identity enforced on {t}: {roles['profit']} = revenue - {roles['cost']}")
+                revenue = roles.get("paid") or roles.get("gross") or roles.get("unit") or amts[0]
+                print(f"amount identity enforced on {t}: {roles['profit']} = {revenue} - {roles['cost']}")
                 said = True
             if said:
                 print("  (coupon is not part of it; do not restate these in profile['formulas'])")
