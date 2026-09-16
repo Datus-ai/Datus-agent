@@ -149,6 +149,36 @@ class QualityChecker:
             return
         self.results.append((name, PASS if ok else (WARN if warn else FAIL), detail))
 
+    def _weekly_verdict(self, table: str, column: str, r: float) -> None:
+        """Record the weekday-cycle result against the weekly shape the generator declared.
+
+        Without a declaration this check asserted a B2C curve on every dataset, so a metering or
+        always-on schema that correctly declared `flat` could never reach ok: true - its only routes
+        out were a shape that did not match the business, or a loosened assertion. The declaration
+        is verified rather than trusted: asking for `weekday_heavy` and producing a busy weekend
+        still fails.
+        """
+        shape = (self.meta or {}).get("weekly_shape")
+        heavy, quiet, level = r >= 1.12, r <= 0.88, abs(r - 1.0) < 0.12
+        want = {
+            "weekend_heavy": (heavy, "weekends busier, as declared"),
+            "weekday_heavy": (quiet, "weekends quieter, as declared"),
+            "flat": (level, "flat, as declared (metering / always-on)"),
+        }.get(shape)
+        if want is None:  # no declaration (an older generator, or another producer): either cycle will do
+            ok = heavy or quiet
+            note = (
+                " (B2C shape: weekends busier)"
+                if heavy
+                else " (B2B shape: weekends quieter)"
+                if quiet
+                else "  <- no weekday signal, the curve is flat"
+            )
+        else:
+            ok, why = want
+            note = f" ({why})" if ok else f"  <- profile['weekly_shape'] = {shape!r}, and the data does not show it"
+        self.add("weekday cycle", ok, f"observing {table}.{column}: weekend/weekday = {r:.2f}x" + note)
+
     def tables(self) -> List[str]:
         return [r[0] for r in self.q(f"SELECT table_name FROM duckdb_tables() WHERE {_OWN_CATALOG} ORDER BY 1")]
 
@@ -452,18 +482,7 @@ class QualityChecker:
                         if abs(cand - 1.0) > abs(r - 1.0):
                             wt, wmc, r = ct, cmc, cand
         if r:
-            self.add(
-                "weekday cycle",
-                r >= 1.12 or r <= 0.88,
-                f"observing {wt}.{wmc}: weekend/weekday = {r:.2f}x"
-                + (
-                    " (B2C shape: weekends busier)"
-                    if r >= 1.12
-                    else " (B2B shape: weekends quieter)"
-                    if r <= 0.88
-                    else "  <- no weekday signal, the curve is flat"
-                ),
-            )
+            self._weekly_verdict(wt, wmc, r)
 
         if self.date_table:
             dtbl = self.date_table

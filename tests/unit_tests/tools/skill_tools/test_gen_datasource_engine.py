@@ -1776,3 +1776,74 @@ def test_measure_columns_arrive_as_skeleton_slots(engine_module):
 
     assert '"students.gpa": {"range": (0.1, 40)}' in skeleton
     assert "cannot infer a measure" in skeleton
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "column,role",
+    [("payment_amount", "paid"), ("duty_free_price", "unit"), ("duty_amount", "tax")],
+)
+def test_the_role_words_cover_the_obvious_neighbours(engine_module, column, role):
+    """`payment_amount` fell to the catch-all because the pattern only had `pay_`, and
+    `duty_free_price` is a price rather than a duty."""
+    assert engine_module.DDLEngine._amt_role(column) == role
+
+
+@pytest.mark.acceptance
+def test_a_dimension_with_no_date_column_is_not_reported_as_demoted(engine_module, capsys):
+    """The demotion message blames a date column, so it must only fire when one decided it.
+
+    A table with measures, a foreign key and no date at all is a dimension for the ordinary reason.
+    It was reported as demoted by `` - an empty column name - which pointed the caller at a fact
+    table it should not build.
+    """
+    engine_module.DDLEngine(
+        "CREATE TABLE teachers (teacher_id BIGINT PRIMARY KEY, teacher_name VARCHAR);"
+        "CREATE TABLE courses (course_id BIGINT PRIMARY KEY, "
+        "teacher_id BIGINT REFERENCES teachers(teacher_id), course_name VARCHAR, credits INTEGER);",
+        rows=9_000,
+        months=6,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "planned as a dimension, because" not in out
+    assert "``" not in out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("shape", ["weekend_heavy", "weekday_heavy", "flat"])
+def test_the_declared_weekly_shape_reaches_the_metadata(engine_module, tmp_path, shape):
+    """The quality check cannot honour a declaration it cannot see."""
+    import json
+
+    out = tmp_path / "m.duckdb"
+    engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=6, seed=1, profile={"weekly_shape": shape}).generate(
+        str(out), verbose=False
+    )
+
+    meta = json.loads((tmp_path / ".m.meta.json").read_text(encoding="utf-8"))
+
+    assert meta["weekly_shape"] == shape
+
+
+@pytest.mark.acceptance
+def test_measure_columns_left_on_the_fallback_are_named(engine_module):
+    """Deleting the skeleton's entry puts the column back on the fallback silently.
+
+    A warning rather than an error: the skeleton has to stay runnable as copied, and 0.1-40 is
+    genuinely right for some measures.
+    """
+    _errors, warnings = engine_module.DDLEngine(CAMPUS_DDL, rows=9_000, months=6, seed=1).precheck(strict=False)
+
+    assert any("students.gpa" in w and "0.1-40 fallback" in w for w in warnings), warnings
+
+
+@pytest.mark.acceptance
+def test_a_corrected_measure_range_clears_the_warning(engine_module):
+    _errors, warnings = engine_module.DDLEngine(
+        CAMPUS_DDL, rows=9_000, months=6, seed=1, profile={"columns": {"students.gpa": {"range": (0.0, 4.0)}}}
+    ).precheck(strict=False)
+
+    assert not [w for w in warnings if "0.1-40 fallback" in w], warnings

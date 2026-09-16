@@ -136,7 +136,7 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 | `effective_col` | Which column makes an entity usable | Inference picked the wrong date, or there is none to find |
 | `no_date_dim` / `date_dim_name` | Suppress or rename the auto-built date dimension | Only with `extra_tables` including `date_dim` |
 | `pre_sql` / `extra_sql` | Business post-processing SQL. **One SQL string, or a list of statements** (`["UPDATE ...", "UPDATE ..."]`); anything else is refused by `precheck()` before generating. `pre_sql` runs before the summary layer, `extra_sql` after | **Last resort**, when nothing above can express it |
-| `weekly_shape` | How a week looks: `weekend_heavy` (default, consumer retail), `weekday_heavy` (B2B, payroll, clinics, booking desks) or `flat` (metering, sensors, always-on). **Set it** - the default is a consumer shop, so a B2B dataset left alone has its busiest days on the weekend, and the quality check then confirms the shape it was handed | `weekend_lift` still overrides the number outright |
+| `weekly_shape` | How a week looks: `weekend_heavy` (default, consumer retail), `weekday_heavy` (B2B, payroll, clinics, booking desks) or `flat` (metering, sensors, always-on). **Set it** - the default is a consumer shop, so a B2B dataset left alone has its busiest days on the weekend. `check_datasource_quality` reads it from the generator metadata and verifies *that* shape, so `flat` passes as flat rather than failing for having no cycle - and declaring a shape the data does not show still fails | `weekend_lift` overrides the number outright |
 | `trend_mom` | Month-over-month growth | Default 0.031 |
 | `table_comments` / `column_comments` | Comments | Recommended wherever a definition is not obvious |
 

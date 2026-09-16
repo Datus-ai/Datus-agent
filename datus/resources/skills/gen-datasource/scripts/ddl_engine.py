@@ -462,7 +462,11 @@ class DDLEngine:
                         # every measure comes out as a static attribute with no time signal - so
                         # the one column that decided it is named in the report rather than left
                         # for the caller to find by reading the data.
-                        self._demoted[t] = next(
+                        # Only when a date column actually decided it. A table with no date column
+                        # at all is a dimension for the ordinary reason, and reporting it as demoted
+                        # by `` - an empty name - pointed the caller at a fact table it should not
+                        # build.
+                        blamed = next(
                             (
                                 c["name"]
                                 for c in self.schema[t]
@@ -470,6 +474,8 @@ class DDLEngine:
                             ),
                             "",
                         )
+                        if blamed:
+                            self._demoted[t] = blamed
         for t in self.schema:
             self.roles.setdefault(t, ROLE_FACT)
         # Main fact: the fact table with the most foreign keys that also carries amounts
@@ -711,6 +717,10 @@ class DDLEngine:
             "generator": "gen-datasource/ddl_engine",
             "date_range": [self.start.isoformat(), self.end.isoformat()],
             "extra_tables": self.extra_tables,
+            # The weekday check asserted a B2C shape on every dataset. It has to know what was
+            # asked for: `flat` is a legitimate answer for metering or an always-on service, and
+            # without this the caller who declares it can never reach ok: true.
+            "weekly_shape": self.profile.get("weekly_shape", "weekend_heavy"),
             "strict_ddl": self.extra_tables == "none",
             "declared": {
                 "pk": self.decl_pk,
@@ -956,6 +966,28 @@ class DDLEngine:
             for sk in d.get("scope", {}):
                 if not any(sk in cs for cs in colof.values()):
                     warn.append(f"disruption `{d.get('name')}` scope column `{sk}` does not exist; it will never match")
+
+        # Measure units cannot be inferred from a DDL, so the engine falls back to a 0.1-40
+        # lognormal - a plausible weight or duration and nonsense for anything bounded. A production
+        # schema shipped a GPA of 11.79 on a DECIMAL(4,2). The skeleton writes the fallback out as a
+        # value to correct, but deleting the entry puts the column right back on it silently, so the
+        # columns still sitting on it are named here. A warning, not an error: the skeleton has to
+        # stay runnable as copied, and 0.1-40 is genuinely right for some measures.
+        cfg = self.profile.get("columns") or {}
+        unranged = sorted(
+            f"{t}.{c['name']}"
+            for t in self.schema
+            if self.roles.get(t) != ROLE_DATE
+            for c in self.schema[t]
+            if c["sem"] == "measure"
+            and tuple(cfg.get(f"{t}.{c['name']}", {}).get("range", ()) or ()) in ((), (0.1, 40))
+        )
+        if unranged:
+            warn.append(
+                f"measure columns on the engine's 0.1-40 fallback: {', '.join(unranged[:8])}"
+                + (f" and {len(unranged) - 8} more" if len(unranged) > 8 else "")
+                + ". Set columns['t.col']['range'] for any whose units are not a 0.1-40 quantity"
+            )
 
         pin_keys = [k for k in ("table_rows", "dim_rows") if self.profile.get(k)]
         pinned_names = set(self.profile.get("table_rows", {}) or {}) | set(self.profile.get("dim_rows", {}) or {})
@@ -1767,8 +1799,8 @@ class DDLEngine:
         ("ship", r"ship|freight|delivery|postage|logistic"),
         # Anchored at both ends: these are whole words, and a token-start match alone read
         # `taxonomy_value` as a tax. The longer words below need only the leading anchor.
-        ("tax", r"tax(?:es)?(?:_|$)|vat(?:_|$)|duty(?:_|$)|duties(?:_|$)"),
-        ("paid", r"paid|net_|settle|actual|final|payable|received|pay_"),
+        ("tax", r"tax(?:es)?(?:_|$)|vat(?:_|$)|duty(?!_free)(?:_|$)|duties(?:_|$)"),
+        ("paid", r"paid|net_|settle|actual|final|payable|received|pay_|payment"),
         ("unit", r"unit|price"),
         ("gross", r"."),
     ]

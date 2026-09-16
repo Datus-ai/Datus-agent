@@ -592,3 +592,33 @@ def test_orphaned_keys_fail_even_when_they_are_the_only_finding():
     assert fk["status"] == "FAIL", fk
     assert "orphans" in fk["detail"]
     assert summarize(results)["ok"] is False
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "shape,ratio,expected",
+    [
+        ("flat", 0.99, "PASS"),
+        ("weekend_heavy", 1.31, "PASS"),
+        ("weekday_heavy", 0.36, "PASS"),
+        ("weekday_heavy", 1.31, "FAIL"),
+        (None, 0.99, "FAIL"),
+        (None, 1.31, "PASS"),
+    ],
+)
+def test_the_weekday_check_honours_the_declared_weekly_shape(shape, ratio, expected):
+    """The check asserted a B2C curve on every dataset.
+
+    A metering or always-on schema that correctly declared `flat` could never reach ok: true - its
+    only routes out were a shape that did not match the business, or a loosened assertion. With no
+    declaration (an older generator, or another producer) the old either-direction rule stands.
+    """
+    from datus.tools.db_tools.datasource_quality import QualityChecker
+
+    checker = QualityChecker.__new__(QualityChecker)
+    checker.meta = {"weekly_shape": shape} if shape else {}
+    checker.results, checker.skip = [], set()
+
+    checker._weekly_verdict("orders", "paid_amount", ratio)
+
+    assert checker.results[0][1] == expected, checker.results[0]
