@@ -900,7 +900,7 @@ def test_report_shows_the_findings_instead_of_the_claim(engine_module, capsys):
 
     out = capsys.readouterr().out
 
-    assert "will not plan against the schema" in out
+    assert "configuration pre-check failed" in out
     assert "pre_sql[1]" in out and "nope" in out
     assert "columns and types check out" not in out, "do not claim a clean bill next to a finding"
 
@@ -1195,3 +1195,427 @@ def test_a_metric_table_does_not_claim_an_identity_the_engine_never_enforces(eng
 
     assert "daily_channel_metrics" in out, "the table is still in the plan"
     assert "amount identity enforced" not in out
+
+
+DOWNSTREAM_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_date DATE,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    order_date DATE,
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE shipments (
+    shipment_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    ship_date DATE,
+    freight_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_table_is_planned_above_its_parent(engine_module):
+    """A detail row is a line of its parent document, so there cannot be fewer of them.
+
+    Independent role shares gave `fact` 0.52 and `detail` 0.28, and a production run was handed
+    26,320 order_items under 48,880 orders - 0.54 lines per order. The caller stopped trusting the
+    allocation, pinned `table_rows` on all five tables by hand, and spent the turn on arithmetic
+    the engine exists to do. SKILL.md section 1.2 has always asked for 1.4-2.2 lines per parent.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=17, seed=42)
+
+    ratio = eng.nrows["order_items"] / eng.nrows["orders"]
+    assert ratio > 1, f"a detail table cannot hold fewer rows than its parent (got {ratio:.2f})"
+    assert 1.4 <= ratio <= 2.2, f"lines per parent outside the documented band (got {ratio:.2f})"
+
+
+@pytest.mark.acceptance
+def test_the_planned_detail_count_is_one_the_generator_can_reach(engine_module, tmp_path):
+    """The plan `report()` prints has to be the plan `generate()` carries out.
+
+    `_gen_detail` rounds lines-per-parent up to at least one, so a plan below the parent count was
+    not merely unrealistic - it was unreachable, and the run silently produced most of a table more
+    than the number it had just printed.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=3, seed=1)
+    planned = eng.nrows["order_items"]
+
+    out = tmp_path / "detail.duckdb"
+    eng.generate(str(out), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(out))
+    try:
+        actual = con.execute("SELECT count(*) FROM order_items").fetchone()[0]
+    finally:
+        con.close()
+
+    assert abs(actual - planned) / planned < 0.2, f"planned {planned:,}, generated {actual:,}"
+
+
+@pytest.mark.acceptance
+def test_a_downstream_fact_is_planned_below_its_parent(engine_module):
+    """A shipment / claim / repayment does not follow every document, so it is not a detail line.
+
+    Both roles used to draw from the same `detail` share; sizing them the same way would have
+    swapped one wrong ratio for another.
+    """
+    eng = engine_module.DDLEngine(DOWNSTREAM_DDL, rows=20_000, months=6, seed=1)
+    assert eng.roles["shipments"] == "downstream"
+
+    assert eng.nrows["shipments"] < eng.nrows["orders"]
+    assert eng.nrows["order_items"] > eng.nrows["orders"]
+
+
+NAMING_TPL_DDL = """
+CREATE TABLE products (
+    product_id BIGINT PRIMARY KEY,
+    product_name VARCHAR,
+    category VARCHAR,          -- Electronics / Beauty / Clothing
+    list_price DECIMAL(18, 2)
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    product_id BIGINT REFERENCES products(product_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_naming_template_naming_a_column_does_not_break_the_report(engine_module, capsys):
+    """`report()` previews names before a row exists, and a `tpl` draws from the row being built.
+
+    Passing no row made a perfectly valid `"{brand} {category}"` raise KeyError out of `report()` -
+    a traceback in place of the plan, on the first command the skill tells the caller to run. The
+    production workaround was a fake `vocab` entry, which then made the preview print names the run
+    would never produce.
+    """
+    engine_module.DDLEngine(
+        NAMING_TPL_DDL,
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"naming": {"products": {"tpl": "{brand} {category}"}}},
+    ).report()
+
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if "products.product_name ->" in ln)
+    drawn = {v for v in ("Electronics", "Beauty", "Clothing") if v in line}
+
+    assert drawn, f"the preview must show the domain the run will really draw from: {line}"
+    assert "CATEG" not in line, f"a fallback code means the preview never saw the DDL domain: {line}"
+
+
+@pytest.mark.acceptance
+def test_a_naming_template_naming_nothing_says_so_instead_of_raising(engine_module, capsys):
+    engine_module.DDLEngine(
+        NAMING_TPL_DDL,
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"naming": {"products": {"tpl": "{brand} {nonesuch}"}}},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "'nonesuch'" in out
+    assert "neither a vocabulary key nor a generated column of products" in out
+
+
+@pytest.mark.acceptance
+def test_report_runs_the_validation_generate_will_run(engine_module, capsys):
+    """`gen.py report` is where the caller looks, and it used to validate nothing.
+
+    A production run pinned every table, read a plan with nothing wrong in it, and moved on; the
+    "pins every table calibration could scale" error existed the whole time and had no surface to
+    appear on until `generate()`, long after the profile was written.
+    """
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 26_000, "order_items": 40_000}},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "pins every table calibration could scale" in out
+
+
+@pytest.mark.acceptance
+def test_a_clean_profile_is_told_it_is_clean(engine_module, capsys):
+    """Silence reads as "not checked". It has to say the check ran."""
+    engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"trend_mom": 0.03}).report()
+
+    assert "profile validated: no errors, no warnings" in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_bare_ddl_is_not_told_its_profile_validated(engine_module, capsys):
+    """`plan_datasource` reports on a DDL alone, before a profile exists.
+
+    Saying "validated" there is a green light for work nobody has done yet.
+    """
+    engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1).report()
+
+    assert "profile validated" not in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_failing_sql_block_is_reported_once_not_twice(engine_module, capsys):
+    """`_print_plan` listed the SQL problems and then the pre-check listed them again.
+
+    The one report that has to be unambiguous printed the same failure twice, four lines apart.
+    """
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"pre_sql": "UPDATE orders SET no_such_col = 1;"},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert out.count("pre_sql[1]:") == 1, out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("requested", (1.0, 1.35, 1.84, 2.6, 3.0, 4.0))
+def test_lines_per_document_follow_the_plan(engine_module, requested):
+    """The line-count draw ignored the plan below two lines per document.
+
+    It returned the raw spread, mean 1.84, whatever `nrows` said - which made a detail table the one
+    table calibration could not move, because calibration works by rescaling `nrows` between passes.
+    """
+    import random
+
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1)
+    rng = random.Random(7)
+
+    mean = sum(eng._lines_for(requested, rng) for _ in range(40_000)) / 40_000
+
+    # An upper clamp used to truncate the tail, and it cost the most exactly where the caller had
+    # asked for the most: 2% of the requested mean at three lines per document, 3% at four.
+    assert abs(mean - requested) < 0.05, f"asked for {requested} lines per document, drew {mean:.3f}"
+
+
+@pytest.mark.acceptance
+def test_lines_per_document_never_drop_below_one(engine_module):
+    """A detail row belongs to a parent document, so a document cannot have zero lines."""
+    import random
+
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1)
+    rng = random.Random(7)
+
+    assert min(eng._lines_for(0.4, rng) for _ in range(5_000)) == 1
+
+
+@pytest.mark.acceptance
+def test_calibration_reaches_the_budget_through_the_detail_table(engine_module, tmp_path):
+    """Two production runs shipped ~90,000 rows against a requested 80,000.
+
+    Both pinned their other tables and left the detail table free to absorb the difference - which
+    it could not do, because the line-count draw was not reading `nrows`. Every one of the three
+    passes produced byte-identical row counts, and the run shipped the overshoot.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=20_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"customers": 1500, "orders": 9000}},
+    )
+
+    res = eng.generate(str(tmp_path / "cal.duckdb"), verbose=False)
+
+    assert abs(res["deviation"]) <= 0.06, f"{res['rows']:,} rows, deviation {res['deviation']:+.1%}"
+    assert res["tables"]["order_items"] >= res["tables"]["orders"], "still one line per order at the floor"
+
+
+@pytest.mark.acceptance
+def test_a_skipped_funnel_stage_still_gets_a_believable_ratio(engine_module):
+    """The ratio belongs to the pair of stages, not to the step's own name.
+
+    Keyed on the name alone, `purchasers` got "purchasers per checkout user" wherever it appeared -
+    so a schema that goes straight from sessions to purchasers was handed a 55% site conversion
+    rate. The stage levels divide, so a skipped stage narrows by the whole gap instead.
+    """
+    full = engine_module.DDLEngine._default_ratio("checkout_users", "purchasers")[0]
+    skipped = engine_module.DDLEngine._default_ratio("sessions", "purchasers")[0]
+
+    assert 0.4 < full[0] < full[1] < 0.7, full
+    assert 0.01 < skipped[0] < skipped[1] < 0.05, skipped
+
+
+@pytest.mark.acceptance
+def test_a_narrowing_funnel_step_never_prefills_above_one(engine_module):
+    """A step that loses people cannot gain them on some rows, or the funnel stops being a funnel."""
+    for src, dst in (("clicks", "sessions"), ("sessions", "unique_visitors"), ("add_to_carts", "checkout_users")):
+        (_lo, hi), known = engine_module.DDLEngine._default_ratio(src, dst)
+        assert known, f"{src} -> {dst} was not recognised"
+        assert hi < 1.0, f"{src} -> {dst} prefilled {hi}"
+
+
+@pytest.mark.acceptance
+def test_an_unrecognised_step_is_marked_rather_than_guessed_at(engine_module):
+    """A default the engine cannot justify has to say so, or it reads as an inferred value."""
+    ratio, known = engine_module.DDLEngine._default_ratio("widgets_seen", "sprockets_touched")
+
+    assert not known
+    assert ratio == engine_module.DDLEngine.FUNNEL_DEFAULT
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("pin,expected", [({"orders": 12_000}, 12_000), ({"orders": 1_500}, 1_500)])
+def test_pinning_the_parent_scales_its_detail_table(engine_module, pin, expected):
+    """A pin is a count, not a share, and a detail hangs off its parent's count.
+
+    Pins used to be applied last, as a plain overwrite once the shares were computed, so the detail
+    table stayed on the number its share gave it and never looked at the parent again: `orders`
+    pinned to 12,000 or to 1,500 both produced 12,085 `order_items` - one line per order or eight.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": pin})
+
+    ratio = eng.nrows["order_items"] / eng.nrows["orders"]
+
+    assert eng.nrows["orders"] == expected, "the pin itself is the caller's instruction"
+    assert 1.4 <= ratio <= 2.2, f"lines per parent outside the documented band (got {ratio:.2f})"
+
+
+@pytest.mark.acceptance
+def test_pinning_the_detail_table_sizes_its_parent(engine_module):
+    """The same relationship read the other way: pinned lines imply how many documents carry them.
+
+    Resolving pins in one direction only left the parent on the 50-row floor - 600 lines per order.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": {"order_items": 30_000}}
+    )
+
+    assert eng.nrows["order_items"] == 30_000
+    assert 1.4 <= 30_000 / eng.nrows["orders"] <= 2.2, eng.nrows
+
+
+@pytest.mark.acceptance
+def test_pinning_both_ends_leaves_both_alone(engine_module):
+    """An explicit count on both tables is the caller overriding the ratio, which is allowed."""
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": {"orders": 6_000, "order_items": 9_000}}
+    )
+
+    assert (eng.nrows["orders"], eng.nrows["order_items"]) == (6_000, 9_000)
+
+
+@pytest.mark.acceptance
+def test_a_wrongly_typed_sql_block_is_reported_not_raised(engine_module, capsys):
+    """`_sql_block` raises TypeError, and it did so from inside the report.
+
+    A traceback halfway through the plan, for a mistake the pre-check names in one sentence.
+    """
+    engine_module.DDLEngine(BUDGET_DDL, rows=5_000, months=3, seed=1, profile={"pre_sql": 123}).report()
+
+    out = capsys.readouterr().out
+
+    assert "pre_sql: must be a str or a list of str, got int" in out
+    assert "table" in out, "the rest of the plan still has to print"
+
+
+NESTED_DETAIL_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE item_serials (
+    serial_id BIGINT PRIMARY KEY,
+    item_id BIGINT REFERENCES order_items(item_id),
+    serial_no VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_table_can_itself_be_a_parent(engine_module, tmp_path):
+    """`order_items` has serials; a claim has line items. A detail table is a legitimate parent.
+
+    `_gen_detail` recorded neither `refs` nor `_fact_rows`, so `_parent_of` could not see it and the
+    nested table fell through to `_gen_fact` - generated as an independent fact, 10,754 rows with
+    the foreign key NULL on every single one. The FK check reports that as resolving, because it
+    excludes NULLs from both sides of the ratio.
+    """
+    import duckdb
+
+    out = tmp_path / "nested.duckdb"
+    engine_module.DDLEngine(NESTED_DETAIL_DDL, rows=20_000, months=6, seed=1).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        total, nulls = con.execute(
+            "SELECT count(*), count(*) FILTER (WHERE item_id IS NULL) FROM item_serials"
+        ).fetchone()
+        resolving = con.execute(
+            "SELECT count(*) FROM item_serials s JOIN order_items i ON s.item_id = i.item_id"
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    assert total > 0
+    assert nulls == 0, f"{nulls:,} of {total:,} nested-detail rows have no parent key"
+    assert resolving == total
+
+
+REVIEW_METRIC_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE daily_seller_metrics (
+    stat_dt DATE,
+    seller VARCHAR,
+    impressions BIGINT,
+    clicks BIGINT,
+    review_count BIGINT,
+    gmv DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_stage_word_only_matches_at_a_token_start(engine_module):
+    """A bare substring search read `review_count` as a page view, because it contains "view".
+
+    Page views are the one fan-out in the table, so a review column was prefilled to go *up* from
+    its predecessor instead of down - the only ratio in the funnel that must never be guessed wrong.
+    """
+    page_view = dict(engine_module.DDLEngine.FUNNEL_STAGE)[r"view|browse|detail|pv"]
+
+    for name in ("review_count", "review_score", "interview_count"):
+        assert engine_module.DDLEngine._stage_level(name) is None, name
+    for name in ("view_count", "page_view", "product_detail", "pv_cnt"):
+        assert engine_module.DDLEngine._stage_level(name) == page_view, name
+
+
+@pytest.mark.acceptance
+def test_an_unrecognised_stage_is_annotated_in_the_skeleton(engine_module):
+    """A default the engine cannot justify has to be marked where the caller will read it."""
+    skeleton = engine_module.DDLEngine(REVIEW_METRIC_DDL, rows=20_000, months=6, seed=1).profile_skeleton()
+
+    line = next(ln for ln in skeleton.splitlines() if "review_count" in ln)
+
+    assert "step not recognised" in line, line

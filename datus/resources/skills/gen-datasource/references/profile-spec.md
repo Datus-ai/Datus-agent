@@ -32,7 +32,7 @@ split by hand** - it is the single most expensive way to burn a run. The rule it
 | Step | What the engine does |
 |---|---|
 | Budget | `rows * 0.94`; the remaining 6% is headroom for dimensions |
-| Fact layer | Split by role share: main fact `0.52` when there is no event/snapshot table, `0.32` when there is; detail `0.28`; event stream `0.34`; snapshot `0.20`. Shares are renormalised over the roles that actually exist, so a DDL with no detail table gives its share to the main fact |
+| Fact layer | Facts and their details share one block of the budget: `0.52 + 0.28`, or `0.32 + 0.28` when an event or snapshot table exists. Within that block a fact weighs 1 and a detail weighs its lines per parent - `1.8` for a detail table, `0.6` for a downstream fact - so a detail table always comes out above its parent, in the 1.4-2.2 band `references/design-from-scratch.md` section 1.2 states. Event stream `0.34`, snapshot `0.20`. Shares are renormalised over the roles that actually exist, so a DDL with no detail table gives its share to the main fact |
 | Dimensions | `main_fact_rows / DIM_DENSITY[kind]`, then clamped to `[4, 8% of rows]` |
 | Daily metric table | `max(number of days, 7% of rows)`; the real count is `days x dimension combinations`, and `report()` prints the combinations it will build |
 | Date dimension | Exactly the number of days |
@@ -83,6 +83,7 @@ on disk made the "never read the engine" rule unenforceable - so here they are.
 | Amount identity on a fact row | `paid = gross - discount + shipping + tax`. Discount is 0 for 38% of rows, otherwise 2-22% of gross, capped at 90%. Shipping is 0 for 42% of rows, otherwise a flat 3-22 (**additive, never a fraction of the goods**). Tax is 0-8.5% of `gross - discount`. **Coupon is not part of the identity** - it is 0 for 58% of rows, otherwise 30-85% *of the discount* |
 | Cost vs price | A cost column is never allowed above the price column. A `columns` bound `<= 1` reads as a cost *ratio*; `> 1` as an absolute range, still clamped to the price |
 | Flag columns | True with p = 0.93 on a dimension, p = 0.88 on a fact. Override per column with `columns: {"t.col": {"p": 0.7}}` |
+| Lines per document | The row allocation decides the average (1.8 by default, see 1.1), and the spread around it is 1-5 lines with weights 0.52 / 0.26 / 0.12 / 0.06 / 0.04 scaled to that average. **A document always has at least one line, and that beats the plan**: pin a detail table below its parent and the plan keeps your number - `_plan_rows` and `precheck` both honour an explicit pin - while generation still produces one line per parent, so the table comes out larger than the printed plan. Pin the parent instead and the lines follow it |
 | Detail line quantities | A detail row draws 1-4 with weights 0.71 / 0.19 / 0.07 / 0.03. **Not the same as a generic `count` column on a fact table**, which draws 1-5 with 0.52 / 0.26 / 0.12 / 0.06 / 0.04. Either is overridden by `derive` |
 | Daily metric grid width | `days x dimension combinations`, capped at `row budget / number of days`, and capped again by what the schema allows. `report()` prints both the plan and the binding cap |
 | Same-named columns on a fact | Inherited from the FK'd dimension row rather than redrawn, so `category` on an order line matches the product's |
@@ -215,7 +216,12 @@ cleanly separated.
   cost ratio by category can be configured separately
 - Cost columns on a dimension have one extra rule: an upper bound **<= 1 is read as a cost ratio**
   (a fraction of price), **> 1 as an absolute amount** (clamped to not exceed the price). That is how
-  a per-category margin gradient is configured:
+  a per-category margin gradient is configured.
+  The fraction is of the **list** price, and the line is sold at a discount off that, so the margin
+  the data ends up showing is *narrower* than `1 - ratio`. A production run set `[.80, .88]` on one
+  category expecting a 12-20% margin and measured 1.8%, because a ~15% line discount came off after:
+  its per-category margin gradient came out 30x and failed its own assertion. Leave room for the
+  discount - `[.65, .75]` on that category measured 4.2x across categories and passed.
 
 ```python
 "products.list_price": {"__by__": "category", "3C": [200, 900], "Beauty": [30, 200]},
@@ -223,7 +229,16 @@ cleanly separated.
                         "Beauty": [.35, .45], "__default__": [.5, .65]},
 ```
 
-- **Supported on dimension, fact and detail tables alike.**
+- **Supported on dimension, fact and detail tables alike**, with two limits.
+  *Grouping across tables* (`"__by__": "products.category"`, reading the value from the row a foreign
+  key points at) works on **fact and detail** tables, which carry the key. On a **dimension** the
+  grouping column must be one of that table's own columns - `products.cost_price` grouped by
+  `category` is fine, grouped by anything outside `products` it silently falls through to
+  `__default__`.
+  *The cost-ratio reading* is the other: it belongs to `_gen_dim`, so `products.cost_price` reads
+  `[.80, .88]` as a ratio while `order_items.unit_cost` does not. A detail table's cost column needs no conditional at all -
+  it already follows the cost of the product the line references, so the per-category gradient you
+  configure on the dimension arrives on the detail rows on its own.
 
 ### semantics - correcting what a column is
 
@@ -376,7 +391,9 @@ to work out what `refund_rate` did.
 ```python
 "lifecycle": {
   "orders": {
-    # Average gap in hours between adjacent timestamps, matching timestamp column order in the DDL
+    # One entry per business timestamp, in DDL column order. Entry [0] belongs to the first
+    # timestamp, which is the anchor and has nothing before it - write 0 and it is ignored. So four
+    # timestamps take four numbers, of which three are real gaps.
     "gap_hours": [0, 6, 30, 72],          # order->paid 6h, paid->shipped 30h, shipped->completed 72h
     # Status -> how many stages it reaches (decides which later timestamps are NULL)
     "stages": {"pending": 1, "paid": 2, "shipped": 3, "completed": 4,

@@ -512,8 +512,40 @@ class DDLEngine:
             for c in cols
         )
 
+    # Lines per parent document. A production run was handed 26,320 order_items under 48,880 orders
+    # - 0.54 lines per order, which is not a schema that can exist and is also not a plan the engine
+    # can carry out: ``_gen_detail`` rounds lines-per-parent up to one, so it would have produced
+    # 48,880 rows against a printed plan of 26,320. The caller saw the contradiction, stopped
+    # trusting the allocation, and pinned ``table_rows`` on every table by hand.
+    DETAIL_PER_PARENT = 1.8
+    DOWNSTREAM_PER_PARENT = 0.6  # a shipment / claim / repayment does not follow every document
+
+    def _doc_parent(self, t):
+        """The document a detail row belongs to, resolved from declared keys at planning time.
+
+        ``_parent_of`` answers the same question during generation, but it filters on ``self.refs``,
+        which fills up only as tables are generated - asked before that it calls every detail an
+        orphan, and orphans would all be sized as if they were facts.
+        """
+        for f in self.fks.get(t, []):
+            par = self.pk_owner.get(f)
+            if par and self.roles.get(par) in (ROLE_FACT, ROLE_DETAIL, ROLE_DOWNSTREAM):
+                return par
+        return None
+
+    def _doc_weight(self, t, details, seen=()):
+        """A detail's weight within the document block: its parent's, times its lines per parent."""
+        if t in seen:  # a key cycle in the DDL must not recurse forever
+            return 1.0
+        per = self.DOWNSTREAM_PER_PARENT if self.roles.get(t) == ROLE_DOWNSTREAM else self.DETAIL_PER_PARENT
+        par = self._doc_parent(t)
+        return per * (self._doc_weight(par, details, seen + (t,)) if par in details else 1.0)
+
     def _plan_rows(self):
-        """Allocate rows per skill Phase 1.2/1.3: the fact layer takes the bulk, dimensions size by business density."""
+        """Allocate rows: the fact layer takes the bulk, dimensions size by business density.
+
+        The shares are stated in ``references/profile-spec.md`` section 1.1.
+        """
         roles = self.roles
         dims = [t for t, r in roles.items() if r == ROLE_DIM]
         facts = [t for t, r in roles.items() if r == ROLE_FACT]
@@ -533,11 +565,46 @@ class DDLEngine:
         tot = sum(v for v in share.values() if v) or 1
         budget = self.rows * 0.94  # leave 6% for dimensions
         n = {}
-        for t in facts:
-            n[t] = max(50, int(budget * share["fact"] / tot / len(facts)))
+        # The fact layer and its details share one block of the budget, split by lines per parent
+        # rather than by a share each. Independent shares gave `detail` less than `fact`, which no
+        # amount of tuning fixes: a detail row exists only as a line of its parent document, so its
+        # count is the parent's count times the lines per document and can never be below it.
+        #
+        # Resolve in three steps, and in this order: the pins, then the details those pins
+        # determine, then a share of what is left for whatever nothing has fixed. Applying the pins
+        # last - as a plain overwrite once the shares were computed - left a detail table on the
+        # number its share gave it and never looked at the parent again: pinning `orders` to 12,000
+        # or to 1,500 produced the same 12,085 `order_items`, so one line per order or eight, both
+        # outside the documented 1.4-2.2 band, both a plan `_gen_detail` then carried out faithfully.
+        block = share["fact"] + share.get("detail", 0)
+        weights = {t: 1.0 for t in facts}
+        weights.update({t: self._doc_weight(t, details) for t in details})
+        settled = {t: pinned[t] for t in facts + details if t in pinned}
+
+        def per_parent(t):
+            return self.DOWNSTREAM_PER_PARENT if roles[t] == ROLE_DOWNSTREAM else self.DETAIL_PER_PARENT
+
+        progressed = True
+        while progressed:  # a detail of a detail settles on the pass after its parent
+            progressed = False
+            for t in details:
+                par = self._doc_parent(t)
+                if par not in (facts + details):
+                    continue
+                if t not in settled and par in settled:  # pinned parent -> its lines follow
+                    settled[t] = max(50, int(settled[par] * per_parent(t)))
+                elif par not in settled and t in settled:  # pinned lines -> the documents under them
+                    settled[par] = max(50, int(settled[t] / per_parent(t)))
+                else:
+                    continue
+                progressed = True
+        rest = [t for t in facts + details if t not in settled]
+        left = max(0.0, budget * block / tot - sum(settled.values()))
+        unit = left / (sum(weights[t] for t in rest) or 1)
+        n.update(settled)
+        for t in rest:
+            n[t] = max(50, int(unit * weights[t]))
         main_n = n.get(self.main_fact, max(50, int(budget * 0.5)))
-        for t in details:
-            n[t] = max(50, int(budget * share["detail"] / tot / max(1, len(details))))
         for t in events:
             n[t] = max(50, int(budget * share["event"] / tot / max(1, len(events))))
         for t in snaps:
@@ -783,16 +850,16 @@ class DDLEngine:
 
         for key, d in (self.profile.get("derive", {}) or {}).items():
             chk_ref("derive", key)
-            # (0.0, 0.0) is the placeholder profile_skeleton() writes. `_derive` multiplies the base
-            # by it, so leaving it turns the whole chain to zeros - visible only after a generate,
-            # an import and a check. It is never a legitimate ratio either way.
+            # `_derive` multiplies the base by the ratio, so (0.0, 0.0) turns the whole chain to
+            # zeros - visible only after a generate, an import and a check. The skeleton no longer
+            # emits it (it prefills believable ratios), but it is never a legitimate ratio, so a
+            # hand-written one is still refused here.
             if isinstance(d, dict):
                 ratios = [d.get("ratio")] if not isinstance(d.get("ratio"), dict) else list(d["ratio"].values())
                 for r in ratios:
                     if isinstance(r, (list, tuple)) and len(r) == 2 and r[0] == 0 and r[1] == 0:
                         err.append(
-                            f"derive[{key}]: ratio is still the skeleton's (0.0, 0.0) placeholder, which "
-                            f"generates a column of zeros. Fill in the real range"
+                            f"derive[{key}]: a ratio of (0.0, 0.0) generates a column of zeros. Fill in the real range"
                         )
                         break
             if "." not in key or not isinstance(d, dict):
@@ -900,6 +967,62 @@ class DDLEngine:
                 print(f"  ! {w}")
         return err, warn
 
+    # Where each funnel stage sits relative to the top of the funnel, recognised by what the stage
+    # is called. A step's ratio is the quotient of the two stages it connects, so a schema that
+    # skips stages still gets a believable number: purchasers taken straight off sessions is a 2%
+    # site conversion, where "purchasers per checkout user" would have said 55%. Keyed on the step
+    # name alone, that is exactly the mistake it made. These are not claims about the caller's
+    # business - they are numbers that make a first run converge, so the quality check can say which
+    # one to move instead of the caller designing ten of them against a blank page. An empty slot is
+    # a decision, and deriving these ten by hand took 16% of a measured 676-second turn.
+    FUNNEL_STAGE = (
+        (r"impression|exposure|imp_cnt", 1.0),
+        (r"click", 0.035),
+        (r"unique|visitor|uv", 0.027),
+        (r"session|visit", 0.030),
+        (r"view|browse|detail|pv", 0.088),  # the one fan-out: one visit browses several items
+        (r"cart|wish|favou?rite", 0.0031),
+        (r"checkout|submit", 0.0012),
+        (r"purchas|buyer|convert|paid_user", 0.00065),
+        (r"order", 0.00072),
+    )
+    FUNNEL_DEFAULT = (0.25, 0.45)  # neither end recognised: narrow rather than stall
+    FUNNEL_BAND = 0.12  # the spread around the point estimate; wide enough to vary, tight enough to stay monotone
+    # Money about a step, per unit of the count it follows: a cost per acquisition, an order value.
+    MONEY_RATIO = ((r"spend|cost|budget|fee", (20.0, 60.0)), (r"revenue|gmv|sales|amount|value", (60.0, 260.0)))
+    MONEY_DEFAULT = (30.0, 120.0)
+
+    @classmethod
+    def _stage_level(cls, name):
+        """Match a stage word at the start of one of the column name's `_`-separated tokens.
+
+        A bare substring search read `review_count` and `interview_count` as page views, because
+        both contain "view" - so a review table got the one fan-out ratio in the table and its
+        counts went up instead of down. Anchoring to a token start keeps `page_view`, `view_count`
+        and `pv_cnt` and drops the accidents.
+        """
+        for pattern, level in cls.FUNNEL_STAGE:
+            if re.search(rf"(?:^|_)(?:{pattern})", name, re.I):
+                return level
+        return None
+
+    @classmethod
+    def _default_ratio(cls, src, dst, is_money=False):
+        """The prefilled ratio for one derive step, and whether the engine recognised both ends."""
+        if is_money:
+            for pattern, ratio in cls.MONEY_RATIO:
+                if re.search(rf"(?:^|_)(?:{pattern})", dst, re.I):
+                    return ratio, True
+            return cls.MONEY_DEFAULT, False
+        lo_stage, hi_stage = cls._stage_level(src), cls._stage_level(dst)
+        if not lo_stage or not hi_stage:
+            return cls.FUNNEL_DEFAULT, False
+        point = hi_stage / lo_stage
+        lo, hi = point * (1 - cls.FUNNEL_BAND), point * (1 + cls.FUNNEL_BAND)
+        if point < 1:  # a narrowing step must stay narrowing on every row
+            hi = min(hi, 0.99)
+        return (round(lo, 4), round(hi, 4)), True
+
     def profile_skeleton(self):
         """A copy-paste PROFILE with everything the engine already knows filled in.
 
@@ -908,9 +1031,11 @@ class DDLEngine:
         vocabularies in reasoning - then re-emitting them as a file in the next turn. It was
         composing from a blank page because that is what the skill handed it.
 
-        Everything below is either inferred (so the caller keeps it) or an explicit TODO (so the
-        caller fills one slot instead of designing a structure). Nothing is invented: a domain the
-        engine could not extract is listed as missing rather than guessed at.
+        Copied out unedited it produces a database that passes its own funnel assertions: an empty
+        slot is a decision, and ten of them were what the caller met first. Everything is inferred
+        from the DDL or prefilled with a believable default; the only blank left is ``calendar``,
+        which is a business fact the engine has no way to know and must not invent. Fill that, run,
+        and let the quality check say which default to move.
         """
         enum_cols = {
             (t, c["name"])
@@ -981,18 +1106,21 @@ class DDLEngine:
             counts = [c["name"] for c in self.schema[t] if c["sem"] == "count"]
             if len(counts) < 3:
                 continue
-            derive_lines.append(f"        # {t}: the funnel. Without these the counts do not converge")
+            derive_lines.append(f"        # {t}: the funnel, prefilled. Tune what the quality check flags.")
             for i in range(1, len(counts)):
+                ratio, known_step = self._default_ratio(counts[i - 1], counts[i])
                 derive_lines.append(
-                    f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": (0.0, 0.0)}},'
+                    f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": {ratio}}},'
+                    + ("" if known_step else "  # <- step not recognised; check this one")
                 )
             ordered = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
             for name in [c["name"] for c in self.schema[t] if c["sem"] == "amount"]:
                 before = [c for c in ordered[: ordered.index(name)] if c in counts]
                 if before:
+                    ratio, known_step = self._default_ratio(before[-1], name, is_money=True)
                     derive_lines.append(
-                        f'        {lit(f"{t}.{name}")}: {{"from": {lit(before[-1])}, '
-                        f'"ratio": (0.0, 0.0)}},  # money per step'
+                        f'        {lit(f"{t}.{name}")}: {{"from": {lit(before[-1])}, "ratio": {ratio}}},'
+                        + ("  # money per step" if known_step else "  # <- amount not recognised; check this one")
                     )
         if derive_lines:
             out.append('    "derive": {')
@@ -1003,6 +1131,8 @@ class DDLEngine:
         out.append('    "vocab": {},       # any non-retail industry: brand / org_suffix / person / given / item')
         out.append("}")
         out.append("")
+        out.append("# The ratios above are defaults, not guesses at your business: run first, then move")
+        out.append("# the ones check_datasource_quality flags. Nothing here has to be decided up front.")
         out.append("# Not in this skeleton on purpose:")
         out.append("#   formulas   - the amount identities above are already enforced; do not restate them")
         out.append("#   table_rows - pinning is what stops calibration reaching your row budget")
@@ -1053,6 +1183,15 @@ class DDLEngine:
                 )
         self._print_semantics()
         self._print_plan()
+        # The same validation generate() runs, at the point the skill actually looks. A production
+        # run pinned table_rows on every table, ran `gen.py report`, read a plan with nothing wrong
+        # in it and moved on: the "pins every table calibration could scale" error existed the whole
+        # time and had no surface to appear on until generate(), long after the profile was written.
+        # precheck() prints its own findings; only the clean case needs a line here, and only when
+        # there is a profile to have validated - plan_datasource runs report() on a bare DDL, where
+        # "validated" would be a green light for work nobody has done yet.
+        if not any(self.precheck(strict=False)) and self.profile:
+            print("profile validated: no errors, no warnings")
         return self
 
     def _print_plan(self):
@@ -1081,7 +1220,13 @@ class DDLEngine:
                 continue
             col = next((c["name"] for c in self.schema[t] if c["sem"] == "name"), None)
             if col:
-                samples = ", ".join(self._name_for(t, i, rng) for i in range(2))
+                try:
+                    samples = ", ".join(self._name_for(t, i, rng, self._preview_ent(t, rng)) for i in range(2))
+                except KeyError as e:
+                    samples = (
+                        f"<naming[{t!r}]['tpl'] asks for {e}, which is neither a vocabulary key "
+                        f"nor a generated column of {t}>"
+                    )
                 named.append(f"{t}.{col} -> {samples}")
         if named:
             print("name samples (change with profile['vocab'] or profile['naming']):")
@@ -1162,6 +1307,11 @@ class DDLEngine:
 
         planned_sql = False
         for key in ("pre_sql", "extra_sql"):
+            if not isinstance(self.profile.get(key) or "", (str, list, tuple)):
+                # `_sql_block` raises TypeError on anything else, and it did so from here - halfway
+                # through the report, as a traceback, for a mistake the pre-check below names in a
+                # sentence. A report must not be the thing that breaks on a bad profile.
+                continue
             block = self._sql_block(key)
             if block.strip():
                 planned_sql = True
@@ -1169,18 +1319,31 @@ class DDLEngine:
                     f"{key}: {block.count(';')} statement(s) will run "
                     f"({'before' if key == 'pre_sql' else 'after'} the summary layer)"
                 )
-        if planned_sql:
-            # Plan them here rather than claiming precheck did: report() is the first thing the
-            # skill runs, and generate() is the only other caller. Reporting the findings at the
-            # cheap end is the whole point - the alternative is reasoning them through by hand,
-            # which one production run did at length.
-            problems = self._sql_problems()
-            if problems:
-                print(f"  {len(problems)} statement(s) will not plan against the schema:")
-                for problem in problems:
-                    print(f"  x {problem}")
-            else:
-                print("  every statement above planned against the schema; columns and types check out")
+        if planned_sql and not self._sql_problems():
+            # The failures are listed by the pre-check below, which report() always runs, so saying
+            # them here too would print the same line twice in the one report that needs to be
+            # unambiguous. What stays here is the claim that they were planned - the alternative is
+            # reasoning them through by hand, which one production run did at length.
+            print("  every statement above planned against the schema; columns and types check out")
+
+    def _preview_ent(self, t, rng):
+        """A stand-in row for the name preview.
+
+        A ``tpl`` draws from the row being built, so ``"{brand} {subcategory}"`` has nothing to draw
+        from before generation starts. Filling the table's enum columns here shows what the run will
+        really produce, and keeps a valid template from raising KeyError out of ``report()`` - which
+        is where a production run met it: a traceback in place of the plan, no row generated yet,
+        and the workaround it reached for was a fake ``vocab["subcategory"]`` list that made the
+        preview print names the run would never produce.
+        """
+        ent = {}
+        for c in self.schema[t]:
+            if c["sem"] != "enum":
+                continue
+            vals, ws = self._enum_values(t, c["name"])
+            if vals:
+                ent[c["name"]] = rng.choices(vals, ws)[0]
+        return ent
 
     def _print_semantics(self):
         """Print the inferred semantic of every column, so the caller can correct what is wrong.
@@ -2105,6 +2268,35 @@ class DDLEngine:
                 return f, par
         return None, None
 
+    # How many lines a document gets. The spread is what makes the long tail - most orders have one
+    # line, a few have five - and its mean is 1.84.
+    LINE_SPREAD = ([1, 2, 3, 4, 5], [0.52, 0.26, 0.12, 0.06, 0.04])
+    LINE_SPREAD_MEAN = 1.84
+
+    def _lines_for(self, lines_per_doc, rng):
+        """Lines on this document, for a requested average of ``lines_per_doc``.
+
+        The draw used to ignore the request entirely below two lines per document: it returned the
+        raw spread, mean 1.84, whatever the plan said. That made a detail table the one table
+        calibration could not move - it rescales ``nrows`` between passes, and this generator was
+        not reading it. Two production runs pinned their other tables, left the detail table free to
+        absorb the difference, and shipped 90,004 and 90,073 rows against a requested 80,000, the
+        same total on all three passes because every pass produced identical rows.
+
+        The spread is kept and its *extra* lines are scaled to the requested mean, so the first line
+        is never scaled away: a document has at least one line by construction, rather than by a
+        clamp that would push the mean back above what was asked for. The fractional part is
+        resolved by a coin flip so the mean is exact rather than rounded off. At 1.84 lines per
+        document this is the raw spread again. A plan below one line per parent is not reachable -
+        ``precheck`` says so.
+        """
+        spread = rng.choices(*self.LINE_SPREAD)[0] - 1
+        extra = max(0.0, lines_per_doc - 1.0) * spread / (self.LINE_SPREAD_MEAN - 1)
+        # No upper clamp: the draw is already bounded by the spread's own top (five lines scaled),
+        # and a ceiling only truncated the tail - it cost 2% of the requested mean at three lines
+        # per document and 3% at four, on the tables where the caller had asked for the most.
+        return 1 + int(extra) + (1 if rng.random() < extra - int(extra) else 0)
+
     def _gen_detail(self, t, o):
         """Detail rows inherit the parent date and keep amounts self-consistent within the row
         (price x qty = line amount, cost from the product cost, margin = revenue - cost), then are
@@ -2115,7 +2307,7 @@ class DDLEngine:
         if not par:
             return self._gen_fact(t, o)
         prefs = self.refs[par]
-        n_per = max(1, round(self.nrows[t] / max(1, len(prefs))))
+        lines_per_doc = self.nrows[t] / max(1, len(prefs))  # fractional: calibration moves it in small steps
         item_col = next(
             (
                 c["name"]
@@ -2149,9 +2341,9 @@ class DDLEngine:
         rfq_col = next((c for c in cnt_cols if re.search(r"refund|return", c)), None)
         reason_cols = [c["name"] for c in cols if re.search(r"reason|cause", c["name"])]
         refund_p = self.profile.get("refund_rate", 0.055)
-        rows, agg, no = [], {}, 0
+        rows, agg, no, refs = [], {}, 0, []
         for pi, pr in enumerate(prefs):
-            k = max(1, min(6, rng.choices([1, 2, 3, 4, 5], [0.52, 0.26, 0.12, 0.06, 0.04])[0] if n_per <= 2 else n_per))
+            k = self._lines_for(lines_per_doc, rng)
             if pool and eff_cum:
                 picks = self._pick_items(pool, eff_sorted, eff_cum, pr["dt"], k, rng)
             else:
@@ -2231,8 +2423,25 @@ class DDLEngine:
                 tot["refund"] += ramt
                 self._apply_formulas(t, row)
                 rows.append([row[c] for c in names])
+                refs.append(
+                    {
+                        "pk": row[pk],
+                        "dt": pr["dt"],
+                        "ts": pr.get("ts"),
+                        "status": pr.get("status", ""),
+                        "amt": sales,
+                        "fks": {f: row.get(f, "") for f in self.fks[t]},
+                        "subj": 1.0,
+                    }
+                )
             agg[pr["pk"]] = {k2: round(v, 2) for k2, v in tot.items()}
         o.write(t, names, rows)
+        # A detail table is a legitimate parent - order_items has serials, a claim has line items.
+        # Without these two lines `_parent_of` could not see it, so `_gen_detail` fell through to
+        # `_gen_fact` for the nested table and generated it as an independent fact: 10,754 rows with
+        # the foreign key NULL on every one of them, which the FK check then reports as resolving.
+        self.refs[t] = refs
+        self._fact_rows[t] = (names, rows)
         self._realign_parent(par, agg)
 
     def _pick_items(self, pool, eff_sorted, eff_cum, d, k, rng):

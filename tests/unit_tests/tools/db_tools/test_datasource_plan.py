@@ -235,32 +235,94 @@ def test_the_skeleton_is_valid_python_that_defines_a_profile():
 
 
 @pytest.mark.acceptance
-def test_copying_the_skeleton_unfilled_is_refused_before_generating():
-    """Its `(0.0, 0.0)` ratios multiply the base to zero, so an unfilled chain is all zeros.
-
-    Left to the quality check that costs a generate, an import and a check to discover - which is
-    the cycle the skeleton exists to avoid. precheck names the key instead.
-    """
+def _engine_from_skeleton(ddl, rows, months):
+    """Build an engine on the skeleton exactly as a caller would: copy it out, run it unedited."""
     import sys
 
     from datus.tools.db_tools.datasource_plan import load_engine
 
-    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+    _plan, skeleton = plan_from_ddl(ddl, rows=rows, months=months)
     namespace = {}
     exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
 
     scripts = str(load_engine().__file__).rsplit("/", 1)[0]
     sys.path.insert(0, scripts)
     try:
-        engine = load_engine().DDLEngine(SKELETON_DDL, rows=80_000, months=17, profile=namespace["PROFILE"])
+        return load_engine().DDLEngine(ddl, rows=rows, months=months, seed=42, profile=namespace["PROFILE"])
+    finally:
+        sys.path.remove(scripts)
+
+
+@pytest.mark.acceptance
+def test_copying_the_skeleton_unfilled_runs_and_is_believable(tmp_path):
+    """An empty slot is a decision, and the skeleton used to open with ten of them.
+
+    Its funnel ratios were `(0.0, 0.0)` placeholders, so the first runnable profile was whatever the
+    caller designed against a blank page - 16% of one measured 676-second turn went on deriving
+    those ten numbers by hand. Prefilled, the skeleton copied out unedited has to produce a funnel
+    that converges, or the prefill is not worth having.
+    """
+    import duckdb
+
+    engine = _engine_from_skeleton(SKELETON_DDL, rows=30_000, months=6)
+
+    assert not engine.precheck(strict=False)[0], "the skeleton must not need editing to be valid"
+
+    out = tmp_path / "skeleton.duckdb"
+    engine.generate(str(out), verbose=False)
+    con = duckdb.connect(str(out))
+    try:
+        rows, ctr, cvr = con.execute(
+            "SELECT count(*), 1.0*sum(clicks)/sum(impressions), 1.0*sum(purchasers)/sum(sessions) "
+            "FROM daily_channel_metrics"
+        ).fetchone()
+        broken = con.execute(
+            "SELECT count(*) FROM daily_channel_metrics "
+            "WHERE clicks > impressions OR sessions > clicks OR purchasers > sessions"
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    assert broken == 0, f"{broken} of {rows} funnel rows do not narrow"
+    assert 0.005 < ctr < 0.12, f"click-through rate {ctr:.4f} is not believable"
+    assert 0.002 < cvr < 0.10, f"conversion rate {cvr:.4f} is not believable"
+
+
+@pytest.mark.acceptance
+def test_the_skeleton_leaves_only_the_calendar_blank():
+    """Prefilling is for what the engine can know. Promotion windows are a business fact.
+
+    Inventing them would put a Double 11 in a dataset that has no such thing, which is worse than
+    an empty list the caller fills in.
+    """
+    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+
+    assert "(0.0, 0.0)" not in skeleton, "a placeholder ratio is a decision the caller has to make"
+    assert '"promos": [' in skeleton, "the one section the engine must not guess stays empty"
+
+
+@pytest.mark.acceptance
+def test_a_hand_written_zero_ratio_is_still_refused():
+    """The skeleton no longer emits it, but it multiplies the base to zero wherever it comes from."""
+    import sys
+
+    from datus.tools.db_tools.datasource_plan import load_engine
+
+    scripts = str(load_engine().__file__).rsplit("/", 1)[0]
+    sys.path.insert(0, scripts)
+    try:
+        engine = load_engine().DDLEngine(
+            SKELETON_DDL,
+            rows=80_000,
+            months=17,
+            profile={"derive": {"daily_channel_metrics.clicks": {"from": "impressions", "ratio": (0.0, 0.0)}}},
+        )
     finally:
         sys.path.remove(scripts)
 
     errors, _warnings = engine.precheck(strict=False)
 
-    placeholders = [e for e in errors if "placeholder" in e]
-    assert placeholders, errors
-    assert "derive[daily_channel_metrics.clicks]" in placeholders[0]
+    assert any("derive[daily_channel_metrics.clicks]" in e and "column of zeros" in e for e in errors), errors
 
 
 @pytest.mark.acceptance
