@@ -495,6 +495,14 @@ on its wrong guess and produce plausible-looking wrong data that no quality chec
 
 **The complete field reference is `references/profile-spec.md`** - reading that one file is enough to write a profile. You do not need the engine source.
 
+**An assertion you wrote is a contract, not a draft.** When one fails, the data is wrong until
+proven otherwise. You may correct the *query* - an assertion that divides by all customers rather
+than by buyers is measuring the wrong thing, and fixing that is a fix. You may not widen the band
+and re-run the check: that is not a pass, it is a smaller claim. If a bound really was wrong,
+**regenerate after changing it and say in the delivery summary which bound moved and why** - a
+production run edited `checks.json` and re-ran the check with no regeneration in between, having
+already widened the same bound once, and reported `ok: true`.
+
 **Order of work**: run `report()` -> override only what is wrong -> add the calendar and differentiation (`conditional`) -> declare identities with `formulas` -> generate -> run the quality check.
 
 **The first `gen.py` is a first draft, not a finished answer.** Put the calendar, the corrected
