@@ -1026,41 +1026,78 @@ class TestConcurrentMutationsDoNotLoseUpdates:
         missing = [m for m in markers if f"{m}_DONE" not in content]
         assert not missing, f"reported success but the change is not on disk: {missing}"
 
-    def test_a_write_cannot_interleave_with_an_edit(self, tmp_path):
-        """``write_file`` replaces the whole file, so it must not land inside an edit's window."""
+    def test_an_edit_waits_for_a_semantic_artifact_writer(self, tmp_path):
+        """The two writer paths must exclude each other, not merely share a name.
+
+        `MetricFilesystemFuncTool` subclasses `FilesystemFuncTool`, so one object serves both the
+        semantic-artifact writes (which take the lock under their own name) and the generic
+        `edit_file` it inherits. Separate registries would leave them free to interleave on one
+        file. Asserted through behaviour - the edit must not complete while the artifact lock is
+        held - rather than by comparing the two names for identity.
+        """
         import threading
 
+        from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
+
         tool = self._tool(tmp_path)
-        target = tmp_path / "notes.md"
-        target.write_text("alpha", encoding="utf-8")
+        target = tmp_path / "model.yml"
+        target.write_text("version: 1", encoding="utf-8")
 
-        seen = []
-        start = threading.Barrier(2)
+        order = []
+        holder_is_in = threading.Event()
+        release_holder = threading.Event()
 
-        def do_edit():
-            start.wait(timeout=10)
-            tool.edit_file("notes.md", "alpha", "alpha-edited")
+        def hold_the_artifact_lock():
+            with semantic_artifact_lock(target):
+                holder_is_in.set()
+                release_holder.wait(timeout=10)
+                order.append("released")
 
-        def do_write():
-            start.wait(timeout=10)
-            tool.write_file("notes.md", "beta")
+        def try_to_edit():
+            holder_is_in.wait(timeout=10)
+            tool.edit_file("model.yml", "version: 1", "version: 2")
+            order.append("edited")
 
-        threads = [threading.Thread(target=do_edit), threading.Thread(target=do_write)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=30)
+        holder = threading.Thread(target=hold_the_artifact_lock)
+        editor = threading.Thread(target=try_to_edit)
+        holder.start()
+        editor.start()
 
-        seen.append(target.read_text(encoding="utf-8"))
-        # Either order is legitimate; a torn or empty file is not.
-        assert seen[0] in ("beta", "alpha-edited"), seen
+        editor.join(timeout=0.5)
+        assert editor.is_alive(), "edit_file ran while the artifact lock was held"
 
-    def test_the_lock_is_shared_with_the_semantic_artifact_writers(self):
-        """`MetricFilesystemFuncTool` inherits this `edit_file`, so one registry or none.
+        release_holder.set()
+        holder.join(timeout=10)
+        editor.join(timeout=10)
 
-        Two registries would leave the inherited generic path and the semantic-artifact path free
-        to interleave on the same file, which is the bug this fixes wearing a different hat.
-        """
-        from datus.storage.semantic_model.artifact_file import path_mutation_lock, semantic_artifact_lock
+        assert order == ["released", "edited"]
+        assert target.read_text(encoding="utf-8") == "version: 2"
 
-        assert semantic_artifact_lock is path_mutation_lock
+    def test_the_lock_registry_does_not_grow_for_the_life_of_the_process(self, tmp_path):
+        """A sandbox pod edits many files over many sessions; one lock per path forever adds up."""
+        import gc
+
+        from datus.storage.semantic_model import artifact_file
+
+        tool = self._tool(tmp_path)
+        for i in range(50):
+            name = f"f{i}.txt"
+            (tmp_path / name).write_text("x", encoding="utf-8")
+            assert tool.edit_file(name, "x", "y").success == 1
+
+        gc.collect()
+
+        # Nothing holds these locks any more, so the registry must have let them go.
+        assert len(artifact_file._ARTIFACT_LOCKS) == 0, dict(artifact_file._ARTIFACT_LOCKS)
+
+    def test_a_lock_survives_while_it_is_held(self, tmp_path):
+        """Pruning must not hand two threads different locks for one path."""
+        import gc
+
+        from datus.storage.semantic_model import artifact_file
+        from datus.storage.semantic_model.artifact_file import path_mutation_lock
+
+        target = tmp_path / "held.txt"
+        with path_mutation_lock(target):
+            gc.collect()
+            assert str(target.resolve()) in artifact_file._ARTIFACT_LOCKS
