@@ -512,6 +512,35 @@ class DDLEngine:
             for c in cols
         )
 
+    # Lines per parent document. A production run was handed 26,320 order_items under 48,880 orders
+    # - 0.54 lines per order, which is not a schema that can exist and is also not a plan the engine
+    # can carry out: ``_gen_detail`` rounds lines-per-parent up to one, so it would have produced
+    # 48,880 rows against a printed plan of 26,320. The caller saw the contradiction, stopped
+    # trusting the allocation, and pinned ``table_rows`` on every table by hand.
+    DETAIL_PER_PARENT = 1.8
+    DOWNSTREAM_PER_PARENT = 0.6  # a shipment / claim / repayment does not follow every document
+
+    def _doc_parent(self, t):
+        """The document a detail row belongs to, resolved from declared keys at planning time.
+
+        ``_parent_of`` answers the same question during generation, but it filters on ``self.refs``,
+        which fills up only as tables are generated - asked before that it calls every detail an
+        orphan, and orphans would all be sized as if they were facts.
+        """
+        for f in self.fks.get(t, []):
+            par = self.pk_owner.get(f)
+            if par and self.roles.get(par) in (ROLE_FACT, ROLE_DETAIL, ROLE_DOWNSTREAM):
+                return par
+        return None
+
+    def _doc_weight(self, t, details, seen=()):
+        """A detail's weight within the document block: its parent's, times its lines per parent."""
+        if t in seen:  # a key cycle in the DDL must not recurse forever
+            return 1.0
+        per = self.DOWNSTREAM_PER_PARENT if self.roles.get(t) == ROLE_DOWNSTREAM else self.DETAIL_PER_PARENT
+        par = self._doc_parent(t)
+        return per * (self._doc_weight(par, details, seen + (t,)) if par in details else 1.0)
+
     def _plan_rows(self):
         """Allocate rows per skill Phase 1.2/1.3: the fact layer takes the bulk, dimensions size by business density."""
         roles = self.roles
@@ -533,11 +562,17 @@ class DDLEngine:
         tot = sum(v for v in share.values() if v) or 1
         budget = self.rows * 0.94  # leave 6% for dimensions
         n = {}
-        for t in facts:
-            n[t] = max(50, int(budget * share["fact"] / tot / len(facts)))
+        # The fact layer and its details share one block of the budget, split by lines per parent
+        # rather than by a share each. Independent shares gave `detail` less than `fact`, which no
+        # amount of tuning fixes: a detail row exists only as a line of its parent document, so its
+        # count is the parent's count times the lines per document and can never be below it.
+        block = share["fact"] + share.get("detail", 0)
+        weights = {t: 1.0 for t in facts}
+        weights.update({t: self._doc_weight(t, details) for t in details})
+        unit = budget * block / tot / (sum(weights.values()) or 1)
+        for t in facts + details:
+            n[t] = max(50, int(unit * weights[t]))
         main_n = n.get(self.main_fact, max(50, int(budget * 0.5)))
-        for t in details:
-            n[t] = max(50, int(budget * share["detail"] / tot / max(1, len(details))))
         for t in events:
             n[t] = max(50, int(budget * share["event"] / tot / max(1, len(events))))
         for t in snaps:
@@ -1053,6 +1088,15 @@ class DDLEngine:
                 )
         self._print_semantics()
         self._print_plan()
+        # The same validation generate() runs, at the point the skill actually looks. A production
+        # run pinned table_rows on every table, ran `gen.py report`, read a plan with nothing wrong
+        # in it and moved on: the "pins every table calibration could scale" error existed the whole
+        # time and had no surface to appear on until generate(), long after the profile was written.
+        # precheck() prints its own findings; only the clean case needs a line here, and only when
+        # there is a profile to have validated - plan_datasource runs report() on a bare DDL, where
+        # "validated" would be a green light for work nobody has done yet.
+        if not any(self.precheck(strict=False)) and self.profile:
+            print("profile validated: no errors, no warnings")
         return self
 
     def _print_plan(self):
@@ -1081,7 +1125,13 @@ class DDLEngine:
                 continue
             col = next((c["name"] for c in self.schema[t] if c["sem"] == "name"), None)
             if col:
-                samples = ", ".join(self._name_for(t, i, rng) for i in range(2))
+                try:
+                    samples = ", ".join(self._name_for(t, i, rng, self._preview_ent(t, rng)) for i in range(2))
+                except KeyError as e:
+                    samples = (
+                        f"<naming[{t!r}]['tpl'] asks for {e}, which is neither a vocabulary key "
+                        f"nor a generated column of {t}>"
+                    )
                 named.append(f"{t}.{col} -> {samples}")
         if named:
             print("name samples (change with profile['vocab'] or profile['naming']):")
@@ -1169,18 +1219,31 @@ class DDLEngine:
                     f"{key}: {block.count(';')} statement(s) will run "
                     f"({'before' if key == 'pre_sql' else 'after'} the summary layer)"
                 )
-        if planned_sql:
-            # Plan them here rather than claiming precheck did: report() is the first thing the
-            # skill runs, and generate() is the only other caller. Reporting the findings at the
-            # cheap end is the whole point - the alternative is reasoning them through by hand,
-            # which one production run did at length.
-            problems = self._sql_problems()
-            if problems:
-                print(f"  {len(problems)} statement(s) will not plan against the schema:")
-                for problem in problems:
-                    print(f"  x {problem}")
-            else:
-                print("  every statement above planned against the schema; columns and types check out")
+        if planned_sql and not self._sql_problems():
+            # The failures are listed by the pre-check below, which report() always runs, so saying
+            # them here too would print the same line twice in the one report that needs to be
+            # unambiguous. What stays here is the claim that they were planned - the alternative is
+            # reasoning them through by hand, which one production run did at length.
+            print("  every statement above planned against the schema; columns and types check out")
+
+    def _preview_ent(self, t, rng):
+        """A stand-in row for the name preview.
+
+        A ``tpl`` draws from the row being built, so ``"{brand} {subcategory}"`` has nothing to draw
+        from before generation starts. Filling the table's enum columns here shows what the run will
+        really produce, and keeps a valid template from raising KeyError out of ``report()`` - which
+        is where a production run met it: a traceback in place of the plan, no row generated yet,
+        and the workaround it reached for was a fake ``vocab["subcategory"]`` list that made the
+        preview print names the run would never produce.
+        """
+        ent = {}
+        for c in self.schema[t]:
+            if c["sem"] != "enum":
+                continue
+            vals, ws = self._enum_values(t, c["name"])
+            if vals:
+                ent[c["name"]] = rng.choices(vals, ws)[0]
+        return ent
 
     def _print_semantics(self):
         """Print the inferred semantic of every column, so the caller can correct what is wrong.

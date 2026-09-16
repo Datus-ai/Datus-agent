@@ -32,7 +32,7 @@ split by hand** - it is the single most expensive way to burn a run. The rule it
 | Step | What the engine does |
 |---|---|
 | Budget | `rows * 0.94`; the remaining 6% is headroom for dimensions |
-| Fact layer | Split by role share: main fact `0.52` when there is no event/snapshot table, `0.32` when there is; detail `0.28`; event stream `0.34`; snapshot `0.20`. Shares are renormalised over the roles that actually exist, so a DDL with no detail table gives its share to the main fact |
+| Fact layer | Facts and their details share one block of the budget: `0.52 + 0.28`, or `0.32 + 0.28` when an event or snapshot table exists. Within that block a fact weighs 1 and a detail weighs its lines per parent - `1.8` for a detail table, `0.6` for a downstream fact - so a detail table always comes out above its parent, in the 1.4-2.2 band SKILL.md section 1.2 states. Event stream `0.34`, snapshot `0.20`. Shares are renormalised over the roles that actually exist, so a DDL with no detail table gives its share to the main fact |
 | Dimensions | `main_fact_rows / DIM_DENSITY[kind]`, then clamped to `[4, 8% of rows]` |
 | Daily metric table | `max(number of days, 7% of rows)`; the real count is `days x dimension combinations`, and `report()` prints the combinations it will build |
 | Date dimension | Exactly the number of days |
@@ -223,7 +223,11 @@ cleanly separated.
                         "Beauty": [.35, .45], "__default__": [.5, .65]},
 ```
 
-- **Supported on dimension, fact and detail tables alike.**
+- **Supported on dimension, fact and detail tables alike.** The cost-ratio reading above is the one
+  part that is not: it belongs to `_gen_dim`, so `products.cost_price` reads `[.80, .88]` as a ratio
+  while `order_items.unit_cost` does not. A detail table's cost column needs no conditional at all -
+  it already follows the cost of the product the line references, so the per-category gradient you
+  configure on the dimension arrives on the detail rows on its own.
 
 ### semantics - correcting what a column is
 
@@ -376,7 +380,9 @@ to work out what `refund_rate` did.
 ```python
 "lifecycle": {
   "orders": {
-    # Average gap in hours between adjacent timestamps, matching timestamp column order in the DDL
+    # One entry per business timestamp, in DDL column order. Entry [0] belongs to the first
+    # timestamp, which is the anchor and has nothing before it - write 0 and it is ignored. So four
+    # timestamps take four numbers, of which three are real gaps.
     "gap_hours": [0, 6, 30, 72],          # order->paid 6h, paid->shipped 30h, shipped->completed 72h
     # Status -> how many stages it reaches (decides which later timestamps are NULL)
     "stages": {"pending": 1, "paid": 2, "shipped": 3, "completed": 4,

@@ -900,7 +900,7 @@ def test_report_shows_the_findings_instead_of_the_claim(engine_module, capsys):
 
     out = capsys.readouterr().out
 
-    assert "will not plan against the schema" in out
+    assert "configuration pre-check failed" in out
     assert "pre_sql[1]" in out and "nope" in out
     assert "columns and types check out" not in out, "do not claim a clean bill next to a finding"
 
@@ -1195,3 +1195,194 @@ def test_a_metric_table_does_not_claim_an_identity_the_engine_never_enforces(eng
 
     assert "daily_channel_metrics" in out, "the table is still in the plan"
     assert "amount identity enforced" not in out
+
+
+DOWNSTREAM_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_date DATE,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    order_date DATE,
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE shipments (
+    shipment_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    ship_date DATE,
+    freight_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_table_is_planned_above_its_parent(engine_module):
+    """A detail row is a line of its parent document, so there cannot be fewer of them.
+
+    Independent role shares gave `fact` 0.52 and `detail` 0.28, and a production run was handed
+    26,320 order_items under 48,880 orders - 0.54 lines per order. The caller stopped trusting the
+    allocation, pinned `table_rows` on all five tables by hand, and spent the turn on arithmetic
+    the engine exists to do. SKILL.md section 1.2 has always asked for 1.4-2.2 lines per parent.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=17, seed=42)
+
+    ratio = eng.nrows["order_items"] / eng.nrows["orders"]
+    assert ratio > 1, f"a detail table cannot hold fewer rows than its parent (got {ratio:.2f})"
+    assert 1.4 <= ratio <= 2.2, f"lines per parent outside the documented band (got {ratio:.2f})"
+
+
+@pytest.mark.acceptance
+def test_the_planned_detail_count_is_one_the_generator_can_reach(engine_module, tmp_path):
+    """The plan `report()` prints has to be the plan `generate()` carries out.
+
+    `_gen_detail` rounds lines-per-parent up to at least one, so a plan below the parent count was
+    not merely unrealistic - it was unreachable, and the run silently produced most of a table more
+    than the number it had just printed.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=3, seed=1)
+    planned = eng.nrows["order_items"]
+
+    out = tmp_path / "detail.duckdb"
+    eng.generate(str(out), verbose=False)
+    import duckdb
+
+    con = duckdb.connect(str(out))
+    try:
+        actual = con.execute("SELECT count(*) FROM order_items").fetchone()[0]
+    finally:
+        con.close()
+
+    assert abs(actual - planned) / planned < 0.2, f"planned {planned:,}, generated {actual:,}"
+
+
+@pytest.mark.acceptance
+def test_a_downstream_fact_is_planned_below_its_parent(engine_module):
+    """A shipment / claim / repayment does not follow every document, so it is not a detail line.
+
+    Both roles used to draw from the same `detail` share; sizing them the same way would have
+    swapped one wrong ratio for another.
+    """
+    eng = engine_module.DDLEngine(DOWNSTREAM_DDL, rows=20_000, months=6, seed=1)
+    assert eng.roles["shipments"] == "downstream"
+
+    assert eng.nrows["shipments"] < eng.nrows["orders"]
+    assert eng.nrows["order_items"] > eng.nrows["orders"]
+
+
+NAMING_TPL_DDL = """
+CREATE TABLE products (
+    product_id BIGINT PRIMARY KEY,
+    product_name VARCHAR,
+    category VARCHAR,          -- Electronics / Beauty / Clothing
+    list_price DECIMAL(18, 2)
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    product_id BIGINT REFERENCES products(product_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_naming_template_naming_a_column_does_not_break_the_report(engine_module, capsys):
+    """`report()` previews names before a row exists, and a `tpl` draws from the row being built.
+
+    Passing no row made a perfectly valid `"{brand} {category}"` raise KeyError out of `report()` -
+    a traceback in place of the plan, on the first command the skill tells the caller to run. The
+    production workaround was a fake `vocab` entry, which then made the preview print names the run
+    would never produce.
+    """
+    engine_module.DDLEngine(
+        NAMING_TPL_DDL,
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"naming": {"products": {"tpl": "{brand} {category}"}}},
+    ).report()
+
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if "products.product_name ->" in ln)
+    drawn = {v for v in ("Electronics", "Beauty", "Clothing") if v in line}
+
+    assert drawn, f"the preview must show the domain the run will really draw from: {line}"
+    assert "CATEG" not in line, f"a fallback code means the preview never saw the DDL domain: {line}"
+
+
+@pytest.mark.acceptance
+def test_a_naming_template_naming_nothing_says_so_instead_of_raising(engine_module, capsys):
+    engine_module.DDLEngine(
+        NAMING_TPL_DDL,
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"naming": {"products": {"tpl": "{brand} {nonesuch}"}}},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "'nonesuch'" in out
+    assert "neither a vocabulary key nor a generated column of products" in out
+
+
+@pytest.mark.acceptance
+def test_report_runs_the_validation_generate_will_run(engine_module, capsys):
+    """`gen.py report` is where the caller looks, and it used to validate nothing.
+
+    A production run pinned every table, read a plan with nothing wrong in it, and moved on; the
+    "pins every table calibration could scale" error existed the whole time and had no surface to
+    appear on until `generate()`, long after the profile was written.
+    """
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 26_000, "order_items": 40_000}},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "pins every table calibration could scale" in out
+
+
+@pytest.mark.acceptance
+def test_a_clean_profile_is_told_it_is_clean(engine_module, capsys):
+    """Silence reads as "not checked". It has to say the check ran."""
+    engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"trend_mom": 0.03}).report()
+
+    assert "profile validated: no errors, no warnings" in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_bare_ddl_is_not_told_its_profile_validated(engine_module, capsys):
+    """`plan_datasource` reports on a DDL alone, before a profile exists.
+
+    Saying "validated" there is a green light for work nobody has done yet.
+    """
+    engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1).report()
+
+    assert "profile validated" not in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_failing_sql_block_is_reported_once_not_twice(engine_module, capsys):
+    """`_print_plan` listed the SQL problems and then the pre-check listed them again.
+
+    The one report that has to be unambiguous printed the same failure twice, four lines apart.
+    """
+    engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"pre_sql": "UPDATE orders SET no_such_col = 1;"},
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert out.count("pre_sql[1]:") == 1, out
