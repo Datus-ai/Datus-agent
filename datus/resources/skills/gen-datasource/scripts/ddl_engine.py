@@ -841,6 +841,19 @@ class DDLEngine:
                 if not any(sk in cs for cs in colof.values()):
                     warn.append(f"disruption `{d.get('name')}` scope column `{sk}` does not exist; it will never match")
 
+        pinned = self.profile.get("table_rows", {}) or {}
+        pinned_total = sum(v for v in pinned.values() if isinstance(v, int))
+        if pinned_total > self.rows * 1.06:
+            free = [
+                t for t in self.nrows if self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC) and t not in pinned
+            ]
+            err.append(
+                f"table_rows pins {pinned_total:,} rows against a budget of {self.rows:,} "
+                f"({100.0 * (pinned_total / self.rows - 1):+.0f}%). Calibration can only scale tables that are "
+                f"neither pinned nor role-fixed, and {'none are left' if not free else 'only ' + ', '.join(sorted(free)) + ' remain'}"
+                f" - the total cannot come back to target. Lower the pinned counts or raise rows="
+            )
+
         # row-count constraints (invariant 10)
         for t, n in self.nrows.items():
             if self.roles.get(t) == ROLE_DIM and n > self.rows * 0.08:
@@ -2437,12 +2450,16 @@ class DDLEngine:
         if verbose:
             extra = f" (last pass {res['t_last_pass']:.2f}s)" if _attempt > 1 else ""
             if getattr(self, "_reused_cal", False) and _attempt == 1:
-                extra += " (reused previous calibration)"
-            if abs(dev) > 0.25:  # badly off: usually a wrong role inference - do not ship it as a success
+                extra += " (reused the previous row allocation; every row was generated fresh)"
+            # Warn from the tolerance, not from 25%: a production run shipped 90,004 rows against a
+            # requested 80,000 (+12.5%) and nothing said a word, because four of five tables were
+            # pinned and calibration had nothing left to scale.
+            if abs(dev) > tolerance:
                 print(
-                    f"  ! actual rows differ from target by {100 * dev:+.0f}%, far outside tolerance. "
+                    f"  ! actual rows differ from target by {100 * dev:+.0f}%, outside the "
+                    f"{100 * tolerance:.0f}% tolerance, after {_attempt} pass(es). "
                     f"Usual causes: the main fact table was classified as a dimension/metric table, "
-                    f"or pinned table_rows values conflict."
+                    f"or pinned table_rows values leave calibration nothing to scale."
                     f"\n    Check the roles in report() and override with profile['roles'] if needed."
                 )
             print(

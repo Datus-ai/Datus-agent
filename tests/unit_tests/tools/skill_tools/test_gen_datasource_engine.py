@@ -978,3 +978,87 @@ def test_the_summary_path_still_generates_end_to_end(engine_module, tmp_path):
     result = eng.generate(str(tmp_path / "s.duckdb"), verbose=False)
 
     assert "ads_business_daily" in result["tables"]
+
+
+BUDGET_DDL = """
+CREATE TABLE customers (
+    customer_id BIGINT PRIMARY KEY,
+    customer_name VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    customer_id BIGINT REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_pinning_more_rows_than_the_budget_is_refused(engine_module):
+    """Calibration can only scale tables that are neither pinned nor role-fixed.
+
+    Pin past the budget and there is nothing left to scale, so the total can never come back -
+    which is worth saying before generating rather than after.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 60_000, "order_items": 90_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("table_rows pins 150,000 rows against a budget of 80,000" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_pinning_inside_the_budget_is_left_alone(engine_module):
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"table_rows": {"orders": 20_000}})
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "table_rows pins" in e], errors
+
+
+@pytest.mark.acceptance
+def test_a_deviation_outside_tolerance_is_reported(engine_module, tmp_path, capsys):
+    """The warning fired only past 25%, so a run shipped +12.5% in silence."""
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=8000,
+        months=3,
+        seed=1,
+        profile={"table_rows": {"order_items": 5000, "orders": 3200}},
+    )
+
+    result = eng.generate(str(tmp_path / "b.duckdb"))
+
+    assert abs(result["deviation"]) > 0.06
+    out = capsys.readouterr().out
+    assert "outside the 6% tolerance" in out, out
+    assert "pinned table_rows values leave calibration nothing to scale" in out
+
+
+@pytest.mark.acceptance
+def test_the_calibration_note_says_what_is_reused(engine_module, tmp_path, capsys):
+    """ "(reused previous calibration)" read as "the data is cached".
+
+    A production run deleted `data/_build` to fight a cache that does not exist.
+    """
+    out_path = tmp_path / "c.duckdb"
+    engine_module.DDLEngine(BUDGET_DDL, rows=6000, months=3, seed=1).generate(str(out_path))
+    capsys.readouterr()
+
+    engine_module.DDLEngine(BUDGET_DDL, rows=6000, months=3, seed=1).generate(str(out_path))
+
+    out = capsys.readouterr().out
+    assert "every row was generated fresh" in out, out

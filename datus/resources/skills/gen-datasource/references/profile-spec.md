@@ -310,9 +310,16 @@ Measured: email CTR 9.92% / paid_search 5.0% / social 1.25%, each inside its con
 - **Do not back-solve the top of the funnel.** A chain is relative: it says clicks are 1-3% of
   impressions, not what impressions should be so that `attributed_revenue` matches the order
   table's GMV. That is a cross-table constraint the chain cannot express, and arithmetic in your
-  head is the expensive way to approximate it. Set the head column with a plain `columns` range,
-  generate, and read the achieved ratio out of an assertion - one 9-second run answers it exactly.
-  Adjust the range once if it is off; a `pre_sql` restatement is the last resort if it is not
+  head is the expensive way to approximate it. Generate once and read the achieved ratio out of an
+  assertion - a 9-second run answers it exactly
+- **To move that ratio, turn the knob at the *end* of the chain**, not the head. Widening or
+  narrowing `impressions` barely moves it: the calendar multipliers and the day x dimension
+  weights scale the whole chain together, so the head's range mostly cancels out. The ratio is set
+  by the last conversion step - `attributed_orders`' `ratio` against `purchasers`. A production
+  run followed the head instead, cut `impressions` from `(2000, 8500)` to `(1800, 6800)`, watched
+  attributed/actual go the **wrong way** (1.22 -> 1.32), and spent three turns assuming a stale
+  cache before fixing it at `attributed_orders` - where `(0.95, 1.05)` -> `(0.72, 0.80)` landed it
+  first try
 
 ### refund_rate, effective_col, no_date_dim, date_dim_name
 
