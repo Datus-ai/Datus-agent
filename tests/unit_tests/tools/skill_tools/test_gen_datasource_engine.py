@@ -1032,12 +1032,14 @@ def test_pinning_inside_the_budget_is_left_alone(engine_module):
 @pytest.mark.acceptance
 def test_a_deviation_outside_tolerance_is_reported(engine_module, tmp_path, capsys):
     """The warning fired only past 25%, so a run shipped +12.5% in silence."""
+    # Pin only the detail table: the fact table stays scalable, so this is a genuine overshoot
+    # rather than the "nothing left to calibrate" case, which precheck refuses outright.
     eng = engine_module.DDLEngine(
         BUDGET_DDL,
-        rows=8000,
-        months=3,
+        rows=4000,
+        months=6,
         seed=1,
-        profile={"table_rows": {"order_items": 5000, "orders": 3200}},
+        profile={"table_rows": {"order_items": 3800}},
     )
 
     result = eng.generate(str(tmp_path / "b.duckdb"))
@@ -1062,3 +1064,53 @@ def test_the_calibration_note_says_what_is_reused(engine_module, tmp_path, capsy
 
     out = capsys.readouterr().out
     assert "every row was generated fresh" in out, out
+
+
+@pytest.mark.acceptance
+def test_pinning_everything_scalable_is_refused(engine_module):
+    """`rows=` stops meaning anything once calibration has no table left to move.
+
+    The production overshoot came from exactly this: four of five tables pinned, one pass, +12.5%.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 20_000, "order_items": 30_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("pins every table calibration could scale" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_leaving_one_table_free_is_allowed(engine_module):
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"table_rows": {"order_items": 30_000}}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "pins every table" in e], errors
+
+
+@pytest.mark.acceptance
+def test_report_states_the_amount_identity_the_engine_enforces(engine_module, capsys):
+    """A production run restated this identity in `formulas` after deriving it by hand."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "original_amount DECIMAL(18,2), discount_amount DECIMAL(18,2), shipping_amount DECIMAL(18,2), "
+        "tax_amount DECIMAL(18,2), coupon_amount DECIMAL(18,2), paid_amount DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+        seed=1,
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "amount identity enforced on orders: paid_amount = original_amount - discount_amount" in out
+    assert "coupon is not part of it" in out
+    assert "do not restate these in profile['formulas']" in out

@@ -124,7 +124,10 @@ def plan_from_ddl(
     end_date: Optional[str] = None,
     seed: int = 42,
 ) -> str:
-    """Return what ``DDLEngine(...).report()`` prints for this DDL, generating nothing.
+    """Return ``(plan, profile skeleton)`` for this DDL, generating nothing.
+
+    The skeleton is the second half of the answer: the plan says what the engine inferred, and
+    the skeleton hands that back as a PROFILE to fill in rather than a structure to design.
 
     The profile is deliberately empty. The plan is what the engine infers from the DDL alone, which
     is the thing worth seeing before writing a profile - the skill's order of work is "run report,
@@ -142,6 +145,7 @@ def plan_from_ddl(
     engine_module = load_engine()
     resolved_end = _parse_end_date(end_date)  # validate before taking the capture lock
     captured = io.StringIO()
+    skeleton = ""
     try:
         # report() writes to stdout: it is normally read back from a subprocess. Here the caller
         # wants the text, and a stray print must not reach the host process's stdout. The lock
@@ -156,6 +160,7 @@ def plan_from_ddl(
                 seed=seed,
             )
             engine.report()
+            skeleton = engine.profile_skeleton()
     except DatasourcePlanError:
         raise
     except Exception as e:
@@ -168,4 +173,4 @@ def plan_from_ddl(
     plan = captured.getvalue().strip()
     if not plan:
         raise DatasourcePlanError("The engine produced no plan for this DDL; check that it contains CREATE TABLE.")
-    return plan
+    return plan, skeleton

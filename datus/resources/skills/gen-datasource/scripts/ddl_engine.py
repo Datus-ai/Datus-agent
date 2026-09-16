@@ -841,6 +841,19 @@ class DDLEngine:
                 if not any(sk in cs for cs in colof.values()):
                     warn.append(f"disruption `{d.get('name')}` scope column `{sk}` does not exist; it will never match")
 
+        pinned_names = set(self.profile.get("table_rows", {}) or {}) | set(self.profile.get("dim_rows", {}) or {})
+        scalable = [
+            t
+            for t in self.nrows
+            if self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC) and t not in pinned_names
+        ]
+        if pinned_names and not scalable:
+            err.append(
+                "table_rows pins every table calibration could scale, so the total is whatever the pins "
+                "add up to and rows= stops meaning anything. A production run shipped 90,004 rows against "
+                "a requested 80,000 this way. Leave the main fact or the detail table unpinned."
+            )
+
         pinned = self.profile.get("table_rows", {}) or {}
         pinned_total = sum(v for v in pinned.values() if isinstance(v, int))
         if pinned_total > self.rows * 1.06:
@@ -874,6 +887,76 @@ class DDLEngine:
             for w in warn:
                 print(f"  ! {w}")
         return err, warn
+
+    def profile_skeleton(self):
+        """A copy-paste PROFILE with everything the engine already knows filled in.
+
+        Measured on a production run: 40% of one 272,000-character turn went on enumerating
+        enum domains, joint combinations, per-channel `conditional` dictionaries and naming
+        vocabularies in reasoning - then re-emitting them as a file in the next turn. It was
+        composing from a blank page because that is what the skill handed it.
+
+        Everything below is either inferred (so the caller keeps it) or an explicit TODO (so the
+        caller fills one slot instead of designing a structure). Nothing is invented: a domain the
+        engine could not extract is listed as missing rather than guessed at.
+        """
+        enum_cols = {
+            (t, c["name"])
+            for t in self.schema
+            for c in self.schema[t]
+            if c["sem"] == "enum" and self.roles.get(t) != ROLE_DATE
+        }
+        known = getattr(self, "ddl_enums", {}) or {}
+        partial = getattr(self, "_partial_enums", set())
+        undefined = sorted({c for _t, c in enum_cols if c not in known} | set(partial))
+        fact_enums = sorted({c for t, c in enum_cols if self.roles.get(t) in (ROLE_FACT, ROLE_DETAIL)})
+
+        out = ["PROFILE = {"]
+        out.append("    # --- The only section the engine cannot infer at all. Write it first. ---")
+        out.append('    "calendar": {')
+        out.append(f"        # Windows must fall inside {self.start} ~ {self.end} or they are dropped whole.")
+        out.append('        "promos": [  # ("MM-DD", "MM-DD", multiplier, "name")')
+        out.append("        ],")
+        out.append('        "slows": [],')
+        out.append('        "disruptions": [  # {"at": 0.0-1.0, "days": N, "factor": <1, "name": "", "scope": {}}')
+        out.append("        ],")
+        out.append("    },")
+        out.append(f'    "trend_mom": {self.profile.get("trend_mom", 0.031)},   # month-over-month growth')
+
+        if known:
+            out.append("    # Domains below came from your DDL comments and are already applied:")
+            for col, vals in list(known.items())[:12]:
+                flag = "  <- looks incomplete, finish it in enums" if col in partial else ""
+                out.append(f"    #   {col}: {', '.join(str(v) for v in vals[:6])}{flag}")
+        if undefined:
+            out.append('    "enums": {   # no domain found - without these the engine invents CODE1..CODEn')
+            for col in undefined[:12]:
+                out.append(f'        "{col}": [],')
+            out.append("    },")
+
+        if fact_enums:
+            out.append('    "conditional": {   # one dimension behaving differently from another')
+            out.append(f"        # Grouping columns available on the fact layer: {', '.join(fact_enums[:8])}")
+            out.append("    },")
+
+        metrics = [t for t, r in self.roles.items() if r == ROLE_METRIC]
+        for t in metrics:
+            counts = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
+            if len(counts) >= 3:
+                out.append(f'    "derive": {{   # {t}: chain these in business order, or the funnel will not converge')
+                for i in range(1, min(len(counts), 8)):
+                    out.append(f'        "{t}.{counts[i]}": {{"from": "{counts[i - 1]}", "ratio": (0.0, 0.0)}},')
+                out.append("    },")
+                break
+
+        out.append('    "semantics": {},   # only the columns report() got wrong, above')
+        out.append('    "vocab": {},       # any non-retail industry: brand / org_suffix / person / given / item')
+        out.append("}")
+        out.append("")
+        out.append("# Not in this skeleton on purpose:")
+        out.append("#   formulas   - the amount identities above are already enforced; do not restate them")
+        out.append("#   table_rows - pinning is what stops calibration reaching your row budget")
+        return "\n".join(out)
 
     # ---------------------------------------------------------------- report
     def report(self):
@@ -997,6 +1080,29 @@ class DDLEngine:
                 print(f"  {line}")
             if len(applied) > 12:
                 print(f"  ... and {len(applied) - 12} more")
+        for t in sorted(self.schema):
+            amts = [c["name"] for c in self.schema[t] if c["sem"] == "amount"]
+            if len(amts) < 2 or self.roles.get(t) in (ROLE_DATE, ROLE_DIM):
+                continue
+            roles = {self._amt_role(c): c for c in amts}
+            if not ({"discount", "tax", "ship", "cost", "profit"} & set(roles)):
+                continue
+            # A production run restated exactly this in profile['formulas'] and spent 39,000
+            # characters of reasoning deriving it. The engine has always done it; nothing said so.
+            parts = [roles.get("gross") or roles.get("unit") or amts[0]]
+            for role, sign in (("discount", "-"), ("ship", "+"), ("tax", "+")):
+                if role in roles:
+                    parts.append(f"{sign} {roles[role]}")
+            said = False
+            if "paid" in roles and len(parts) > 1:
+                print(f"amount identity enforced on {t}: {roles['paid']} = {' '.join(parts)}")
+                said = True
+            if "cost" in roles and "profit" in roles:
+                print(f"amount identity enforced on {t}: {roles['profit']} = revenue - {roles['cost']}")
+                said = True
+            if said:
+                print("  (coupon is not part of it; do not restate these in profile['formulas'])")
+
         planned_sql = False
         for key in ("pre_sql", "extra_sql"):
             block = self._sql_block(key)

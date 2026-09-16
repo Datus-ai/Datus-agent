@@ -20,7 +20,7 @@ data. The profile is what makes it look real.
 | The 17 invariants | Weighted calendar sampling, derived-from-base quantities, child events anchored to parents, monotonic sequences, complete terminal states, FKs sampled from upstream only, layer backfill, stock baseline, zero header/detail amount drift |
 | Type contract | Tables are created with the declared types (a BIGINT key stays BIGINT; DECIMAL(18,2) does not become DOUBLE) |
 | Table/column comments | Written per role; overridable in the profile |
-| Structural metadata | Written as `.<db stem>.meta.json` **beside the database**, so a build at `data/_build/` puts it there; the skill copies it to `data/.datasource.meta.json` during cleanup. The quality check searches both and reports which it used, instead of re-inferring |
+| Structural metadata | Written as `.<db stem>.meta.json` **beside the database**, so a build at `data/_build/` puts it there. It is derived from `gen.py`, not a deliverable: the quality check reads it during the same run and it goes when `_build/` does |
 
 **Run `eng.report()` first and override only what is wrong.**
 
