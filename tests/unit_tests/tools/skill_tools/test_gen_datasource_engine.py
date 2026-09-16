@@ -1437,3 +1437,36 @@ def test_calibration_reaches_the_budget_through_the_detail_table(engine_module, 
 
     assert abs(res["deviation"]) <= 0.06, f"{res['rows']:,} rows, deviation {res['deviation']:+.1%}"
     assert res["tables"]["order_items"] >= res["tables"]["orders"], "still one line per order at the floor"
+
+
+@pytest.mark.acceptance
+def test_a_skipped_funnel_stage_still_gets_a_believable_ratio(engine_module):
+    """The ratio belongs to the pair of stages, not to the step's own name.
+
+    Keyed on the name alone, `purchasers` got "purchasers per checkout user" wherever it appeared -
+    so a schema that goes straight from sessions to purchasers was handed a 55% site conversion
+    rate. The stage levels divide, so a skipped stage narrows by the whole gap instead.
+    """
+    full = engine_module.DDLEngine._default_ratio("checkout_users", "purchasers")[0]
+    skipped = engine_module.DDLEngine._default_ratio("sessions", "purchasers")[0]
+
+    assert 0.4 < full[0] < full[1] < 0.7, full
+    assert 0.01 < skipped[0] < skipped[1] < 0.05, skipped
+
+
+@pytest.mark.acceptance
+def test_a_narrowing_funnel_step_never_prefills_above_one(engine_module):
+    """A step that loses people cannot gain them on some rows, or the funnel stops being a funnel."""
+    for src, dst in (("clicks", "sessions"), ("sessions", "unique_visitors"), ("add_to_carts", "checkout_users")):
+        (_lo, hi), known = engine_module.DDLEngine._default_ratio(src, dst)
+        assert known, f"{src} -> {dst} was not recognised"
+        assert hi < 1.0, f"{src} -> {dst} prefilled {hi}"
+
+
+@pytest.mark.acceptance
+def test_an_unrecognised_step_is_marked_rather_than_guessed_at(engine_module):
+    """A default the engine cannot justify has to say so, or it reads as an inferred value."""
+    ratio, known = engine_module.DDLEngine._default_ratio("widgets_seen", "sprockets_touched")
+
+    assert not known
+    assert ratio == engine_module.DDLEngine.FUNNEL_DEFAULT

@@ -185,7 +185,9 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    It returns the engine's whole plan - row allocation per table, table roles, column semantics,
    the resolved date window, sample names, business codes, the daily-metric grid - and generates
    nothing. **This is the answer to every "what will the engine do with my DDL" question, and it
-   is one call.** Read it, then write `gen.py` with a profile that corrects what it got wrong.
+   is one call.** It also returns `profile_skeleton`: a PROFILE with every default already filled
+   in, which runs as it stands. **Paste it into `gen.py`, fill in `calendar`, and run.** Correcting
+   a default is what the quality check is for; designing one up front is not.
 1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
    (`gen.py` takes the output path as its first argument and creates the parent itself, so the
    command stays a single invocation with no shell chaining)

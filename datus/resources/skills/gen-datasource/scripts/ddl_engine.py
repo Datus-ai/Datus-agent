@@ -818,16 +818,16 @@ class DDLEngine:
 
         for key, d in (self.profile.get("derive", {}) or {}).items():
             chk_ref("derive", key)
-            # (0.0, 0.0) is the placeholder profile_skeleton() writes. `_derive` multiplies the base
-            # by it, so leaving it turns the whole chain to zeros - visible only after a generate,
-            # an import and a check. It is never a legitimate ratio either way.
+            # `_derive` multiplies the base by the ratio, so (0.0, 0.0) turns the whole chain to
+            # zeros - visible only after a generate, an import and a check. The skeleton no longer
+            # emits it (it prefills believable ratios), but it is never a legitimate ratio, so a
+            # hand-written one is still refused here.
             if isinstance(d, dict):
                 ratios = [d.get("ratio")] if not isinstance(d.get("ratio"), dict) else list(d["ratio"].values())
                 for r in ratios:
                     if isinstance(r, (list, tuple)) and len(r) == 2 and r[0] == 0 and r[1] == 0:
                         err.append(
-                            f"derive[{key}]: ratio is still the skeleton's (0.0, 0.0) placeholder, which "
-                            f"generates a column of zeros. Fill in the real range"
+                            f"derive[{key}]: a ratio of (0.0, 0.0) generates a column of zeros. Fill in the real range"
                         )
                         break
             if "." not in key or not isinstance(d, dict):
@@ -935,6 +935,55 @@ class DDLEngine:
                 print(f"  ! {w}")
         return err, warn
 
+    # Where each funnel stage sits relative to the top of the funnel, recognised by what the stage
+    # is called. A step's ratio is the quotient of the two stages it connects, so a schema that
+    # skips stages still gets a believable number: purchasers taken straight off sessions is a 2%
+    # site conversion, where "purchasers per checkout user" would have said 55%. Keyed on the step
+    # name alone, that is exactly the mistake it made. These are not claims about the caller's
+    # business - they are numbers that make a first run converge, so the quality check can say which
+    # one to move instead of the caller designing ten of them against a blank page. An empty slot is
+    # a decision, and deriving these ten by hand took 16% of a measured 676-second turn.
+    FUNNEL_STAGE = (
+        (r"impression|exposure|imp_cnt", 1.0),
+        (r"click", 0.035),
+        (r"unique|visitor|uv", 0.027),
+        (r"session|visit", 0.030),
+        (r"view|browse|detail|pv", 0.088),  # the one fan-out: one visit browses several items
+        (r"cart|wish|favou?rite", 0.0031),
+        (r"checkout|submit", 0.0012),
+        (r"purchas|buyer|convert|paid_user", 0.00065),
+        (r"order", 0.00072),
+    )
+    FUNNEL_DEFAULT = (0.25, 0.45)  # neither end recognised: narrow rather than stall
+    FUNNEL_BAND = 0.12  # the spread around the point estimate; wide enough to vary, tight enough to stay monotone
+    # Money about a step, per unit of the count it follows: a cost per acquisition, an order value.
+    MONEY_RATIO = ((r"spend|cost|budget|fee", (20.0, 60.0)), (r"revenue|gmv|sales|amount|value", (60.0, 260.0)))
+    MONEY_DEFAULT = (30.0, 120.0)
+
+    @classmethod
+    def _stage_level(cls, name):
+        for pattern, level in cls.FUNNEL_STAGE:
+            if re.search(pattern, name, re.I):
+                return level
+        return None
+
+    @classmethod
+    def _default_ratio(cls, src, dst, is_money=False):
+        """The prefilled ratio for one derive step, and whether the engine recognised both ends."""
+        if is_money:
+            for pattern, ratio in cls.MONEY_RATIO:
+                if re.search(pattern, dst, re.I):
+                    return ratio, True
+            return cls.MONEY_DEFAULT, False
+        lo_stage, hi_stage = cls._stage_level(src), cls._stage_level(dst)
+        if not lo_stage or not hi_stage:
+            return cls.FUNNEL_DEFAULT, False
+        point = hi_stage / lo_stage
+        lo, hi = point * (1 - cls.FUNNEL_BAND), point * (1 + cls.FUNNEL_BAND)
+        if point < 1:  # a narrowing step must stay narrowing on every row
+            hi = min(hi, 0.99)
+        return (round(lo, 4), round(hi, 4)), True
+
     def profile_skeleton(self):
         """A copy-paste PROFILE with everything the engine already knows filled in.
 
@@ -943,9 +992,11 @@ class DDLEngine:
         vocabularies in reasoning - then re-emitting them as a file in the next turn. It was
         composing from a blank page because that is what the skill handed it.
 
-        Everything below is either inferred (so the caller keeps it) or an explicit TODO (so the
-        caller fills one slot instead of designing a structure). Nothing is invented: a domain the
-        engine could not extract is listed as missing rather than guessed at.
+        Copied out unedited it produces a database that passes its own funnel assertions: an empty
+        slot is a decision, and ten of them were what the caller met first. Everything is inferred
+        from the DDL or prefilled with a believable default; the only blank left is ``calendar``,
+        which is a business fact the engine has no way to know and must not invent. Fill that, run,
+        and let the quality check say which default to move.
         """
         enum_cols = {
             (t, c["name"])
@@ -1016,18 +1067,21 @@ class DDLEngine:
             counts = [c["name"] for c in self.schema[t] if c["sem"] == "count"]
             if len(counts) < 3:
                 continue
-            derive_lines.append(f"        # {t}: the funnel. Without these the counts do not converge")
+            derive_lines.append(f"        # {t}: the funnel, prefilled. Tune what the quality check flags.")
             for i in range(1, len(counts)):
+                ratio, known_step = self._default_ratio(counts[i - 1], counts[i])
                 derive_lines.append(
-                    f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": (0.0, 0.0)}},'
+                    f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": {ratio}}},'
+                    + ("" if known_step else "  # <- step not recognised; check this one")
                 )
             ordered = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
             for name in [c["name"] for c in self.schema[t] if c["sem"] == "amount"]:
                 before = [c for c in ordered[: ordered.index(name)] if c in counts]
                 if before:
+                    ratio, known_step = self._default_ratio(before[-1], name, is_money=True)
                     derive_lines.append(
-                        f'        {lit(f"{t}.{name}")}: {{"from": {lit(before[-1])}, '
-                        f'"ratio": (0.0, 0.0)}},  # money per step'
+                        f'        {lit(f"{t}.{name}")}: {{"from": {lit(before[-1])}, "ratio": {ratio}}},'
+                        + ("  # money per step" if known_step else "  # <- amount not recognised; check this one")
                     )
         if derive_lines:
             out.append('    "derive": {')
@@ -1038,6 +1092,8 @@ class DDLEngine:
         out.append('    "vocab": {},       # any non-retail industry: brand / org_suffix / person / given / item')
         out.append("}")
         out.append("")
+        out.append("# The ratios above are defaults, not guesses at your business: run first, then move")
+        out.append("# the ones check_datasource_quality flags. Nothing here has to be decided up front.")
         out.append("# Not in this skeleton on purpose:")
         out.append("#   formulas   - the amount identities above are already enforced; do not restate them")
         out.append("#   table_rows - pinning is what stops calibration reaching your row budget")
