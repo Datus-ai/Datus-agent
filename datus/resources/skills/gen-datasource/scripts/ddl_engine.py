@@ -2168,6 +2168,33 @@ class DDLEngine:
                 return f, par
         return None, None
 
+    # How many lines a document gets. The spread is what makes the long tail - most orders have one
+    # line, a few have five - and its mean is 1.84.
+    LINE_SPREAD = ([1, 2, 3, 4, 5], [0.52, 0.26, 0.12, 0.06, 0.04])
+    LINE_SPREAD_MEAN = 1.84
+
+    def _lines_for(self, lines_per_doc, rng):
+        """Lines on this document, for a requested average of ``lines_per_doc``.
+
+        The draw used to ignore the request entirely below two lines per document: it returned the
+        raw spread, mean 1.84, whatever the plan said. That made a detail table the one table
+        calibration could not move - it rescales ``nrows`` between passes, and this generator was
+        not reading it. Two production runs pinned their other tables, left the detail table free to
+        absorb the difference, and shipped 90,004 and 90,073 rows against a requested 80,000, the
+        same total on all three passes because every pass produced identical rows.
+
+        The spread is kept and its *extra* lines are scaled to the requested mean, so the first line
+        is never scaled away: a document has at least one line by construction, rather than by a
+        clamp that would push the mean back above what was asked for. The fractional part is
+        resolved by a coin flip so the mean is exact rather than rounded off. At 1.84 lines per
+        document this is the raw spread again. A plan below one line per parent is not reachable -
+        ``precheck`` says so.
+        """
+        spread = rng.choices(*self.LINE_SPREAD)[0] - 1
+        extra = max(0.0, lines_per_doc - 1.0) * spread / (self.LINE_SPREAD_MEAN - 1)
+        k = 1 + int(extra) + (1 if rng.random() < extra - int(extra) else 0)
+        return min(max(6, round(lines_per_doc * 3)), k)
+
     def _gen_detail(self, t, o):
         """Detail rows inherit the parent date and keep amounts self-consistent within the row
         (price x qty = line amount, cost from the product cost, margin = revenue - cost), then are
@@ -2178,7 +2205,7 @@ class DDLEngine:
         if not par:
             return self._gen_fact(t, o)
         prefs = self.refs[par]
-        n_per = max(1, round(self.nrows[t] / max(1, len(prefs))))
+        lines_per_doc = self.nrows[t] / max(1, len(prefs))  # fractional: calibration moves it in small steps
         item_col = next(
             (
                 c["name"]
@@ -2214,7 +2241,7 @@ class DDLEngine:
         refund_p = self.profile.get("refund_rate", 0.055)
         rows, agg, no = [], {}, 0
         for pi, pr in enumerate(prefs):
-            k = max(1, min(6, rng.choices([1, 2, 3, 4, 5], [0.52, 0.26, 0.12, 0.06, 0.04])[0] if n_per <= 2 else n_per))
+            k = self._lines_for(lines_per_doc, rng)
             if pool and eff_cum:
                 picks = self._pick_items(pool, eff_sorted, eff_cum, pr["dt"], k, rng)
             else:

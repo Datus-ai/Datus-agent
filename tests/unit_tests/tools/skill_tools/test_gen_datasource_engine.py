@@ -1386,3 +1386,54 @@ def test_a_failing_sql_block_is_reported_once_not_twice(engine_module, capsys):
     out = capsys.readouterr().out
 
     assert out.count("pre_sql[1]:") == 1, out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("requested", (1.0, 1.35, 1.84, 2.6))
+def test_lines_per_document_follow_the_plan(engine_module, requested):
+    """The line-count draw ignored the plan below two lines per document.
+
+    It returned the raw spread, mean 1.84, whatever `nrows` said - which made a detail table the one
+    table calibration could not move, because calibration works by rescaling `nrows` between passes.
+    """
+    import random
+
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1)
+    rng = random.Random(7)
+
+    mean = sum(eng._lines_for(requested, rng) for _ in range(40_000)) / 40_000
+
+    assert abs(mean - requested) < 0.05, f"asked for {requested} lines per document, drew {mean:.3f}"
+
+
+@pytest.mark.acceptance
+def test_lines_per_document_never_drop_below_one(engine_module):
+    """A detail row belongs to a parent document, so a document cannot have zero lines."""
+    import random
+
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1)
+    rng = random.Random(7)
+
+    assert min(eng._lines_for(0.4, rng) for _ in range(5_000)) == 1
+
+
+@pytest.mark.acceptance
+def test_calibration_reaches_the_budget_through_the_detail_table(engine_module, tmp_path):
+    """Two production runs shipped ~90,000 rows against a requested 80,000.
+
+    Both pinned their other tables and left the detail table free to absorb the difference - which
+    it could not do, because the line-count draw was not reading `nrows`. Every one of the three
+    passes produced byte-identical row counts, and the run shipped the overshoot.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=20_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"customers": 1500, "orders": 9000}},
+    )
+
+    res = eng.generate(str(tmp_path / "cal.duckdb"), verbose=False)
+
+    assert abs(res["deviation"]) <= 0.06, f"{res['rows']:,} rows, deviation {res['deviation']:+.1%}"
+    assert res["tables"]["order_items"] >= res["tables"]["orders"], "still one line per order at the floor"
