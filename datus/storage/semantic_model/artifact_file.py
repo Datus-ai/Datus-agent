@@ -26,8 +26,14 @@ def artifact_revision(content: bytes) -> str:
 
 
 @contextmanager
-def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
-    """Serialize one semantic artifact across threads in this process."""
+def path_mutation_lock(target_path: Path) -> Iterator[None]:
+    """Serialize mutations of one file across threads in this process.
+
+    One registry for every writer, deliberately. The agent framework dispatches tool calls with
+    ``asyncio.gather``, so two edits of the same file can run at once, and
+    ``MetricFilesystemFuncTool`` inherits the generic ``edit_file`` from ``FilesystemFuncTool`` -
+    a second registry would leave those two paths free to interleave on the same file.
+    """
 
     target_path = target_path.resolve(strict=False)
     key = str(target_path)
@@ -36,6 +42,10 @@ def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
 
     with thread_lock:
         yield
+
+
+#: The original name, kept so semantic-model callers read naturally. Same registry, same lock.
+semantic_artifact_lock = path_mutation_lock
 
 
 def atomic_write_bytes(target_path: Path, content: bytes, *, mode: Optional[int] = None) -> None:

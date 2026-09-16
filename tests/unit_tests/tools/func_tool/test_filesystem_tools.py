@@ -973,3 +973,94 @@ class TestTabularFilesRedirect:
         """Only reads are redirected — the write side has no extension gate."""
         tool = _make_tool(str(tmp_path))
         assert tool.write_file("out.xlsx", "not really a spreadsheet").success == 1
+
+
+# ---------------------------------------------------------------------------
+# Concurrent mutation of one file
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentMutationsDoNotLoseUpdates:
+    """Two tool calls editing one file must not silently discard one of the edits.
+
+    The agent framework dispatches tool calls with ``asyncio.gather``, and a measured production
+    run issued two ``edit_file`` calls against ``data/gen.py`` with identical millisecond
+    timestamps. ``edit_file`` was a lock-free read -> replace -> write: both read the original,
+    the second write won, and **both returned "File edited successfully"**. The run then spent
+    five turns and a full regeneration cycle working out why the file still held the old value.
+    """
+
+    def _tool(self, tmp_path):
+        return _make_tool(str(tmp_path))
+
+    def test_parallel_edits_to_one_file_all_land(self, tmp_path):
+        import threading
+
+        tool = self._tool(tmp_path)
+        target = tmp_path / "gen.py"
+        # Zero-padded so no marker is a substring of another: edit_file requires a unique match.
+        markers = [f"SLOT_{i:02d}" for i in range(12)]
+        target.write_text("\n".join(markers), encoding="utf-8")
+
+        results, errors = [], []
+        start = threading.Barrier(len(markers))
+
+        def edit(marker):
+            try:
+                start.wait(timeout=10)
+                results.append(tool.edit_file("gen.py", marker, f"{marker}_DONE"))
+            except Exception as e:  # noqa: BLE001 - surfaced by the assertion below
+                errors.append(e)
+
+        threads = [threading.Thread(target=edit, args=(m,)) for m in markers]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not errors, errors
+        assert all(r.success == 1 for r in results), [r.error for r in results]
+        # Every edit that reported success has to be in the file. This is the whole contract:
+        # the old code passed the success assertion above and failed this one.
+        content = target.read_text(encoding="utf-8")
+        missing = [m for m in markers if f"{m}_DONE" not in content]
+        assert not missing, f"reported success but the change is not on disk: {missing}"
+
+    def test_a_write_cannot_interleave_with_an_edit(self, tmp_path):
+        """``write_file`` replaces the whole file, so it must not land inside an edit's window."""
+        import threading
+
+        tool = self._tool(tmp_path)
+        target = tmp_path / "notes.md"
+        target.write_text("alpha", encoding="utf-8")
+
+        seen = []
+        start = threading.Barrier(2)
+
+        def do_edit():
+            start.wait(timeout=10)
+            tool.edit_file("notes.md", "alpha", "alpha-edited")
+
+        def do_write():
+            start.wait(timeout=10)
+            tool.write_file("notes.md", "beta")
+
+        threads = [threading.Thread(target=do_edit), threading.Thread(target=do_write)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        seen.append(target.read_text(encoding="utf-8"))
+        # Either order is legitimate; a torn or empty file is not.
+        assert seen[0] in ("beta", "alpha-edited"), seen
+
+    def test_the_lock_is_shared_with_the_semantic_artifact_writers(self):
+        """`MetricFilesystemFuncTool` inherits this `edit_file`, so one registry or none.
+
+        Two registries would leave the inherited generic path and the semantic-artifact path free
+        to interleave on the same file, which is the bug this fixes wearing a different hat.
+        """
+        from datus.storage.semantic_model.artifact_file import path_mutation_lock, semantic_artifact_lock
+
+        assert semantic_artifact_lock is path_mutation_lock
