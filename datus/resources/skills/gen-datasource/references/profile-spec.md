@@ -216,7 +216,12 @@ cleanly separated.
   cost ratio by category can be configured separately
 - Cost columns on a dimension have one extra rule: an upper bound **<= 1 is read as a cost ratio**
   (a fraction of price), **> 1 as an absolute amount** (clamped to not exceed the price). That is how
-  a per-category margin gradient is configured:
+  a per-category margin gradient is configured.
+  The fraction is of the **list** price, and the line is sold at a discount off that, so the margin
+  the data ends up showing is *narrower* than `1 - ratio`. A production run set `[.80, .88]` on one
+  category expecting a 12-20% margin and measured 1.8%, because a ~15% line discount came off after:
+  its per-category margin gradient came out 30x and failed its own assertion. Leave room for the
+  discount - `[.65, .75]` on that category measured 4.2x across categories and passed.
 
 ```python
 "products.list_price": {"__by__": "category", "3C": [200, 900], "Beauty": [30, 200]},
