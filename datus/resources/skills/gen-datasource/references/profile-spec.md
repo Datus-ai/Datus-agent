@@ -136,7 +136,8 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 | `effective_col` | Which column makes an entity usable | Inference picked the wrong date, or there is none to find |
 | `no_date_dim` / `date_dim_name` | Suppress or rename the auto-built date dimension | Only with `extra_tables` including `date_dim` |
 | `pre_sql` / `extra_sql` | Business post-processing SQL. **One SQL string, or a list of statements** (`["UPDATE ...", "UPDATE ..."]`); anything else is refused by `precheck()` before generating. `pre_sql` runs before the summary layer, `extra_sql` after | **Last resort**, when nothing above can express it |
-| `trend_mom` / `weekend_lift` | Trend and weekend coefficients | Defaults 0.031 / 1.33; B2B needs different values |
+| `weekly_shape` | How a week looks: `weekend_heavy` (default, consumer retail), `weekday_heavy` (B2B, payroll, clinics, booking desks) or `flat` (metering, sensors, always-on). **Set it** - the default is a consumer shop, so a B2B dataset left alone has its busiest days on the weekend. `check_datasource_quality` reads it from the generator metadata and verifies *that* shape, so `flat` passes as flat rather than failing for having no cycle - and declaring a shape the data does not show still fails | an unsupported value is refused by `precheck`, not swapped for the default; `weekend_lift` overrides the number outright |
+| `trend_mom` | Month-over-month growth | Default 0.031 |
 | `table_comments` / `column_comments` | Comments | Recommended wherever a definition is not obvious |
 
 ---
@@ -146,6 +147,7 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 ### calendar - time signal (most important)
 
 ```python
+"weekly_shape": "weekday_heavy",    # weekend_heavy (default) / weekday_heavy / flat
 "calendar": {
   # (start MM-DD, end MM-DD, intensity multiplier, name); expanded across years automatically
   "promos": [("11-27", "11-30", 5.2, "Black Friday / Cyber Monday"), ("06-16", "06-18", 3.2, "618")],
@@ -418,6 +420,9 @@ to work out what `refund_rate` did.
 ```python
 "columns": {
   "dim_product.list_price":   {"range": (9, 320)},        # numeric range (amount/count/measure)
+  # A measure has no inferable units, so without a range it falls back to 0.1-40 - a plausible
+  # weight or duration and nonsense for a score or a rate. precheck names every measure still on
+  # it. A lower bound of 0 is fine: those draw from a bell centred in the range, not a lognormal.
   "dim_customer.reg_dt":      {"before_start": (30, 900)},# days before the range start (dimension attribute date)
   "dim_customer.is_vip":      {"p": 0.08},                # probability a boolean/flag column is 1
   "dim_product.cost_price":   {"cost_ratio": (.4, .65)},  # cost as a fraction of price
