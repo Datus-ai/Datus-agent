@@ -1470,3 +1470,58 @@ def test_an_unrecognised_step_is_marked_rather_than_guessed_at(engine_module):
 
     assert not known
     assert ratio == engine_module.DDLEngine.FUNNEL_DEFAULT
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("pin,expected", [({"orders": 12_000}, 12_000), ({"orders": 1_500}, 1_500)])
+def test_pinning_the_parent_scales_its_detail_table(engine_module, pin, expected):
+    """A pin is a count, not a share, and a detail hangs off its parent's count.
+
+    Pins used to be applied last, as a plain overwrite once the shares were computed, so the detail
+    table stayed on the number its share gave it and never looked at the parent again: `orders`
+    pinned to 12,000 or to 1,500 both produced 12,085 `order_items` - one line per order or eight.
+    """
+    eng = engine_module.DDLEngine(BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": pin})
+
+    ratio = eng.nrows["order_items"] / eng.nrows["orders"]
+
+    assert eng.nrows["orders"] == expected, "the pin itself is the caller's instruction"
+    assert 1.4 <= ratio <= 2.2, f"lines per parent outside the documented band (got {ratio:.2f})"
+
+
+@pytest.mark.acceptance
+def test_pinning_the_detail_table_sizes_its_parent(engine_module):
+    """The same relationship read the other way: pinned lines imply how many documents carry them.
+
+    Resolving pins in one direction only left the parent on the 50-row floor - 600 lines per order.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": {"order_items": 30_000}}
+    )
+
+    assert eng.nrows["order_items"] == 30_000
+    assert 1.4 <= 30_000 / eng.nrows["orders"] <= 2.2, eng.nrows
+
+
+@pytest.mark.acceptance
+def test_pinning_both_ends_leaves_both_alone(engine_module):
+    """An explicit count on both tables is the caller overriding the ratio, which is allowed."""
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=20_000, months=6, seed=1, profile={"table_rows": {"orders": 6_000, "order_items": 9_000}}
+    )
+
+    assert (eng.nrows["orders"], eng.nrows["order_items"]) == (6_000, 9_000)
+
+
+@pytest.mark.acceptance
+def test_a_wrongly_typed_sql_block_is_reported_not_raised(engine_module, capsys):
+    """`_sql_block` raises TypeError, and it did so from inside the report.
+
+    A traceback halfway through the plan, for a mistake the pre-check names in one sentence.
+    """
+    engine_module.DDLEngine(BUDGET_DDL, rows=5_000, months=3, seed=1, profile={"pre_sql": 123}).report()
+
+    out = capsys.readouterr().out
+
+    assert "pre_sql: must be a str or a list of str, got int" in out
+    assert "table" in out, "the rest of the plan still has to print"

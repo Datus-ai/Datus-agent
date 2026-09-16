@@ -569,11 +569,40 @@ class DDLEngine:
         # rather than by a share each. Independent shares gave `detail` less than `fact`, which no
         # amount of tuning fixes: a detail row exists only as a line of its parent document, so its
         # count is the parent's count times the lines per document and can never be below it.
+        #
+        # Resolve in three steps, and in this order: the pins, then the details those pins
+        # determine, then a share of what is left for whatever nothing has fixed. Applying the pins
+        # last - as a plain overwrite once the shares were computed - left a detail table on the
+        # number its share gave it and never looked at the parent again: pinning `orders` to 12,000
+        # or to 1,500 produced the same 12,085 `order_items`, so one line per order or eight, both
+        # outside the documented 1.4-2.2 band, both a plan `_gen_detail` then carried out faithfully.
         block = share["fact"] + share.get("detail", 0)
         weights = {t: 1.0 for t in facts}
         weights.update({t: self._doc_weight(t, details) for t in details})
-        unit = budget * block / tot / (sum(weights.values()) or 1)
-        for t in facts + details:
+        settled = {t: pinned[t] for t in facts + details if t in pinned}
+
+        def per_parent(t):
+            return self.DOWNSTREAM_PER_PARENT if roles[t] == ROLE_DOWNSTREAM else self.DETAIL_PER_PARENT
+
+        progressed = True
+        while progressed:  # a detail of a detail settles on the pass after its parent
+            progressed = False
+            for t in details:
+                par = self._doc_parent(t)
+                if par not in (facts + details):
+                    continue
+                if t not in settled and par in settled:  # pinned parent -> its lines follow
+                    settled[t] = max(50, int(settled[par] * per_parent(t)))
+                elif par not in settled and t in settled:  # pinned lines -> the documents under them
+                    settled[par] = max(50, int(settled[t] / per_parent(t)))
+                else:
+                    continue
+                progressed = True
+        rest = [t for t in facts + details if t not in settled]
+        left = max(0.0, budget * block / tot - sum(settled.values()))
+        unit = left / (sum(weights[t] for t in rest) or 1)
+        n.update(settled)
+        for t in rest:
             n[t] = max(50, int(unit * weights[t]))
         main_n = n.get(self.main_fact, max(50, int(budget * 0.5)))
         for t in events:
@@ -1271,6 +1300,11 @@ class DDLEngine:
 
         planned_sql = False
         for key in ("pre_sql", "extra_sql"):
+            if not isinstance(self.profile.get(key) or "", (str, list, tuple)):
+                # `_sql_block` raises TypeError on anything else, and it did so from here - halfway
+                # through the report, as a traceback, for a mistake the pre-check below names in a
+                # sentence. A report must not be the thing that breaks on a bad profile.
+                continue
             block = self._sql_block(key)
             if block.strip():
                 planned_sql = True

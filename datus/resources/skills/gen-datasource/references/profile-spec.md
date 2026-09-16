@@ -229,9 +229,14 @@ cleanly separated.
                         "Beauty": [.35, .45], "__default__": [.5, .65]},
 ```
 
-- **Supported on dimension, fact and detail tables alike.** The cost-ratio reading above is the one
-  part that is not: it belongs to `_gen_dim`, so `products.cost_price` reads `[.80, .88]` as a ratio
-  while `order_items.unit_cost` does not. A detail table's cost column needs no conditional at all -
+- **Supported on dimension, fact and detail tables alike**, with two limits.
+  *Grouping across tables* (`"__by__": "products.category"`, reading the value from the row a foreign
+  key points at) works on **fact and detail** tables, which carry the key. On a **dimension** the
+  grouping column must be one of that table's own columns - `products.cost_price` grouped by
+  `category` is fine, grouped by anything outside `products` it silently falls through to
+  `__default__`.
+  *The cost-ratio reading* is the other: it belongs to `_gen_dim`, so `products.cost_price` reads
+  `[.80, .88]` as a ratio while `order_items.unit_cost` does not. A detail table's cost column needs no conditional at all -
   it already follows the cost of the product the line references, so the per-category gradient you
   configure on the dimension arrives on the detail rows on its own.
 
