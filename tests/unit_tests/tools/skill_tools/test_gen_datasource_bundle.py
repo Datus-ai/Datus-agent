@@ -25,6 +25,7 @@ def test_bundle_has_engine_and_references():
     assert (SKILL_DIR / "scripts" / "genlib.py").is_file()
     assert (SKILL_DIR / "references" / "profile-spec.md").is_file()
     assert (SKILL_DIR / "references" / "pitfalls.md").is_file()
+    assert (SKILL_DIR / "references" / "design-from-scratch.md").is_file()
 
 
 @pytest.mark.acceptance
@@ -207,3 +208,34 @@ def test_every_dimension_kind_is_documented():
     undocumented = sorted(k for k in kinds if f"`{k}`" not in docs)
 
     assert not undocumented, f"dimension kinds `dim_kinds` accepts but no document names: {undocumented}"
+
+
+@pytest.mark.acceptance
+def test_skill_md_does_not_carry_the_row_allocation_worksheet():
+    """The layer-share table is a design aid for inventing a schema, not for judging one.
+
+    It sat in SKILL.md under a heading that said "On Path A you do not compute this", and a measured
+    production run computed it anyway - the percentages are a worksheet whatever the sentence above
+    them says. It lives in `design-from-scratch.md` now, which a DDL-driven run never opens.
+    """
+    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    design = (SKILL_DIR / "references" / "design-from-scratch.md").read_text(encoding="utf-8")
+
+    for share in ("| Main fact | 10-15% |", "| Event stream |", "| All dimensions |"):
+        assert share not in skill, f"{share} is a worksheet; it belongs in design-from-scratch.md"
+        assert share in design, f"{share} was dropped rather than moved"
+
+
+@pytest.mark.acceptance
+def test_no_reference_points_at_a_section_that_moved_out():
+    """A cross-reference naming the wrong file is worse than no cross-reference.
+
+    Sections 1.2 / 1.3 / 2.4 and phases 0, 1, 2 and 4 moved; anything still calling them SKILL.md
+    sections sends the reader to a file that no longer has them.
+    """
+    import re
+
+    for name in ("SKILL.md", "references/profile-spec.md", "references/pitfalls.md"):
+        text = (SKILL_DIR / name).read_text(encoding="utf-8")
+        stale = re.findall(r"Phase [0124]\b[^\n]{0,40}", text)
+        assert not stale, f"{name} still points at a phase that moved: {stale}"

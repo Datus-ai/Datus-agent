@@ -220,7 +220,7 @@ def suggest_cardinality(fact_rows, days, secondary_card=1, target_density=20):
     return max(1, int(fact_rows / max(1, days * secondary_card * target_density)))
 
 
-# How many fact rows an entity of each dimension kind should carry on average (invariant 10 / skill Phase 1.3)
+# How many fact rows an entity of each dimension kind should carry on average (invariant 10; the formula is in references/design-from-scratch.md section 1.3)
 DIM_DENSITY = {
     "enum": 1500,  # carrier/channel/payment/plan/product line - the business has only a few; never scale them
     "org": 600,  # seller/store/warehouse/line/department/team

@@ -542,7 +542,10 @@ class DDLEngine:
         return per * (self._doc_weight(par, details, seen + (t,)) if par in details else 1.0)
 
     def _plan_rows(self):
-        """Allocate rows per skill Phase 1.2/1.3: the fact layer takes the bulk, dimensions size by business density."""
+        """Allocate rows: the fact layer takes the bulk, dimensions size by business density.
+
+        The shares are stated in ``references/profile-spec.md`` section 1.1.
+        """
         roles = self.roles
         dims = [t for t, r in roles.items() if r == ROLE_DIM]
         facts = [t for t, r in roles.items() if r == ROLE_FACT]

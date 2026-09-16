@@ -32,7 +32,7 @@ split by hand** - it is the single most expensive way to burn a run. The rule it
 | Step | What the engine does |
 |---|---|
 | Budget | `rows * 0.94`; the remaining 6% is headroom for dimensions |
-| Fact layer | Facts and their details share one block of the budget: `0.52 + 0.28`, or `0.32 + 0.28` when an event or snapshot table exists. Within that block a fact weighs 1 and a detail weighs its lines per parent - `1.8` for a detail table, `0.6` for a downstream fact - so a detail table always comes out above its parent, in the 1.4-2.2 band SKILL.md section 1.2 states. Event stream `0.34`, snapshot `0.20`. Shares are renormalised over the roles that actually exist, so a DDL with no detail table gives its share to the main fact |
+| Fact layer | Facts and their details share one block of the budget: `0.52 + 0.28`, or `0.32 + 0.28` when an event or snapshot table exists. Within that block a fact weighs 1 and a detail weighs its lines per parent - `1.8` for a detail table, `0.6` for a downstream fact - so a detail table always comes out above its parent, in the 1.4-2.2 band `references/design-from-scratch.md` section 1.2 states. Event stream `0.34`, snapshot `0.20`. Shares are renormalised over the roles that actually exist, so a DDL with no detail table gives its share to the main fact |
 | Dimensions | `main_fact_rows / DIM_DENSITY[kind]`, then clamped to `[4, 8% of rows]` |
 | Daily metric table | `max(number of days, 7% of rows)`; the real count is `days x dimension combinations`, and `report()` prints the combinations it will build |
 | Date dimension | Exactly the number of days |

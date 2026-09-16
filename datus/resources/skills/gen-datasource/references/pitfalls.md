@@ -153,7 +153,7 @@ picks = rng.choices(sku_by_seller[seller["id"]], [p["w"] for p in pool], k=n)
 A side effect of the wrong version: an order spanning several sellers has to be filtered out
 afterwards, cutting detail rows ~30% below plan. **Picking the seller first** fixes that too.
 
-**Acceptance**: the top-10% share lands in the target band from Phase 2.4; above 90% means weights
+**Acceptance**: the top-10% share lands in the target band from section 2.4 of `design-from-scratch.md`; above 90% means weights
 were stacked.
 
 **Small cardinalities need a flatter target.** A `head_share` of 0.74 is meaningful for hundreds of
@@ -188,7 +188,7 @@ seq = FULL_SEQ if status == "DELIVERED" else FULL_SEQ[:rng.randint(2, 5)]
 orders per cell**. The summary table is as wide as the detail table and every drill-down is a list of
 ones.
 
-Derive it with the Phase 1.3 formulas in SKILL.md, and record the measured density per grain in the
+Derive it with the section 1.3 formulas in `design-from-scratch.md`, and record the measured density per grain in the
 data-dictionary section of `README.md`.
 
 ---
