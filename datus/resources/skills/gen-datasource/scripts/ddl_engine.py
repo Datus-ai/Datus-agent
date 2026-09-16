@@ -200,7 +200,8 @@ class DDLEngine:
             self.days,
             self.cal,
             trend_mom=self.profile.get("trend_mom", 0.031),
-            weekend_lift=self.profile.get("weekend_lift", 1.33),
+            weekend_lift=self._weekly()[0],
+            dow_overrides=self._weekly()[1],
         )
         self._cum_w = list(itertools.accumulate(self.day_w))
         self.pools, self.refs = {}, {}
@@ -391,10 +392,15 @@ class DDLEngine:
             ]
             self.fks[t] = declared + [c for c in inferred if c not in declared]
         # Attribute dates (registered/hired/listed) are not business dates; business dates are what mark a fact table
+        # Anchored at a token start. Unanchored, `aggregate_dt` matched "reg", `invalidated_at`
+        # matched "valid", `reopened_at` matched "open" and `reentry_time` matched "entry" - so the
+        # table's only business date read as an entity attribute and the whole table was demoted to
+        # a dimension, every measure on it generated as a static attribute with no time signal.
         attr_date = re.compile(
-            r"(reg|onboard|hire|launch|first|join|create|birth|open|expire|"
-            r"valid|found|entry)"
+            r"(?:^|_)(?:reg|onboard|hire|launch|first|join|create|birth|open|expire|valid|found|entry)"
         )
+
+        self._demoted = {}
 
         def _traits(t):
             cols = self.schema[t]
@@ -449,6 +455,21 @@ class DDLEngine:
                     # Referencing only dimensions: it is a fact only if it has a business date. An attribute table like
                     # dim_product ("has price/cost but only a listing date") holds amounts as attributes, not measures - still a dimension.
                     self.roles[t] = ROLE_FACT if biz else ROLE_DIM
+                    if not biz and (namt or _measures(t)):
+                        # The date-name test is a naming heuristic and naming is per-industry:
+                        # `opened_at` is when an account was opened on a dimension and when a
+                        # ticket was raised on a fact. Getting it wrong costs the whole table -
+                        # every measure comes out as a static attribute with no time signal - so
+                        # the one column that decided it is named in the report rather than left
+                        # for the caller to find by reading the data.
+                        self._demoted[t] = next(
+                            (
+                                c["name"]
+                                for c in self.schema[t]
+                                if c["sem"] in ("date", "ts", "date_pk") and attr_date.search(c["name"])
+                            ),
+                            "",
+                        )
         for t in self.schema:
             self.roles.setdefault(t, ROLE_FACT)
         # Main fact: the fact table with the most foreign keys that also carries amounts
@@ -540,6 +561,22 @@ class DDLEngine:
         per = self.DOWNSTREAM_PER_PARENT if self.roles.get(t) == ROLE_DOWNSTREAM else self.DETAIL_PER_PARENT
         par = self._doc_parent(t)
         return per * (self._doc_weight(par, details, seen + (t,)) if par in details else 1.0)
+
+    # How a week looks, by business shape rather than by assuming retail. The engine defaulted to
+    # `weekend_lift=1.33` - Saturday a third busier than a weekday - which is a consumer shop and
+    # nothing else. A B2B schema generated that way has its busiest days on the weekend, and the
+    # quality check then confirms the "B2C shape" it was handed.
+    WEEKLY_SHAPE = {
+        "weekend_heavy": (1.33, None),  # consumer retail, food delivery, entertainment
+        "weekday_heavy": (0.35, {0: 1.05, 4: 0.95}),  # B2B, payroll, clinics, logistics booking
+        "flat": (1.0, {0: 1.0, 4: 1.0}),  # metering, sensors, always-on services
+    }
+
+    def _weekly(self):
+        """(weekend_lift, dow_overrides) for the declared weekly shape."""
+        shape = self.profile.get("weekly_shape", "weekend_heavy")
+        lift, overrides = self.WEEKLY_SHAPE.get(shape, self.WEEKLY_SHAPE["weekend_heavy"])
+        return self.profile.get("weekend_lift", lift), overrides
 
     def _plan_rows(self):
         """Allocate rows: the fact layer takes the bulk, dimensions size by business density.
@@ -1127,8 +1164,28 @@ class DDLEngine:
             out.extend(derive_lines)
             out.append("    },")
 
+        # Measure columns: the engine's fallback is a 0.1-40 lognormal, which is a plausible weight
+        # or duration and nonsense for anything bounded - a production schema got a GPA of 11.79 on
+        # a DECIMAL(4,2). It cannot be inferred from the DDL, so the default is written out here as
+        # a value to correct rather than left hidden behind the generator.
+        measures = sorted(
+            f"{t}.{c['name']}"
+            for t in self.schema
+            if self.roles.get(t) != ROLE_DATE
+            for c in self.schema[t]
+            if c["sem"] == "measure" and f"{t}.{c['name']}" not in (self.profile.get("columns") or {})
+        )
+        if measures:
+            out.append(
+                '    "columns": {   # the engine cannot infer a measure\'s units. This is its fallback, not a reading'
+            )
+            out.append("        #   of your schema - correct any that is not a 0.1-40 quantity.")
+            for key in measures[:12]:
+                out.append(f'        {lit(key)}: {{"range": (0.1, 40)}},')
+            out.append("    },")
         out.append('    "semantics": {},   # only the columns report() got wrong, above')
-        out.append('    "vocab": {},       # any non-retail industry: brand / org_suffix / person / given / item')
+        out.append('    "vocab": {},       # the built-in words are retail-shaped (brands, "Works"/"Labs" suffixes).')
+        out.append("        #   Any other industry replaces them here: brand / org_suffix / person / given / item.")
         out.append("}")
         out.append("")
         out.append("# The ratios above are defaults, not guesses at your business: run first, then move")
@@ -1154,6 +1211,14 @@ class DDLEngine:
         nd_pk, nd_fk = len(self.decl_pk), len(self.decl_fk)
         if nd_pk or nd_fk:
             print(f"declared in the DDL: {nd_pk} primary key(s), {nd_fk} foreign key(s) (they win over inference)")
+        for t, col in sorted(getattr(self, "_demoted", {}).items()):
+            print(
+                f"! {t} has measures and a foreign key but is planned as a dimension, because "
+                f"`{col}` reads as an entity attribute date (when the entity came into being) "
+                f"rather than a business event. If `{col}` is when something happened, set "
+                f"profile['roles'] = {{{t!r}: 'fact'}} - as a dimension its measures carry no "
+                f"time signal at all."
+            )
         print(f"{'table':<26}{'role':<14}{'rows':>10}  foreign keys")
         for t in sorted(self.schema, key=lambda x: -self.nrows.get(x, 0)):
             print(f"{t:<26}{self.roles[t]:<10}{self.nrows.get(t, 0):>10,}  {','.join(self.fks.get(t, [])) or '-'}")
@@ -1206,6 +1271,11 @@ class DDLEngine:
         import random as _r
 
         p = self.profile
+        print(
+            f"weekly shape: {self.profile.get('weekly_shape', 'weekend_heavy')} "
+            f"(Saturday x{self._weekly()[0]} vs a weekday; "
+            f"set profile['weekly_shape'] to {' / '.join(self.WEEKLY_SHAPE)})"
+        )
         print(
             f"knobs: months={self.months} ({len(self.days)} days, {self.start}~{self.end})  seed={self.seed}  "
             f"extra_tables={self.extra_tables!r}  "
@@ -1285,6 +1355,12 @@ class DDLEngine:
             # later defaults to silence, which is the safe direction.
             if len(amts) < 2 or self.roles.get(t) not in (ROLE_FACT, ROLE_SNAPSHOT, ROLE_DETAIL):
                 continue
+            # The roles drive how `_settle_amounts` splits the money, whether or not an identity
+            # comes out of them, and a role read wrong is the whole failure: `scholarship_amount`
+            # matched the shipping pattern once and was *added* to the amount paid rather than
+            # deducted. So they are printed for every table that settles amounts, not only for the
+            # tables that end up announcing an identity.
+            print(f"amount roles on {t}: " + ", ".join(f"{c}={self._amt_role(c)}" for c in amts))
             roles = {self._amt_role(c): c for c in amts}
             if not ({"discount", "tax", "ship", "cost", "profit"} & set(roles)):
                 continue
@@ -1303,7 +1379,10 @@ class DDLEngine:
                 print(f"amount identity enforced on {t}: {roles['profit']} = {revenue} - {roles['cost']}")
                 said = True
             if said:
-                print("  (coupon is not part of it; do not restate these in profile['formulas'])")
+                print(
+                    "  (coupon is not part of it. A role read wrong is corrected with "
+                    "profile['formulas'], not by restating the identity)"
+                )
 
         planned_sql = False
         for key in ("pre_sql", "extra_sql"):
@@ -1686,7 +1765,9 @@ class DDLEngine:
         ("coupon", r"coupon|voucher"),
         ("discount", r"discount|promo|rebate|reduction|deduct"),
         ("ship", r"ship|freight|delivery|postage|logistic"),
-        ("tax", r"tax|vat|duty"),
+        # Anchored at both ends: these are whole words, and a token-start match alone read
+        # `taxonomy_value` as a tax. The longer words below need only the leading anchor.
+        ("tax", r"tax(?:es)?(?:_|$)|vat(?:_|$)|duty(?:_|$)|duties(?:_|$)"),
         ("paid", r"paid|net_|settle|actual|final|payable|received|pay_"),
         ("unit", r"unit|price"),
         ("gross", r"."),
@@ -1700,7 +1781,12 @@ class DDLEngine:
         r = cls._ROLE_CACHE.get(col)
         if r is None:
             c = col.lower()
-            r = cls._ROLE_CACHE[col] = next(x for x, pat in cls.AMT_ROLE if re.search(pat, c))
+            # Anchored at a token start, not anywhere in the string. `scholarship_amount` matched
+            # the shipping pattern and was settled as a delivery charge - added to the paid amount
+            # rather than deducted from it. The words below are English business vocabulary and
+            # they collide across industries: "ship" in scholarship, "tax" in taxonomy, "duty" in
+            # duty_roster. A token start keeps shipping_amount and freight_fee and drops those.
+            r = cls._ROLE_CACHE[col] = next(x for x, pat in cls.AMT_ROLE if re.search(rf"(?:^|_)(?:{pat})", c))
         return r
 
     def _settle_amounts(self, cols, base, rng, parts=None):

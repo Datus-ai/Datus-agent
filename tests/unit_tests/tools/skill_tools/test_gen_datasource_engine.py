@@ -1113,7 +1113,12 @@ def test_report_states_the_amount_identity_the_engine_enforces(engine_module, ca
 
     assert "amount identity enforced on orders: paid_amount = original_amount - discount_amount" in out
     assert "coupon is not part of it" in out
-    assert "do not restate these in profile['formulas']" in out
+    assert "not by restating the identity" in out
+    # The roles are what the identity is built from, and a wrong one is the whole failure mode:
+    # `scholarship_amount` read as a shipping charge is added to the paid amount, not deducted.
+    assert "amount roles on orders: " in out
+    assert "shipping_amount=ship" in out
+    assert "coupon_amount=coupon" in out
 
 
 @pytest.mark.acceptance
@@ -1619,3 +1624,155 @@ def test_an_unrecognised_stage_is_annotated_in_the_skeleton(engine_module):
     line = next(ln for ln in skeleton.splitlines() if "review_count" in ln)
 
     assert "step not recognised" in line, line
+
+
+CAMPUS_DDL = """
+CREATE TABLE students (
+    student_id BIGINT PRIMARY KEY,
+    student_name VARCHAR,
+    gpa DECIMAL(4, 2)
+);
+CREATE TABLE enrolments (
+    enrol_id BIGINT PRIMARY KEY,
+    student_id BIGINT REFERENCES students(student_id),
+    enrol_time TIMESTAMP,
+    scholarship_amount DECIMAL(18, 2),
+    tuition_amount DECIMAL(18, 2),
+    paid_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "column,role",
+    [
+        ("scholarship_amount", "gross"),
+        ("shipping_amount", "ship"),
+        ("shipment_fee", "ship"),
+        ("taxonomy_value", "gross"),
+        ("tax_amount", "tax"),
+        ("taxes_paid", "tax"),
+    ],
+)
+def test_an_amount_role_matches_a_word_not_a_substring(engine_module, column, role):
+    """The role words are English business vocabulary and they collide across industries.
+
+    `scholarship_amount` matched the shipping pattern, so a scholarship was settled as a delivery
+    charge - *added* to the amount paid instead of deducted from it - and `taxonomy_value` was a tax.
+    """
+    assert engine_module.DDLEngine._amt_role(column) == role
+
+
+@pytest.mark.acceptance
+def test_the_report_names_the_role_it_gave_each_amount(engine_module, capsys):
+    """The identity is built from the roles, so the roles are what has to be checkable.
+
+    The report stated the identity and never said which column it had read as what, which is the
+    one thing a caller on a non-retail schema needs to see.
+    """
+    engine_module.DDLEngine(CAMPUS_DDL, rows=9_000, months=6, seed=1).report()
+
+    out = capsys.readouterr().out
+
+    assert "scholarship_amount=gross" in out
+    assert "paid_amount=paid" in out
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("shape,low,high", [("weekend_heavy", 1.15, 1.6), ("weekday_heavy", 0.2, 0.6)])
+def test_the_weekly_shape_reaches_the_data(engine_module, tmp_path, shape, low, high):
+    """`weekend_lift=1.33` was hardcoded: a consumer shop, and nothing else.
+
+    A B2B schema generated that way has its busiest days on the weekend, and the weekday check then
+    reports the "B2C shape" it was handed.
+    """
+    import duckdb
+
+    out = tmp_path / f"{shape}.duckdb"
+    engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=6, seed=1, profile={"weekly_shape": shape}).generate(
+        str(out), verbose=False
+    )
+
+    con = duckdb.connect(str(out))
+    try:
+        ratio = con.execute(
+            "WITH d AS (SELECT order_time::date dt, count(*) n FROM orders GROUP BY 1) "
+            "SELECT avg(n) FILTER (WHERE dayofweek(dt) IN (0, 6)) "
+            "     / avg(n) FILTER (WHERE dayofweek(dt) NOT IN (0, 6)) FROM d"
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    assert low <= ratio <= high, f"{shape} produced a weekend/weekday ratio of {ratio:.2f}"
+
+
+@pytest.mark.acceptance
+def test_the_report_states_which_weekly_shape_is_in_force(engine_module, capsys):
+    engine_module.DDLEngine(BUDGET_DDL, rows=9_000, months=6, seed=1).report()
+
+    assert "weekly shape: weekend_heavy" in capsys.readouterr().out
+
+
+ATTR_DATE_DDL = """
+CREATE TABLE parties (
+    party_id BIGINT PRIMARY KEY,
+    party_name VARCHAR
+);
+CREATE TABLE movements (
+    movement_id BIGINT PRIMARY KEY,
+    party_id BIGINT REFERENCES parties(party_id),
+    {date_col} TIMESTAMP,
+    fee_amount DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", ["aggregate_dt", "invalidated_at", "reopened_at", "reentry_time"])
+def test_a_business_date_is_not_demoted_by_a_substring(engine_module, date_col):
+    """The attribute-date test was an unanchored substring search.
+
+    `aggregate_dt` matched "reg", `invalidated_at` matched "valid", `reopened_at` matched "open"
+    and `reentry_time` matched "entry" - so the table's only business date read as an entity
+    attribute and the whole table became a dimension, every measure on it generated as a static
+    attribute with no time signal.
+    """
+    eng = engine_module.DDLEngine(ATTR_DATE_DDL.format(date_col=date_col), rows=9_000, months=6, seed=1)
+
+    assert eng.roles["movements"] == "fact"
+
+
+@pytest.mark.acceptance
+def test_a_table_demoted_by_a_date_name_says_so(engine_module, capsys):
+    """`opened_at` is an entity attribute on a dimension and the event time on a ticket table.
+
+    The heuristic cannot tell, so when it demotes a table that has measures and a foreign key it
+    names the column that decided it and the override, rather than leaving the caller to find out
+    from the data.
+    """
+    ddl = ATTR_DATE_DDL.format(date_col="opened_at")
+    eng = engine_module.DDLEngine(ddl, rows=9_000, months=6, seed=1)
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert eng.roles["movements"] == "dim", "the heuristic still decides; the report just says so"
+    assert "`opened_at` reads as an entity attribute date" in out
+    assert "'movements': 'fact'" in out
+
+    override = engine_module.DDLEngine(ddl, rows=9_000, months=6, seed=1, profile={"roles": {"movements": "fact"}})
+    assert override.roles["movements"] == "fact", "the override the message names has to work"
+
+
+@pytest.mark.acceptance
+def test_measure_columns_arrive_as_skeleton_slots(engine_module):
+    """A measure's units cannot be inferred, and the fallback is a 0.1-40 lognormal.
+
+    A production schema got a GPA of 11.79 on a DECIMAL(4,2) because that fallback was hidden
+    behind the generator instead of written where the caller would read it.
+    """
+    skeleton = engine_module.DDLEngine(CAMPUS_DDL, rows=9_000, months=6, seed=1).profile_skeleton()
+
+    assert '"students.gpa": {"range": (0.1, 40)}' in skeleton
+    assert "cannot infer a measure" in skeleton

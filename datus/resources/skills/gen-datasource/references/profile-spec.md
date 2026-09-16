@@ -136,7 +136,8 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 | `effective_col` | Which column makes an entity usable | Inference picked the wrong date, or there is none to find |
 | `no_date_dim` / `date_dim_name` | Suppress or rename the auto-built date dimension | Only with `extra_tables` including `date_dim` |
 | `pre_sql` / `extra_sql` | Business post-processing SQL. **One SQL string, or a list of statements** (`["UPDATE ...", "UPDATE ..."]`); anything else is refused by `precheck()` before generating. `pre_sql` runs before the summary layer, `extra_sql` after | **Last resort**, when nothing above can express it |
-| `trend_mom` / `weekend_lift` | Trend and weekend coefficients | Defaults 0.031 / 1.33; B2B needs different values |
+| `weekly_shape` | How a week looks: `weekend_heavy` (default, consumer retail), `weekday_heavy` (B2B, payroll, clinics, booking desks) or `flat` (metering, sensors, always-on). **Set it** - the default is a consumer shop, so a B2B dataset left alone has its busiest days on the weekend, and the quality check then confirms the shape it was handed | `weekend_lift` still overrides the number outright |
+| `trend_mom` | Month-over-month growth | Default 0.031 |
 | `table_comments` / `column_comments` | Comments | Recommended wherever a definition is not obvious |
 
 ---
@@ -146,6 +147,7 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 ### calendar - time signal (most important)
 
 ```python
+"weekly_shape": "weekday_heavy",    # weekend_heavy (default) / weekday_heavy / flat
 "calendar": {
   # (start MM-DD, end MM-DD, intensity multiplier, name); expanded across years automatically
   "promos": [("11-27", "11-30", 5.2, "Black Friday / Cyber Monday"), ("06-16", "06-18", 3.2, "618")],
