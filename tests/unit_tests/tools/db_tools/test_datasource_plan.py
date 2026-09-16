@@ -46,7 +46,7 @@ CREATE TABLE daily_channel_metrics (
 @pytest.mark.acceptance
 def test_the_plan_answers_the_question_that_sent_a_run_into_the_source():
     """Row allocation per table, without writing a generator and without reading the engine."""
-    plan = plan_from_ddl(DDL, rows=50_000, months=12)
+    plan, _skeleton = plan_from_ddl(DDL, rows=50_000, months=12)
 
     assert "main fact table orders" in plan
     for table in ("orders", "customers", "daily_channel_metrics"):
@@ -69,7 +69,7 @@ def test_the_plan_needs_no_profile_and_generates_nothing(tmp_path, monkeypatch):
 
 @pytest.mark.acceptance
 def test_end_date_pins_the_window():
-    plan = plan_from_ddl(DDL, rows=20_000, months=12, end_date="2026-06-30")
+    plan, _skeleton = plan_from_ddl(DDL, rows=20_000, months=12, end_date="2026-06-30")
 
     assert "2025-07-01 ~ 2026-06-30" in plan
 
@@ -157,7 +157,7 @@ def test_concurrent_plans_do_not_interleave():
     def run(name):
         try:
             start.wait(timeout=10)
-            plans[name] = plan_from_ddl(ddl_for(name), rows=5000, months=3)
+            plans[name] = plan_from_ddl(ddl_for(name), rows=5000, months=3)[0]
         except Exception as e:  # noqa: BLE001 - surfaced by the assertion below
             errors.append(e)
 
@@ -184,3 +184,165 @@ def test_capture_restores_stdout(capsys):
     sys.stdout.write("back on the real stdout\n")
 
     assert capsys.readouterr().out == "back on the real stdout\n"
+
+
+# ---------------------------------------------------------------------------
+# The skeleton: what the engine knows, handed back as something to fill in
+# ---------------------------------------------------------------------------
+
+
+SKELETON_DDL = """
+CREATE TABLE customers (
+    customer_id BIGINT PRIMARY KEY,
+    customer_name VARCHAR,
+    member_level VARCHAR,
+    city VARCHAR
+);
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    customer_id BIGINT REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    order_status VARCHAR,   -- pending / paid / shipped
+    channel VARCHAR,
+    original_amount DECIMAL(18, 2),
+    discount_amount DECIMAL(18, 2),
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE daily_channel_metrics (
+    stat_dt DATE,
+    channel VARCHAR,
+    impressions BIGINT,
+    clicks BIGINT,
+    sessions BIGINT,
+    purchasers BIGINT,
+    gmv DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_the_skeleton_is_valid_python_that_defines_a_profile():
+    """It is meant to be copied into `gen.py`, so it has to parse and evaluate as written."""
+    import ast
+
+    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+
+    ast.parse(skeleton)
+    namespace = {}
+    exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
+    assert isinstance(namespace["PROFILE"], dict)
+    assert "calendar" in namespace["PROFILE"]
+
+
+@pytest.mark.acceptance
+def test_copying_the_skeleton_unfilled_is_refused_before_generating():
+    """Its `(0.0, 0.0)` ratios multiply the base to zero, so an unfilled chain is all zeros.
+
+    Left to the quality check that costs a generate, an import and a check to discover - which is
+    the cycle the skeleton exists to avoid. precheck names the key instead.
+    """
+    import sys
+
+    from datus.tools.db_tools.datasource_plan import load_engine
+
+    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+    namespace = {}
+    exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
+
+    scripts = str(load_engine().__file__).rsplit("/", 1)[0]
+    sys.path.insert(0, scripts)
+    try:
+        engine = load_engine().DDLEngine(SKELETON_DDL, rows=80_000, months=17, profile=namespace["PROFILE"])
+    finally:
+        sys.path.remove(scripts)
+
+    errors, _warnings = engine.precheck(strict=False)
+
+    placeholders = [e for e in errors if "placeholder" in e]
+    assert placeholders, errors
+    assert "derive[daily_channel_metrics.clicks]" in placeholders[0]
+
+
+@pytest.mark.acceptance
+def test_the_skeleton_carries_what_the_engine_inferred():
+    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+
+    # Domains it extracted from the DDL comments, so the caller does not restate them.
+    assert "order_status: pending, paid, shipped" in skeleton
+    # Enum columns with no domain, which would otherwise be filled with CODE1..CODEn.
+    assert '"member_level": []' in skeleton
+    assert '"city": []' in skeleton
+    # The funnel chain, in column order, with the ratios left to the caller.
+    assert '"daily_channel_metrics.clicks": {"from": "impressions"' in skeleton
+    assert '"daily_channel_metrics.sessions": {"from": "clicks"' in skeleton
+    # An amount takes the nearest count before it. Chaining it by raw column order gave
+    # "attributed_revenue from ad_spend", which means nothing.
+    assert '"daily_channel_metrics.gmv": {"from": "purchasers"' in skeleton
+
+
+@pytest.mark.acceptance
+def test_the_skeleton_says_what_it_leaves_out_and_why():
+    """The two keys a production run reached for and should not have."""
+    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+
+    assert "formulas" in skeleton and "do not restate them" in skeleton
+    assert "table_rows" in skeleton and "calibration" in skeleton
+
+
+@pytest.mark.acceptance
+def test_the_skeleton_invents_no_domain_it_could_not_read():
+    """A guessed enum is worse than an empty slot: it reads as inferred and is fiction."""
+    _plan, skeleton = plan_from_ddl(SKELETON_DDL, rows=80_000, months=17)
+
+    member_level_line = next(line for line in skeleton.splitlines() if '"member_level"' in line)
+    assert member_level_line.strip() == '"member_level": [],'
+
+
+@pytest.mark.acceptance
+def test_a_quoted_identifier_does_not_break_the_skeleton():
+    """Identifiers come from the caller's DDL, where DuckDB allows quotes inside a quoted name.
+
+    Interpolated raw, `it's_type` closed the string early and the skeleton would not parse - and
+    the skeleton exists to be copied into `gen.py` and run.
+    """
+    import ast
+
+    ddl = (
+        'CREATE TABLE metrics ("stat_dt" DATE, "it\'s_type" VARCHAR, impressions BIGINT, '
+        'clicks BIGINT, sessions BIGINT, "gm\'v" DECIMAL(18,2));'
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "paid_amount DECIMAL(18,2));"
+    )
+
+    _plan, skeleton = plan_from_ddl(ddl, rows=9000, months=6)
+
+    ast.parse(skeleton)
+    namespace = {}
+    exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
+    assert "it's_type" in namespace["PROFILE"]["enums"]
+
+
+@pytest.mark.acceptance
+def test_every_metric_table_contributes_its_funnel():
+    """Stopping after the first one dropped the second table's chain entirely.
+
+    Emitting a second `"derive"` block instead would be a duplicate key that silently overwrites
+    the first, so they go into one mapping.
+    """
+    ddl = (
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "paid_amount DECIMAL(18,2));"
+        "CREATE TABLE channel_daily (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, sessions BIGINT, gmv DECIMAL(18,2));"
+        "CREATE TABLE campaign_daily (stat_dt DATE, campaign VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, purchasers BIGINT, revenue DECIMAL(18,2));"
+    )
+
+    _plan, skeleton = plan_from_ddl(ddl, rows=12_000, months=6)
+
+    assert skeleton.count('"derive": {') == 1, "one mapping, or the later block wins and the first is lost"
+    namespace = {}
+    exec(compile(skeleton, "<skeleton>", "exec"), namespace)  # noqa: S102 - the engine wrote it
+    derive = namespace["PROFILE"]["derive"]
+    assert {"channel_daily.clicks", "channel_daily.sessions"} <= set(derive)
+    assert {"campaign_daily.clicks", "campaign_daily.purchasers"} <= set(derive)

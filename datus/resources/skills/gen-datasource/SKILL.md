@@ -195,15 +195,11 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    ```
    import_database_file(path="data/_build/datasource.duckdb", mode="replace")
    ```
-3. Verify with `check_datasource_quality(config_path="data/checks.json")` - it searches
-   `data/` and `data/_build/` for `.datasource.meta.json` itself and reports which one it used,
-   so do not pass `meta_path`
-4. Keep the metadata, then delete the build directory - the engine writes
-   `.datasource.meta.json` **next to the database**, so it is inside `_build/`, and
-   `check_datasource_quality` needs it to verify the declared keys:
-   ```
-   cp data/_build/.datasource.meta.json data/.datasource.meta.json && rm -rf data/_build
-   ```
+3. Verify with `check_datasource_quality(config_path="data/checks.json")` - it finds the
+   `.datasource.meta.json` the engine wrote inside `data/_build/` by itself, so do not pass
+   `meta_path`. To re-check after delivery, regenerate to `data/_build/` first, check, then
+   remove it again: the metadata is derived from `gen.py`, so it costs one 9-second run
+4. Delete the build directory: `rm -rf data/_build`
 
 **Do not generate a second copy at `data/datasource.duckdb`.** The datasource already holds the
 data after step 2, and in a Datus deployment that path is often the datasource's own file - this
@@ -224,9 +220,7 @@ engine wrote arrive with the data - do not re-issue `COMMENT ON` by hand.
 └── data/
     ├── README.md               <=150 lines: what the schema cannot say about itself
     ├── gen.py                  generator incl. profile; fixed seed, re-runnable
-    ├── checks.json             business assertions for check_datasource_quality
-    └── .datasource.meta.json   structural metadata written by the engine; the
-                                quality check reads it - never hand-write it
+    └── checks.json             business assertions for check_datasource_quality
 ```
 
 Everything lives under `data/` so the directory can be handed over whole: database, manual, generator and assertions together - runnable, reproducible, re-parameterizable. Leave nothing in the workspace root except the user's own DDL file.
@@ -800,7 +794,7 @@ check_datasource_quality(config_path="data/checks.json")
 
 It runs 19 automatic checks: layering, mandatory date dimension, FK orphan rate, time span and YoY feasibility, time trend, stock baseline, weekday cycle (auto-detecting B2C weekend-heavy vs B2B weekend-light), event explainability, derived-ratio range and negative counts, dead and constant columns, event monotonicity, long-tail concentration, aggregation density (thresholds adapt to database size), comment coverage, semantic naming, primary-key non-null uniqueness, no single entity dominating the head, and no future-dated rows.
 
-Trend, span, stock baseline and event attribution observe the **headline** series - the largest fact table's highest-magnitude business metric (identifier columns like `month_key` and cumulative stock columns like `billed_usd` are excluded). Only the weekday check searches for the strongest signal, and it says which column it used. It finds the `.datasource.meta.json` the engine wrote (roles, keys, strict-DDL mode) instead of re-inferring, and reports which copy it used.
+Trend, span, stock baseline and event attribution observe the **headline** series - the largest fact table's highest-magnitude business metric (identifier columns like `month_key` and cumulative stock columns like `billed_usd` are excluded). Only the weekday check searches for the strongest signal, and it says which column it used. It finds the `.datasource.meta.json` the engine wrote inside `data/_build/` (roles, keys, strict-DDL mode) instead of re-inferring, and reports which file it used.
 
 Business-specific rules (header/detail amount alignment, causal ordering, label self-consistency, dimension gradients) go in `data/checks.json`:
 
@@ -895,7 +889,7 @@ If an assertion fails, go back to Phase 2 and retune the signal - not the assert
 
 ## Delivery
 
-Confirm every artifact exists under `data/`: `README.md` (<=150 lines), `gen.py`, `checks.json`, `.datasource.meta.json`. The data itself lives in the datasource, not in a file beside them. Confirm there is **nothing extra**: no `_build/` left behind, no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
+Confirm every artifact exists under `data/`: `README.md` (<=150 lines), `gen.py`, `checks.json`. The data itself lives in the datasource, not in a file beside them. Confirm there is **nothing extra**: no `_build/` left behind, no `.datasource.meta.json` (it is derived from `gen.py` and lives inside `_build/`), no `sql/`, no `steps/`, no `DATA_DICT.md`; all generation logic in `data/gen.py` alone.
 
 > **If `data/datasource.duckdb` exists, leave it alone.** It is not yours and it is not a leftover:
 > in a Datus deployment that is the datasource's own file, bound when the project was created, and

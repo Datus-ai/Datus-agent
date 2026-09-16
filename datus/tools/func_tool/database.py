@@ -2019,17 +2019,31 @@ class DBFuncTool:
                   - 'error' (Optional[str]): Error message on failure, including the DDL the
                     engine could not parse and whatever it managed to plan first.
                   - 'result' (Optional[dict]): On success, ``plan`` - the report text, to be
-                    read as-is - plus the ``rows``, ``months`` and ``end_date`` it was planned
+                    read as-is - ``profile_skeleton``, a PROFILE with everything the engine
+                    already inferred filled in and the rest left as TODO slots, ``next``, the
+                    step to take, plus the ``rows``, ``months`` and ``end_date`` it was planned
                     with.
         """
         try:
-            plan = plan_from_ddl(ddl, rows=rows, months=months, end_date=end_date or None)
+            plan, skeleton = plan_from_ddl(ddl, rows=rows, months=months, end_date=end_date or None)
             return FuncToolResult(
                 result={
                     "plan": plan,
+                    # Everything the engine already knows, as a PROFILE to fill in rather than a
+                    # structure to design. A measured production run spent 40% of one turn
+                    # enumerating enum domains and conditional dictionaries in its reasoning before
+                    # writing them out - composing from a blank page, because that is what it had.
+                    "profile_skeleton": skeleton,
                     "rows": rows,
                     "months": months,
                     "end_date": end_date or None,
+                    # The model follows tool output far more reliably than skill prose, so the
+                    # next step belongs here rather than only in SKILL.md.
+                    "next": (
+                        "Copy profile_skeleton into data/gen.py, fill its TODO slots from the "
+                        "business description, then run `python3 data/gen.py report`. Do not "
+                        "design the profile in reasoning first - the skeleton is the design."
+                    ),
                 }
             )
         except DatasourcePlanError as e:
@@ -2139,7 +2153,6 @@ class DBFuncTool:
     #: Where the generator drops its structural metadata, relative to the workspace. Searched
     #: when the caller does not name a path; the most recently written one wins.
     _GENERATOR_META_CANDIDATES = (
-        "data/.datasource.meta.json",
         "data/_build/.datasource.meta.json",
         ".datasource.meta.json",
     )

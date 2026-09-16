@@ -1032,12 +1032,14 @@ def test_pinning_inside_the_budget_is_left_alone(engine_module):
 @pytest.mark.acceptance
 def test_a_deviation_outside_tolerance_is_reported(engine_module, tmp_path, capsys):
     """The warning fired only past 25%, so a run shipped +12.5% in silence."""
+    # Pin only the detail table: the fact table stays scalable, so this is a genuine overshoot
+    # rather than the "nothing left to calibrate" case, which precheck refuses outright.
     eng = engine_module.DDLEngine(
         BUDGET_DDL,
-        rows=8000,
-        months=3,
+        rows=4000,
+        months=6,
         seed=1,
-        profile={"table_rows": {"order_items": 5000, "orders": 3200}},
+        profile={"table_rows": {"order_items": 3800}},
     )
 
     result = eng.generate(str(tmp_path / "b.duckdb"))
@@ -1062,3 +1064,134 @@ def test_the_calibration_note_says_what_is_reused(engine_module, tmp_path, capsy
 
     out = capsys.readouterr().out
     assert "every row was generated fresh" in out, out
+
+
+@pytest.mark.acceptance
+def test_pinning_everything_scalable_is_refused(engine_module):
+    """`rows=` stops meaning anything once calibration has no table left to move.
+
+    The production overshoot came from exactly this: four of five tables pinned, one pass, +12.5%.
+    """
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 20_000, "order_items": 30_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert any("pins every table calibration could scale" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+def test_leaving_one_table_free_is_allowed(engine_module):
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL, rows=80_000, months=6, seed=1, profile={"table_rows": {"order_items": 30_000}}
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "pins every table" in e], errors
+
+
+@pytest.mark.acceptance
+def test_report_states_the_amount_identity_the_engine_enforces(engine_module, capsys):
+    """A production run restated this identity in `formulas` after deriving it by hand."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "original_amount DECIMAL(18,2), discount_amount DECIMAL(18,2), shipping_amount DECIMAL(18,2), "
+        "tax_amount DECIMAL(18,2), coupon_amount DECIMAL(18,2), paid_amount DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+        seed=1,
+    )
+    eng.report()
+
+    out = capsys.readouterr().out
+
+    assert "amount identity enforced on orders: paid_amount = original_amount - discount_amount" in out
+    assert "coupon is not part of it" in out
+    assert "do not restate these in profile['formulas']" in out
+
+
+@pytest.mark.acceptance
+def test_a_schema_with_nothing_to_calibrate_is_not_blamed_on_the_pin(engine_module):
+    """Dimensions and metric tables have nothing calibration can scale, pinned or not.
+
+    Refusing there blames the caller for their DDL, and the message named `table_rows` when only
+    `dim_rows` had been set.
+    """
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE customers (customer_id BIGINT PRIMARY KEY, customer_name VARCHAR);"
+        "CREATE TABLE daily_metrics (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, gmv DECIMAL(18,2));",
+        rows=9000,
+        months=6,
+        seed=1,
+        profile={"dim_rows": {"customers": 500}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    assert not [e for e in errors if "pins every table" in e], errors
+
+
+@pytest.mark.acceptance
+def test_the_pin_message_names_the_key_that_was_set(engine_module):
+    eng = engine_module.DDLEngine(
+        BUDGET_DDL,
+        rows=80_000,
+        months=6,
+        seed=1,
+        profile={"table_rows": {"orders": 20_000, "order_items": 30_000}},
+    )
+
+    errors, _warnings = eng.precheck(strict=False)
+
+    message = next(e for e in errors if "pins every table" in e)
+    assert message.startswith("table_rows pins")
+    # and names the tables it is talking about
+    assert "order_items, orders" in message
+
+
+@pytest.mark.acceptance
+def test_the_profit_identity_names_a_real_column(engine_module, capsys):
+    """Every other term on that line is a column; "revenue" was the internal role name."""
+    engine_module.DDLEngine(
+        "CREATE TABLE order_items (item_id BIGINT PRIMARY KEY, order_time TIMESTAMP, "
+        "sales_amount DECIMAL(18,2), total_cost DECIMAL(18,2), gross_profit DECIMAL(18,2));",
+        rows=5000,
+        months=3,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "gross_profit = sales_amount - total_cost" in out
+    assert "revenue -" not in out
+
+
+@pytest.mark.acceptance
+def test_a_metric_table_does_not_claim_an_identity_the_engine_never_enforces(engine_module, capsys):
+    """Only `_gen_fact` and `_gen_detail`'s backfill call `_settle_amounts`.
+
+    A metric table fills its amounts independently, so the claimed
+    `paid = gross - discount + tax` was off by hundreds per row - the report asserting work the
+    engine does not do, which is the failure the line was added to prevent.
+    """
+    engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id BIGINT PRIMARY KEY, order_time TIMESTAMP, paid_amount DECIMAL(18,2));"
+        "CREATE TABLE daily_channel_metrics (stat_dt DATE, channel VARCHAR, impressions BIGINT, "
+        "clicks BIGINT, gross_revenue DECIMAL(18,2), discount_amount DECIMAL(18,2), "
+        "tax_amount DECIMAL(18,2), paid_revenue DECIMAL(18,2));",
+        rows=9000,
+        months=6,
+        seed=1,
+    ).report()
+
+    out = capsys.readouterr().out
+
+    assert "daily_channel_metrics" in out, "the table is still in the plan"
+    assert "amount identity enforced" not in out

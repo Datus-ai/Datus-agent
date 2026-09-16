@@ -465,10 +465,7 @@ class TestGeneratorMetaDiscovery:
             encoding="utf-8",
         )
 
-    @pytest.mark.parametrize(
-        "where",
-        ["data/.datasource.meta.json", "data/_build/.datasource.meta.json", ".datasource.meta.json"],
-    )
+    @pytest.mark.parametrize("where", ["data/_build/.datasource.meta.json", ".datasource.meta.json"])
     def test_the_metadata_is_found_without_being_named(self, tool, where):
         db_tool, root = tool
         self._write_meta(root, where)
@@ -502,10 +499,10 @@ class TestGeneratorMetaDiscovery:
     def test_naming_the_path_and_leaving_it_out_agree(self, tool):
         """The whole point: both call shapes must produce the same verdicts."""
         db_tool, root = tool
-        self._write_meta(root, "data/.datasource.meta.json")
+        self._write_meta(root, "data/_build/.datasource.meta.json")
 
         found = db_tool.check_datasource_quality()
-        named = db_tool.check_datasource_quality(meta_path="data/.datasource.meta.json")
+        named = db_tool.check_datasource_quality(meta_path="data/_build/.datasource.meta.json")
 
         assert [(r["check"], r["status"]) for r in found.result["checks"]] == [
             (r["check"], r["status"]) for r in named.result["checks"]

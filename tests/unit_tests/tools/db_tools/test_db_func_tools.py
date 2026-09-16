@@ -2025,3 +2025,17 @@ class TestPlanDatasource:
 
         assert result.success == 1
         assert result.result["end_date"] is None
+
+    def test_the_tool_returns_the_skeleton_and_the_next_step(self, db_func_tool):
+        """The model follows tool output far more reliably than skill prose.
+
+        Three measured runs read `plan_datasource` and `report` line by line and acted on them,
+        while a bold instruction in SKILL.md was ignored each time - so what to do next belongs in
+        the result, not only in the document.
+        """
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9)
+
+        assert result.success == 1
+        assert result.result["profile_skeleton"].startswith("PROFILE = {")
+        assert "data/gen.py" in result.result["next"]
+        assert "gen.py report" in result.result["next"]

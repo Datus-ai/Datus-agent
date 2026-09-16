@@ -783,6 +783,18 @@ class DDLEngine:
 
         for key, d in (self.profile.get("derive", {}) or {}).items():
             chk_ref("derive", key)
+            # (0.0, 0.0) is the placeholder profile_skeleton() writes. `_derive` multiplies the base
+            # by it, so leaving it turns the whole chain to zeros - visible only after a generate,
+            # an import and a check. It is never a legitimate ratio either way.
+            if isinstance(d, dict):
+                ratios = [d.get("ratio")] if not isinstance(d.get("ratio"), dict) else list(d["ratio"].values())
+                for r in ratios:
+                    if isinstance(r, (list, tuple)) and len(r) == 2 and r[0] == 0 and r[1] == 0:
+                        err.append(
+                            f"derive[{key}]: ratio is still the skeleton's (0.0, 0.0) placeholder, which "
+                            f"generates a column of zeros. Fill in the real range"
+                        )
+                        break
             if "." not in key or not isinstance(d, dict):
                 continue
             t, _c = key.split(".", 1)
@@ -841,6 +853,19 @@ class DDLEngine:
                 if not any(sk in cs for cs in colof.values()):
                     warn.append(f"disruption `{d.get('name')}` scope column `{sk}` does not exist; it will never match")
 
+        pin_keys = [k for k in ("table_rows", "dim_rows") if self.profile.get(k)]
+        pinned_names = set(self.profile.get("table_rows", {}) or {}) | set(self.profile.get("dim_rows", {}) or {})
+        # What calibration could scale if nothing were pinned. A schema of dimensions and metric
+        # tables has none of its own, and refusing a pin there would blame the caller for the DDL.
+        calibratable = [t for t in self.nrows if self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC)]
+        if calibratable and pinned_names and not [t for t in calibratable if t not in pinned_names]:
+            err.append(
+                f"{' and '.join(pin_keys)} pins every table calibration could scale "
+                f"({', '.join(sorted(calibratable))}), so the total is whatever the pins add up to and "
+                f"rows= stops meaning anything. A production run shipped 90,004 rows against a requested "
+                f"80,000 this way. Leave one of them unpinned."
+            )
+
         pinned = self.profile.get("table_rows", {}) or {}
         pinned_total = sum(v for v in pinned.values() if isinstance(v, int))
         if pinned_total > self.rows * 1.06:
@@ -874,6 +899,114 @@ class DDLEngine:
             for w in warn:
                 print(f"  ! {w}")
         return err, warn
+
+    def profile_skeleton(self):
+        """A copy-paste PROFILE with everything the engine already knows filled in.
+
+        Measured on a production run: 40% of one 272,000-character turn went on enumerating
+        enum domains, joint combinations, per-channel `conditional` dictionaries and naming
+        vocabularies in reasoning - then re-emitting them as a file in the next turn. It was
+        composing from a blank page because that is what the skill handed it.
+
+        Everything below is either inferred (so the caller keeps it) or an explicit TODO (so the
+        caller fills one slot instead of designing a structure). Nothing is invented: a domain the
+        engine could not extract is listed as missing rather than guessed at.
+        """
+        enum_cols = {
+            (t, c["name"])
+            for t in self.schema
+            for c in self.schema[t]
+            if c["sem"] == "enum" and self.roles.get(t) != ROLE_DATE
+        }
+        known = getattr(self, "ddl_enums", {}) or {}
+        partial = getattr(self, "_partial_enums", set())
+        undefined = sorted({c for _t, c in enum_cols if c not in known} | set(partial))
+        fact_enums = sorted({c for t, c in enum_cols if self.roles.get(t) in (ROLE_FACT, ROLE_DETAIL)})
+
+        import json as _json
+
+        def lit(value):
+            """Emit an identifier as a Python string literal.
+
+            Table and column names come from the caller's DDL, where DuckDB allows quotes and
+            newlines inside a quoted identifier. Interpolating them raw produced a skeleton that
+            would not parse - and the skeleton exists to be copied into `gen.py` and run.
+
+            ``json.dumps`` rather than ``repr``: its output is a valid Python string literal too,
+            and it keeps the double quotes the rest of the skeleton uses instead of switching to
+            single ones on the entries that happen to need escaping.
+            """
+            return _json.dumps(str(value))
+
+        out = ["PROFILE = {"]
+        out.append("    # --- The only section the engine cannot infer at all. Write it first. ---")
+        out.append('    "calendar": {')
+        out.append(f"        # Windows must fall inside {self.start} ~ {self.end} or they are dropped whole.")
+        out.append('        "promos": [  # ("MM-DD", "MM-DD", multiplier, "name")')
+        out.append("        ],")
+        out.append('        "slows": [],')
+        out.append('        "disruptions": [  # {"at": 0.0-1.0, "days": N, "factor": <1, "name": "", "scope": {}}')
+        out.append("        ],")
+        out.append("    },")
+        out.append(f'    "trend_mom": {self.profile.get("trend_mom", 0.031)},   # month-over-month growth')
+
+        if known:
+            out.append("    # Domains below came from your DDL comments and are already applied:")
+            for col, vals in list(known.items())[:12]:
+                flag = "  <- looks incomplete, finish it in enums" if col in partial else ""
+                out.append(f"    #   {col}: {', '.join(str(v) for v in vals[:6])}{flag}")
+        if undefined:
+            out.append('    "enums": {   # no domain found, or the DDL comment looked truncated.')
+            out.append("        #   An empty list changes nothing: the DDL domain or the default still applies.")
+            out.append("        #   Fill one in only to override what is listed above.")
+            for col in undefined[:12]:
+                out.append(f"        {lit(col)}: [],")
+            out.append("    },")
+
+        if fact_enums:
+            out.append('    "conditional": {   # one dimension behaving differently from another')
+            out.append(f"        # Grouping columns available on the fact layer: {', '.join(fact_enums[:8])}")
+            out.append("    },")
+
+        # Every metric table, not just the first: one "derive" block holding all of them. Emitting
+        # a second block would be a duplicate key that silently overwrites the first, and stopping
+        # after one dropped the second table's funnel entirely - a schema with a channel table and
+        # a campaign table got a chain for one and zeros for the other.
+        derive_lines = []
+        for t in sorted(t for t, r in self.roles.items() if r == ROLE_METRIC):
+            # Counts form the funnel and chain to each other; amounts are money *about* a step, so
+            # each takes the nearest count before it. Chaining them by raw column order produced
+            # "attributed_revenue from ad_spend", which means nothing - and a cap of 8 cut off
+            # attributed_orders, the one ratio profile-spec names as the tuning point.
+            counts = [c["name"] for c in self.schema[t] if c["sem"] == "count"]
+            if len(counts) < 3:
+                continue
+            derive_lines.append(f"        # {t}: the funnel. Without these the counts do not converge")
+            for i in range(1, len(counts)):
+                derive_lines.append(
+                    f'        {lit(f"{t}.{counts[i]}")}: {{"from": {lit(counts[i - 1])}, "ratio": (0.0, 0.0)}},'
+                )
+            ordered = [c["name"] for c in self.schema[t] if c["sem"] in ("count", "amount")]
+            for name in [c["name"] for c in self.schema[t] if c["sem"] == "amount"]:
+                before = [c for c in ordered[: ordered.index(name)] if c in counts]
+                if before:
+                    derive_lines.append(
+                        f'        {lit(f"{t}.{name}")}: {{"from": {lit(before[-1])}, '
+                        f'"ratio": (0.0, 0.0)}},  # money per step'
+                    )
+        if derive_lines:
+            out.append('    "derive": {')
+            out.extend(derive_lines)
+            out.append("    },")
+
+        out.append('    "semantics": {},   # only the columns report() got wrong, above')
+        out.append('    "vocab": {},       # any non-retail industry: brand / org_suffix / person / given / item')
+        out.append("}")
+        out.append("")
+        out.append("# Not in this skeleton on purpose:")
+        out.append("#   formulas   - the amount identities above are already enforced; do not restate them")
+        out.append("#   table_rows - pinning is what stops calibration reaching your row budget")
+        return "\n".join(out)
 
     # ---------------------------------------------------------------- report
     def report(self):
@@ -997,6 +1130,36 @@ class DDLEngine:
                 print(f"  {line}")
             if len(applied) > 12:
                 print(f"  ... and {len(applied) - 12} more")
+        for t in sorted(self.schema):
+            amts = [c["name"] for c in self.schema[t] if c["sem"] == "amount"]
+            # An allow-list, not an exclusion list: only ``_gen_fact`` (fact and snapshot) and
+            # ``_gen_detail``'s backfill call ``_settle_amounts``. Metric, event, downstream, dim
+            # and date tables fill amounts independently, and claiming an identity they do not hold
+            # is the failure this line was added to prevent - measured on a metric table whose
+            # "paid_revenue = gross - discount + tax" was off by hundreds per row. A role added
+            # later defaults to silence, which is the safe direction.
+            if len(amts) < 2 or self.roles.get(t) not in (ROLE_FACT, ROLE_SNAPSHOT, ROLE_DETAIL):
+                continue
+            roles = {self._amt_role(c): c for c in amts}
+            if not ({"discount", "tax", "ship", "cost", "profit"} & set(roles)):
+                continue
+            # A production run restated exactly this in profile['formulas'] and spent 39,000
+            # characters of reasoning deriving it. The engine has always done it; nothing said so.
+            parts = [roles.get("gross") or roles.get("unit") or amts[0]]
+            for role, sign in (("discount", "-"), ("ship", "+"), ("tax", "+")):
+                if role in roles:
+                    parts.append(f"{sign} {roles[role]}")
+            said = False
+            if "paid" in roles and len(parts) > 1:
+                print(f"amount identity enforced on {t}: {roles['paid']} = {' '.join(parts)}")
+                said = True
+            if "cost" in roles and "profit" in roles:
+                revenue = roles.get("paid") or roles.get("gross") or roles.get("unit") or amts[0]
+                print(f"amount identity enforced on {t}: {roles['profit']} = {revenue} - {roles['cost']}")
+                said = True
+            if said:
+                print("  (coupon is not part of it; do not restate these in profile['formulas'])")
+
         planned_sql = False
         for key in ("pre_sql", "extra_sql"):
             block = self._sql_block(key)
