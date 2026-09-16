@@ -973,3 +973,131 @@ class TestTabularFilesRedirect:
         """Only reads are redirected — the write side has no extension gate."""
         tool = _make_tool(str(tmp_path))
         assert tool.write_file("out.xlsx", "not really a spreadsheet").success == 1
+
+
+# ---------------------------------------------------------------------------
+# Concurrent mutation of one file
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentMutationsDoNotLoseUpdates:
+    """Two tool calls editing one file must not silently discard one of the edits.
+
+    The agent framework dispatches tool calls with ``asyncio.gather``, and a measured production
+    run issued two ``edit_file`` calls against ``data/gen.py`` with identical millisecond
+    timestamps. ``edit_file`` was a lock-free read -> replace -> write: both read the original,
+    the second write won, and **both returned "File edited successfully"**. The run then spent
+    five turns and a full regeneration cycle working out why the file still held the old value.
+    """
+
+    def _tool(self, tmp_path):
+        return _make_tool(str(tmp_path))
+
+    def test_parallel_edits_to_one_file_all_land(self, tmp_path):
+        import threading
+
+        tool = self._tool(tmp_path)
+        target = tmp_path / "gen.py"
+        # Zero-padded so no marker is a substring of another: edit_file requires a unique match.
+        markers = [f"SLOT_{i:02d}" for i in range(12)]
+        target.write_text("\n".join(markers), encoding="utf-8")
+
+        results, errors = [], []
+        start = threading.Barrier(len(markers))
+
+        def edit(marker):
+            try:
+                start.wait(timeout=10)
+                results.append(tool.edit_file("gen.py", marker, f"{marker}_DONE"))
+            except Exception as e:  # noqa: BLE001 - surfaced by the assertion below
+                errors.append(e)
+
+        threads = [threading.Thread(target=edit, args=(m,)) for m in markers]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not errors, errors
+        assert all(r.success == 1 for r in results), [r.error for r in results]
+        # Every edit that reported success has to be in the file. This is the whole contract:
+        # the old code passed the success assertion above and failed this one.
+        content = target.read_text(encoding="utf-8")
+        missing = [m for m in markers if f"{m}_DONE" not in content]
+        assert not missing, f"reported success but the change is not on disk: {missing}"
+
+    def test_an_edit_waits_for_a_semantic_artifact_writer(self, tmp_path):
+        """The two writer paths must exclude each other, not merely share a name.
+
+        `MetricFilesystemFuncTool` subclasses `FilesystemFuncTool`, so one object serves both the
+        semantic-artifact writes (which take the lock under their own name) and the generic
+        `edit_file` it inherits. Separate registries would leave them free to interleave on one
+        file. Asserted through behaviour - the edit must not complete while the artifact lock is
+        held - rather than by comparing the two names for identity.
+        """
+        import threading
+
+        from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
+
+        tool = self._tool(tmp_path)
+        target = tmp_path / "model.yml"
+        target.write_text("version: 1", encoding="utf-8")
+
+        order = []
+        holder_is_in = threading.Event()
+        release_holder = threading.Event()
+
+        def hold_the_artifact_lock():
+            with semantic_artifact_lock(target):
+                holder_is_in.set()
+                release_holder.wait(timeout=10)
+                order.append("released")
+
+        def try_to_edit():
+            holder_is_in.wait(timeout=10)
+            tool.edit_file("model.yml", "version: 1", "version: 2")
+            order.append("edited")
+
+        holder = threading.Thread(target=hold_the_artifact_lock)
+        editor = threading.Thread(target=try_to_edit)
+        holder.start()
+        editor.start()
+
+        editor.join(timeout=0.5)
+        assert editor.is_alive(), "edit_file ran while the artifact lock was held"
+
+        release_holder.set()
+        holder.join(timeout=10)
+        editor.join(timeout=10)
+
+        assert order == ["released", "edited"]
+        assert target.read_text(encoding="utf-8") == "version: 2"
+
+    def test_the_lock_registry_does_not_grow_for_the_life_of_the_process(self, tmp_path):
+        """A sandbox pod edits many files over many sessions; one lock per path forever adds up."""
+        import gc
+
+        from datus.storage.semantic_model import artifact_file
+
+        tool = self._tool(tmp_path)
+        for i in range(50):
+            name = f"f{i}.txt"
+            (tmp_path / name).write_text("x", encoding="utf-8")
+            assert tool.edit_file(name, "x", "y").success == 1
+
+        gc.collect()
+
+        # Nothing holds these locks any more, so the registry must have let them go.
+        assert len(artifact_file._ARTIFACT_LOCKS) == 0, dict(artifact_file._ARTIFACT_LOCKS)
+
+    def test_a_lock_survives_while_it_is_held(self, tmp_path):
+        """Pruning must not hand two threads different locks for one path."""
+        import gc
+
+        from datus.storage.semantic_model import artifact_file
+        from datus.storage.semantic_model.artifact_file import path_mutation_lock
+
+        target = tmp_path / "held.txt"
+        with path_mutation_lock(target):
+            gc.collect()
+            assert str(target.resolve()) in artifact_file._ARTIFACT_LOCKS

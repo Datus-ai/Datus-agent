@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterator, List, Optional
 from agents import Tool
 from wcmatch import glob as wc_glob
 
+from datus.storage.semantic_model.artifact_file import path_mutation_lock
 from datus.tools import BaseTool
 from datus.tools.func_tool import FuncToolResult
 from datus.tools.func_tool.fs_path_policy import (
@@ -430,8 +431,9 @@ class FilesystemFuncTool(BaseTool):
                 return guard_error
 
             try:
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_text(content, encoding="utf-8")
+                with path_mutation_lock(target_path):
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    target_path.write_text(content, encoding="utf-8")
                 self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File written successfully: {resolved.display}")
             except PermissionError:
@@ -488,7 +490,8 @@ class FilesystemFuncTool(BaseTool):
                 return FuncToolResult(success=0, error=f"Path is not a regular file: {resolved.display}")
 
             try:
-                target_path.unlink()
+                with path_mutation_lock(target_path):
+                    target_path.unlink()
                 self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File deleted successfully: {resolved.display}")
             except PermissionError:
@@ -538,12 +541,19 @@ class FilesystemFuncTool(BaseTool):
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
 
             try:
-                content = target_path.read_text(encoding="utf-8")
-                new_content, error = apply_single_replacement(content, old_string, new_string)
-                if error is not None:
-                    return FuncToolResult(success=0, error=error)
+                # read -> replace -> write is one critical section. The agent framework dispatches
+                # tool calls with ``asyncio.gather``, so two edits of the same file can interleave:
+                # both read the original, the second write wins, and BOTH return "edited
+                # successfully". A measured production run lost a `tier_bands` change that way and
+                # spent five turns plus a full regeneration cycle working out why the file still
+                # held the old value.
+                with path_mutation_lock(target_path):
+                    content = target_path.read_text(encoding="utf-8")
+                    new_content, error = apply_single_replacement(content, old_string, new_string)
+                    if error is not None:
+                        return FuncToolResult(success=0, error=error)
 
-                target_path.write_text(new_content, encoding="utf-8")
+                    target_path.write_text(new_content, encoding="utf-8")
                 self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File edited successfully: {resolved.display}")
             except UnicodeDecodeError:

@@ -11,11 +11,17 @@ import os
 import stat
 import tempfile
 import threading
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
-_ARTIFACT_LOCKS: dict[str, threading.RLock] = {}
+#: Weak values so the registry does not grow for the life of the process. A sandbox pod that
+#: edits thousands of files would otherwise keep a lock object per path forever. This is safe
+#: because every holder keeps a strong local reference for the duration of the ``with``: an entry
+#: can only be collected once nobody is inside it, and a thread arriving after that creates a
+#: fresh lock with no one to exclude.
+_ARTIFACT_LOCKS: "weakref.WeakValueDictionary[str, threading.RLock]" = weakref.WeakValueDictionary()
 _ARTIFACT_LOCKS_GUARD = threading.Lock()
 
 
@@ -26,16 +32,29 @@ def artifact_revision(content: bytes) -> str:
 
 
 @contextmanager
-def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
-    """Serialize one semantic artifact across threads in this process."""
+def path_mutation_lock(target_path: Path) -> Iterator[None]:
+    """Serialize mutations of one file across threads in this process.
+
+    One registry for every writer, deliberately. The agent framework dispatches tool calls with
+    ``asyncio.gather``, so two edits of the same file can run at once, and
+    ``MetricFilesystemFuncTool`` inherits the generic ``edit_file`` from ``FilesystemFuncTool`` -
+    a second registry would leave those two paths free to interleave on the same file.
+    """
 
     target_path = target_path.resolve(strict=False)
     key = str(target_path)
     with _ARTIFACT_LOCKS_GUARD:
-        thread_lock = _ARTIFACT_LOCKS.setdefault(key, threading.RLock())
+        thread_lock = _ARTIFACT_LOCKS.get(key)
+        if thread_lock is None:
+            thread_lock = threading.RLock()
+            _ARTIFACT_LOCKS[key] = thread_lock
 
     with thread_lock:
         yield
+
+
+#: The original name, kept so semantic-model callers read naturally. Same registry, same lock.
+semantic_artifact_lock = path_mutation_lock
 
 
 def atomic_write_bytes(target_path: Path, content: bytes, *, mode: Optional[int] = None) -> None:
