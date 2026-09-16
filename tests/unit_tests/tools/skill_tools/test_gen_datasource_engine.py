@@ -1680,7 +1680,9 @@ def test_the_report_names_the_role_it_gave_each_amount(engine_module, capsys):
 
 
 @pytest.mark.acceptance
-@pytest.mark.parametrize("shape,low,high", [("weekend_heavy", 1.15, 1.6), ("weekday_heavy", 0.2, 0.6)])
+@pytest.mark.parametrize(
+    "shape,low,high", [("weekend_heavy", 1.15, 1.6), ("weekday_heavy", 0.2, 0.6), ("flat", 0.9, 1.1)]
+)
 def test_the_weekly_shape_reaches_the_data(engine_module, tmp_path, shape, low, high):
     """`weekend_lift=1.33` was hardcoded: a consumer shop, and nothing else.
 
@@ -1847,3 +1849,122 @@ def test_a_corrected_measure_range_clears_the_warning(engine_module):
     ).precheck(strict=False)
 
     assert not [w for w in warnings if "0.1-40 fallback" in w], warnings
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("path", ["dim", "fill_generic"])
+def test_a_declared_measure_range_constrains_the_data(engine_module, tmp_path, path):
+    """Both measure generators ignored `columns['t.col']['range']`.
+
+    So the slot the skeleton writes and the warning precheck prints asked the caller to set a value
+    that changed nothing - a GPA declared (0.0, 4.0) still came out at 49.02. The two also
+    disagreed on the fallback, 0.1-50 on a dimension against 0.1-40 elsewhere, so neither matched
+    what was documented.
+    """
+    import duckdb
+
+    table, column, bounds = ("students", "gpa", (0.0, 4.0)) if path == "dim" else ("sessions", "room_area", (5.0, 40.0))
+    ddl = (
+        "CREATE TABLE students (student_id BIGINT PRIMARY KEY, student_name VARCHAR, gpa DECIMAL(4,2));"
+        "CREATE TABLE sessions (sess_id BIGINT PRIMARY KEY, "
+        "student_id BIGINT REFERENCES students(student_id), order_time TIMESTAMP, "
+        "fee_amount DECIMAL(18,2), room_area DECIMAL(6,2));"
+    )
+    out = tmp_path / f"{path}.duckdb"
+    engine_module.DDLEngine(
+        ddl, rows=9_000, months=6, seed=1, profile={"columns": {f"{table}.{column}": {"range": bounds}}}
+    ).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        low, high = con.execute(f"SELECT min({column}), max({column}) FROM {table}").fetchone()
+    finally:
+        con.close()
+
+    assert bounds[0] <= float(low) <= float(high) <= bounds[1], f"{column} spans {low}-{high}, asked for {bounds}"
+
+
+@pytest.mark.acceptance
+def test_a_measure_range_starting_at_zero_is_generable(engine_module, tmp_path):
+    """A lower bound of zero is the ordinary case for a bounded measure, and log(0) is not a number.
+
+    The lognormal draw raised `ValueError: math domain error` on the first range a caller would
+    write for a score.
+    """
+    import duckdb
+
+    out = tmp_path / "zero.duckdb"
+    engine_module.DDLEngine(
+        "CREATE TABLE gauges (gauge_id BIGINT PRIMARY KEY, gauge_name VARCHAR);"
+        "CREATE TABLE readings (reading_id BIGINT PRIMARY KEY, "
+        "gauge_id BIGINT REFERENCES gauges(gauge_id), order_time TIMESTAMP, "
+        "fee_amount DECIMAL(18,2), health_score DECIMAL(5,2));",
+        rows=9_000,
+        months=3,
+        seed=1,
+        profile={"columns": {"readings.health_score": {"range": (0.0, 100.0)}}},
+    ).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        low, high, below = con.execute(
+            "SELECT min(health_score), max(health_score), count(*) FILTER (WHERE health_score < 10) FROM readings"
+        ).fetchone()
+    finally:
+        con.close()
+
+    assert 0.0 <= float(low) <= float(high) <= 100.0, f"{low}-{high}"
+    assert below, "a range starting at zero has to be able to produce values near zero"
+
+
+@pytest.mark.acceptance
+def test_an_unsupported_weekly_shape_is_refused(engine_module):
+    """`.get(shape, weekend_heavy)` swallowed a typo and the surfaces then disagreed.
+
+    The report and the metadata echoed what was asked for while the data was generated as a
+    consumer shop, so the quality check was handed a label the rows did not carry.
+    """
+    errors, _warnings = engine_module.DDLEngine(
+        BUDGET_DDL, rows=9_000, months=6, seed=1, profile={"weekly_shape": "weekday-heavy"}
+    ).precheck(strict=False)
+
+    assert any("'weekday-heavy' is not a shape" in e for e in errors), errors
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", ["regression_dt", "regional_dt"])
+def test_reg_is_not_a_prefix_of_every_word_starting_with_reg(engine_module, date_col):
+    """Spelled out as `reg_` or `regist*`: a token start alone still caught `regression_dt`."""
+    eng = engine_module.DDLEngine(ATTR_DATE_DDL.format(date_col=date_col), rows=9_000, months=6, seed=1)
+
+    assert eng.roles["movements"] == "fact"
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize("date_col", ["registered_at", "reg_dt", "registration_date"])
+def test_the_real_registration_dates_still_read_as_attributes(engine_module, date_col):
+    eng = engine_module.DDLEngine(ATTR_DATE_DDL.format(date_col=date_col), rows=9_000, months=6, seed=1)
+
+    assert eng.roles["movements"] == "dim"
+
+
+@pytest.mark.acceptance
+def test_duty_is_a_tax_only_in_a_monetary_form(engine_module):
+    """Anchored at the front alone, `duty_roster_allowance` was a tax."""
+    assert engine_module.DDLEngine._amt_role("duty_roster_allowance") == "gross"
+    assert engine_module.DDLEngine._amt_role("duty_amount") == "tax"
+    assert engine_module.DDLEngine._amt_role("import_duty") == "tax"
+
+
+@pytest.mark.acceptance
+def test_a_table_with_no_foreign_key_also_reports_its_demotion(engine_module, capsys):
+    """A table reaches ROLE_DIM with foreign keys and without them; only the first path reported."""
+    engine_module.DDLEngine(
+        "CREATE TABLE sensors (sensor_id BIGINT PRIMARY KEY, opened_at TIMESTAMP, "
+        "reading_score DECIMAL(8,2), calib_score DECIMAL(8,2));",
+        rows=9_000,
+        months=6,
+        seed=1,
+    ).report()
+
+    assert "sensors carries measures but is planned as a dimension" in capsys.readouterr().out

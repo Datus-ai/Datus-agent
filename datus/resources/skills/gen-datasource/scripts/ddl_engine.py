@@ -117,6 +117,11 @@ ROLE_DATE, ROLE_DIM, ROLE_FACT, ROLE_DETAIL, ROLE_EVENT, ROLE_SNAPSHOT, ROLE_DOW
     "snapshot",
     "downstream",
 )
+# The fallback when a measure column has no declared range. A measure's units cannot be read off a
+# DDL, so this is a plausible weight or duration and nonsense for anything bounded - it is written
+# into the skeleton and named by precheck so the caller corrects it rather than meeting it in the data.
+MEASURE_RANGE = (0.1, 40)
+
 ROLE_METRIC = "metric_daily"  # daily metric table with no FK (traffic/spend/headline); a day x dimension grid
 
 AUDIT_TS = re.compile(
@@ -397,7 +402,8 @@ class DDLEngine:
         # table's only business date read as an entity attribute and the whole table was demoted to
         # a dimension, every measure on it generated as a static attribute with no time signal.
         attr_date = re.compile(
-            r"(?:^|_)(?:reg|onboard|hire|launch|first|join|create|birth|open|expire|valid|found|entry)"
+            # `reg` spelled out: a token start alone still matched `regression_dt` and `regional_dt`.
+            r"(?:^|_)(?:reg(?:_|ist)|onboard|hire|launch|first|join|create|birth|open|expire|valid|found|entry)"
         )
 
         self._demoted = {}
@@ -439,6 +445,7 @@ class DDLEngine:
                     self.roles[t] = ROLE_METRIC if (has_date_grain and _measures(t) >= 3) else ROLE_FACT
                 else:
                     self.roles[t] = ROLE_DIM
+                    self._blame_date(t, attr_date, _measures(t))
         # Iterate: a table referencing only dimensions is a fact; a table referencing facts is a detail/downstream
         for _ in range(len(self.schema)):
             for t in self.schema:
@@ -455,27 +462,8 @@ class DDLEngine:
                     # Referencing only dimensions: it is a fact only if it has a business date. An attribute table like
                     # dim_product ("has price/cost but only a listing date") holds amounts as attributes, not measures - still a dimension.
                     self.roles[t] = ROLE_FACT if biz else ROLE_DIM
-                    if not biz and (namt or _measures(t)):
-                        # The date-name test is a naming heuristic and naming is per-industry:
-                        # `opened_at` is when an account was opened on a dimension and when a
-                        # ticket was raised on a fact. Getting it wrong costs the whole table -
-                        # every measure comes out as a static attribute with no time signal - so
-                        # the one column that decided it is named in the report rather than left
-                        # for the caller to find by reading the data.
-                        # Only when a date column actually decided it. A table with no date column
-                        # at all is a dimension for the ordinary reason, and reporting it as demoted
-                        # by `` - an empty name - pointed the caller at a fact table it should not
-                        # build.
-                        blamed = next(
-                            (
-                                c["name"]
-                                for c in self.schema[t]
-                                if c["sem"] in ("date", "ts", "date_pk") and attr_date.search(c["name"])
-                            ),
-                            "",
-                        )
-                        if blamed:
-                            self._demoted[t] = blamed
+                    if not biz:
+                        self._blame_date(t, attr_date, namt or _measures(t))
         for t in self.schema:
             self.roles.setdefault(t, ROLE_FACT)
         # Main fact: the fact table with the most foreign keys that also carries amounts
@@ -980,7 +968,7 @@ class DDLEngine:
             if self.roles.get(t) != ROLE_DATE
             for c in self.schema[t]
             if c["sem"] == "measure"
-            and tuple(cfg.get(f"{t}.{c['name']}", {}).get("range", ()) or ()) in ((), (0.1, 40))
+            and tuple(cfg.get(f"{t}.{c['name']}", {}).get("range", ()) or ()) in ((), MEASURE_RANGE)
         )
         if unranged:
             warn.append(
@@ -988,6 +976,13 @@ class DDLEngine:
                 + (f" and {len(unranged) - 8} more" if len(unranged) > 8 else "")
                 + ". Set columns['t.col']['range'] for any whose units are not a 0.1-40 quantity"
             )
+
+        shape = self.profile.get("weekly_shape")
+        if shape is not None and shape not in self.WEEKLY_SHAPE:
+            # `.get(shape, weekend_heavy)` swallowed a typo, and the two surfaces then disagreed:
+            # the report and the metadata echoed what was asked for while the data was generated as
+            # a consumer shop - so the quality check was handed a label the rows did not carry.
+            err.append(f"weekly_shape: {shape!r} is not a shape; choose one of {', '.join(sorted(self.WEEKLY_SHAPE))}")
 
         pin_keys = [k for k in ("table_rows", "dim_rows") if self.profile.get(k)]
         pinned_names = set(self.profile.get("table_rows", {}) or {}) | set(self.profile.get("dim_rows", {}) or {})
@@ -1213,7 +1208,7 @@ class DDLEngine:
             )
             out.append("        #   of your schema - correct any that is not a 0.1-40 quantity.")
             for key in measures[:12]:
-                out.append(f'        {lit(key)}: {{"range": (0.1, 40)}},')
+                out.append(f'        {lit(key)}: {{"range": {MEASURE_RANGE}}},')
             out.append("    },")
         out.append('    "semantics": {},   # only the columns report() got wrong, above')
         out.append('    "vocab": {},       # the built-in words are retail-shaped (brands, "Works"/"Labs" suffixes).')
@@ -1245,7 +1240,7 @@ class DDLEngine:
             print(f"declared in the DDL: {nd_pk} primary key(s), {nd_fk} foreign key(s) (they win over inference)")
         for t, col in sorted(getattr(self, "_demoted", {}).items()):
             print(
-                f"! {t} has measures and a foreign key but is planned as a dimension, because "
+                f"! {t} carries measures but is planned as a dimension, because "
                 f"`{col}` reads as an entity attribute date (when the entity came into being) "
                 f"rather than a business event. If `{col}` is when something happened, set "
                 f"profile['roles'] = {{{t!r}: 'fact'}} - as a dimension its measures carry no "
@@ -1735,6 +1730,50 @@ class DDLEngine:
         return base + (f" (#{i // len(vocab['brand']) + 1})" if i >= len(vocab["brand"]) else "")
 
     # ------------------------------------------------------------ small helpers
+    def _blame_date(self, t, attr_date, has_measures):
+        """Record the date column that demoted a table to a dimension, if one did.
+
+        The date-name test is a naming heuristic and naming is per-industry: `opened_at` is when an
+        account was opened on a dimension and when a ticket was raised on a fact. Getting it wrong
+        costs the whole table - every measure comes out as a static attribute with no time signal -
+        so the column that decided it is named in the report rather than left to be found in the
+        data. Both classification paths record it: a table reaches ROLE_DIM with foreign keys and
+        without them, and only the first was covered.
+
+        Only when a column actually matched. A table with no date at all is a dimension for the
+        ordinary reason, and reporting it as demoted by `` - an empty name - pointed the caller at a
+        fact table it should not build.
+        """
+        if not has_measures:
+            return
+        blamed = next(
+            (
+                c["name"]
+                for c in self.schema[t]
+                if c["sem"] in ("date", "ts", "date_pk") and attr_date.search(c["name"])
+            ),
+            "",
+        )
+        if blamed:
+            self._demoted[t] = blamed
+
+    def _measure_val(self, t, name, rng):
+        """A measure, honouring `columns['t.col']['range']`.
+
+        Both measure paths ignored the range, so the slot the skeleton writes and the warning
+        precheck prints asked the caller to set a value that changed nothing - a GPA declared
+        (0.0, 4.0) still came out at 49.02. They also disagreed on the fallback, 0.1-50 against
+        0.1-40, so neither matched what was documented.
+
+        A lower bound of zero is the ordinary case for a bounded measure (a score, a rate, a
+        backlog) and ``lognorm_between`` cannot take it - log(0). Those draw from a bell centred in
+        the range instead, which is closer to how bounded measures actually sit than a uniform.
+        """
+        lo, hi = self._col_profile(t, name).get("range", MEASURE_RANGE)
+        if lo > 0:
+            return round(lognorm_between(rng, lo, hi), 3)
+        return round(bounded_gauss(rng, (lo + hi) / 2, (hi - lo) / 4, lo, hi), 3)
+
     def _is_int_col(self, t, col):
         d = next((c["type"].upper() for c in self.schema[t] if c["name"] == col), "")
         return any(d.startswith(x) for x in INT_T)
@@ -1799,7 +1838,9 @@ class DDLEngine:
         ("ship", r"ship|freight|delivery|postage|logistic"),
         # Anchored at both ends: these are whole words, and a token-start match alone read
         # `taxonomy_value` as a tax. The longer words below need only the leading anchor.
-        ("tax", r"tax(?:es)?(?:_|$)|vat(?:_|$)|duty(?!_free)(?:_|$)|duties(?:_|$)"),
+        # `duty` only in a monetary form - as the last token, or followed by one. Anchored at the
+        # front alone it read `duty_roster_allowance` as a tax, and `duty_free_price` as one too.
+        ("tax", r"tax(?:es)?(?:_|$)|vat(?:_|$)|duty(?:_(?:amount|amt|fee|charge|cost|value|paid))?$|duties(?:_|$)"),
         ("paid", r"paid|net_|settle|actual|final|payable|received|pay_|payment"),
         ("unit", r"unit|price"),
         ("gross", r"."),
@@ -2100,7 +2141,12 @@ class DDLEngine:
                 elif sem == "flag":
                     ent[name] = 1 if rng.random() < self._col_profile(t, name).get("p", 0.93) else 0
                 elif sem == "measure":
-                    ent[name] = round(lognorm_between(rng, 0.1, 50), 3)
+                    # Reads `columns['t.col']['range']` like amount and count do. It did not, so the
+                    # slot the skeleton writes and the warning precheck prints both asked the caller
+                    # to set a value that changed nothing: a GPA declared (0.0, 4.0) still came out
+                    # at 49.02. The two measure paths also disagreed on the fallback - 0.1-50 here
+                    # against 0.1-40 in `_fill_generic` - so neither matched what was documented.
+                    ent[name] = self._measure_val(t, name, rng)
                 elif self._is_code_col(t, name):
                     ent[name] = self._code_val(t, name, i)
                 else:
@@ -2615,7 +2661,7 @@ class DDLEngine:
         if sem == "amount":
             return round(lognorm_between(rng, 5, 300), 2)
         if sem == "measure":
-            return round(lognorm_between(rng, 0.1, 40), 3)
+            return self._measure_val(t, name, rng)
         if sem == "ts":
             # Invariant 3: a child timestamp is the parent moment plus a non-negative offset, clamped
             # to the cut-off. "A random moment on the same day" is not enough - about half the detail
