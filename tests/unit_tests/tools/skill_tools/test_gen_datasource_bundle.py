@@ -221,7 +221,8 @@ def test_skill_md_does_not_carry_the_row_allocation_worksheet():
     skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     design = (SKILL_DIR / "references" / "design-from-scratch.md").read_text(encoding="utf-8")
 
-    for share in ("| Main fact | 10-15% |", "| Event stream |", "| All dimensions |"):
+    # Matched on the row labels, not the percentages - the shares are `plan_scale`'s to change.
+    for share in ("| Main fact |", "| Fact detail |", "| Event stream |", "| All dimensions |"):
         assert share not in skill, f"{share} is a worksheet; it belongs in design-from-scratch.md"
         assert share in design, f"{share} was dropped rather than moved"
 

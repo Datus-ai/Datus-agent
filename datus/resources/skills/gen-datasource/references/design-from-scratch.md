@@ -46,17 +46,22 @@ Extract the following from one sentence. **Anything missing takes its default an
 
 **Rows to scale** (total includes dim + ods + dws + ads). Look it up, or call `genlib.plan_scale(total_rows)`:
 
-| Total | Main fact | Detail | Event stream | Buyers/users | Sellers/stores | SKUs | Time |
-|---|---|---|---|---|---|---|---|
-| 10k | 1.2k | 1.8k | 4k | 400 | 15 | 80 | < 1s |
-| **50k** | 6k | 9k | 20k | 2k | 30 | 200 | ~1s |
-| **80k (default)** | 9.6k | 14k | 32k | 3.2k | 35 | 250 | ~2s |
-| **100k** | 12k | 18k | 40k | 4k | 40 | 300 | ~2s |
-| 500k | 60k | 90k | 200k | 18k | 70 | 500 | ~6s |
-| 1M | 120k | 180k | 400k | 35k | 90 | 700 | ~12s |
-| 5M | 600k | 900k | 2M | 150k | 150 | 1200 | ~50s |
+This is what `plan_scale` returns, not a target to aim at by hand - the fact layer takes 70% of the
+total (main 18.2%, detail 27.3%, event stream 24.5%), the summary layer 24% and the dimensions 6%.
+The figures below are its output for `dims={"seller": "org", "sku": "item", "buyer": "customer"}`:
 
-**Fix the main fact table first (12% of total), expand the rest by the ratios in 1.2, and derive dimension cardinality from business characteristics per 1.3.** One call gives you all of it and validates the hard constraints:
+| Total | Main fact | Detail | Event stream | Summary | Buyers/users | Sellers/stores | SKUs |
+|---|---|---|---|---|---|---|---|
+| 10k | 1.8k | 2.7k | 2.5k | 2.4k | 455 | 3 | 30 |
+| **50k** | 9.1k | 13.7k | 12.2k | 12k | 2.3k | 15 | 152 |
+| **80k (default)** | 14.6k | 21.8k | 19.6k | 19.2k | 3.6k | 24 | 243 |
+| **100k** | 18.2k | 27.3k | 24.5k | 24k | 4.5k | 30 | 303 |
+| 500k | 91k | 136.5k | 122.5k | 120k | 22.8k | 152 | 1.5k |
+| 1M | 182k | 273k | 245k | 240k | 45.5k | 303 | 3k |
+| 5M | 910k | 1365k | 1225k | 1200k | 227.5k | 1.5k | 15.2k |
+
+Dimension counts follow the kinds you pass, so they move with `dims=`; the fact and summary shares
+do not. **Call it rather than reproducing it** - the one call also validates the hard constraints:
 
 ```python
 from genlib import plan_scale
@@ -98,15 +103,17 @@ ads_*   application:1-2   cross-domain daily report, one row per day, preferred 
 
 **Core principle: the bulk of the data is the fact tables; a dimension table is only a list of entities.** Dimension row counts are decided by how many entities the business actually has and **do not scale with the total** - putting 25,000 users in a 100,000-row database leaves no room for facts.
 
+These are the shares `plan_scale` applies, so the table above and this one are the same contract:
+
 | Layer | Share of total | Note |
 |---|---|---|
-| All dimensions | **3-8%** | No single dimension above 8% of total; cardinality derived per 1.3, not guessed |
-| Main fact | 10-15% | Orders / work orders / policies / subscriptions / visits |
-| Fact detail | 15-20% | 1.4-2.2 rows per main-fact row |
-| Event stream | **35-50%** | Tracking / events / status transitions / instalments; 3-5 rows per main-fact row |
-| Summary layer | 20-28% | Produced by SQL; row count = number of aggregation cells, driven by dimension cardinality |
+| All dimensions | **6%** | No single dimension above 8% of total; cardinality derived per 1.3, not guessed |
+| Main fact | 18.2% | Orders / work orders / policies / subscriptions / visits |
+| Fact detail | 27.3% | 1.4-2.2 rows per main-fact row |
+| Event stream | 24.5% | Tracking / events / status transitions / instalments |
+| Summary layer | 24% | Produced by SQL; row count = number of aggregation cells, driven by dimension cardinality |
 
-> The fact layer (main + detail + events) should total **65-75%**. If dimensions crowd it out, cut the user dimension first (it runs away most easily), then SKUs.
+> The fact layer (main + detail + events) totals **70%**. If dimensions crowd it out, cut the user dimension first (it runs away most easily), then SKUs.
 
 ### 1.3 Dimension cardinality: derive it from the business (**the easiest thing to get wrong**)
 

@@ -1389,7 +1389,7 @@ def test_a_failing_sql_block_is_reported_once_not_twice(engine_module, capsys):
 
 
 @pytest.mark.acceptance
-@pytest.mark.parametrize("requested", (1.0, 1.35, 1.84, 2.6))
+@pytest.mark.parametrize("requested", (1.0, 1.35, 1.84, 2.6, 3.0, 4.0))
 def test_lines_per_document_follow_the_plan(engine_module, requested):
     """The line-count draw ignored the plan below two lines per document.
 
@@ -1403,6 +1403,8 @@ def test_lines_per_document_follow_the_plan(engine_module, requested):
 
     mean = sum(eng._lines_for(requested, rng) for _ in range(40_000)) / 40_000
 
+    # An upper clamp used to truncate the tail, and it cost the most exactly where the caller had
+    # asked for the most: 2% of the requested mean at three lines per document, 3% at four.
     assert abs(mean - requested) < 0.05, f"asked for {requested} lines per document, drew {mean:.3f}"
 
 
@@ -1525,3 +1527,95 @@ def test_a_wrongly_typed_sql_block_is_reported_not_raised(engine_module, capsys)
 
     assert "pre_sql: must be a str or a list of str, got int" in out
     assert "table" in out, "the rest of the plan still has to print"
+
+
+NESTED_DETAIL_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_items (
+    item_id BIGINT PRIMARY KEY,
+    order_id BIGINT REFERENCES orders(order_id),
+    quantity INTEGER,
+    item_amount DECIMAL(18, 2)
+);
+CREATE TABLE item_serials (
+    serial_id BIGINT PRIMARY KEY,
+    item_id BIGINT REFERENCES order_items(item_id),
+    serial_no VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_table_can_itself_be_a_parent(engine_module, tmp_path):
+    """`order_items` has serials; a claim has line items. A detail table is a legitimate parent.
+
+    `_gen_detail` recorded neither `refs` nor `_fact_rows`, so `_parent_of` could not see it and the
+    nested table fell through to `_gen_fact` - generated as an independent fact, 10,754 rows with
+    the foreign key NULL on every single one. The FK check reports that as resolving, because it
+    excludes NULLs from both sides of the ratio.
+    """
+    import duckdb
+
+    out = tmp_path / "nested.duckdb"
+    engine_module.DDLEngine(NESTED_DETAIL_DDL, rows=20_000, months=6, seed=1).generate(str(out), verbose=False)
+
+    con = duckdb.connect(str(out))
+    try:
+        total, nulls = con.execute(
+            "SELECT count(*), count(*) FILTER (WHERE item_id IS NULL) FROM item_serials"
+        ).fetchone()
+        resolving = con.execute(
+            "SELECT count(*) FROM item_serials s JOIN order_items i ON s.item_id = i.item_id"
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    assert total > 0
+    assert nulls == 0, f"{nulls:,} of {total:,} nested-detail rows have no parent key"
+    assert resolving == total
+
+
+REVIEW_METRIC_DDL = """
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY,
+    order_time TIMESTAMP,
+    paid_amount DECIMAL(18, 2)
+);
+CREATE TABLE daily_seller_metrics (
+    stat_dt DATE,
+    seller VARCHAR,
+    impressions BIGINT,
+    clicks BIGINT,
+    review_count BIGINT,
+    gmv DECIMAL(18, 2)
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_stage_word_only_matches_at_a_token_start(engine_module):
+    """A bare substring search read `review_count` as a page view, because it contains "view".
+
+    Page views are the one fan-out in the table, so a review column was prefilled to go *up* from
+    its predecessor instead of down - the only ratio in the funnel that must never be guessed wrong.
+    """
+    page_view = dict(engine_module.DDLEngine.FUNNEL_STAGE)[r"view|browse|detail|pv"]
+
+    for name in ("review_count", "review_score", "interview_count"):
+        assert engine_module.DDLEngine._stage_level(name) is None, name
+    for name in ("view_count", "page_view", "product_detail", "pv_cnt"):
+        assert engine_module.DDLEngine._stage_level(name) == page_view, name
+
+
+@pytest.mark.acceptance
+def test_an_unrecognised_stage_is_annotated_in_the_skeleton(engine_module):
+    """A default the engine cannot justify has to be marked where the caller will read it."""
+    skeleton = engine_module.DDLEngine(REVIEW_METRIC_DDL, rows=20_000, months=6, seed=1).profile_skeleton()
+
+    line = next(ln for ln in skeleton.splitlines() if "review_count" in ln)
+
+    assert "step not recognised" in line, line

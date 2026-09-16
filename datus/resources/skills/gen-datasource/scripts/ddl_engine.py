@@ -994,8 +994,15 @@ class DDLEngine:
 
     @classmethod
     def _stage_level(cls, name):
+        """Match a stage word at the start of one of the column name's `_`-separated tokens.
+
+        A bare substring search read `review_count` and `interview_count` as page views, because
+        both contain "view" - so a review table got the one fan-out ratio in the table and its
+        counts went up instead of down. Anchoring to a token start keeps `page_view`, `view_count`
+        and `pv_cnt` and drops the accidents.
+        """
         for pattern, level in cls.FUNNEL_STAGE:
-            if re.search(pattern, name, re.I):
+            if re.search(rf"(?:^|_)(?:{pattern})", name, re.I):
                 return level
         return None
 
@@ -1004,7 +1011,7 @@ class DDLEngine:
         """The prefilled ratio for one derive step, and whether the engine recognised both ends."""
         if is_money:
             for pattern, ratio in cls.MONEY_RATIO:
-                if re.search(pattern, dst, re.I):
+                if re.search(rf"(?:^|_)(?:{pattern})", dst, re.I):
                     return ratio, True
             return cls.MONEY_DEFAULT, False
         lo_stage, hi_stage = cls._stage_level(src), cls._stage_level(dst)
@@ -2285,8 +2292,10 @@ class DDLEngine:
         """
         spread = rng.choices(*self.LINE_SPREAD)[0] - 1
         extra = max(0.0, lines_per_doc - 1.0) * spread / (self.LINE_SPREAD_MEAN - 1)
-        k = 1 + int(extra) + (1 if rng.random() < extra - int(extra) else 0)
-        return min(max(6, round(lines_per_doc * 3)), k)
+        # No upper clamp: the draw is already bounded by the spread's own top (five lines scaled),
+        # and a ceiling only truncated the tail - it cost 2% of the requested mean at three lines
+        # per document and 3% at four, on the tables where the caller had asked for the most.
+        return 1 + int(extra) + (1 if rng.random() < extra - int(extra) else 0)
 
     def _gen_detail(self, t, o):
         """Detail rows inherit the parent date and keep amounts self-consistent within the row
@@ -2332,7 +2341,7 @@ class DDLEngine:
         rfq_col = next((c for c in cnt_cols if re.search(r"refund|return", c)), None)
         reason_cols = [c["name"] for c in cols if re.search(r"reason|cause", c["name"])]
         refund_p = self.profile.get("refund_rate", 0.055)
-        rows, agg, no = [], {}, 0
+        rows, agg, no, refs = [], {}, 0, []
         for pi, pr in enumerate(prefs):
             k = self._lines_for(lines_per_doc, rng)
             if pool and eff_cum:
@@ -2414,8 +2423,25 @@ class DDLEngine:
                 tot["refund"] += ramt
                 self._apply_formulas(t, row)
                 rows.append([row[c] for c in names])
+                refs.append(
+                    {
+                        "pk": row[pk],
+                        "dt": pr["dt"],
+                        "ts": pr.get("ts"),
+                        "status": pr.get("status", ""),
+                        "amt": sales,
+                        "fks": {f: row.get(f, "") for f in self.fks[t]},
+                        "subj": 1.0,
+                    }
+                )
             agg[pr["pk"]] = {k2: round(v, 2) for k2, v in tot.items()}
         o.write(t, names, rows)
+        # A detail table is a legitimate parent - order_items has serials, a claim has line items.
+        # Without these two lines `_parent_of` could not see it, so `_gen_detail` fell through to
+        # `_gen_fact` for the nested table and generated it as an independent fact: 10,754 rows with
+        # the foreign key NULL on every one of them, which the FK check then reports as resolving.
+        self.refs[t] = refs
+        self._fact_rows[t] = (names, rows)
         self._realign_parent(par, agg)
 
     def _pick_items(self, pool, eff_sorted, eff_cum, d, k, rng):
