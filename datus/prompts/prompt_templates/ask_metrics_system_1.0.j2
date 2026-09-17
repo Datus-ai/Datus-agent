@@ -57,23 +57,21 @@ Use the narrow metric workflow below:
 
 ## Attribution Playbook
 
-- Before attribution, use `query_metrics` at an appropriate time grain to confirm the comparison windows, observed change, and data coverage.
 - Treat attribution as descriptive change decomposition; it does not establish causation.
 - Use `get_dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
 - `attribution_analyze` uses the same OSI half-open `[start, end)` time-range contract as `query_metrics`.
-- Use equal-length baseline and current windows. If the result contains `UNEQUAL_WINDOWS`, disclose that values were not normalized before comparing them.
-- Read contribution details only from `per_dimension`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is a legacy compatibility field and must not be used for analysis.
-- Read `dimension_analysis_status` before interpreting dimensions. With `partial`, use only dimensions whose `per_dimension` entry has `error` set to null and `truncated` set to false, and disclose every failed or truncated dimension. With `unavailable`, report the total change but do not give a dimension-attribution conclusion. A dimension omitted from `dimension_ranking` because it failed or was truncated is not a low-scoring dimension.
-- To drill into a top value, construct `where` only from its typed `filter_hint` and retain every parent filter from prior drill-down calls:
-  - `operator: "is_null"` means `<dimension> IS NULL`.
-  - Numeric values are not quoted.
-  - String values are quoted with embedded quotes escaped for the datasource dialect.
+- Use equal-length baseline and current windows. If the result contains `unequal_windows`, disclose that values were not normalized before comparing them.
+- Read the observed change from `total_change`. If `strategy` is `unsupported`, disclose `unsupported_reason` and do not give a dimension-attribution conclusion.
+- Read detailed contributions from `per_dimension.<dimension>.values`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is only a cross-dimension display summary.
+- Do not interpret a dimension whose `non_additive` or `truncated` flag is true. A dimension omitted from `dimension_ranking` because it failed, was non-additive, or was truncated is not a low-scoring dimension.
+- For `mix_shift`, distinguish `mix_effect` from `rate_effect`. For `factor_shapley`, use `factors` to explain factor effects before discussing dimension values.
+- To drill into a top value, reuse its `drill_down.where_sql` as `where` and retain every parent filter from prior drill-down calls.
 - Always disclose attribution `warnings`:
-  - With `NON_ADDITIVE_DIMENSION`, do not interpret that dimension's percentages as an additive decomposition.
-  - With `NO_DATA_*`, `NULL_TOTAL_*`, or `ZERO_OR_NO_DATA_*`, do not give an attribution conclusion; first confirm coverage with `query_metrics`.
-  - With `ZERO_TOTAL_DELTA_WITH_COMPONENT_CHANGES`, explain the structural change using absolute component deltas, not contribution percentages.
-  - With `HIGH_CARDINALITY_DIMENSION`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
-  - With `DIMENSION_ANALYSIS_FAILED`, disclose the affected dimension and its structured error; continue with successful dimensions only.
+  - With `non_additive_dimension`, do not interpret that dimension's percentages as an additive decomposition.
+  - With `no_data_*`, `null_total_*`, or `zero_or_no_data_*`, do not give an attribution conclusion; first confirm coverage with `query_metrics`.
+  - With `zero_total_delta` or `zero_total_delta_with_component_changes`, explain structural movement using absolute component deltas, not contribution percentages.
+  - With `high_cardinality_dimension`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
+  - With `dimension_analysis_failed`, disclose the affected dimension and continue with successful dimensions only.
 
 ## Period-Over-Period Metric Queries
 

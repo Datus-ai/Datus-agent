@@ -540,41 +540,53 @@ def _fmt_validate_semantic(result: Any) -> str:
 
 def _fmt_attribution_analyze(result: Any) -> str:
     if isinstance(result, dict):
+        implementation = result.get("implementation")
+        strategy = result.get("strategy")
+        summary_parts = [" ".join(str(item) for item in (implementation, strategy) if item)]
+        summary_parts = [part for part in summary_parts if part]
+        if strategy == "unsupported":
+            reason = result.get("unsupported_reason")
+            code = reason.get("code") if isinstance(reason, dict) else None
+            if code:
+                summary_parts.append(str(code))
+            return "; ".join(summary_parts)
+
+        warnings = result.get("warnings") or []
+        failed_count = sum(
+            1
+            for warning in warnings
+            if isinstance(warning, dict) and warning.get("code") == "dimension_analysis_failed"
+        )
         per_dimension = result.get("per_dimension")
         if isinstance(per_dimension, dict) and per_dimension:
-            analyzed_count = 0
-            failed_count = 0
+            usable_count = 0
+            non_additive_count = 0
             truncated_count = 0
             for dimension_result in per_dimension.values():
                 if not isinstance(dimension_result, dict):
                     continue
-                if dimension_result.get("error"):
-                    failed_count += 1
-                elif dimension_result.get("truncated"):
+                if dimension_result.get("truncated"):
                     truncated_count += 1
+                elif dimension_result.get("non_additive"):
+                    non_additive_count += 1
                 else:
-                    analyzed_count += 1
+                    usable_count += 1
 
-            candidates = result.get("candidate_dimensions")
-            requested_count = len(candidates) if isinstance(candidates, list) else len(per_dimension)
+            requested_count = len(per_dimension) + failed_count
             noun = "dimension" if requested_count == 1 else "dimensions"
-            summary_parts = [f"{analyzed_count}/{requested_count} {noun} analyzed"]
+            summary_parts.append(f"{usable_count}/{requested_count} {noun} usable")
             if failed_count:
                 summary_parts.append(f"{failed_count} failed")
+            if non_additive_count:
+                summary_parts.append(f"{non_additive_count} non-additive")
             if truncated_count:
                 summary_parts.append(f"{truncated_count} truncated")
-            warnings = result.get("warnings") or []
             warning_count = len(warnings) if isinstance(warnings, list) else 0
             if warning_count:
                 summary_parts.append(pluralize(warning_count, "warning"))
             return ", ".join(summary_parts)
 
-        if result.get("dimension_analysis_status") == "not_requested":
-            return "totals compared"
-
         selected = result.get("selected_dimensions") or []
-        warnings = result.get("warnings") or []
-        summary_parts = []
         if isinstance(selected, list) and selected:
             summary_parts.append(f"selected {','.join(str(dimension) for dimension in selected)}")
         warning_codes = []

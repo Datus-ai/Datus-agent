@@ -26,7 +26,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.tools.func_tool.attribution_utils import (
     AttributionValidationException,
-    DimensionAttributionUtil,
+    GenericAttributeAnalyzer,
 )
 from datus.tools.func_tool.base import (
     FuncToolListResult,
@@ -37,7 +37,11 @@ from datus.tools.func_tool.base import (
 )
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
-from datus.tools.semantic_tools.models import AnomalyContext
+from datus.tools.semantic_tools.models import (
+    AttributionRequest,
+    AttributionResult,
+    AttributionWindow,
+)
 from datus.tools.semantic_tools.paging import (
     METRIC_CATALOG_MAX_PAGES,
     METRIC_CATALOG_PAGE_SIZE,
@@ -394,7 +398,7 @@ class SemanticTools:
 
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
-        self._attribution_tool: Optional[DimensionAttributionUtil] = None
+        self._attribution_tool: Optional[GenericAttributeAnalyzer] = None
         self._adapter_load_error: Optional[str] = None
         self._adapter_context_key: Optional[Tuple[str, ...]] = None
 
@@ -751,11 +755,24 @@ class SemanticTools:
         return self._adapter
 
     @property
-    def attribution_tool(self) -> Optional[DimensionAttributionUtil]:
+    def attribution_tool(self) -> Optional[GenericAttributeAnalyzer]:
         """Lazy load attribution tool when adapter is available."""
         if self._attribution_tool is None and self.adapter is not None:
-            self._attribution_tool = DimensionAttributionUtil(self.adapter)
+            self._attribution_tool = GenericAttributeAnalyzer(self.adapter)
         return self._attribution_tool
+
+    async def _attribute(
+        self,
+        adapter: BaseSemanticAdapter,
+        request: AttributionRequest,
+    ) -> AttributionResult:
+        native_result = await adapter.attribute(request)
+        if native_result is not None:
+            return native_result
+        attribution_tool = self.attribution_tool
+        if attribution_tool is None:
+            raise RuntimeError("Generic attribution is unavailable.")
+        return await attribution_tool.attribute(request)
 
     def _adapter_unavailable_message(self) -> str:
         """Return a consistent message for semantic-adapter failures."""
@@ -1386,6 +1403,8 @@ class SemanticTools:
                 result=None,
             )
 
+    # Dosi parameter names come from metric declarations and require an open schema.
+    @tool_schema(strict_mode=False)
     def attribution_analyze(
         self,
         metric_name: str,
@@ -1394,20 +1413,21 @@ class SemanticTools:
         baseline_end: str,
         current_start: str,
         current_end: str,
-        anomaly_context: Optional[AnomalyContext] = None,
         max_selected_dimensions: int = 3,
         top_n_values: int = 10,
         where: Optional[str] = None,
         path: Optional[List[str]] = None,
         max_dimension_values: int = 500,
+        time_dimension: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> FuncToolResult:
         """
         Descriptive dimension analysis for metric changes.
 
         Ranks candidate dimensions by change concentration and calculates delta
         contributions for selected dimensions. Results describe where a metric change
-        is concentrated; they do not establish causation. Failed and truncated dimensions
-        are excluded from rankings and contribution output.
+        is concentrated; they do not establish causation. Failed, truncated, and
+        non-additive dimensions are excluded from rankings and summary contributions.
 
         Args:
             metric_name: Metric to analyze(from list_metrics/search_metrics)
@@ -1416,63 +1436,48 @@ class SemanticTools:
             baseline_end: Exclusive baseline end date (e.g., "2026-01-08" for Jan 1-7)
             current_start: Inclusive current start date in an OSI half-open range (e.g., "2026-01-08")
             current_end: Exclusive current end date (e.g., "2026-01-15" for Jan 8-14)
-            anomaly_context: Optional anomaly detection context (AnomalyContext with rule and observed_change_pct)
             max_selected_dimensions: Maximum dimensions to select (default 3)
             top_n_values: Number of top dimension values to return (default 10)
             where: Optional SQL boolean expression applied to every attribution query
             path: Optional subject tree path for metric scoping
             max_dimension_values: Maximum grouped values per dimension (hard-capped at 1000)
+            time_dimension: Optional metric time dimension used for both windows
+            params: Optional parameter bindings for a parameterized metric
 
         Returns:
             FuncToolResult with:
             - dimension_ranking: All dimensions ranked by importance score
             - selected_dimensions: Top dimensions selected for analysis
             - top_dimension_values: Delta contributions of dimension values
-            - dimension_analysis_status: complete, partial, unavailable, or not_requested
-              when individual dimension queries fail, successful dimensions remain available
-              while failed and truncated dimensions are excluded from rankings and contribution output
+            - implementation: dosi or generic
+            - strategy: term_wise, mix_shift, factor_shapley, or unsupported
+            - total_change: Baseline, current, and delta values
+            - per_dimension: Per-dimension contribution details
         """
-        _, error = self._require_adapter("attribution_analyze")
+        adapter, error = self._require_adapter("attribution_analyze")
         if error:
             return error
-
-        attribution_tool = self.attribution_tool
-        if not attribution_tool:
-            return FuncToolResult(
-                success=0,
-                error="Attribution tool not available. Requires a successfully initialized semantic adapter.",
-            )
+        assert adapter is not None
 
         try:
-            # Convert AnomalyContext to dict for attribution_tool
-            # Handle both dict (from LLM) and AnomalyContext object
-            if anomaly_context is None:
-                anomaly_context_dict = None
-            elif isinstance(anomaly_context, dict):
-                anomaly_context_dict = anomaly_context
-            else:
-                anomaly_context_dict = anomaly_context.model_dump()
-
-            result = _run_async(
-                attribution_tool.attribution_analyze(
-                    metric_name=metric_name,
-                    candidate_dimensions=candidate_dimensions,
-                    baseline_start=baseline_start,
-                    baseline_end=baseline_end,
-                    current_start=current_start,
-                    current_end=current_end,
-                    anomaly_context=anomaly_context_dict,
-                    max_selected_dimensions=max_selected_dimensions,
-                    top_n_values=top_n_values,
-                    where=where,
-                    path=path,
-                    max_dimension_values=max_dimension_values,
-                )
+            request = AttributionRequest(
+                metric=metric_name,
+                dimensions=candidate_dimensions,
+                baseline=AttributionWindow(start=baseline_start, end=baseline_end),
+                current=AttributionWindow(start=current_start, end=current_end),
+                where_sql=where,
+                time_dimension=time_dimension,
+                max_values_per_dimension=max_dimension_values,
+                top_n_dimensions=max_selected_dimensions,
+                top_n_values=top_n_values,
+                params=params or {},
+                path=path,
             )
+            result = _run_async(self._attribute(adapter, request))
 
             return FuncToolResult(
                 success=1,
-                result=result.model_dump(),
+                result=result.model_dump(exclude_none=True),
             )
 
         except AttributionValidationException as e:
@@ -1483,6 +1488,15 @@ class SemanticTools:
                 result=e.payload.model_dump(),
             )
         except Exception as e:
+            payload = getattr(e, "payload", None)
+            if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":
+                data = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
+                logger.debug("attribution validation rejection: code=%s", data.get("code"))
+                return FuncToolResult(
+                    success=0,
+                    error=getattr(payload, "message", "") or "attribution validation failed",
+                    result=data,
+                )
             logger.error(f"Error in attribution analysis: {e}")
             return FuncToolResult(
                 success=0,

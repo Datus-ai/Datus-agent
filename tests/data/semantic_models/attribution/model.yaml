@@ -1,0 +1,80 @@
+# Minimal Dosi attribution oracle used by the Agent integration suite.
+# Each metric selects a distinct classification path while every scenario
+# shares one small DuckDB ledger and one groupable dimension.
+
+version: "0.2.0.dev0"
+
+semantic_model:
+  - name: attribution_model
+    description: Agent-to-Dosi attribution integration fixture
+    datasets:
+      - name: ledger
+        source: main.ledger
+        fields:
+          - name: d
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: d
+            dimension:
+              is_time: true
+          - name: cat
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: cat
+          - name: x
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: x
+          - name: y
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: y
+
+    metrics:
+      - name: x_total
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(ledger.x)
+
+      - name: x_above
+        description: Parameterized amount above a query-time threshold
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(CASE WHEN ledger.x > 50 THEN ledger.x END)
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"v":"1.5","params":[{"name":"t","type":"int","default":50,"allowed":[0,50,100]}],"derive":{"type":"filter","base":"x_total","where":"x > :t"}}'
+
+      - name: net
+        description: Two-term additive metric
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(ledger.x) - SUM(ledger.y)
+
+      - name: avg_x
+        description: Ratio metric produced by AVG desugaring
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: AVG(ledger.x)
+
+      - name: xy
+        description: Product of two aggregate factors
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(ledger.x) * SUM(ledger.y)
+
+      - name: unique_categories
+        description: Deliberately unsupported distinct-count metric
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT ledger.cat)
