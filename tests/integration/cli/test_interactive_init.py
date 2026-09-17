@@ -39,11 +39,11 @@ class TestInitKimiConnectivity:
 
     @pytest.mark.skipif(not os.getenv("KIMI_API_KEY"), reason="KIMI_API_KEY not available")
     def test_kimi_k3_fails_without_param_overrides(self):
-        """Confirm that kimi-k3 rejects default temperature (0.7), proving the override is necessary."""
+        """Confirm that kimi-k3 rejects its unsupported default sampling parameters."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init = InteractiveInit(user_home=tmpdir)
 
-            # Deliberately omit temperature/top_p to trigger the 400 error
+            # Deliberately omit temperature/top_p to trigger provider rejection.
             init._pending_probe = {
                 "type": "kimi",
                 "base_url": "https://api.moonshot.cn/v1",
@@ -53,8 +53,8 @@ class TestInitKimiConnectivity:
 
             success, error_msg = init._test_llm_connectivity()
 
-            assert success is False, "kimi-k3 should fail without temperature override"
-            assert "temperature" in error_msg.lower() or "400" in error_msg, (
-                f"Error should mention temperature or 400, got: {error_msg}"
+            assert success is False, "kimi-k3 should fail without required sampling overrides"
+            assert "temperature" in error_msg.lower() or "top_p" in error_msg.lower(), (
+                f"Error should mention a required sampling override, got: {error_msg}"
             )
             logger.info(f"kimi-k3 correctly rejected default params: {error_msg}")

@@ -1953,12 +1953,12 @@ class TestExtractUsageInfo:
 
         assert model._extract_usage_info(usage)["cache_write_tokens"] == 13
 
-    @pytest.mark.parametrize("base_url", [None, "https://api.anthropic.com"])
-    def test_uses_cache_write_tokens_when_openai_config_auto_routes_to_anthropic(self, base_url):
+    @pytest.mark.parametrize("configured_base_url", [None, "https://api.anthropic.com"])
+    def test_uses_cache_write_tokens_when_openai_config_auto_routes_to_anthropic(self, configured_base_url):
         config = _make_model_config(
             model="claude-sonnet-4-6",
             model_type="openai",
-            base_url=base_url,
+            base_url=configured_base_url,
         )
         model = _make_model(config)
         model.litellm_adapter = LiteLLMAdapter(
@@ -1978,7 +1978,7 @@ class TestExtractUsageInfo:
         assert model._extract_usage_info(usage)["cache_write_tokens"] == 13
 
     @pytest.mark.parametrize(
-        ("model_type", "base_url"),
+        ("model_type", "configured_base_url"),
         [
             ("glm", "https://open.bigmodel.cn/api/paas/v4"),
             ("kimi", "https://api.moonshot.cn/v1"),
@@ -1987,8 +1987,8 @@ class TestExtractUsageInfo:
             ("claude", "https://api.kimi.com/coding"),
         ],
     )
-    def test_ignores_cache_write_tokens_from_other_compatible_providers(self, model_type, base_url):
-        model = _make_model(_make_model_config(model_type=model_type, base_url=base_url))
+    def test_ignores_cache_write_tokens_from_other_compatible_providers(self, model_type, configured_base_url):
+        model = _make_model(_make_model_config(model_type=model_type, base_url=configured_base_url))
         model.litellm_adapter.provider = model_type
         usage = Usage(
             input_tokens=100,

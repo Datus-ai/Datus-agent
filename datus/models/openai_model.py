@@ -66,7 +66,7 @@ class OpenAIModel(OpenAICompatibleModel):
 
         return any(self.model_name.startswith(pattern) for pattern in reasoning_model_patterns)
 
-    def generate(self, prompt: Any, enable_thinking: bool = False, **kwargs) -> str:
+    def generate(self, prompt: Any, enable_thinking: bool | None = None, **kwargs) -> str:
         """Generate response with OpenAI-specific parameter handling.
 
         For reasoning models (o-series), removes unsupported parameters and
@@ -74,7 +74,7 @@ class OpenAIModel(OpenAICompatibleModel):
 
         Args:
             prompt: The input prompt to send to the model
-            enable_thinking: Enable thinking mode for hybrid models (default: False)
+            enable_thinking: Enable thinking mode for hybrid models (default: uses model_config)
             **kwargs: Additional generation parameters
 
         Returns:
