@@ -374,6 +374,13 @@ def _build_interaction_result_content(action: ActionHistory) -> Optional[List[IM
     if not content:
         return None
     payload_data = {"content": content}
+    # A timeout notice names the card it retired. The turn often keeps running
+    # (a sibling sub-agent streaming on), so without this the client has no way
+    # to tell that particular card apart from the live ones and would go on
+    # offering a button whose answer the broker has already stopped waiting for.
+    timed_out = output.get("timed_out_action_id")
+    if timed_out:
+        payload_data["timedOutInteractionKey"] = timed_out
     return [IMessageContent(type="markdown", payload=payload_data)]
 
 

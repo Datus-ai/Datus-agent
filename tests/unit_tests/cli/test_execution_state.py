@@ -253,6 +253,68 @@ class TestInteractionRequestTimeout:
         assert notice[0].output["content"]
 
     @pytest.mark.asyncio
+    async def test_timeout_notice_names_the_card_it_retired(self):
+        """The client needs the id to stop offering that card's buttons.
+
+        The turn can still be running when a card times out — a sibling
+        sub-agent streams on — so "the stream ended" is not a usable signal.
+        Only the converter's ``output`` half reaches the client, so the id has
+        to live there.
+        """
+        broker = InteractionBroker()
+
+        with pytest.raises(InteractionTimeout):
+            await broker.request([InteractionEvent(content="Allow?")], timeout=0.05)
+
+        actions = []
+        while not broker.is_queue_empty():
+            actions.append(broker._output_queue.get_nowait())
+
+        queued = [a for a in actions if a.role == ActionRole.INTERACTION and a.status == ActionStatus.PROCESSING]
+        notice = [a for a in actions if a.action_type == "request_timeout"][0]
+        assert notice.output["timed_out_action_id"] == queued[0].action_id
+
+    @pytest.mark.asyncio
+    async def test_answer_that_landed_first_wins_over_the_timeout(self):
+        """``submit`` and the timeout can settle in the same loop iteration.
+
+        ``submit`` pops the pending entry and schedules ``set_result``; by the
+        time the timeout handler runs, ``wait_for`` has already cancelled the
+        future, so the value cannot arrive through it. Reported as a timeout,
+        the client would have been told its answer was accepted while the tool
+        denied the call. Driven deterministically here by handing the answer
+        over exactly as ``submit`` does and never resolving the future.
+        """
+        broker = InteractionBroker()
+
+        task = asyncio.create_task(
+            broker.request([InteractionEvent(content="Allow?", choices={"y": "Yes"})], timeout=0.15)
+        )
+        await asyncio.sleep(0.05)
+        action = broker._output_queue.get_nowait()
+
+        with broker._lock:
+            broker._pending.pop(action.action_id)
+            broker._settled[action.action_id] = [["y"]]
+
+        assert await task == [["y"]]
+
+    @pytest.mark.asyncio
+    async def test_settled_answers_do_not_accumulate(self):
+        """The handshake map is consumed on both paths, not left to grow."""
+        broker = InteractionBroker()
+
+        async def answer_soon():
+            await asyncio.sleep(0.02)
+            action = broker._output_queue.get_nowait()
+            await broker.submit(action.action_id, [["y"]])
+
+        asyncio.create_task(answer_soon())
+        await broker.request([InteractionEvent(content="Allow?", choices={"y": "Yes"})], timeout=2.0)
+
+        assert broker._settled == {}
+
+    @pytest.mark.asyncio
     async def test_answer_within_the_window_still_wins(self):
         broker = InteractionBroker()
 
@@ -290,6 +352,12 @@ class TestInteractionRequestTimeout:
 
         monkeypatch.setenv("DATUS_INTERACTION_TIMEOUT_SECONDS", "not-a-number")
         assert execution_state._configured_interaction_timeout() == DEFAULT_INTERACTION_TIMEOUT_SECONDS
+
+        # ``float()`` takes these. ``nan`` compares false against everything and
+        # ``inf`` waits forever, so either one silently removes the bound.
+        for hostile in ("nan", "inf", "-inf"):
+            monkeypatch.setenv("DATUS_INTERACTION_TIMEOUT_SECONDS", hostile)
+            assert execution_state._configured_interaction_timeout() == DEFAULT_INTERACTION_TIMEOUT_SECONDS
 
         monkeypatch.delenv("DATUS_INTERACTION_TIMEOUT_SECONDS")
         assert execution_state._configured_interaction_timeout() == DEFAULT_INTERACTION_TIMEOUT_SECONDS

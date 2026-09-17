@@ -6,6 +6,7 @@
 """Interaction broker for async user interaction flow control."""
 
 import asyncio
+import math
 import os
 import threading
 import uuid
@@ -35,6 +36,13 @@ logger = get_logger(__name__)
 # Thirty minutes is well past any realistic "went to get coffee" gap while still
 # being finite. ``DATUS_INTERACTION_TIMEOUT_SECONDS=0`` restores the old
 # unbounded wait for anyone who wants it.
+#
+# NOTE this is the budget for ONE card, not for the turn. ``PermissionHooks``
+# serialises prompts on a per-broker lock held across ``request()``, so N
+# sub-agents each needing a permission wait one after another: the worst case
+# for a turn is N x this value, not this value. The incident that motivated it
+# had two sub-agents, so an hour. Raise this to a turn-level deadline before
+# quoting it as an upper bound anywhere.
 DEFAULT_INTERACTION_TIMEOUT_SECONDS = 1800.0
 _INTERACTION_TIMEOUT_ENV = "DATUS_INTERACTION_TIMEOUT_SECONDS"
 
@@ -48,6 +56,13 @@ def _configured_interaction_timeout() -> Optional[float]:
         seconds = float(raw)
     except ValueError:
         logger.warning("%s=%r is not a number; using the default", _INTERACTION_TIMEOUT_ENV, raw)
+        return DEFAULT_INTERACTION_TIMEOUT_SECONDS
+    # ``float()`` also accepts "nan" and "inf". Both would silently disable the
+    # bound — nan compares false against everything, inf waits forever — which
+    # is the exact failure this timeout exists to prevent. Only an explicit
+    # non-positive value is allowed to mean "no timeout".
+    if not math.isfinite(seconds):
+        logger.warning("%s=%r is not finite; using the default", _INTERACTION_TIMEOUT_ENV, raw)
         return DEFAULT_INTERACTION_TIMEOUT_SECONDS
     return seconds if seconds > 0 else None
 
@@ -236,6 +251,15 @@ class InteractionBroker:
 
     def __init__(self):
         self._pending: Dict[str, PendingInteraction] = {}
+        # Answers handed over by ``submit`` but possibly not yet delivered.
+        #
+        # ``submit`` pops ``_pending`` and schedules ``set_result`` on the loop;
+        # if the timeout fires in that same iteration, ``wait_for`` has already
+        # cancelled the future, so the value can never arrive through it. Both
+        # sides would then "win": the client is told its answer was accepted
+        # while the tool takes the deny branch. Parking the answer here under the
+        # same lock lets the timeout path notice it lost and honour the answer.
+        self._settled: Dict[str, List[List[str]]] = {}
         self._output_queue: asyncio.Queue[ActionHistory] = asyncio.Queue()
         self._lock: threading.Lock = threading.Lock()
         self._closed: bool = False
@@ -257,6 +281,7 @@ class InteractionBroker:
         with self._lock:
             pending = list(self._pending.values())
             self._pending.clear()
+            self._settled.clear()
         for interaction in pending:
             if not interaction.future.done():
                 try:
@@ -412,11 +437,20 @@ class InteractionBroker:
                 result = await future
             else:
                 result = await asyncio.wait_for(future, wait_for)
+            with self._lock:
+                self._settled.pop(action_id, None)
             logger.debug(f"InteractionBroker: received response for action_id={action_id}: {result}")
             return result
         except asyncio.TimeoutError:
             with self._lock:
                 self._pending.pop(action_id, None)
+                answered = self._settled.pop(action_id, None)
+            # ``submit`` got in first and the client has already been told its
+            # answer was accepted. Honour it — reporting a timeout here would
+            # deny a tool the user explicitly allowed.
+            if answered is not None:
+                logger.debug("InteractionBroker: answer for action_id=%s landed with the timeout", action_id)
+                return answered
             logger.warning(
                 "InteractionBroker: action_id=%s went unanswered for %.0fs; giving up so the "
                 "run can finish instead of holding the turn open",
@@ -454,10 +488,18 @@ class InteractionBroker:
                 action_type="request_timeout",
                 messages="",
                 input={"timed_out_action_id": action_id, "timeout_seconds": seconds},
+                # ``timed_out_action_id`` has to be in ``output`` because that is
+                # the half the SSE converter forwards. Without it the client
+                # never learns WHICH card died: the turn can still be running (a
+                # sibling sub-agent streaming on), so the card would keep its
+                # buttons and answering would earn "unknown action_id" — the very
+                # thing this change set exists to remove.
                 output={
                     "content": (
                         f"No answer within {minutes} min — treating the question as declined so the run can finish."
-                    )
+                    ),
+                    "timed_out_action_id": action_id,
+                    "timeout_seconds": seconds,
                 },
             )
         )
@@ -519,6 +561,7 @@ class InteractionBroker:
                         return False
 
             self._pending.pop(action_id, None)
+            self._settled[action_id] = answers
 
         if not pending.future.done():
             pending.future.get_loop().call_soon_threadsafe(pending.future.set_result, answers)
