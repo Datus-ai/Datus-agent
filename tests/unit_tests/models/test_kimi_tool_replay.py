@@ -93,21 +93,21 @@ def test_keeps_parallel_calls_with_nonempty_content_in_one_converted_message():
 
 
 @pytest.mark.parametrize(
-    ("model", "base_url"),
+    ("model", "endpoint"),
     [
         ("moonshot/kimi-k2.6", "https://api.moonshot.cn/v1"),
         ("moonshot/kimi-k3", "https://api.moonshot.cn/v1"),
         ("anthropic/kimi-for-coding", "https://api.kimi.com/coding/"),
     ],
 )
-def test_kimi_models_replay_reasoning_content_with_tool_call(model: str, base_url: str):
+def test_kimi_models_replay_reasoning_content_with_tool_call(model: str, endpoint: str):
     items = [
         {
             "type": "reasoning",
             "summary": [{"type": "summary_text", "text": "Inspect both sources."}],
             "provider_data": {
                 "model": model,
-                REASONING_ENDPOINT_KEY: reasoning_endpoint_identity(base_url),
+                REASONING_ENDPOINT_KEY: reasoning_endpoint_identity(endpoint),
             },
         },
         _call("call_1"),
@@ -117,7 +117,7 @@ def test_kimi_models_replay_reasoning_content_with_tool_call(model: str, base_ur
     messages = Converter.items_to_messages(
         items,
         model=model,
-        base_url=base_url,
+        base_url=endpoint,
         should_replay_reasoning_content=should_replay_reasoning_content,
     )
 

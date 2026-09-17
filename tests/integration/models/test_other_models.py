@@ -227,11 +227,11 @@ class TestKimiModel:
     def test_generate_basic(self):
         """Test basic text generation functionality."""
         # Kimi/Moonshot API requires temperature=1 for this model; use model config default
-        # kimi-k3 is a reasoning model: when the response content is empty,
-        # OpenAICompatibleModel uses reasoning_content as the returned content.
+        # kimi-k3 may spend part of the output budget on reasoning before it
+        # emits the requested final answer.
         result = self.model.generate(
             "Explain what SQL JOIN does in exactly two sentences.",
-            max_tokens=200,
+            max_tokens=512,
         )
 
         assert result is not None, "Response should not be None"
