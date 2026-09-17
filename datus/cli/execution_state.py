@@ -462,6 +462,11 @@ class InteractionBroker:
         except asyncio.CancelledError:
             with self._lock:
                 self._pending.pop(action_id, None)
+                # The third path out of this wait. An answer handed over just
+                # before the run was torn down has nobody left to receive it,
+                # and leaving it behind would make ``_settled`` grow for the
+                # broker's lifetime.
+                self._settled.pop(action_id, None)
             # Re-raise, never downgrade to InteractionCancelled. Cancellation
             # here means the *run* is being torn down (``/chat/stop`` cancels the
             # task; a dropped SSE client cancels the generator), and swallowing

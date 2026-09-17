@@ -299,34 +299,53 @@ class TestInteractionRequestTimeout:
 
         assert await task == [["y"]]
 
-    @pytest.mark.asyncio
-    async def test_settled_answers_do_not_accumulate(self):
-        """The handshake map is consumed on both paths, not left to grow."""
-        broker = InteractionBroker()
-
-        async def answer_soon():
-            await asyncio.sleep(0.02)
+    @staticmethod
+    async def _queued_request(broker, timeout):
+        """Start a request and hand back (task, the INTERACTION action queued for it)."""
+        task = asyncio.create_task(
+            broker.request([InteractionEvent(content="Allow?", choices={"y": "Yes"})], timeout=timeout)
+        )
+        await asyncio.sleep(0.02)
+        while True:
             action = broker._output_queue.get_nowait()
-            await broker.submit(action.action_id, [["y"]])
+            if action.status == ActionStatus.PROCESSING:
+                return task, action
 
-        asyncio.create_task(answer_soon())
-        await broker.request([InteractionEvent(content="Allow?", choices={"y": "Yes"})], timeout=2.0)
+    @pytest.mark.asyncio
+    async def test_settled_is_cleared_when_the_answer_arrives(self):
+        broker = InteractionBroker()
+        task, action = await self._queued_request(broker, 2.0)
+
+        await broker.submit(action.action_id, [["y"]])
+        assert await task == [["y"]]
 
         assert broker._settled == {}
 
     @pytest.mark.asyncio
-    async def test_answer_within_the_window_still_wins(self):
+    async def test_settled_is_cleared_when_the_timeout_honours_it(self):
         broker = InteractionBroker()
+        task, action = await self._queued_request(broker, 0.1)
 
-        async def answer_soon():
-            await asyncio.sleep(0.02)
-            action = broker._output_queue.get_nowait()
-            await broker.submit(action.action_id, [["y"]])
+        with broker._lock:
+            broker._pending.pop(action.action_id)
+            broker._settled[action.action_id] = [["y"]]
+        assert await task == [["y"]]
 
-        asyncio.create_task(answer_soon())
-        result = await broker.request([InteractionEvent(content="Allow?", choices={"y": "Yes"})], timeout=2.0)
+        assert broker._settled == {}
 
-        assert result == [["y"]]
+    @pytest.mark.asyncio
+    async def test_settled_is_cleared_when_the_run_is_torn_down(self):
+        """The third way out of the wait — a cancelled run must not leak either."""
+        broker = InteractionBroker()
+        task, action = await self._queued_request(broker, 5)
+
+        with broker._lock:
+            broker._settled[action.action_id] = [["y"]]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert broker._settled == {}
 
     @pytest.mark.asyncio
     async def test_non_positive_timeout_waits_forever(self):
