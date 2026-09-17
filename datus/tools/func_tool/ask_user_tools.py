@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from datus.cli.execution_state import InteractionBroker, InteractionCancelled
+from datus.cli.execution_state import InteractionBroker, InteractionCancelled, InteractionTimeout
 from datus.schemas.interaction_event import InteractionEvent
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
@@ -194,6 +194,18 @@ class AskUserTool:
             logger.info(f"AskUserTool: completed batch clarification with {len(validated)} question(s)")
             return FuncToolResult(success=1, result=result_json)
 
+        except InteractionTimeout:
+            # Distinguished from a cancel so the model is not told the user
+            # "cancelled" — it would take that as a decision and simply ask
+            # again. Nobody was there; say so and let it proceed on its own.
+            logger.info("AskUserTool: no answer within the interaction timeout")
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "No answer from the user within the allotted time. Do not ask again — "
+                    "continue with a reasonable default and state the assumption you made."
+                ),
+            )
         except InteractionCancelled:
             # Only the question was cancelled (ESC, or the broker closing). A
             # cancelled *run* raises CancelledError, which is a BaseException and

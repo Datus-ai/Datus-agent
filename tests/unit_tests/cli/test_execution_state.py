@@ -20,9 +20,11 @@ from datetime import datetime
 import pytest
 
 from datus.cli.execution_state import (
+    DEFAULT_INTERACTION_TIMEOUT_SECONDS,
     ExecutionInterrupted,
     InteractionBroker,
     InteractionCancelled,
+    InteractionTimeout,
     InterruptController,
     PendingInputQueue,
     PendingInteraction,
@@ -182,6 +184,115 @@ class TestInteractionCancelled:
 # ===========================================================================
 # InteractionBroker Tests
 # ===========================================================================
+
+
+class TestInteractionRequestTimeout:
+    """An unanswered prompt must not hold the run open forever.
+
+    The failure it guards against is not hypothetical: a sub-agent's bash
+    permission card scrolled out of view under another sub-agent's output, and
+    because ``request()`` is awaited inline by the tool that raised it — with
+    the permission-prompt lock held — the parent turn never finished and the
+    SSE stream never sent its ``end`` event. The session sat there for 13.6
+    hours.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unanswered_request_times_out(self):
+        broker = InteractionBroker()
+
+        with pytest.raises(InteractionTimeout):
+            await broker.request([InteractionEvent(content="Allow?", choices={"y": "Yes", "n": "No"})], timeout=0.05)
+
+        assert broker.has_pending is False
+
+    @pytest.mark.asyncio
+    async def test_timeout_is_an_interaction_cancelled(self):
+        """Every existing ``except InteractionCancelled`` already denies / gives up.
+
+        Inheriting means the four call sites take their correct safe branch
+        without a fourth code path each has to remember.
+        """
+        broker = InteractionBroker()
+
+        with pytest.raises(InteractionCancelled):
+            await broker.request([InteractionEvent(content="Allow?")], timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_timeout_never_resolves_to_the_default_choice(self):
+        """A plan prompt defaults to "confirm" — timing out must not confirm it."""
+        broker = InteractionBroker()
+
+        with pytest.raises(InteractionTimeout):
+            await broker.request(
+                [
+                    InteractionEvent(
+                        content="Confirm this plan?", choices={"confirm": "Confirm"}, default_choice="confirm"
+                    )
+                ],
+                timeout=0.05,
+            )
+
+    @pytest.mark.asyncio
+    async def test_timeout_queues_a_notice_for_the_client(self):
+        broker = InteractionBroker()
+
+        with pytest.raises(InteractionTimeout):
+            await broker.request([InteractionEvent(content="Allow?")], timeout=0.05)
+
+        actions = []
+        while not broker.is_queue_empty():
+            actions.append(broker._output_queue.get_nowait())
+
+        notice = [a for a in actions if a.action_type == "request_timeout"]
+        assert len(notice) == 1
+        assert notice[0].role == ActionRole.INTERACTION
+        assert notice[0].status == ActionStatus.SUCCESS
+        # ``_build_interaction_result_content`` renders ``output["content"]``;
+        # an empty one is dropped and the transcript would say nothing at all.
+        assert notice[0].output["content"]
+
+    @pytest.mark.asyncio
+    async def test_answer_within_the_window_still_wins(self):
+        broker = InteractionBroker()
+
+        async def answer_soon():
+            await asyncio.sleep(0.02)
+            action = broker._output_queue.get_nowait()
+            await broker.submit(action.action_id, [["y"]])
+
+        asyncio.create_task(answer_soon())
+        result = await broker.request([InteractionEvent(content="Allow?", choices={"y": "Yes"})], timeout=2.0)
+
+        assert result == [["y"]]
+
+    @pytest.mark.asyncio
+    async def test_non_positive_timeout_waits_forever(self):
+        """The escape hatch for anyone who wants the old unbounded behaviour."""
+        broker = InteractionBroker()
+
+        task = asyncio.create_task(broker.request([InteractionEvent(content="Allow?")], timeout=0))
+        await asyncio.sleep(0.15)
+
+        assert task.done() is False
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    def test_env_var_overrides_the_default(self, monkeypatch):
+        from datus.cli import execution_state
+
+        monkeypatch.setenv("DATUS_INTERACTION_TIMEOUT_SECONDS", "90")
+        assert execution_state._configured_interaction_timeout() == 90.0
+
+        monkeypatch.setenv("DATUS_INTERACTION_TIMEOUT_SECONDS", "0")
+        assert execution_state._configured_interaction_timeout() is None
+
+        monkeypatch.setenv("DATUS_INTERACTION_TIMEOUT_SECONDS", "not-a-number")
+        assert execution_state._configured_interaction_timeout() == DEFAULT_INTERACTION_TIMEOUT_SECONDS
+
+        monkeypatch.delenv("DATUS_INTERACTION_TIMEOUT_SECONDS")
+        assert execution_state._configured_interaction_timeout() == DEFAULT_INTERACTION_TIMEOUT_SECONDS
 
 
 class TestInteractionBrokerInit:

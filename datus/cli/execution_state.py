@@ -6,6 +6,7 @@
 """Interaction broker for async user interaction flow control."""
 
 import asyncio
+import os
 import threading
 import uuid
 from collections import deque
@@ -20,6 +21,35 @@ if TYPE_CHECKING:
     from datus.schemas.interaction_event import InteractionEvent
 
 logger = get_logger(__name__)
+
+# How long an unanswered interaction may hold a run before it is given up on.
+#
+# The wait is not cheap to leave unbounded: ``request()`` is awaited inline by
+# the tool that raised the prompt, the permission-prompt lock is held across it,
+# and the parent turn only finishes once every tool call in it returns. One card
+# nobody answers therefore freezes the whole turn, and the SSE stream never
+# reaches its ``end`` event — a real session sat that way for 13.6 hours, the UI
+# spinning the entire time, because a sub-agent's bash permission card scrolled
+# out of view under another sub-agent's output.
+#
+# Thirty minutes is well past any realistic "went to get coffee" gap while still
+# being finite. ``DATUS_INTERACTION_TIMEOUT_SECONDS=0`` restores the old
+# unbounded wait for anyone who wants it.
+DEFAULT_INTERACTION_TIMEOUT_SECONDS = 1800.0
+_INTERACTION_TIMEOUT_ENV = "DATUS_INTERACTION_TIMEOUT_SECONDS"
+
+
+def _configured_interaction_timeout() -> Optional[float]:
+    """Resolve the interaction timeout, or ``None`` when it is disabled."""
+    raw = os.environ.get(_INTERACTION_TIMEOUT_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_INTERACTION_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number; using the default", _INTERACTION_TIMEOUT_ENV, raw)
+        return DEFAULT_INTERACTION_TIMEOUT_SECONDS
+    return seconds if seconds > 0 else None
 
 
 class ExecutionInterrupted(Exception):
@@ -160,6 +190,19 @@ class InteractionCancelled(Exception):
     """Raised when interaction is cancelled."""
 
 
+class InteractionTimeout(InteractionCancelled):
+    """Raised when nobody answered an interaction within the allotted time.
+
+    Deliberately a subclass: every caller of :meth:`InteractionBroker.request`
+    already handles ``InteractionCancelled`` by taking the safe branch — a
+    permission prompt denies, ``ask_user`` reports the question as unanswered,
+    ``confirm_plan`` reports the plan as unconfirmed. A timeout wants exactly
+    those outcomes, so it inherits them rather than adding a fourth code path
+    that each caller would have to remember. Never resolve a timeout to the
+    event's ``default_choice``: it would auto-*confirm* a plan nobody read.
+    """
+
+
 class InteractionBroker:
     """Per-node broker for async user interactions.
 
@@ -281,23 +324,37 @@ class InteractionBroker:
         self._output_queue.put_nowait(action)
         logger.debug(f"InteractionBroker: send queued action_type={action_type}")
 
-    async def request(self, events: List["InteractionEvent"]) -> List[List[str]]:
-        """Request user input. Blocks until user responds.
+    async def request(
+        self,
+        events: List["InteractionEvent"],
+        timeout: Optional[float] = None,
+    ) -> List[List[str]]:
+        """Request user input. Blocks until the user responds or the wait expires.
 
         Args:
             events: One or more InteractionEvent objects.
+            timeout: Seconds to wait. ``None`` (the default) takes the value
+                from ``DATUS_INTERACTION_TIMEOUT_SECONDS``, itself defaulting to
+                :data:`DEFAULT_INTERACTION_TIMEOUT_SECONDS`. A value ``<= 0``
+                waits forever.
 
         Returns:
             ``List[List[str]]`` — one inner list per event.
             Single-select answers have one element; multi-select may have more.
 
         Raises:
+            InteractionTimeout: Nobody answered in time. A subclass of
+                ``InteractionCancelled``, so existing handlers take their
+                already-correct safe branch without changes.
             InteractionCancelled: The question itself was cancelled — the broker
                 was closed, or the user dismissed it (ESC submits ``[[""]]``).
                 Callers turn this into a tool-level "cancelled" result.
             asyncio.CancelledError: The whole run is being cancelled. Propagates
                 untouched so the task actually dies; see the handler below.
         """
+        wait_for = _configured_interaction_timeout() if timeout is None else timeout
+        if wait_for is not None and wait_for <= 0:
+            wait_for = None
         if self._closed:
             raise InteractionCancelled("Broker is already closed")
         if not events:
@@ -351,9 +408,23 @@ class InteractionBroker:
         logger.debug(f"InteractionBroker: request queued with action_id={action_id}")
 
         try:
-            result = await future
+            if wait_for is None:
+                result = await future
+            else:
+                result = await asyncio.wait_for(future, wait_for)
             logger.debug(f"InteractionBroker: received response for action_id={action_id}: {result}")
             return result
+        except asyncio.TimeoutError:
+            with self._lock:
+                self._pending.pop(action_id, None)
+            logger.warning(
+                "InteractionBroker: action_id=%s went unanswered for %.0fs; giving up so the "
+                "run can finish instead of holding the turn open",
+                action_id,
+                wait_for,
+            )
+            self._emit_timeout_notice(action_id, wait_for)
+            raise InteractionTimeout(f"No answer within {wait_for:.0f}s") from None
         except asyncio.CancelledError:
             with self._lock:
                 self._pending.pop(action_id, None)
@@ -365,6 +436,31 @@ class InteractionBroker:
             # an ordinary tool result, and the LLM would carry on to its next
             # action — after the caller was told the run had stopped.
             raise
+
+    def _emit_timeout_notice(self, action_id: str, seconds: float) -> None:
+        """Tell the client why the run moved on without their answer.
+
+        Without this the card just stops mattering with nothing said, and the
+        transcript reads as if the agent ignored its own question.
+        """
+        if self._closed:
+            return
+        minutes = max(int(round(seconds / 60)), 1)
+        self._output_queue.put_nowait(
+            ActionHistory(
+                action_id=str(uuid.uuid4()),
+                role=ActionRole.INTERACTION,
+                status=ActionStatus.SUCCESS,
+                action_type="request_timeout",
+                messages="",
+                input={"timed_out_action_id": action_id, "timeout_seconds": seconds},
+                output={
+                    "content": (
+                        f"No answer within {minutes} min — treating the question as declined so the run can finish."
+                    )
+                },
+            )
+        )
 
     async def fetch(self) -> AsyncGenerator[ActionHistory, None]:
         """Async generator that yields ActionHistory objects for interactions."""
