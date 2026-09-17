@@ -83,6 +83,7 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/integration/storage/test_platform_doc.py",
     "tests/integration/tools/db_tools/test_data_file_loader_excel.py",
     "tests/integration/tools/test_func_tools_db.py",
+    "tests/integration/tools/test_dosi_attribution.py",
     "tests/integration/tools/test_mcp_acceptance.py",
     "tests/integration/tools/db_tools/test_connector_duckdb.py",
     "tests/unit_tests/storage/test_feedback_store.py",
