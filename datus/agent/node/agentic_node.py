@@ -1919,8 +1919,26 @@ class AgenticNode(Node):
     def _get_archive(self) -> Optional[ToolArchive]:
         """Lazily build the on-disk tool I/O archive for this session.
 
-        Path resolution is fully delegated to :class:`DatusPathManager` —
-        archives always land under ``session_data_dir(session_id)``.
+        Anchored on the SessionManager's resolved directory, so the archive
+        lands beside this session's database.
+
+        ⚠️ NOT on ``DatusPathManager``, which is what it used to do.
+        ``AgentConfig.session_dir`` is an override a host may set, and when it
+        does the path manager knows nothing about it: ``sessions_dir`` is
+        derived from ``home``. The publication runtime sets both — ``home`` is
+        the version snapshot, mounted READ-ONLY, and the writable session tree
+        deliberately sits outside it — so every archive tried to mkdir inside
+        the snapshot and died with ``EROFS``. Silently, because the archive is
+        optional: compaction fell back to leaving long tool output inline,
+        which only shows up later as a context window filling faster than it
+        should.
+
+        Going through the session manager also restores what
+        ``DatusPathManager.session_dir`` documents — archives sit alongside the
+        session db, so deleting the db takes them with it — and applies the
+        same scope / sub-agent nesting the db already gets. That nesting is the
+        session manager's business (see :meth:`session_manager`); recomputing
+        it here is what let the two drift apart in the first place.
         """
         if self._archive is not None:
             return self._archive
@@ -1931,12 +1949,13 @@ class AgenticNode(Node):
         if self.agent_config is not None:
             path_manager = getattr(self.agent_config, "path_manager", None)
         try:
-            project_name = path_manager.project_name if path_manager else ""
+            base_dir = Path(self.session_manager.session_dir) / self.session_id / "data"
             self._archive = ToolArchive(
-                project_name=project_name,
+                # Carried for the error text only; `base_dir` decides the path.
+                project_name=path_manager.project_name if path_manager else "",
                 session_id=self.session_id,
+                base_dir=base_dir,
                 preview_chars=cfg.archive_preview_chars,
-                path_manager=path_manager,
             )
         except Exception as exc:
             logger.warning("Failed to construct ToolArchive for session %s: %s", self.session_id, exc)
