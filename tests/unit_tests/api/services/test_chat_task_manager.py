@@ -1,6 +1,7 @@
 """Tests for datus.api.services.chat_task_manager — background task management."""
 
 import asyncio
+import logging
 import re
 from datetime import datetime
 from types import SimpleNamespace
@@ -2413,15 +2414,114 @@ class TestStartChatDatasourceOverride:
         assert real_agent_config.current_datasource == "california_schools"
 
     @pytest.mark.asyncio
-    async def test_invalid_request_datasource_raises(self, real_agent_config, monkeypatch):
-        from datus.api.models.cli_models import StreamChatInput
-        from datus.utils.exceptions import DatusException
+    async def test_unbound_request_datasource_falls_back(self, real_agent_config, monkeypatch):
+        """An unbound name must not fail the turn — it is a UI hint, not a contract.
 
-        monkeypatch.setattr(ChatTaskManager, "_run_loop", lambda *a, **k: None)
+        The web composer keeps its own picker selection, so a name resolved
+        against another project's roster (or one unbound since) arrives stale;
+        raising here reached the client as an ``error`` SSE event that killed
+        every turn of the session.
+        """
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+            captured["request_datasource"] = request.datasource
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
         manager = ChatTaskManager()
         request = StreamChatInput(message="hi", session_id="ds-invalid", datasource="nonexistent")
-        with pytest.raises(DatusException):
-            await manager.start_chat(real_agent_config, request)
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        assert captured["agent_config"].current_datasource == "california_schools"
+        assert captured["request_datasource"] == "california_schools"
+
+    @pytest.mark.asyncio
+    async def test_unbound_request_datasource_drops_its_database_context(self, real_agent_config, monkeypatch):
+        """The catalog/database/schema that came with it go too.
+
+        They name objects inside the datasource that was dropped, and
+        ``_fill_database_context`` prefers the request's value over the
+        config's — so keeping them points the turn at another warehouse's
+        same-named database, which is worse than the error it replaces because
+        it is silent.
+        """
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["catalog"] = request.catalog
+            captured["database"] = request.database
+            captured["db_schema"] = request.db_schema
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(
+            message="hi",
+            session_id="ds-invalid-ctx",
+            datasource="nonexistent",
+            catalog="other_catalog",
+            database="other_db",
+            db_schema="other_schema",
+        )
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        # Refilled from the datasource actually in use, never from the request.
+        assert captured["catalog"] is None
+        assert captured["database"] == "california_schools"
+        assert captured["db_schema"] is None
+
+    @pytest.mark.asyncio
+    async def test_bound_request_datasource_keeps_its_database_context(self, real_agent_config, monkeypatch):
+        """A selection that still resolves is left exactly as the client sent it."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["database"] = request.database
+            captured["db_schema"] = request.db_schema
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(
+            message="hi",
+            session_id="ds-valid-ctx",
+            datasource="california_schools",
+            database="picked_db",
+            db_schema="picked_schema",
+        )
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        assert captured["database"] == "picked_db"
+        assert captured["db_schema"] == "picked_schema"
+
+    @pytest.mark.asyncio
+    async def test_unbound_datasource_warns_once_per_session(self, real_agent_config, monkeypatch, caplog):
+        """A channel pinned to an unbound datasource repeats it every turn."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            return None
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+
+        with caplog.at_level(logging.WARNING, logger="datus.api.services.chat_task_manager"):
+            for _ in range(3):
+                request = StreamChatInput(message="hi", session_id="ds-repeat", datasource="nonexistent")
+                task = await manager.start_chat(real_agent_config, request)
+                await task.asyncio_task
+                manager._tasks.pop("ds-repeat", None)
+
+        warnings = [record for record in caplog.records if "not bound to this project" in record.getMessage()]
+        assert len(warnings) == 1
 
 
 class TestMatchTableEntry:
