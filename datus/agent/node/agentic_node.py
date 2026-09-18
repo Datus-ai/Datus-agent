@@ -1207,9 +1207,16 @@ class AgenticNode(Node):
         which is why one used to be copied to disk per sub-agent just to hold a
         builtin's content.
 
-        One method because the snapshot identity above and the render below MUST
-        agree: if they ever disagree, a snapshot outlives a change that should
-        have invalidated it.
+        One method because the snapshot identity above and the render below must
+        start from the same name: if they ever disagreed at the START, a snapshot
+        would outlive a change that should have invalidated it.
+
+        They can still end up on different templates — ``_get_system_prompt``
+        falls back to the node name when this one resolves to no file, and the
+        identity records what was ASKED FOR, not what rendered. The window that
+        opens is narrow: only if the asked-for template later appears on disk
+        (an operator dropping the file in, or a rollback to a backend that still
+        copied them) does a snapshot survive a change it should not have.
 
         ``node_config`` is read defensively: this now runs on the
         ``execute_stream`` path via the snapshot identity, and computing a cache
@@ -1323,21 +1330,35 @@ class AgenticNode(Node):
             # [A-Za-z0-9_-] differs, so a sub-agent named in Chinese resolves to
             # nothing here while the node name resolves fine.
             fallback_name = f"{self.get_node_name()}_system"
-            if fallback_name != template_name:
-                logger.warning("Template '%s' not found; falling back to '%s'", template_name, fallback_name)
-                try:
-                    base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
-                        template_name=fallback_name,
-                        version=version,
-                        **render_kwargs,
-                    )
-                    return self._finalize_system_prompt(base_prompt)
-                except FileNotFoundError:
-                    pass
-            raise DatusException(
-                code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
-            ) from e
+            if fallback_name == template_name:
+                raise DatusException(
+                    code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                    message_args={"template_name": template_name, "version": version or "latest"},
+                ) from e
+
+            logger.warning("Template '%s' not found; falling back to '%s'", template_name, fallback_name)
+            try:
+                base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
+                    template_name=fallback_name,
+                    version=version,
+                    **render_kwargs,
+                )
+            except FileNotFoundError:
+                raise DatusException(
+                    code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                    message_args={"template_name": template_name, "version": version or "latest"},
+                ) from e
+            except Exception as fallback_exc:
+                # The sibling ``except Exception`` below cannot see this — an
+                # exception raised inside an except block is not caught by the
+                # same try's other handlers — so the wrapping is repeated here.
+                # Without it the fallback path is the only one that can surface
+                # a raw Jinja error to the caller.
+                logger.error(f"Template loading error for '{fallback_name}': {fallback_exc}")
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={"config_error": f"Template loading failed for '{fallback_name}': {fallback_exc}"},
+                ) from fallback_exc
         except Exception as e:
             # Other template errors - wrap in DatusException
             logger.error(f"Template loading error for '{template_name}': {e}")

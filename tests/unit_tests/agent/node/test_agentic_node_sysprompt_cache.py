@@ -37,6 +37,7 @@ import pytest
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.models.session_manager import SessionManager
+from datus.utils.exceptions import DatusException, ErrorCode
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[4] / "datus" / "prompts" / "prompt_templates"
 ACTIVE_TEMPLATES = [
@@ -278,6 +279,27 @@ class TestSnapshotMeta:
 
         assert AgenticNode._get_system_prompt(node) == "SYS"
         assert asked == ["\u9500\u552e\u62a5\u8868_system", "chat_system"]
+
+    def test_a_failing_fallback_render_is_still_wrapped(self, session_manager, monkeypatch):
+        """The fallback path must produce the same exception type as the main one.
+
+        It runs inside an ``except`` block, and the sibling ``except Exception``
+        of the same ``try`` cannot see what is raised there — so a Jinja error on
+        the fallback template would otherwise reach the caller raw.
+        """
+
+        class _PromptManager:
+            def render_template(self, template_name, version=None, **kwargs):
+                if template_name != "chat_system":
+                    raise FileNotFoundError(template_name)
+                raise ValueError("undefined variable in template")
+
+        monkeypatch.setattr("datus.agent.node.agentic_node.get_prompt_manager", lambda **_kwargs: _PromptManager())
+        node = _SnapshotNode(session_manager, _agent_config(), node_config={"system_prompt": "missing"})
+
+        with pytest.raises(DatusException) as excinfo:
+            AgenticNode._get_system_prompt(node)
+        assert excinfo.value.code is ErrorCode.COMMON_CONFIG_ERROR
 
     def test_the_node_name_is_the_fallback(self, session_manager):
         """Unchanged for the CLI, which names its nodes after the template."""
