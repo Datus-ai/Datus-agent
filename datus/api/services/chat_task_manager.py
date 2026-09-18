@@ -13,7 +13,7 @@ import os
 import uuid
 from contextlib import ExitStack
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Set, Tuple
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.api.models.cli_models import (
@@ -71,6 +71,10 @@ HEARTBEAT_INTERVAL = 10  # seconds
 # Max run-boundary auto-continuations per task, bounding a client that keeps
 # POSTing /chat/insert from running one task indefinitely.
 _MAX_INSERT_CONTINUATIONS = 20
+
+# How many (session, datasource) pairs the unbound-datasource warning remembers
+# before it forgets them all and starts again.
+_MAX_WARNED_DATASOURCES = 512
 
 
 def is_thinking_only_content(content_items) -> bool:
@@ -368,6 +372,34 @@ class ChatTaskManager:
         self._default_source = default_source
         self._default_interactive = default_interactive
         self._stream_thinking = stream_thinking
+        # (session_id, datasource) pairs already reported as unbound. A channel
+        # pinned to a datasource that was unbound sends the same name every
+        # turn, and only the first one is news.
+        self._warned_datasources: Set[Tuple[str, str]] = set()
+
+    def _warn_unbound_datasource(self, request: StreamChatInput, agent_config: AgentConfig) -> None:
+        """Report a dropped ``datasource`` once per session, not once per turn.
+
+        Names the available datasources, which is what tells a reader whether
+        the request is stale or the binding is missing — so it is worth building
+        the list, and worth building it only once.
+        """
+        key = (request.session_id or "", request.datasource or "")
+        if key in self._warned_datasources:
+            return
+        # Bounded rather than pruned: this only exists to keep a repeat out of
+        # the log, so forgetting everything occasionally costs one extra line.
+        if len(self._warned_datasources) >= _MAX_WARNED_DATASOURCES:
+            self._warned_datasources.clear()
+        self._warned_datasources.add(key)
+        logger.warning(
+            "Ignoring datasource %r for session %s: not bound to this project (available: %s); "
+            "falling back to %r and dropping the catalog/database/schema that came with it",
+            request.datasource,
+            request.session_id,
+            sorted(agent_config.services.datasources),
+            agent_config.current_datasource,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -458,15 +490,17 @@ class ChatTaskManager:
             if request.datasource in agent_config.services.datasources:
                 agent_config.current_datasource = request.datasource
             else:
-                logger.warning(
-                    "Ignoring datasource %r for session %s: not bound to this project (available: %s); "
-                    "falling back to %r",
-                    request.datasource,
-                    request.session_id,
-                    sorted(agent_config.services.datasources),
-                    agent_config.current_datasource,
-                )
+                self._warn_unbound_datasource(request, agent_config)
                 request.datasource = agent_config.current_datasource or None
+                # The whole selection goes, not just its datasource: these three
+                # name objects INSIDE the warehouse that was just dropped, and
+                # ``_fill_database_context`` below prefers the request's value
+                # over the config's — so keeping them would point the turn at
+                # another warehouse's same-named database, which is the silent
+                # half of the bug the fallback exists to avoid.
+                request.catalog = None
+                request.database = None
+                request.db_schema = None
         request.catalog, request.database, request.db_schema = _fill_database_context(
             agent_config,
             catalog=request.catalog,
