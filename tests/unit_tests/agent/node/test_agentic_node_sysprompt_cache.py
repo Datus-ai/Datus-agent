@@ -253,6 +253,32 @@ class TestSnapshotMeta:
         assert meta["node_name"] == "chat"
         assert meta["system_prompt_template"] == "ask_metrics_system"
 
+    def test_a_template_name_that_resolves_to_nothing_falls_back_to_the_node(self, session_manager, monkeypatch):
+        """A host may still send an UNSANITIZED sub-agent name as ``system_prompt``.
+
+        The template on disk is named after the SANITIZED one, so any character
+        outside [A-Za-z0-9_-] makes the configured name resolve to nothing while
+        the node name resolves fine. The base used to raise here; its two
+        subclasses have always fallen back.
+        """
+        asked = []
+
+        class _PromptManager:
+            def render_template(self, template_name, version=None, **kwargs):
+                asked.append(template_name)
+                if template_name != "chat_system":
+                    raise FileNotFoundError(template_name)
+                return "SYS"
+
+        monkeypatch.setattr("datus.agent.node.agentic_node.get_prompt_manager", lambda **_kwargs: _PromptManager())
+        node = _SnapshotNode(
+            session_manager, _agent_config(), node_config={"system_prompt": "\u9500\u552e\u62a5\u8868"}
+        )
+        node._finalize_system_prompt = lambda prompt, memory_node_name_override=None: prompt
+
+        assert AgenticNode._get_system_prompt(node) == "SYS"
+        assert asked == ["\u9500\u552e\u62a5\u8868_system", "chat_system"]
+
     def test_the_node_name_is_the_fallback(self, session_manager):
         """Unchanged for the CLI, which names its nodes after the template."""
         node = _SnapshotNode(session_manager, _agent_config())

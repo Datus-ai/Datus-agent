@@ -836,7 +836,6 @@ class AgentService:
 
         return Result(success=True, data={"agents": builtin + custom})
 
-    # Map sub-agent type to builtin prompt template base name
     #: Version stamped on the builtin copy written at create time.
     #:
     #: Was ``CreateAgentInput.prompt_version``, which no caller ever set — it was
@@ -845,6 +844,7 @@ class AgentService:
     #: says that plainly.
     _COPIED_TEMPLATE_VERSION = "1.0"
 
+    #: Sub-agent type -> the builtin prompt template it is seeded from.
     _TYPE_TO_TEMPLATE = {
         "gen_sql": "gen_sql_system",
         "ask_metrics": "ask_metrics_system",

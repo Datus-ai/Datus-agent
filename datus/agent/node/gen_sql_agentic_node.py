@@ -206,7 +206,10 @@ class GenSQLAgenticNode(AgenticNode):
             filesystem_root=self._resolve_workspace_root(),
             agent_config=self.agent_config,
             default_database=database_name,
-            sub_agent_name=self.node_config.get("system_prompt"),
+            # The agentic_nodes KEY, never ``system_prompt`` — that names the
+            # prompt template, and the scope lookup silently returns unfiltered
+            # storage when the name misses (``rag_scope.build_scope_filter``).
+            sub_agent_name=self.get_node_name(),
         )
         self._rebuild_tools()
 
@@ -295,7 +298,7 @@ class GenSQLAgenticNode(AgenticNode):
                 filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
                 default_database=self._input_database(),
-                sub_agent_name=self.node_config.get("system_prompt"),
+                sub_agent_name=self.get_node_name(),
             )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as e:
@@ -317,7 +320,7 @@ class GenSQLAgenticNode(AgenticNode):
             adapter_type = resolve_semantic_adapter_type(self.agent_config)
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                sub_agent_name=self.get_node_name(),
                 adapter_type=adapter_type,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
             )
@@ -341,11 +344,11 @@ class GenSQLAgenticNode(AgenticNode):
                     filesystem_root=self._resolve_workspace_root(),
                     agent_config=self.agent_config,
                     default_database=self._input_database(),
-                    sub_agent_name=self.node_config.get("system_prompt"),
+                    sub_agent_name=self.get_node_name(),
                 )
             self.reference_template_tools = ReferenceTemplateTools(
                 self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                sub_agent_name=self.get_node_name(),
                 db_func_tool=db_tool,
             )
             self.tools.extend(self.reference_template_tools.available_tools())
@@ -460,7 +463,7 @@ class GenSQLAgenticNode(AgenticNode):
                     adapter_type = resolve_semantic_adapter_type(self.agent_config)
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                         adapter_type=adapter_type,
                         runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
@@ -473,7 +476,7 @@ class GenSQLAgenticNode(AgenticNode):
                         filesystem_root=self._resolve_workspace_root(),
                         agent_config=self.agent_config,
                         default_database=self._input_database(),
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                     )
                 tool_instance = self.db_func_tool
             elif tool_type == "date_parsing_tools":
@@ -498,11 +501,11 @@ class GenSQLAgenticNode(AgenticNode):
                             filesystem_root=self._resolve_workspace_root(),
                             agent_config=self.agent_config,
                             default_database=self._input_database(),
-                            sub_agent_name=self.node_config.get("system_prompt"),
+                            sub_agent_name=self.get_node_name(),
                         )
                     self.reference_template_tools = ReferenceTemplateTools(
                         self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                         db_func_tool=db_tool,
                     )
                 tool_instance = self.reference_template_tools

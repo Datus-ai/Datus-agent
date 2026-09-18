@@ -272,7 +272,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 # from glob resolves identically in load_file_as_table.
                 filesystem_root=self._resolve_workspace_root(),
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                # The agentic_nodes KEY, never ``system_prompt`` — that names the
+                # prompt template, and the scope lookup silently returns unfiltered
+                # storage when the name misses (``rag_scope.build_scope_filter``).
+                sub_agent_name=self.get_node_name(),
             )
             self.tools.extend(self.db_func_tool.available_tools())
         except Exception as exc:
@@ -286,7 +289,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             adapter_type = resolve_semantic_adapter_type(self.agent_config)
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
-                sub_agent_name=self.node_config.get("system_prompt"),
+                sub_agent_name=self.get_node_name(),
                 adapter_type=adapter_type,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
             )
@@ -296,9 +299,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     def _setup_context_search_tools(self) -> None:
         try:
-            self.context_search_tools = ContextSearchTools(
-                self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
-            )
+            self.context_search_tools = ContextSearchTools(self.agent_config, sub_agent_name=self.get_node_name())
             self.tools.extend(self.context_search_tools.available_tools())
         except Exception as exc:
             logger.error("Failed to setup context search tools: %s", exc)
@@ -318,7 +319,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                         adapter_type=resolve_semantic_adapter_type(self.agent_config),
                         runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
@@ -330,13 +331,13 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                         # from glob resolves identically in load_file_as_table.
                         filesystem_root=self._resolve_workspace_root(),
                         agent_config=self.agent_config,
-                        sub_agent_name=self.node_config.get("system_prompt"),
+                        sub_agent_name=self.get_node_name(),
                     )
                 tool_instance = self.db_func_tool
             elif tool_type == "context_search_tools":
                 if not self.context_search_tools:
                     self.context_search_tools = ContextSearchTools(
-                        self.agent_config, sub_agent_name=self.node_config.get("system_prompt")
+                        self.agent_config, sub_agent_name=self.get_node_name()
                     )
                 tool_instance = self.context_search_tools
             elif tool_type == "filesystem_tools":

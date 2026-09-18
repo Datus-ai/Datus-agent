@@ -1312,7 +1312,28 @@ class AgenticNode(Node):
             )
 
         except FileNotFoundError as e:
-            # Template not found - throw DatusException
+            # Fall back to the node name before giving up. The two subclasses
+            # that override this have always done so; the base raising outright
+            # is what makes a mismatched ``system_prompt`` fatal rather than
+            # merely wrong.
+            #
+            # ⚠️ IT IS ALSO A VERSION-SKEW GUARD. A host may still be sending an
+            # UNSANITIZED sub-agent name as ``system_prompt`` while the template
+            # on disk is named after the sanitized one — any character outside
+            # [A-Za-z0-9_-] differs, so a sub-agent named in Chinese resolves to
+            # nothing here while the node name resolves fine.
+            fallback_name = f"{self.get_node_name()}_system"
+            if fallback_name != template_name:
+                logger.warning("Template '%s' not found; falling back to '%s'", template_name, fallback_name)
+                try:
+                    base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
+                        template_name=fallback_name,
+                        version=version,
+                        **render_kwargs,
+                    )
+                    return self._finalize_system_prompt(base_prompt)
+                except FileNotFoundError:
+                    pass
             raise DatusException(
                 code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
                 message_args={"template_name": template_name, "version": version or "latest"},
