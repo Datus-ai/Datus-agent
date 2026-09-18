@@ -259,8 +259,10 @@ class TestSnapshotMeta:
 
         The template on disk is named after the SANITIZED one, so any character
         outside [A-Za-z0-9_-] makes the configured name resolve to nothing while
-        the node name resolves fine. The base used to raise here; its two
-        subclasses have always fallen back.
+        the node name resolves fine. ``/`` stands in for the whole class here;
+        a sub-agent named in Chinese is the case that prompted this.
+
+        The base used to raise here; its two subclasses have always fallen back.
         """
         asked = []
 
@@ -272,13 +274,11 @@ class TestSnapshotMeta:
                 return "SYS"
 
         monkeypatch.setattr("datus.agent.node.agentic_node.get_prompt_manager", lambda **_kwargs: _PromptManager())
-        node = _SnapshotNode(
-            session_manager, _agent_config(), node_config={"system_prompt": "\u9500\u552e\u62a5\u8868"}
-        )
+        node = _SnapshotNode(session_manager, _agent_config(), node_config={"system_prompt": "sales/report"})
         node._finalize_system_prompt = lambda prompt, memory_node_name_override=None: prompt
 
         assert AgenticNode._get_system_prompt(node) == "SYS"
-        assert asked == ["\u9500\u552e\u62a5\u8868_system", "chat_system"]
+        assert asked == ["sales/report_system", "chat_system"]
 
     def test_a_failing_fallback_render_is_still_wrapped(self, session_manager, monkeypatch):
         """The fallback path must produce the same exception type as the main one.

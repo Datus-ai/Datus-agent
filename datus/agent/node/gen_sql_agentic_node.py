@@ -454,7 +454,13 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             if tool_type == "context_search_tools":
                 if not self.context_search_tools:
-                    self.context_search_tools = ContextSearchTools(self.agent_config, self.node_config["system_prompt"])
+                    # Keyword, and the agentic_nodes KEY — the positional form
+                    # is how this one escaped the sweep, and ``system_prompt``
+                    # names a template, not a scope. It was also a bare
+                    # subscript: a node_config without the key raised KeyError.
+                    self.context_search_tools = ContextSearchTools(
+                        self.agent_config, sub_agent_name=self.get_node_name()
+                    )
                 tool_instance = self.context_search_tools
             elif tool_type == "semantic_tools":
                 if not self.semantic_tools:
