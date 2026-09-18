@@ -1263,7 +1263,17 @@ class AgenticNode(Node):
         root_path = self._resolve_workspace_root()
 
         # Construct template name: {template_name}_system_{version}
-        template_name = f"{self.get_node_name()}_system"
+        #
+        # ``system_prompt`` names the template; the node name is only the
+        # fallback. Without it a host that names its nodes after the user's
+        # sub-agent (SaaS does) could only ever resolve a template FILE named
+        # after that sub-agent — which is why one used to be copied onto disk
+        # per sub-agent just to hold a builtin's content. The other two
+        # ``_get_system_prompt`` overrides already read it this way; this one
+        # was the odd one out, and the only one with no fallback when the
+        # lookup misses.
+        system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
+        template_name = f"{system_prompt_name}_system"
 
         render_kwargs: Dict[str, Any] = {
             "agent_config": self.agent_config,
