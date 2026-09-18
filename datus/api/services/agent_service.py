@@ -837,6 +837,14 @@ class AgentService:
         return Result(success=True, data={"agents": builtin + custom})
 
     # Map sub-agent type to builtin prompt template base name
+    #: Version stamped on the builtin copy written at create time.
+    #:
+    #: Was ``CreateAgentInput.prompt_version``, which no caller ever set — it was
+    #: the field's own default travelling through the request. The copy and the
+    #: node's later lookup only have to agree with EACH OTHER, and a constant
+    #: says that plainly.
+    _COPIED_TEMPLATE_VERSION = "1.0"
+
     _TYPE_TO_TEMPLATE = {
         "gen_sql": "gen_sql_system",
         "ask_metrics": "ask_metrics_system",
@@ -951,10 +959,6 @@ class AgentService:
         )
         if scoped_ctx:
             agent_entry["scoped_context"] = scoped_ctx
-        if request.prompt_template:
-            agent_entry["prompt_template"] = request.prompt_template
-        if request.prompt_version:
-            agent_entry["prompt_version"] = request.prompt_version
         # ask_* agents carry their bound artifact's slug directly on the
         # agentic_nodes entry — the node reads it via ``self.node_config``
         # without any wrapper. The SaaS backend stores the same value under
@@ -973,7 +977,7 @@ class AgentService:
             self._copy_prompt_template(
                 agent_type=request.type or "gen_sql",
                 agent_name=request.name,
-                version=request.prompt_version,
+                version=self._COPIED_TEMPLATE_VERSION,
                 agent_config=agent_config,
             )
         except Exception:
@@ -1017,26 +1021,6 @@ class AgentService:
             content = source_path.read_text(encoding="utf-8")
             target_file.write_text(content, encoding="utf-8")
             logger.info(f"Copied prompt template: {source_path.name} -> {target_file}")
-
-    def _save_prompt_template(
-        self,
-        agent_name: str,
-        version: Optional[str],
-        content: str,
-        agent_config: AgentConfig,
-    ) -> None:
-        """Write prompt template content to the project's template file."""
-        if not content:
-            return
-        safe_name = self._sanitize_path_component(agent_name)
-        resolved = self._sanitize_path_component(version or "1.0")
-        template_dir = agent_config.path_manager.datus_home / "template"
-        os.makedirs(template_dir, exist_ok=True)
-        target_file = template_dir / f"{safe_name}_system_{resolved}.j2"
-        if not target_file.resolve().is_relative_to(template_dir.resolve()):
-            raise ValueError(f"Path escapes template directory: {target_file}")
-        target_file.write_text(content, encoding="utf-8")
-        logger.info(f"Saved prompt template: {target_file}")
 
     async def edit_agent(
         self,
@@ -1092,20 +1076,6 @@ class AgentService:
             if channel_error is not None:
                 return channel_error
 
-        # If prompt_template content is provided, save to template file
-        prompt_content = request.prompt_template
-        if prompt_content is not None:
-            version = request.prompt_version or agent.get("prompt_version")
-            try:
-                self._save_prompt_template(
-                    agent_name=request.id,
-                    version=version,
-                    content=prompt_content,
-                    agent_config=agent_config,
-                )
-            except Exception:
-                logger.warning(f"Failed to save prompt template for agent '{request.id}' (non-fatal)", exc_info=True)
-
         # Update only provided fields (name is the dict key and acts as id, so exclude it).
         # API ``description`` lands on the runtime-visible ``agent_description``
         # key; drop any legacy flat ``description`` left over from older edits
@@ -1118,7 +1088,7 @@ class AgentService:
         # and report success without moving the binding.
         datasource_name_input = request.datasource_name
         update_data = request.model_dump(
-            exclude={"id", "name", "prompt_template", "channels", "datasource_name"},
+            exclude={"id", "name", "channels", "datasource_name"},
             exclude_none=True,
         )
         if "description" in update_data:
@@ -1218,7 +1188,7 @@ class AgentService:
             if agent.pop("subjects", None) is not None:
                 agent_dict_mutated = True
 
-        if not update_data and prompt_content is None and not agent_dict_mutated:
+        if not update_data and not agent_dict_mutated:
             return Result(success=True, data={"name": request.id, "id": request.id})
 
         # Merge update data into the agent entry
