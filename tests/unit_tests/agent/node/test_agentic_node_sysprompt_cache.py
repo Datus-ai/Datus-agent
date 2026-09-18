@@ -69,10 +69,13 @@ def _agent_config(*, current_datasource=None, services=None, model="gpt-4.1", la
 class _SnapshotNode(AgenticNode):
     """Minimal node exposing the real snapshot/reminder/runtime-context methods."""
 
-    def __init__(self, session_manager: SessionManager, agent_config, *, db_func_tool=None):
+    def __init__(self, session_manager: SessionManager, agent_config, *, db_func_tool=None, node_config=None):
         self.session_id = "chat_session_x"
         self._session_manager = session_manager
         self.agent_config = agent_config
+        # Real nodes get this from ``AgenticNode.__init__``, which this fake
+        # skips; the snapshot identity reads it to resolve the template name.
+        self.node_config = node_config if node_config is not None else {}
         self.db_func_tool = db_func_tool
         self.build_count = 0
         self.lazy_mount_count = 0
@@ -227,10 +230,44 @@ class TestSnapshotMeta:
         meta = node._system_prompt_snapshot_meta("1.2")
         assert meta == {
             "node_name": "chat",
+            "system_prompt_template": "chat_system",
             "prompt_version": "1.2",
             "model_name": "openai:gpt-4.1",
             "language": "",
         }
+
+    def test_the_template_is_part_of_the_identity(self, session_manager):
+        """``node_name`` does not imply it any more.
+
+        The node name used to decide the template outright, so listing it was
+        enough; ``system_prompt`` decides now and can change while the node name
+        does not — a sub-agent retyped from chat to ask_metrics is the case.
+        """
+        retyped = _SnapshotNode(
+            session_manager,
+            _agent_config(current_datasource="main"),
+            node_config={"system_prompt": "ask_metrics"},
+        )
+        meta = retyped._system_prompt_snapshot_meta("1.2")
+
+        assert meta["node_name"] == "chat"
+        assert meta["system_prompt_template"] == "ask_metrics_system"
+
+    def test_the_node_name_is_the_fallback(self, session_manager):
+        """Unchanged for the CLI, which names its nodes after the template."""
+        node = _SnapshotNode(session_manager, _agent_config())
+        assert node._system_prompt_template_name() == "chat_system"
+
+    def test_a_retyped_sub_agent_rebuilds_rather_than_replaying(self, session_manager):
+        """The whole point of carrying it: the snapshot must not survive."""
+        cfg = _agent_config()
+        before = _SnapshotNode(session_manager, cfg)
+        assert before._get_session_system_prompt("1.2") == "SYS#1"
+        # Same session id, same node name, different template.
+        after = _SnapshotNode(session_manager, cfg, node_config={"system_prompt": "ask_metrics"})
+
+        assert after._get_session_system_prompt("1.2") == "SYS#1"
+        assert after.build_count == 1, "the stale snapshot was replayed instead of rebuilt"
 
     def test_meta_falls_back_to_agent_config_version(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config())

@@ -1184,10 +1184,41 @@ class AgenticNode(Node):
         language = getattr(agent_config, "language", None) if agent_config is not None else None
         return {
             "node_name": self.get_node_name(),
+            # NOT implied by ``node_name``. The node name used to decide the
+            # template outright, so listing it here covered both; now
+            # ``system_prompt`` decides and can change while the node name does
+            # not — a sub-agent retyped from chat to ask_metrics is the case.
+            # Left out, a session would replay the previous template's bytes
+            # until a compact or /clear. Snapshots written before this key
+            # existed miss the comparison and rebuild once, which is the safe
+            # direction.
+            "system_prompt_template": self._system_prompt_template_name(),
             "prompt_version": str(version or ""),
             "model_name": model_id,
             "language": str(language or "").strip(),
         }
+
+    def _system_prompt_template_name(self) -> str:
+        """The template ``_get_system_prompt`` renders, as PromptManager names it.
+
+        ``system_prompt`` names the template; the node name is only the fallback.
+        Without that a host naming its nodes after the user's sub-agent (SaaS
+        does) could only resolve a template FILE named after that sub-agent —
+        which is why one used to be copied to disk per sub-agent just to hold a
+        builtin's content.
+
+        One method because the snapshot identity above and the render below MUST
+        agree: if they ever disagree, a snapshot outlives a change that should
+        have invalidated it.
+
+        ``node_config`` is read defensively: this now runs on the
+        ``execute_stream`` path via the snapshot identity, and computing a cache
+        key must not be what takes a turn down. A node built without one falls
+        back to its own name, which is exactly how this resolved before
+        ``system_prompt`` was honoured.
+        """
+        node_config = getattr(self, "node_config", None) or {}
+        return f"{node_config.get('system_prompt') or self.get_node_name()}_system"
 
     def _get_session_system_prompt(
         self,
@@ -1243,7 +1274,7 @@ class AgenticNode(Node):
         """
         Get the system prompt for this agentic node using PromptManager.
 
-        The template name follows the pattern: {get_node_name()}_system_{version}
+        The template name follows the pattern: {system_prompt or get_node_name()}_system_{version}
 
         Args:
             prompt_version: Optional prompt version to use, overrides agent config version
@@ -1262,18 +1293,7 @@ class AgenticNode(Node):
 
         root_path = self._resolve_workspace_root()
 
-        # Construct template name: {template_name}_system_{version}
-        #
-        # ``system_prompt`` names the template; the node name is only the
-        # fallback. Without it a host that names its nodes after the user's
-        # sub-agent (SaaS does) could only ever resolve a template FILE named
-        # after that sub-agent — which is why one used to be copied onto disk
-        # per sub-agent just to hold a builtin's content. The other two
-        # ``_get_system_prompt`` overrides already read it this way; this one
-        # was the odd one out, and the only one with no fallback when the
-        # lookup misses.
-        system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()
-        template_name = f"{system_prompt_name}_system"
+        template_name = self._system_prompt_template_name()
 
         render_kwargs: Dict[str, Any] = {
             "agent_config": self.agent_config,
