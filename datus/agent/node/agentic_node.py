@@ -1184,10 +1184,48 @@ class AgenticNode(Node):
         language = getattr(agent_config, "language", None) if agent_config is not None else None
         return {
             "node_name": self.get_node_name(),
+            # NOT implied by ``node_name``. The node name used to decide the
+            # template outright, so listing it here covered both; now
+            # ``system_prompt`` decides and can change while the node name does
+            # not — a sub-agent retyped from chat to ask_metrics is the case.
+            # Left out, a session would replay the previous template's bytes
+            # until a compact or /clear. Snapshots written before this key
+            # existed miss the comparison and rebuild once, which is the safe
+            # direction.
+            "system_prompt_template": self._system_prompt_template_name(),
             "prompt_version": str(version or ""),
             "model_name": model_id,
             "language": str(language or "").strip(),
         }
+
+    def _system_prompt_template_name(self) -> str:
+        """The template ``_get_system_prompt`` renders, as PromptManager names it.
+
+        ``system_prompt`` names the template; the node name is only the fallback.
+        Without that a host naming its nodes after the user's sub-agent (SaaS
+        does) could only resolve a template FILE named after that sub-agent —
+        which is why one used to be copied to disk per sub-agent just to hold a
+        builtin's content.
+
+        One method because the snapshot identity above and the render below must
+        start from the same name: if they ever disagreed at the START, a snapshot
+        would outlive a change that should have invalidated it.
+
+        They can still end up on different templates — ``_get_system_prompt``
+        falls back to the node name when this one resolves to no file, and the
+        identity records what was ASKED FOR, not what rendered. The window that
+        opens is narrow: only if the asked-for template later appears on disk
+        (an operator dropping the file in, or a rollback to a backend that still
+        copied them) does a snapshot survive a change it should not have.
+
+        ``node_config`` is read defensively: this now runs on the
+        ``execute_stream`` path via the snapshot identity, and computing a cache
+        key must not be what takes a turn down. A node built without one falls
+        back to its own name, which is exactly how this resolved before
+        ``system_prompt`` was honoured.
+        """
+        node_config = getattr(self, "node_config", None) or {}
+        return f"{node_config.get('system_prompt') or self.get_node_name()}_system"
 
     def _get_session_system_prompt(
         self,
@@ -1243,7 +1281,7 @@ class AgenticNode(Node):
         """
         Get the system prompt for this agentic node using PromptManager.
 
-        The template name follows the pattern: {get_node_name()}_system_{version}
+        The template name follows the pattern: {system_prompt or get_node_name()}_system_{version}
 
         Args:
             prompt_version: Optional prompt version to use, overrides agent config version
@@ -1262,8 +1300,7 @@ class AgenticNode(Node):
 
         root_path = self._resolve_workspace_root()
 
-        # Construct template name: {template_name}_system_{version}
-        template_name = f"{self.get_node_name()}_system"
+        template_name = self._system_prompt_template_name()
 
         render_kwargs: Dict[str, Any] = {
             "agent_config": self.agent_config,
@@ -1282,11 +1319,46 @@ class AgenticNode(Node):
             )
 
         except FileNotFoundError as e:
-            # Template not found - throw DatusException
-            raise DatusException(
-                code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
-                message_args={"template_name": template_name, "version": version or "latest"},
-            ) from e
+            # Fall back to the node name before giving up. The two subclasses
+            # that override this have always done so; the base raising outright
+            # is what makes a mismatched ``system_prompt`` fatal rather than
+            # merely wrong.
+            #
+            # ⚠️ IT IS ALSO A VERSION-SKEW GUARD. A host may still be sending an
+            # UNSANITIZED sub-agent name as ``system_prompt`` while the template
+            # on disk is named after the sanitized one — any character outside
+            # [A-Za-z0-9_-] differs, so a sub-agent named in Chinese resolves to
+            # nothing here while the node name resolves fine.
+            fallback_name = f"{self.get_node_name()}_system"
+            if fallback_name == template_name:
+                raise DatusException(
+                    code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                    message_args={"template_name": template_name, "version": version or "latest"},
+                ) from e
+
+            logger.warning("Template '%s' not found; falling back to '%s'", template_name, fallback_name)
+            try:
+                base_prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
+                    template_name=fallback_name,
+                    version=version,
+                    **render_kwargs,
+                )
+            except FileNotFoundError:
+                raise DatusException(
+                    code=ErrorCode.COMMON_TEMPLATE_NOT_FOUND,
+                    message_args={"template_name": template_name, "version": version or "latest"},
+                ) from e
+            except Exception as fallback_exc:
+                # The sibling ``except Exception`` below cannot see this — an
+                # exception raised inside an except block is not caught by the
+                # same try's other handlers — so the wrapping is repeated here.
+                # Without it the fallback path is the only one that can surface
+                # a raw Jinja error to the caller.
+                logger.error(f"Template loading error for '{fallback_name}': {fallback_exc}")
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={"config_error": f"Template loading failed for '{fallback_name}': {fallback_exc}"},
+                ) from fallback_exc
         except Exception as e:
             # Other template errors - wrap in DatusException
             logger.error(f"Template loading error for '{template_name}': {e}")

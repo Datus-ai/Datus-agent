@@ -334,7 +334,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
 
                 self.semantic_tools = SemanticTools(
                     agent_config=self.agent_config,
-                    sub_agent_name=self.node_config.get("system_prompt"),
+                    # The agentic_nodes KEY, never ``system_prompt`` — that names the
+                    # prompt template, and the scope lookup silently returns unfiltered
+                    # storage when the name misses (``rag_scope.build_scope_filter``).
+                    sub_agent_name=self.get_node_name(),
                     adapter_type=resolve_semantic_adapter_type(self.agent_config),
                     runtime_db_context_provider=self._semantic_runtime_db_context,
                 )

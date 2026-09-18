@@ -54,9 +54,6 @@ class CreateAgentInput(BaseModel):
         ),
     )
     description: Optional[str] = Field(default=None, description="Agent description")
-    prompt_template: Optional[str] = Field(default=None, description="System prompt content")
-    prompt_version: Optional[str] = Field(default="1.0", description="Prompt version (None = latest)")
-    prompt_language: str = Field(default="en", description="Prompt language")
     tools: Optional[List[str]] = Field(default=None, description="Tool names")
     mcp: Optional[List[str]] = Field(default_factory=list, description="MCP tool names")
     skills: Optional[List[str]] = Field(default_factory=list, description="Skills pattern filter")
@@ -170,9 +167,6 @@ class EditAgentInput(BaseModel):
     id: str = Field(..., description="Agent id to edit")
     name: Optional[str] = Field(default=None, description="Agent name to edit")
     description: Optional[str] = None
-    prompt_template: Optional[str] = Field(default=None, alias="system_prompt")
-    prompt_version: Optional[str] = Field(default=None, description="Prompt version (None = latest)")
-    prompt_language: Optional[str] = None
     tools: Optional[List[str]] = None
     mcp: Optional[List[str]] = None
     skills: Optional[List[str]] = None

@@ -37,6 +37,7 @@ import pytest
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.models.session_manager import SessionManager
+from datus.utils.exceptions import DatusException, ErrorCode
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[4] / "datus" / "prompts" / "prompt_templates"
 ACTIVE_TEMPLATES = [
@@ -69,10 +70,13 @@ def _agent_config(*, current_datasource=None, services=None, model="gpt-4.1", la
 class _SnapshotNode(AgenticNode):
     """Minimal node exposing the real snapshot/reminder/runtime-context methods."""
 
-    def __init__(self, session_manager: SessionManager, agent_config, *, db_func_tool=None):
+    def __init__(self, session_manager: SessionManager, agent_config, *, db_func_tool=None, node_config=None):
         self.session_id = "chat_session_x"
         self._session_manager = session_manager
         self.agent_config = agent_config
+        # Real nodes get this from ``AgenticNode.__init__``, which this fake
+        # skips; the snapshot identity reads it to resolve the template name.
+        self.node_config = node_config if node_config is not None else {}
         self.db_func_tool = db_func_tool
         self.build_count = 0
         self.lazy_mount_count = 0
@@ -227,10 +231,91 @@ class TestSnapshotMeta:
         meta = node._system_prompt_snapshot_meta("1.2")
         assert meta == {
             "node_name": "chat",
+            "system_prompt_template": "chat_system",
             "prompt_version": "1.2",
             "model_name": "openai:gpt-4.1",
             "language": "",
         }
+
+    def test_the_template_is_part_of_the_identity(self, session_manager):
+        """``node_name`` does not imply it any more.
+
+        The node name used to decide the template outright, so listing it was
+        enough; ``system_prompt`` decides now and can change while the node name
+        does not — a sub-agent retyped from chat to ask_metrics is the case.
+        """
+        retyped = _SnapshotNode(
+            session_manager,
+            _agent_config(current_datasource="main"),
+            node_config={"system_prompt": "ask_metrics"},
+        )
+        meta = retyped._system_prompt_snapshot_meta("1.2")
+
+        assert meta["node_name"] == "chat"
+        assert meta["system_prompt_template"] == "ask_metrics_system"
+
+    def test_a_template_name_that_resolves_to_nothing_falls_back_to_the_node(self, session_manager, monkeypatch):
+        """A host may still send an UNSANITIZED sub-agent name as ``system_prompt``.
+
+        The template on disk is named after the SANITIZED one, so any character
+        outside [A-Za-z0-9_-] makes the configured name resolve to nothing while
+        the node name resolves fine. ``/`` stands in for the whole class here;
+        a sub-agent named in Chinese is the case that prompted this.
+
+        The base used to raise here; its two subclasses have always fallen back.
+        """
+        asked = []
+
+        class _PromptManager:
+            def render_template(self, template_name, version=None, **kwargs):
+                asked.append(template_name)
+                if template_name != "chat_system":
+                    raise FileNotFoundError(template_name)
+                return "SYS"
+
+        monkeypatch.setattr("datus.agent.node.agentic_node.get_prompt_manager", lambda **_kwargs: _PromptManager())
+        node = _SnapshotNode(session_manager, _agent_config(), node_config={"system_prompt": "sales/report"})
+        node._finalize_system_prompt = lambda prompt, memory_node_name_override=None: prompt
+
+        assert AgenticNode._get_system_prompt(node) == "SYS"
+        assert asked == ["sales/report_system", "chat_system"]
+
+    def test_a_failing_fallback_render_is_still_wrapped(self, session_manager, monkeypatch):
+        """The fallback path must produce the same exception type as the main one.
+
+        It runs inside an ``except`` block, and the sibling ``except Exception``
+        of the same ``try`` cannot see what is raised there — so a Jinja error on
+        the fallback template would otherwise reach the caller raw.
+        """
+
+        class _PromptManager:
+            def render_template(self, template_name, version=None, **kwargs):
+                if template_name != "chat_system":
+                    raise FileNotFoundError(template_name)
+                raise ValueError("undefined variable in template")
+
+        monkeypatch.setattr("datus.agent.node.agentic_node.get_prompt_manager", lambda **_kwargs: _PromptManager())
+        node = _SnapshotNode(session_manager, _agent_config(), node_config={"system_prompt": "missing"})
+
+        with pytest.raises(DatusException) as excinfo:
+            AgenticNode._get_system_prompt(node)
+        assert excinfo.value.code is ErrorCode.COMMON_CONFIG_ERROR
+
+    def test_the_node_name_is_the_fallback(self, session_manager):
+        """Unchanged for the CLI, which names its nodes after the template."""
+        node = _SnapshotNode(session_manager, _agent_config())
+        assert node._system_prompt_template_name() == "chat_system"
+
+    def test_a_retyped_sub_agent_rebuilds_rather_than_replaying(self, session_manager):
+        """The whole point of carrying it: the snapshot must not survive."""
+        cfg = _agent_config()
+        before = _SnapshotNode(session_manager, cfg)
+        assert before._get_session_system_prompt("1.2") == "SYS#1"
+        # Same session id, same node name, different template.
+        after = _SnapshotNode(session_manager, cfg, node_config={"system_prompt": "ask_metrics"})
+
+        assert after._get_session_system_prompt("1.2") == "SYS#1"
+        assert after.build_count == 1, "the stale snapshot was replayed instead of rebuilt"
 
     def test_meta_falls_back_to_agent_config_version(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config())

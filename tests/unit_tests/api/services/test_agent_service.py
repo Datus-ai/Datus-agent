@@ -1091,41 +1091,6 @@ class TestEditAgent:
         assert get_result.success is True
         assert get_result.data["agent"]["description"] == "updated description"
 
-    async def test_edit_with_prompt_template_writes_under_resolved_home(
-        self, real_agent_config, agent_yml_with_singleton
-    ):
-        """``edit_agent`` with an explicit ``prompt_template`` invokes
-        ``_save_prompt_template``, which must resolve ``agent_config.home``
-        through ``path_manager`` so a literal ``~`` does not leak into the
-        filesystem write.
-        """
-        from datus.api.models.agent_models import CreateAgentInput, EditAgentInput
-
-        resolved_home = real_agent_config.path_manager.datus_home
-        # Mutate ``agent_config.home`` post-construction to a tilde path —
-        # path_manager remains pointed at resolved_home.
-        real_agent_config.home = "~/datus-tilde-edit-template-does-not-exist"
-
-        svc = AgentService()
-        await svc.create_agent(
-            CreateAgentInput(name="prompt_edit_agent", type="gen_sql"),
-            real_agent_config,
-        )
-        edit = await svc.edit_agent(
-            EditAgentInput(
-                id="prompt_edit_agent",
-                name="prompt_edit_agent",
-                prompt_template="custom system prompt body",
-                prompt_version="1.0",
-            ),
-            real_agent_config,
-        )
-        assert edit.success is True
-        # Template file landed under the resolved home, not anywhere a
-        # literal-tilde expansion would point.
-        target = resolved_home / "template" / "prompt_edit_agent_system_1.0.j2"
-        assert target.exists() and target.read_text(encoding="utf-8") == "custom system prompt body"
-
     async def test_template_copy_resolves_tilde_in_home(self, real_agent_config, agent_yml_with_singleton, tmp_path):
         """Regression: ``agent_config.home`` may carry a literal ``~`` (default
         ``~/.datus``). ``_copy_prompt_template`` (called by ``create_agent``)
@@ -1155,8 +1120,8 @@ class TestEditAgent:
         assert result.success is True
 
         # The template should land under the resolved home, never under a
-        # literal tilde-prefixed directory next to CWD. CreateAgentInput
-        # defaults prompt_version="1.0", so the file is suffixed accordingly.
+        # literal tilde-prefixed directory next to CWD. The copy is stamped
+        # with ``_COPIED_TEMPLATE_VERSION``, so the file is suffixed accordingly.
         template_file = resolved_home / "template" / "tilde_template_agent_system_1.0.j2"
         assert template_file.exists(), f"template not found at {template_file}"
         # And no literal-tilde directory should have been created on disk.
@@ -2117,7 +2082,7 @@ class TestDeleteAgent:
 
         svc = AgentService()
         await svc.create_agent(
-            CreateAgentInput(name="template_owner", type="gen_sql", prompt_version="1.0"),
+            CreateAgentInput(name="template_owner", type="gen_sql"),
             real_agent_config,
         )
 
@@ -2242,7 +2207,7 @@ class TestDeleteAgent:
 
         svc = AgentService()
         await svc.create_agent(
-            CreateAgentInput(name="unlink_fails", type="gen_sql", prompt_version="1.0"),
+            CreateAgentInput(name="unlink_fails", type="gen_sql"),
             real_agent_config,
         )
 
