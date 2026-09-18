@@ -262,7 +262,7 @@ class LLMAutoReviewer(AutoReviewer):
                 # the provider request; schema-only adapters ignore it.
                 timeout=config.timeout_seconds,
             )
-            if isinstance(raw, dict) and raw.get("error"):
+            if isinstance(raw, dict) and "error" in raw:
                 error = str(raw["error"]).strip() or "model returned an invalid response"
                 verdict = AutoReviewVerdict(
                     risk_level=ReviewRiskLevel.HIGH,
