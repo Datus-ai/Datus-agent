@@ -2413,15 +2413,30 @@ class TestStartChatDatasourceOverride:
         assert real_agent_config.current_datasource == "california_schools"
 
     @pytest.mark.asyncio
-    async def test_invalid_request_datasource_raises(self, real_agent_config, monkeypatch):
-        from datus.api.models.cli_models import StreamChatInput
-        from datus.utils.exceptions import DatusException
+    async def test_unbound_request_datasource_falls_back(self, real_agent_config, monkeypatch):
+        """An unbound name must not fail the turn — it is a UI hint, not a contract.
 
-        monkeypatch.setattr(ChatTaskManager, "_run_loop", lambda *a, **k: None)
+        The web composer keeps its own picker selection, so a name resolved
+        against another project's roster (or one unbound since) arrives stale;
+        raising here reached the client as an ``error`` SSE event that killed
+        every turn of the session.
+        """
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+            captured["request_datasource"] = request.datasource
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
         manager = ChatTaskManager()
         request = StreamChatInput(message="hi", session_id="ds-invalid", datasource="nonexistent")
-        with pytest.raises(DatusException):
-            await manager.start_chat(real_agent_config, request)
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        assert captured["agent_config"].current_datasource == "california_schools"
+        assert captured["request_datasource"] == "california_schools"
 
 
 class TestMatchTableEntry:

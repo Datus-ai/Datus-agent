@@ -448,8 +448,25 @@ class ChatTaskManager:
                 agent_config.set_active_provider_model(provider, model_id, persist=False)
         # Per-request datasource override (e.g. an IM channel pinned to a datasource).
         # Switches the connection profile; the setter validates it exists in config.
+        #
+        # A name that is not bound falls back to the project's default instead of
+        # raising: the caller is a UI hint (the web composer's picker keeps its own
+        # selection, and one resolved against another project's roster — or unbound
+        # since — arrives here stale), and the setter's DatusException reached the
+        # client as an ``error`` SSE event that killed the whole turn.
         if request.datasource:
-            agent_config.current_datasource = request.datasource
+            if request.datasource in agent_config.services.datasources:
+                agent_config.current_datasource = request.datasource
+            else:
+                logger.warning(
+                    "Ignoring datasource %r for session %s: not bound to this project (available: %s); "
+                    "falling back to %r",
+                    request.datasource,
+                    request.session_id,
+                    sorted(agent_config.services.datasources),
+                    agent_config.current_datasource,
+                )
+                request.datasource = agent_config.current_datasource or None
         request.catalog, request.database, request.db_schema = _fill_database_context(
             agent_config,
             catalog=request.catalog,
