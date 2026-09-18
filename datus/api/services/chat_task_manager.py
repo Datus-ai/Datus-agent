@@ -392,8 +392,11 @@ class ChatTaskManager:
         if len(self._warned_datasources) >= _MAX_WARNED_DATASOURCES:
             self._warned_datasources.clear()
         self._warned_datasources.add(key)
+        # %r on both request-supplied values: ``session_id`` is free-form client
+        # input, and repr escapes the CR/LF that would otherwise let it forge a
+        # second log line.
         logger.warning(
-            "Ignoring datasource %r for session %s: not bound to this project (available: %s); "
+            "Ignoring datasource %r for session %r: not bound to this project (available: %s); "
             "falling back to %r and dropping the catalog/database/schema that came with it",
             request.datasource,
             request.session_id,
