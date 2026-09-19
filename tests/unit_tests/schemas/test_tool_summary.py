@@ -461,13 +461,15 @@ class TestSemanticFormatters:
             {
                 "success": 1,
                 "result": {
+                    "implementation": "dosi",
+                    "strategy": "factor_shapley",
                     "dimension_ranking": list(range(8)),
                     "selected_dimensions": ["region", "platform", "channel"],
-                    "warnings": [{"code": "UNEQUAL_WINDOWS"}],
+                    "warnings": [{"code": "unequal_windows"}],
                 },
             },
         )
-        assert out == "selected region,platform,channel; warnings UNEQUAL_WINDOWS"
+        assert out == "dosi factor_shapley; selected region,platform,channel; warnings unequal_windows"
         assert len(out) > SUMMARY_TEXT_MAX_CHARS
 
     def test_attribution_analyze_partial_dimensions(self):
@@ -476,22 +478,22 @@ class TestSemanticFormatters:
             {
                 "success": 1,
                 "result": {
-                    "candidate_dimensions": ["organization", "channel", "product"],
+                    "implementation": "generic",
+                    "strategy": "term_wise",
                     "per_dimension": {
-                        "organization": {"error": {"code": "DIMENSION_QUERY_FAILED"}},
-                        "channel": {"contributions": []},
+                        "channel": {"values": [], "non_additive": False},
                         "product": {"truncated": True},
+                        "region": {"values": [], "non_additive": True},
                     },
                     "warnings": [
-                        {"code": "DIMENSION_ANALYSIS_FAILED"},
-                        {"code": "HIGH_CARDINALITY_DIMENSION"},
+                        {"code": "dimension_analysis_failed", "dimension": "organization"},
+                        {"code": "high_cardinality_dimension", "dimension": "product"},
                     ],
-                    "dimension_analysis_status": "partial",
                 },
             },
         )
 
-        assert out == "1/3 dimensions analyzed, 1 failed, 1 truncated, 2 warnings"
+        assert out == "generic term_wise, 1/4 dimensions usable, 1 failed, 1 non-additive, 1 truncated, 2 warnings"
 
     def test_attribution_analyze_totals_only(self):
         out = _summarize(
@@ -499,14 +501,15 @@ class TestSemanticFormatters:
             {
                 "success": 1,
                 "result": {
-                    "candidate_dimensions": [],
+                    "implementation": "generic",
+                    "strategy": "unsupported",
+                    "unsupported_reason": {"code": "dimensions_required"},
                     "per_dimension": {},
-                    "dimension_analysis_status": "not_requested",
                 },
             },
         )
 
-        assert out == "totals compared"
+        assert out == "generic unsupported; dimensions_required"
 
 
 class TestGenerationFormatters:

@@ -44,6 +44,8 @@ Standard data models for semantic layer operations:
 
 ```python
 from datus.tools.semantic_tools.models import (
+    AttributionRequest,  # BaseModel: metric, dimensions, comparison windows
+    AttributionResult,   # BaseModel: implementation, strategy, decomposition
     MetricDefinition,   # BaseModel: name, description, type, dimensions, etc.
     QueryResult,        # BaseModel: columns, data, metadata
     ValidationResult,   # BaseModel: valid, issues
@@ -67,6 +69,7 @@ class BaseSemanticAdapter(ABC):
     async def list_metrics(path, limit, offset) -> List[MetricDefinition]
     async def get_dimensions(metric_name, path) -> List[str]
     async def query_metrics(metrics, dimensions, ...) -> QueryResult
+    async def attribute(request) -> Optional[AttributionResult]
     async def validate_semantic() -> ValidationResult
 
     # Storage Sync Interface
@@ -502,7 +505,8 @@ semantic_tool = SemanticTools(
 
 # Get available tools for LLM
 tools = semantic_tool.available_tools()
-# Returns: [search_metrics, list_metrics, get_dimensions, query_metrics, validate_semantic]
+# Returns: [search_metrics, list_metrics, get_dimensions, query_metrics,
+#           validate_semantic, attribution_analyze]
 ```
 
 ### 3. Direct Adapter Usage

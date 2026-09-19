@@ -7,7 +7,7 @@ import json
 from enum import Enum
 from importlib import import_module
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -18,7 +18,12 @@ from datus.tools.func_tool.attribution_utils import (
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async
-from datus.tools.semantic_tools.models import QueryResult, ValidationResult
+from datus.tools.semantic_tools.models import (
+    AttributionRequest,
+    AttributionWindow,
+    QueryResult,
+    ValidationResult,
+)
 
 
 class _Severity(Enum):
@@ -1959,7 +1964,14 @@ class TestAttributionAnalyze:
 
         schema = trans_to_function_tool(tool.attribution_analyze).params_json_schema
 
-        assert {"where", "path", "max_dimension_values"}.issubset(schema["properties"])
+        assert {
+            "where",
+            "path",
+            "max_dimension_values",
+            "time_dimension",
+            "params",
+        }.issubset(schema["properties"])
+        assert "anomaly_context" not in schema["properties"]
         assert "exclusive" in schema["properties"]["baseline_end"]["description"].lower()
         assert "exclusive" in schema["properties"]["current_end"]["description"].lower()
 
@@ -1971,7 +1983,7 @@ class TestAttributionAnalyze:
         assert "descriptive dimension analysis" in description
         assert "do not establish causation" in description
         assert "root cause analysis" not in description
-        assert "failed and truncated dimensions are excluded" in description
+        assert "failed, truncated, and non-additive dimensions are excluded" in description
 
     def test_no_attribution_tool_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.attribution_analyze(
@@ -1985,108 +1997,102 @@ class TestAttributionAnalyze:
         assert result.success == 0
         assert "semantic adapter" in result.error.lower()
 
-    def test_success_with_dict_anomaly_context(self, semantic_tools_with_adapter):
+    def test_success_builds_unified_request(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
-        mock_attribution = Mock()
-        tool._attribution_tool = mock_attribution
-
         mock_result = Mock()
         mock_result.model_dump.return_value = {
+            "metric": "revenue",
+            "implementation": "dosi",
+            "strategy": "term_wise",
             "dimension_ranking": [],
             "selected_dimensions": [],
-            "top_dimension_values": {},
-            "warnings": [{"code": "UNEQUAL_WINDOWS", "message": "not equal"}],
+            "top_dimension_values": [],
+            "warnings": [{"code": "unequal_windows", "message": "not equal"}],
         }
+        tool._attribute = AsyncMock(return_value=mock_result)
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_result):
-            result = tool.attribution_analyze(
-                metric_name="revenue",
-                candidate_dimensions=["region"],
-                baseline_start="2024-01-01",
-                baseline_end="2024-01-08",
-                current_start="2024-01-08",
-                current_end="2024-01-15",
-                anomaly_context={"rule": "3sigma", "observed_change_pct": 20.0},
-                where="region = 'US'",
-                path=["sales"],
-                max_dimension_values=25,
-            )
-
-        assert result.success == 1
-        assert result.result["warnings"][0]["code"] == "UNEQUAL_WINDOWS"
-        mock_attribution.attribution_analyze.assert_called_once_with(
+        result = tool.attribution_analyze(
             metric_name="revenue",
             candidate_dimensions=["region"],
             baseline_start="2024-01-01",
             baseline_end="2024-01-08",
             current_start="2024-01-08",
             current_end="2024-01-15",
-            anomaly_context={"rule": "3sigma", "observed_change_pct": 20.0},
-            max_selected_dimensions=3,
-            top_n_values=10,
             where="region = 'US'",
             path=["sales"],
             max_dimension_values=25,
+            time_dimension="orders.order_date",
+            params={"currency": "USD"},
         )
 
-    def test_success_none_anomaly_context(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
-        mock_attribution = Mock()
-        tool._attribution_tool = mock_attribution
-
-        mock_result = Mock()
-        mock_result.model_dump.return_value = {
-            "dimension_ranking": [],
-            "dimension_analysis_status": "unavailable",
-            "per_dimension": {
-                "region": {
-                    "error": {
-                        "code": "DIMENSION_QUERY_FAILED",
-                        "message": "region query failed",
-                    }
-                }
-            },
-        }
-
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_result):
-            result = tool.attribution_analyze(
-                metric_name="revenue",
-                candidate_dimensions=["region"],
-                baseline_start="2024-01-01",
-                baseline_end="2024-01-08",
-                current_start="2024-01-08",
-                current_end="2024-01-15",
-                anomaly_context=None,
-            )
-
         assert result.success == 1
-        assert result.result["dimension_analysis_status"] == "unavailable"
-        assert result.result["per_dimension"]["region"]["error"] == {
-            "code": "DIMENSION_QUERY_FAILED",
-            "message": "region query failed",
-        }
+        assert result.result["warnings"][0]["code"] == "unequal_windows"
+        called_adapter, request = tool._attribute.await_args.args
+        assert called_adapter is mock_adapter
+        assert request.metric == "revenue"
+        assert request.dimensions == ["region"]
+        assert request.where_sql == "region = 'US'"
+        assert request.path == ["sales"]
+        assert request.max_values_per_dimension == 25
+        assert request.time_dimension == "orders.order_date"
+        assert request.params == {"currency": "USD"}
+        mock_result.model_dump.assert_called_once_with(exclude_none=True)
+
+    @pytest.mark.asyncio
+    async def test_attribute_prefers_native_adapter(self, semantic_tools_with_adapter):
+        tool, adapter = semantic_tools_with_adapter
+        native_result = Mock()
+        adapter.attribute = AsyncMock(return_value=native_result)
+        tool._attribution_tool = Mock()
+        request = AttributionRequest(
+            metric="revenue",
+            dimensions=["region"],
+            baseline=AttributionWindow(start="2024-01-01", end="2024-01-08"),
+            current=AttributionWindow(start="2024-01-08", end="2024-01-15"),
+        )
+
+        result = await tool._attribute(adapter, request)
+
+        assert result is native_result
+        tool._attribution_tool.attribute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_attribute_falls_back_when_adapter_returns_none(self, semantic_tools_with_adapter):
+        tool, adapter = semantic_tools_with_adapter
+        generic_result = Mock()
+        adapter.attribute = AsyncMock(return_value=None)
+        tool._attribution_tool = Mock()
+        tool._attribution_tool.attribute = AsyncMock(return_value=generic_result)
+        request = AttributionRequest(
+            metric="revenue",
+            dimensions=["region"],
+            baseline=AttributionWindow(start="2024-01-01", end="2024-01-08"),
+            current=AttributionWindow(start="2024-01-08", end="2024-01-15"),
+        )
+
+        result = await tool._attribute(adapter, request)
+
+        assert result is generic_result
+        tool._attribution_tool.attribute.assert_awaited_once_with(request)
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
-        mock_attribution = Mock()
-        tool._attribution_tool = mock_attribution
+        tool, _ = semantic_tools_with_adapter
+        tool._attribute = AsyncMock(side_effect=Exception("analysis failed"))
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("analysis failed")):
-            result = tool.attribution_analyze(
-                metric_name="revenue",
-                candidate_dimensions=["region"],
-                baseline_start="2024-01-01",
-                baseline_end="2024-01-08",
-                current_start="2024-01-08",
-                current_end="2024-01-15",
-            )
+        result = tool.attribution_analyze(
+            metric_name="revenue",
+            candidate_dimensions=["region"],
+            baseline_start="2024-01-01",
+            baseline_end="2024-01-08",
+            current_start="2024-01-08",
+            current_end="2024-01-15",
+        )
 
         assert result.success == 0
         assert "analysis failed" in result.error
 
     def test_validation_exception_returns_structured_failure(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
-        tool._attribution_tool = Mock()
+        tool, _ = semantic_tools_with_adapter
         payload = AttributionValidationErrorPayload(
             code="MULTI_ROW_TOTAL",
             message="Expected one total row.",
@@ -2095,22 +2101,48 @@ class TestAttributionAnalyze:
             row_count=2,
         )
 
-        with patch(
-            "datus.tools.func_tool.semantic_tools._run_async",
-            side_effect=AttributionValidationException(payload),
-        ):
-            result = tool.attribution_analyze(
-                metric_name="revenue",
-                candidate_dimensions=["region"],
-                baseline_start="2024-01-01",
-                baseline_end="2024-01-08",
-                current_start="2024-01-08",
-                current_end="2024-01-15",
-            )
+        tool._attribute = AsyncMock(side_effect=AttributionValidationException(payload))
+        result = tool.attribution_analyze(
+            metric_name="revenue",
+            candidate_dimensions=["region"],
+            baseline_start="2024-01-01",
+            baseline_end="2024-01-08",
+            current_start="2024-01-08",
+            current_end="2024-01-15",
+        )
 
         assert result.success == 0
         assert result.error == "Expected one total row."
         assert result.result == payload.model_dump()
+
+    def test_native_validation_exception_returns_adapter_payload(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+        payload = Mock(
+            error_type="semantic_validation_error",
+            code="unknown_metric",
+            message="Unknown metric 'revenues'.",
+        )
+        payload.model_dump.return_value = {
+            "error_type": "semantic_validation_error",
+            "code": "unknown_metric",
+            "message": "Unknown metric 'revenues'.",
+        }
+        error = Exception(payload.message)
+        error.payload = payload
+        tool._attribute = AsyncMock(side_effect=error)
+
+        result = tool.attribution_analyze(
+            metric_name="revenues",
+            candidate_dimensions=["region"],
+            baseline_start="2024-01-01",
+            baseline_end="2024-01-08",
+            current_start="2024-01-08",
+            current_end="2024-01-15",
+        )
+
+        assert result.success == 0
+        assert result.error == "Unknown metric 'revenues'."
+        assert result.result["code"] == "unknown_metric"
 
 
 class TestExtractDbConfig:

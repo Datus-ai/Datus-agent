@@ -1301,15 +1301,13 @@ class TestBuildAttributionAnalyze:
             input_data={"function_name": "attribution_analyze"},
             output_data={
                 "raw_output": '{"success": 1, "result": {'
-                '"candidate_dimensions": ["d1", "d2"], '
-                '"per_dimension": {"d1": {"contributions": []}, '
-                '"d2": {"error": {"code": "DIMENSION_QUERY_FAILED"}}}, '
-                '"dimension_analysis_status": "partial", '
-                '"warnings": [{"code": "DIMENSION_ANALYSIS_FAILED"}]}}'
+                '"implementation": "generic", "strategy": "term_wise", '
+                '"per_dimension": {"d1": {"values": [], "non_additive": false}}, '
+                '"warnings": [{"code": "dimension_analysis_failed", "dimension": "d2"}]}}'
             },
         )
         tc = _build_attribution_analyze(a, verbose=False)
-        assert tc.compact_result == "1/2 dimensions analyzed, 1 failed, 1 warning"
+        assert tc.compact_result == "generic term_wise, 1/2 dimensions usable, 1 failed, 1 warning"
 
 
 # ── Filesystem tools ──────────────────────────────────────────────

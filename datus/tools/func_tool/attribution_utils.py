@@ -15,7 +15,21 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
-from datus.tools.semantic_tools.models import QueryResult
+from datus.tools.semantic_tools.models import (
+    AttributionComparisonMetadata,
+    AttributionDimensionDetail,
+    AttributionDimensionScore,
+    AttributionDrillDown,
+    AttributionReconciliation,
+    AttributionRequest,
+    AttributionResult,
+    AttributionTotalChange,
+    AttributionUnsupportedInfo,
+    AttributionValueContribution,
+    AttributionWarning,
+    AttributionWindow,
+    QueryResult,
+)
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -24,37 +38,6 @@ JsonScalar = Union[str, int, float, bool]
 _MAX_DIMENSION_VALUES = 1000
 _ADDITIVITY_TOLERANCE = 0.02
 _ZERO_DELTA_EPSILON = 1e-6
-
-
-# ==================== Data Models ====================
-
-
-class DimensionRanking(BaseModel):
-    """Ranking score for a dimension's change concentration."""
-
-    dimension: str = Field(..., description="Dimension name")
-    score: float = Field(
-        ..., description="Max contribution ratio (max_abs_delta / total_delta), can exceed 1 when deltas offset"
-    )
-
-
-class FilterHint(BaseModel):
-    """Typed filter information for a follow-up attribution query."""
-
-    dimension: str
-    operator: Literal["eq", "is_null"]
-    value: Optional[JsonScalar] = None
-
-
-class DimensionValueContribution(BaseModel):
-    """Delta contribution of a dimension value."""
-
-    dimension_values: Dict[str, str] = Field(..., description="Legacy human-readable dimension value(s)")
-    baseline: float = Field(..., description="Baseline period metric value")
-    current: float = Field(..., description="Current period metric value")
-    delta: float = Field(..., description="Absolute change (current - baseline)")
-    contribution_pct_of_total_delta: float = Field(..., description="Percentage contribution to total delta")
-    filter_hint: Optional[FilterHint] = None
 
 
 class AdditivityCheck(BaseModel):
@@ -79,25 +62,6 @@ class DimensionAnalysisError(BaseModel):
     row_count: Optional[int] = None
 
 
-class DimensionAttribution(BaseModel):
-    """Attribution details and guardrail state for one dimension."""
-
-    dimension: str
-    score: Optional[float] = None
-    additivity_check: AdditivityCheck = Field(default_factory=AdditivityCheck)
-    truncated: bool = False
-    contributions: List[DimensionValueContribution] = Field(default_factory=list)
-    error: Optional[DimensionAnalysisError] = None
-
-
-class AttributionWarning(BaseModel):
-    """A non-fatal limitation that must be disclosed when interpreting results."""
-
-    code: str
-    dimension: Optional[str] = None
-    message: str
-
-
 class AttributionValidationErrorPayload(BaseModel):
     """Structured fatal validation failure returned by the public tool wrapper."""
 
@@ -118,79 +82,100 @@ class AttributionValidationException(Exception):
         super().__init__(payload.message)
 
 
-class AttributionAnalysisResult(BaseModel):
-    """Result of unified attribution analysis."""
-
-    metric_name: str = Field(..., description="Metric being analyzed")
-    candidate_dimensions: List[str] = Field(..., description="Input candidate dimensions")
-    dimension_ranking: List[DimensionRanking] = Field(..., description="Dimensions ranked by change concentration")
-    selected_dimensions: List[str] = Field(..., description="Dimensions selected for analysis")
-    top_dimension_values: List[DimensionValueContribution] = Field(
-        ..., description="Legacy cross-dimension list of top contributors"
-    )
-    anomaly_context: Optional[Dict] = Field(None, description="Anomaly detection context")
-    comparison_metadata: Dict = Field(..., description="Comparison period metadata")
-    per_dimension: Dict[str, DimensionAttribution] = Field(default_factory=dict)
-    warnings: List[AttributionWarning] = Field(default_factory=list)
-    dimension_analysis_status: Literal["complete", "partial", "unavailable", "not_requested"] = "complete"
-
-
 # ==================== Attribution Util ====================
 
 
-class DimensionAttributionUtil:
-    """Dimension attribution utility that only depends on BaseSemanticAdapter."""
+class GenericAttributeAnalyzer:
+    """Term-wise attribution fallback for adapters without a native implementation."""
 
     def __init__(self, adapter: BaseSemanticAdapter):
         self.adapter = adapter
 
-    async def attribution_analyze(
-        self,
-        metric_name: str,
-        candidate_dimensions: List[str],
-        baseline_start: str,
-        baseline_end: str,
-        current_start: str,
-        current_end: str,
-        path: Optional[List[str]] = None,
-        anomaly_context: Optional[Dict] = None,
-        max_selected_dimensions: int = 3,
-        top_n_values: int = 10,
-        where: Optional[str] = None,
-        max_dimension_values: int = 500,
-    ) -> AttributionAnalysisResult:
+    async def attribute(self, request: AttributionRequest) -> AttributionResult:
         """Rank candidate dimensions over OSI half-open time windows."""
-        candidate_dimensions = list(dict.fromkeys(candidate_dimensions))
+        metric_name = request.metric
+        candidate_dimensions = list(dict.fromkeys(request.dimensions))
         baseline_days = self._validate_time_window(
             period="baseline",
-            start=baseline_start,
-            end=baseline_end,
+            start=request.baseline.start,
+            end=request.baseline.end,
         )
         current_days = self._validate_time_window(
             period="current",
-            start=current_start,
-            end=current_end,
+            start=request.current.start,
+            end=request.current.end,
         )
-        requested_max_dimension_values = max_dimension_values
-        effective_max_dimension_values = max(1, min(max_dimension_values, _MAX_DIMENSION_VALUES))
-        grouped_query_limit = effective_max_dimension_values + 1
         warnings: List[AttributionWarning] = []
+        effective_time_dimension = None
+        if request.time_dimension:
+            try:
+                available_dimensions = await self.adapter.get_dimensions(
+                    metric_name,
+                    path=request.path,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not verify generic attribution time dimension '%s': %s",
+                    request.time_dimension,
+                    error,
+                )
+                available_dimensions = []
+            primary_time_dimensions = [
+                dimension.name for dimension in available_dimensions if dimension.is_primary_time
+            ]
+            if request.time_dimension not in primary_time_dimensions:
+                return AttributionResult(
+                    metric=metric_name,
+                    implementation="generic",
+                    strategy="unsupported",
+                    unsupported_reason=AttributionUnsupportedInfo(
+                        code="time_dimension_not_supported",
+                        message=(
+                            "Generic attribution cannot honor the requested time dimension "
+                            f"'{request.time_dimension}' through query_metrics; use native attribution "
+                            "or request the adapter's primary time dimension."
+                        ),
+                    ),
+                    comparison_metadata=self._comparison_metadata(
+                        request=request,
+                        baseline_days=baseline_days,
+                        current_days=current_days,
+                        queries_executed=0,
+                        time_dimension=None,
+                    ),
+                    warnings=warnings,
+                )
+            effective_time_dimension = request.time_dimension
+
+        requested_max_dimension_values = (
+            500 if request.max_values_per_dimension is None else request.max_values_per_dimension
+        )
+        effective_max_dimension_values = max(
+            1,
+            min(requested_max_dimension_values, _MAX_DIMENSION_VALUES),
+        )
+        top_n_values = 10 if request.top_n_values is None else max(1, request.top_n_values)
+        top_n_dimensions = 3 if request.top_n_dimensions is None else max(1, request.top_n_dimensions)
+        grouped_query_limit = effective_max_dimension_values + 1
+        queries_executed = 2
 
         baseline_total_result = await self.adapter.query_metrics(
             metrics=[metric_name],
             dimensions=[],
-            path=path,
-            time_start=baseline_start,
-            time_end=baseline_end,
-            where=where,
+            path=request.path,
+            time_start=request.baseline.start,
+            time_end=request.baseline.end,
+            where=request.where_sql,
+            params=request.params or None,
         )
         current_total_result = await self.adapter.query_metrics(
             metrics=[metric_name],
             dimensions=[],
-            path=path,
-            time_start=current_start,
-            time_end=current_end,
-            where=where,
+            path=request.path,
+            time_start=request.current.start,
+            time_end=request.current.end,
+            where=request.where_sql,
+            params=request.params or None,
         )
 
         baseline_total = self._parse_total(
@@ -207,10 +192,10 @@ class DimensionAttributionUtil:
         )
         total_delta = current_total - baseline_total
 
-        if baseline_days is not None and current_days is not None and baseline_days != current_days:
+        if baseline_days != current_days:
             warnings.append(
                 AttributionWarning(
-                    code="UNEQUAL_WINDOWS",
+                    code="unequal_windows",
                     message=(
                         f"Baseline and current windows contain {baseline_days} and {current_days} days; "
                         "values were not normalized."
@@ -223,26 +208,27 @@ class DimensionAttributionUtil:
             baseline_total=baseline_total,
             current_total=current_total,
         )
-        dimension_rankings: List[DimensionRanking] = []
-        all_contributions: Dict[str, List[DimensionValueContribution]] = {}
-        per_dimension: Dict[str, DimensionAttribution] = {}
+        dimension_rankings: List[AttributionDimensionScore] = []
+        all_contributions: Dict[str, List[AttributionValueContribution]] = {}
+        per_dimension: Dict[str, AttributionDimensionDetail] = {}
 
         for dimension in candidate_dimensions:
             baseline_result, baseline_lookup, dimension_error = await self._query_grouped_period(
                 metric_name=metric_name,
                 dimension=dimension,
                 period="baseline",
-                time_start=baseline_start,
-                time_end=baseline_end,
-                path=path,
-                where=where,
+                time_start=request.baseline.start,
+                time_end=request.baseline.end,
+                path=request.path,
+                where=request.where_sql,
                 limit=grouped_query_limit,
+                params=request.params,
             )
+            queries_executed += 1
             if dimension_error is not None:
                 self._record_dimension_failure(
                     dimension=dimension,
                     error=dimension_error,
-                    per_dimension=per_dimension,
                     warnings=warnings,
                 )
                 continue
@@ -251,17 +237,18 @@ class DimensionAttributionUtil:
                 metric_name=metric_name,
                 dimension=dimension,
                 period="current",
-                time_start=current_start,
-                time_end=current_end,
-                path=path,
-                where=where,
+                time_start=request.current.start,
+                time_end=request.current.end,
+                path=request.path,
+                where=request.where_sql,
                 limit=grouped_query_limit,
+                params=request.params,
             )
+            queries_executed += 1
             if dimension_error is not None:
                 self._record_dimension_failure(
                     dimension=dimension,
                     error=dimension_error,
-                    per_dimension=per_dimension,
                     warnings=warnings,
                 )
                 continue
@@ -283,14 +270,12 @@ class DimensionAttributionUtil:
                 or len(union_keys) > effective_max_dimension_values
             )
             if truncated:
-                per_dimension[dimension] = DimensionAttribution(
-                    dimension=dimension,
+                per_dimension[dimension] = AttributionDimensionDetail(
                     truncated=True,
-                    additivity_check=AdditivityCheck(status="skipped"),
                 )
                 warnings.append(
                     AttributionWarning(
-                        code="HIGH_CARDINALITY_DIMENSION",
+                        code="high_cardinality_dimension",
                         dimension=dimension,
                         message=(
                             f"Dimension '{dimension}' exceeded the {effective_max_dimension_values}-value limit. "
@@ -310,7 +295,7 @@ class DimensionAttributionUtil:
             )
             deltas = [contribution.delta for contribution in contributions]
             score = (
-                max(abs(delta) for delta in deltas) / abs(total_delta) if deltas and not total_delta_is_zero else 0.0
+                max(abs(delta) for delta in deltas) / abs(total_delta) if deltas and not total_delta_is_zero else None
             )
             additivity_check = self._check_additivity(
                 baseline_total=baseline_total,
@@ -322,7 +307,7 @@ class DimensionAttributionUtil:
             if additivity_check.status == "failed":
                 warnings.append(
                     AttributionWarning(
-                        code="NON_ADDITIVE_DIMENSION",
+                        code="non_additive_dimension",
                         dimension=dimension,
                         message=(
                             f"Grouped values for '{dimension}' do not reconcile to the period totals; "
@@ -338,7 +323,7 @@ class DimensionAttributionUtil:
             ):
                 warnings.append(
                     AttributionWarning(
-                        code="ZERO_TOTAL_DELTA_WITH_COMPONENT_CHANGES",
+                        code="zero_total_delta_with_component_changes",
                         dimension=dimension,
                         message=(
                             f"Dimension '{dimension}' has offsetting component changes while the total change is "
@@ -347,60 +332,110 @@ class DimensionAttributionUtil:
                     )
                 )
 
-            dimension_rankings.append(DimensionRanking(dimension=dimension, score=score))
-            all_contributions[dimension] = contributions
-            per_dimension[dimension] = DimensionAttribution(
-                dimension=dimension,
+            non_additive = additivity_check.status == "failed"
+            per_dimension[dimension] = AttributionDimensionDetail(
+                values=sorted(
+                    contributions,
+                    key=lambda item: abs(item.delta),
+                    reverse=True,
+                )[:top_n_values],
                 score=score,
-                additivity_check=additivity_check,
-                contributions=sorted(contributions, key=lambda item: abs(item.delta), reverse=True)[
-                    : max(0, top_n_values)
-                ],
+                non_additive=non_additive,
+                reconciliation=AttributionReconciliation(
+                    baseline_residual=additivity_check.baseline_residual or 0.0,
+                    current_residual=additivity_check.current_residual or 0.0,
+                    passed=not non_additive,
+                ),
             )
+            if non_additive:
+                continue
+            dimension_rankings.append(
+                AttributionDimensionScore(
+                    dimension=dimension,
+                    score=score,
+                    non_additive=False,
+                    truncated=False,
+                )
+            )
+            all_contributions[dimension] = contributions
 
-        dimension_rankings.sort(key=lambda ranking: ranking.score, reverse=True)
-        selected_dimensions = [ranking.dimension for ranking in dimension_rankings[: max(0, max_selected_dimensions)]]
+        dimension_rankings.sort(
+            key=lambda ranking: ranking.score or 0.0,
+            reverse=True,
+        )
+        selected_dimensions = [ranking.dimension for ranking in dimension_rankings[:top_n_dimensions]]
         selected_contributions = [
             contribution for dimension in selected_dimensions for contribution in all_contributions[dimension]
         ]
         selected_contributions.sort(
-            key=lambda contribution: contribution.contribution_pct_of_total_delta,
+            key=lambda contribution: abs(contribution.delta),
             reverse=True,
         )
+        unsupported_reason = None
+        strategy: Literal["term_wise", "unsupported"] = "term_wise"
+        if not candidate_dimensions:
+            strategy = "unsupported"
+            unsupported_reason = AttributionUnsupportedInfo(
+                code="dimensions_required",
+                message="Generic attribution requires at least one candidate dimension.",
+            )
+        elif not dimension_rankings:
+            strategy = "unsupported"
+            unsupported_reason = AttributionUnsupportedInfo(
+                code="no_additive_dimensions",
+                message="No candidate dimension produced a complete additive decomposition.",
+            )
 
-        return AttributionAnalysisResult(
-            metric_name=metric_name,
-            candidate_dimensions=candidate_dimensions,
+        return AttributionResult(
+            metric=metric_name,
+            implementation="generic",
+            strategy=strategy,
+            unsupported_reason=unsupported_reason,
+            total_change=AttributionTotalChange(
+                baseline_value=baseline_total,
+                current_value=current_total,
+                delta=total_delta,
+                pct_change=(total_delta / abs(baseline_total) * 100 if baseline_total else None),
+            ),
             dimension_ranking=dimension_rankings,
             selected_dimensions=selected_dimensions,
-            top_dimension_values=selected_contributions[: max(0, top_n_values)],
-            anomaly_context=anomaly_context,
-            comparison_metadata={
-                "baseline": {
-                    "start": baseline_start,
-                    "end": baseline_end,
-                    "days": baseline_days,
-                    "total": baseline_total,
-                },
-                "current": {
-                    "start": current_start,
-                    "end": current_end,
-                    "days": current_days,
-                    "total": current_total,
-                },
-                "total_delta": total_delta,
-                "time_range_semantics": "[start, end)",
-                "where": where,
-                "path": path,
-                "requested_max_dimension_values": requested_max_dimension_values,
-                "effective_max_dimension_values": effective_max_dimension_values,
-            },
+            top_dimension_values=selected_contributions[:top_n_values],
             per_dimension=per_dimension,
-            warnings=warnings,
-            dimension_analysis_status=self._dimension_analysis_status(
-                requested_count=len(candidate_dimensions),
-                analyzed_count=len(dimension_rankings),
+            comparison_metadata=self._comparison_metadata(
+                request=request,
+                baseline_days=baseline_days,
+                current_days=current_days,
+                queries_executed=queries_executed,
+                time_dimension=effective_time_dimension,
             ),
+            warnings=warnings,
+        )
+
+    @staticmethod
+    def _comparison_metadata(
+        *,
+        request: AttributionRequest,
+        baseline_days: int,
+        current_days: int,
+        queries_executed: int,
+        time_dimension: Optional[str],
+    ) -> AttributionComparisonMetadata:
+        """Build metadata from the options the generic queries actually honored."""
+        return AttributionComparisonMetadata(
+            baseline=AttributionWindow(
+                start=request.baseline.start,
+                end=request.baseline.end,
+            ),
+            current=AttributionWindow(
+                start=request.current.start,
+                end=request.current.end,
+            ),
+            baseline_days=baseline_days,
+            current_days=current_days,
+            equal_length_windows=baseline_days == current_days,
+            time_dimension=time_dimension,
+            queries_executed=queries_executed,
+            params=request.params,
         )
 
     async def _query_grouped_period(
@@ -414,6 +449,7 @@ class DimensionAttributionUtil:
         path: Optional[List[str]],
         where: Optional[str],
         limit: int,
+        params: Dict[str, Any],
     ) -> tuple[
         Optional[QueryResult],
         Optional[Dict[str, tuple[Optional[JsonScalar], float]]],
@@ -429,6 +465,7 @@ class DimensionAttributionUtil:
                 time_end=time_end,
                 where=where,
                 limit=limit,
+                params=params or None,
             )
         except Exception as error:
             payload = getattr(error, "payload", None)
@@ -490,16 +527,11 @@ class DimensionAttributionUtil:
         *,
         dimension: str,
         error: DimensionAnalysisError,
-        per_dimension: Dict[str, DimensionAttribution],
         warnings: List[AttributionWarning],
     ) -> None:
-        per_dimension[dimension] = DimensionAttribution(
-            dimension=dimension,
-            error=error,
-        )
         warnings.append(
             AttributionWarning(
-                code="DIMENSION_ANALYSIS_FAILED",
+                code="dimension_analysis_failed",
                 dimension=dimension,
                 message=(
                     f"Dimension '{dimension}' could not be analyzed during {error.period}: "
@@ -528,7 +560,7 @@ class DimensionAttributionUtil:
         if row_count == 0:
             warnings.append(
                 AttributionWarning(
-                    code=f"NO_DATA_{period.upper()}",
+                    code=f"no_data_{period}",
                     message=f"The {period} total query returned no rows; the total is treated as 0.",
                 )
             )
@@ -554,7 +586,7 @@ class DimensionAttributionUtil:
         if value is None:
             warnings.append(
                 AttributionWarning(
-                    code=f"NULL_TOTAL_{period.upper()}",
+                    code=f"null_total_{period}",
                     message=f"The {period} total is NULL and is treated as 0; confirm data coverage.",
                 )
             )
@@ -569,7 +601,7 @@ class DimensionAttributionUtil:
         if numeric_value == 0:
             warnings.append(
                 AttributionWarning(
-                    code=f"ZERO_OR_NO_DATA_{period.upper()}",
+                    code=f"zero_or_no_data_{period}",
                     message=(
                         f"The {period} total is 0, which cannot distinguish a real zero from empty aggregate "
                         "input; confirm coverage with query_metrics at an appropriate time grain."
@@ -662,30 +694,50 @@ class DimensionAttributionUtil:
         current_lookup: Dict[str, tuple[Optional[JsonScalar], float]],
         total_delta: float,
         total_delta_is_zero: bool,
-    ) -> List[DimensionValueContribution]:
-        contributions: List[DimensionValueContribution] = []
+    ) -> List[AttributionValueContribution]:
+        contributions: List[AttributionValueContribution] = []
         for key in union_keys:
             dimension_value = (current_lookup.get(key) or baseline_lookup[key])[0]
             baseline_value = baseline_lookup.get(key, (dimension_value, 0.0))[1]
             current_value = current_lookup.get(key, (dimension_value, 0.0))[1]
             delta = current_value - baseline_value
-            contribution_pct = 0.0 if total_delta_is_zero else delta / total_delta * 100
-            is_null = dimension_value is None
+            contribution_pct = None if total_delta_is_zero else delta / total_delta * 100
+            if key not in baseline_lookup:
+                segment_kind = "entered"
+            elif key not in current_lookup:
+                segment_kind = "exited"
+            else:
+                segment_kind = "normal"
             contributions.append(
-                DimensionValueContribution(
-                    dimension_values={dimension: self._display_dimension_value(dimension_value)},
-                    baseline=baseline_value,
-                    current=current_value,
+                AttributionValueContribution(
+                    dimension=dimension,
+                    value=self._display_dimension_value(dimension_value),
+                    baseline_value=baseline_value,
+                    current_value=current_value,
                     delta=delta,
-                    contribution_pct_of_total_delta=contribution_pct,
-                    filter_hint=FilterHint(
-                        dimension=dimension,
-                        operator="is_null" if is_null else "eq",
-                        value=None if is_null else dimension_value,
+                    contribution_pct=contribution_pct,
+                    segment_kind=segment_kind,
+                    drill_down=AttributionDrillDown(
+                        where_sql=self._drill_down_sql(
+                            dimension,
+                            dimension_value,
+                        )
                     ),
                 )
             )
         return contributions
+
+    @staticmethod
+    def _drill_down_sql(dimension: str, value: Optional[JsonScalar]) -> str:
+        if value is None:
+            return f"{dimension} IS NULL"
+        if isinstance(value, bool):
+            literal = "TRUE" if value else "FALSE"
+        elif isinstance(value, (int, float)):
+            literal = str(value)
+        else:
+            literal = "'" + str(value).replace("'", "''") + "'"
+        return f"{dimension} = {literal}"
 
     @staticmethod
     def _check_additivity(
@@ -855,12 +907,19 @@ class DimensionAttributionUtil:
         period: Literal["baseline", "current"],
         start: str,
         end: str,
-    ) -> Optional[int]:
+    ) -> int:
         """Validate a concrete OSI half-open window and return its day count."""
         try:
             days = (date.fromisoformat(end) - date.fromisoformat(start)).days
         except (TypeError, ValueError):
-            return None
+            self._raise_validation_error(
+                code="INVALID_TIME_WINDOW",
+                message=(
+                    f"{period.title()} window must use ISO dates in an OSI "
+                    f"half-open range [start, end); received [{start}, {end})."
+                ),
+                period=period,
+            )
         if days <= 0:
             self._raise_validation_error(
                 code="INVALID_TIME_WINDOW",
@@ -871,20 +930,6 @@ class DimensionAttributionUtil:
                 period=period,
             )
         return days
-
-    @staticmethod
-    def _dimension_analysis_status(
-        *,
-        requested_count: int,
-        analyzed_count: int,
-    ) -> Literal["complete", "partial", "unavailable", "not_requested"]:
-        if requested_count == 0:
-            return "not_requested"
-        if analyzed_count == requested_count:
-            return "complete"
-        if analyzed_count > 0:
-            return "partial"
-        return "unavailable"
 
     @staticmethod
     def _raise_validation_error(
