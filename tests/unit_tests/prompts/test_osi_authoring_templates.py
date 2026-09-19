@@ -135,6 +135,23 @@ def test_semantic_modeling_template_maps_dialect_to_engine_enum(datasource_diale
     assert f"Dosi expression dialect: `{expected_dialect}`" in text
 
 
+def test_semantic_modeling_template_delegates_result_set_strategy_to_required_skill():
+    pm = get_prompt_manager()
+    text = pm.render_template(
+        template_name="semantic_modeling_system",
+        authoring_scope="full",
+        current_datasource="bird_school",
+        current_datasource_dialect="duckdb",
+        **COMMON_VARS,
+    )
+
+    assert (
+        "The complete Dosi dataset and metric contracts are provided in the appended `<required_skill>` sections."
+        in text
+    )
+    assert "Validate the final selected model" in text
+
+
 @pytest.mark.parametrize("template_name", ["gen_semantic_model_system", "gen_metrics_system"])
 def test_osi_dialect_label_uses_datasource_type_not_config_name(template_name):
     # The label is derived from the datasource dialect/type, not the config name:

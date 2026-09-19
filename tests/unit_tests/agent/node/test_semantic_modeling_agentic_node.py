@@ -81,9 +81,14 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "compact dataset, table, relationship, and metric coverage" in prompt
     assert "use the returned authoring outline" in prompt
     assert "plan that same model name so it can be repaired in place" in prompt
-    assert "Treat SQL as evidence rather than a required persisted result shape" in prompt
+    assert "Treat source SQL as evidence for reusable semantics rather than a required persisted result shape" in prompt
     assert "extract reusable fields, relationships, and native business metrics" in prompt
-    assert "durable reusable cohort/result set or asks for faithful one-query reproduction" in prompt
+    assert "Prefer binding a dataset to a qualified physical table" in prompt
+    assert "A missing key or relationship does not justify replacing" in prompt
+    assert "do not enumerate separate metrics for brands, regions, or other dimension members" in prompt
+    assert "Keep the metric set minimal and complete" in prompt
+    assert "Do not create physical datasets as unused shells" in prompt
+    assert "merely for co-query convenience" in prompt
     assert '<required_skill name="dosi-semantic-authoring">' in prompt
     assert "## Active OSI Core authoring specification" in prompt
     assert "# Apache Ossie - Core Metadata Spec" in prompt
@@ -146,8 +151,6 @@ def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agen
     prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
     assert "This run is datasets-only" in prompt
     assert "Do not author metrics in this datasets-only run" in prompt
-    assert "still author reusable native inputs." in prompt
-    assert "still author reusable native inputs and metrics." not in prompt
     assert "Keep all existing metric definitions unchanged" in prompt
 
 
