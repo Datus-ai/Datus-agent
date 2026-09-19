@@ -665,7 +665,7 @@ requires-dist = [
     { name = "datus-bi-core", specifier = ">=0.1.2" },
     { name = "datus-db-core", specifier = ">=0.1.7" },
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
-    { name = "datus-semantic-core", specifier = ">=0.2.4" },
+    { name = "datus-semantic-core", specifier = ">=0.2.5" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "duckdb", specifier = "==1.5.2" },
@@ -781,15 +781,15 @@ wheels = [
 
 [[package]]
 name = "datus-semantic-core"
-version = "0.2.4"
+version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/13/50d3af94fbd917560ff9950e838582bcbe18edb89d8dbde1cd5a13bff80c/datus_semantic_core-0.2.4.tar.gz", hash = "sha256:6d9a117b32fbc776fb08e78f418e492725a95664823eef90cf826f395b0c6100", size = 21044, upload-time = "2026-09-04T06:55:06.375Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/26/9b62abff6263b9d2835b82d73712138fbe2a6e8dfb1cc8ef501f8c12ed55/datus_semantic_core-0.2.5.tar.gz", hash = "sha256:cee4d8cb6dda882a7bb593cf466f291a68feb7eac59a88dd20725f8411e09c8c", size = 22980, upload-time = "2026-09-19T12:45:46.576Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/52/f24ab476b9063777b592a8811bec9676062ed031018e85399f5dfcd340dd/datus_semantic_core-0.2.4-py3-none-any.whl", hash = "sha256:be6957eb6f1d8dda559055d3382a4fc390b6403195f7efb3c2684b1786a701ef", size = 18340, upload-time = "2026-09-04T06:55:05.307Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/ea/ef1032f58a60792bcf491b8b1686998169e3725100a76870cbdca8e58076/datus_semantic_core-0.2.5-py3-none-any.whl", hash = "sha256:bdfbc8a0055acce70c27343c0186c6dc4da51b531059d1058ff6a8cffdf875e7", size = 19708, upload-time = "2026-09-19T12:45:45.747Z" },
 ]
 
 [[package]]

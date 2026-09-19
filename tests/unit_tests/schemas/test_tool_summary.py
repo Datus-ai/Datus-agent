@@ -483,6 +483,7 @@ class TestSemanticFormatters:
                     "per_dimension": {
                         "channel": {"values": [], "non_additive": False},
                         "product": {"truncated": True},
+                        "region": {"values": [], "non_additive": True},
                     },
                     "warnings": [
                         {"code": "dimension_analysis_failed", "dimension": "organization"},
@@ -492,7 +493,7 @@ class TestSemanticFormatters:
             },
         )
 
-        assert out == "generic term_wise, 1/3 dimensions usable, 1 failed, 1 truncated, 2 warnings"
+        assert out == "generic term_wise, 1/4 dimensions usable, 1 failed, 1 non-additive, 1 truncated, 2 warnings"
 
     def test_attribution_analyze_totals_only(self):
         out = _summarize(
