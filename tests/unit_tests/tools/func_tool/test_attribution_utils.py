@@ -9,14 +9,21 @@ from datus.tools.func_tool.attribution_utils import (
 from datus.tools.semantic_tools.models import (
     AttributionRequest,
     AttributionWindow,
+    DimensionInfo,
     QueryResult,
 )
 
 
 class ScriptedAdapter:
-    def __init__(self, results):
+    def __init__(self, results, dimensions=None):
         self.results = list(results)
+        self.dimensions = list(dimensions or [])
         self.calls = []
+        self.dimension_calls = []
+
+    async def get_dimensions(self, metric_name, path=None):
+        self.dimension_calls.append({"metric_name": metric_name, "path": path})
+        return self.dimensions
 
     async def query_metrics(self, **kwargs):
         self.calls.append(kwargs)
@@ -93,6 +100,45 @@ class TestGenericAttributeAnalyzer:
         assert "metric_name" not in payload
         assert "total_delta" not in payload["comparison_metadata"]
         assert "filter_hint" not in payload["per_dimension"]["orders.region"]["values"][0]
+
+    @pytest.mark.asyncio
+    async def test_explicit_primary_time_dimension_is_reported(self):
+        adapter = ScriptedAdapter(
+            [
+                result(["revenue"], {"revenue": 30}),
+                result(["revenue"], {"revenue": 50}),
+                result(["region", "revenue"], {"region": "US", "revenue": 30}),
+                result(["region", "revenue"], {"region": "US", "revenue": 50}),
+            ],
+            dimensions=[DimensionInfo(name="orders.order_date", is_primary_time=True)],
+        )
+
+        output = await analyze(
+            adapter,
+            path=["sales"],
+            time_dimension="orders.order_date",
+        )
+
+        assert output.strategy == "term_wise"
+        assert output.comparison_metadata.time_dimension == "orders.order_date"
+        assert adapter.dimension_calls == [{"metric_name": "revenue", "path": ["sales"]}]
+        assert len(adapter.calls) == 4
+
+    @pytest.mark.asyncio
+    async def test_non_primary_time_dimension_is_unsupported_before_query(self):
+        adapter = ScriptedAdapter(
+            [],
+            dimensions=[DimensionInfo(name="orders.order_date", is_primary_time=True)],
+        )
+
+        output = await analyze(adapter, time_dimension="orders.ship_date")
+
+        assert output.strategy == "unsupported"
+        assert output.unsupported_reason.code == "time_dimension_not_supported"
+        assert output.total_change is None
+        assert output.comparison_metadata.time_dimension is None
+        assert output.comparison_metadata.queries_executed == 0
+        assert adapter.calls == []
 
     @pytest.mark.asyncio
     async def test_marks_entered_and_exited_segments_and_escapes_strings(self):

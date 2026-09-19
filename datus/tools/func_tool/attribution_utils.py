@@ -105,6 +105,48 @@ class GenericAttributeAnalyzer:
             start=request.current.start,
             end=request.current.end,
         )
+        warnings: List[AttributionWarning] = []
+        effective_time_dimension = None
+        if request.time_dimension:
+            try:
+                available_dimensions = await self.adapter.get_dimensions(
+                    metric_name,
+                    path=request.path,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not verify generic attribution time dimension '%s': %s",
+                    request.time_dimension,
+                    error,
+                )
+                available_dimensions = []
+            primary_time_dimensions = [
+                dimension.name for dimension in available_dimensions if dimension.is_primary_time
+            ]
+            if request.time_dimension not in primary_time_dimensions:
+                return AttributionResult(
+                    metric=metric_name,
+                    implementation="generic",
+                    strategy="unsupported",
+                    unsupported_reason=AttributionUnsupportedInfo(
+                        code="time_dimension_not_supported",
+                        message=(
+                            "Generic attribution cannot honor the requested time dimension "
+                            f"'{request.time_dimension}' through query_metrics; use native attribution "
+                            "or request the adapter's primary time dimension."
+                        ),
+                    ),
+                    comparison_metadata=self._comparison_metadata(
+                        request=request,
+                        baseline_days=baseline_days,
+                        current_days=current_days,
+                        queries_executed=0,
+                        time_dimension=None,
+                    ),
+                    warnings=warnings,
+                )
+            effective_time_dimension = request.time_dimension
+
         requested_max_dimension_values = (
             500 if request.max_values_per_dimension is None else request.max_values_per_dimension
         )
@@ -115,7 +157,6 @@ class GenericAttributeAnalyzer:
         top_n_values = 10 if request.top_n_values is None else max(1, request.top_n_values)
         top_n_dimensions = 3 if request.top_n_dimensions is None else max(1, request.top_n_dimensions)
         grouped_query_limit = effective_max_dimension_values + 1
-        warnings: List[AttributionWarning] = []
         queries_executed = 2
 
         baseline_total_result = await self.adapter.query_metrics(
@@ -360,23 +401,41 @@ class GenericAttributeAnalyzer:
             selected_dimensions=selected_dimensions,
             top_dimension_values=selected_contributions[:top_n_values],
             per_dimension=per_dimension,
-            comparison_metadata=AttributionComparisonMetadata(
-                baseline=AttributionWindow(
-                    start=request.baseline.start,
-                    end=request.baseline.end,
-                ),
-                current=AttributionWindow(
-                    start=request.current.start,
-                    end=request.current.end,
-                ),
+            comparison_metadata=self._comparison_metadata(
+                request=request,
                 baseline_days=baseline_days,
                 current_days=current_days,
-                equal_length_windows=baseline_days == current_days,
-                time_dimension=request.time_dimension,
                 queries_executed=queries_executed,
-                params=request.params,
+                time_dimension=effective_time_dimension,
             ),
             warnings=warnings,
+        )
+
+    @staticmethod
+    def _comparison_metadata(
+        *,
+        request: AttributionRequest,
+        baseline_days: int,
+        current_days: int,
+        queries_executed: int,
+        time_dimension: Optional[str],
+    ) -> AttributionComparisonMetadata:
+        """Build metadata from the options the generic queries actually honored."""
+        return AttributionComparisonMetadata(
+            baseline=AttributionWindow(
+                start=request.baseline.start,
+                end=request.baseline.end,
+            ),
+            current=AttributionWindow(
+                start=request.current.start,
+                end=request.current.end,
+            ),
+            baseline_days=baseline_days,
+            current_days=current_days,
+            equal_length_windows=baseline_days == current_days,
+            time_dimension=time_dimension,
+            queries_executed=queries_executed,
+            params=request.params,
         )
 
     async def _query_grouped_period(
