@@ -9,10 +9,13 @@ LLM is told to write, the DDL it is told to normalise, and the two column classe
 filled with nothing.
 """
 
+import contextlib
 import importlib.util
+import io
 import sys
 from pathlib import Path
 
+import duckdb
 import pytest
 
 SKILL_DIR = Path(__file__).resolve().parents[4] / "datus" / "resources" / "skills" / "gen-datasource"
@@ -2039,3 +2042,39 @@ def test_a_staging_warning_says_it_is_advisory(engine_module, capsys, monkeypatc
     assert "could not stage the summary layer" in out, out
     assert "advisory only" in out, out
     assert "generation is unaffected" in out, out
+
+
+@pytest.mark.acceptance
+def test_a_composite_primary_key_is_honoured_by_generation(engine_module, tmp_path):
+    """SKILL.md step 0 and profile-spec §5.6 both tell the reader to declare the real grain of a
+    readings table as `PRIMARY KEY (parent_id, ts)`. That advice is only worth giving because the
+    engine keeps the COMBINATION unique - pin it, or the docs quietly start lying.
+
+    The failure it prevents: most DDL arriving here declares no keys at all, and giving a readings
+    table a single-column key instead is a claim its data cannot meet. A measured run declared
+    `series_id` alone and got `sensor_readings.series_id has 11,815 duplicate keys` back from the
+    quality check, then spent rounds correcting data that was doing exactly what a time series does.
+    """
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE flight_sensors (sensor_id VARCHAR PRIMARY KEY, series_id VARCHAR UNIQUE, unit VARCHAR);"
+        "CREATE TABLE sensor_readings ("
+        "  series_id VARCHAR REFERENCES flight_sensors(series_id),"
+        "  ts TIMESTAMP, value_double DOUBLE, PRIMARY KEY (series_id, ts));",
+        rows=5000,
+    )
+
+    assert eng.decl_pk["sensor_readings"] == ["series_id", "ts"], "both columns must survive parsing"
+
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    con = duckdb.connect(str(out), read_only=True)
+    dup_pairs = con.execute(
+        "SELECT count(*) FROM (SELECT series_id, ts FROM sensor_readings GROUP BY 1, 2 HAVING count(*) > 1)"
+    ).fetchone()[0]
+    repeated_series = con.execute(
+        "SELECT count(*) FROM (SELECT series_id FROM sensor_readings GROUP BY 1 HAVING count(*) > 1)"
+    ).fetchone()[0]
+
+    assert dup_pairs == 0, "the declared grain must hold"
+    assert repeated_series > 0, "a series with one reading each is not a time series - that is the whole point"

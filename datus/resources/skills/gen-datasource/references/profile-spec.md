@@ -13,7 +13,7 @@ data. The profile is what makes it look real.
 | Capability | Notes |
 |---|---|
 | Table roles | date_dim / dim / fact / detail / downstream / event / metric_daily / snapshot, inferred structurally, never from name prefixes. `date_dim` and `metric_daily` share a shape - a date grain, no foreign key, a few measures - and are told apart by whether every column is a calendar attribute (`year_num`, `quarter_cd`) or the table carries something the date does not determine (`channel`, `gmv`). Force either with `roles` |
-| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect |
+| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect. A composite `PRIMARY KEY (parent_id, ts)` is read and honoured - declare it whenever the grain is two columns, or the quality check fails on duplicates that are not a data problem (§5.6) |
 | Enum domains | **Extracted from DDL inline comments** (`order_status VARCHAR, -- pending / paid / shipped`). `report()` lists which columns were extracted and which end in `...` (incomplete) |
 | Column semantics | id / date / ts / amount / count / ratio / enum / flag / name / seq / measure, from name + type |
 | Row allocation | Fact layer 65-75%, dimensions derived from business density, two-pass total calibration (within 6%) |
@@ -525,7 +525,7 @@ Do not wait until everything is configured to check.
 
 ---
 
-## 5. Five easy mistakes
+## 5. Six easy mistakes
 
 **1. Without `tier_cols` the wrong column gets picked.** The engine finds the tier column by matching
 `tier|level|grade|segment`, so `city_tier` wins first and then gets overwritten with
@@ -551,6 +551,40 @@ cut-off, or move the cut-off past the window.
 **5. `pre_sql` is a last resort.** It runs before the automatic summary layer and can restate metrics
 and backfill across tables. But anything `conditional` / `formulas` can express should not be SQL -
 SQL bypasses the engine's consistency guarantees and is not reusable.
+
+**6. A table whose grain is two columns needs a COMPOSITE primary key, not a single-column one.**
+
+Most DDL that arrives here declares no constraints at all - a measured run took in nine tables with
+zero `PRIMARY KEY`, zero `FOREIGN KEY` and zero `UNIQUE`, and adding them back is the first thing to
+do, because "declared wins over inferred" only helps once something is declared. The trap is doing it
+one column at a time. A reading / measurement / line-item table does not have a single-column key:
+
+```sql
+CREATE TABLE sensor_readings (series_id VARCHAR, ts TIMESTAMP, value_double DOUBLE);
+```
+
+Its grain is `(series_id, ts)` - one series has many readings, by definition. Writing
+`series_id VARCHAR PRIMARY KEY` declares the opposite, and the run that did it got
+`primary key non-null and unique: sensor_readings.series_id has 11,815 duplicate keys` from the
+quality check, then spent rounds trying to fix data that was doing exactly what the schema now said
+it must not. Nothing was wrong with the data; the key was.
+
+**Declare the real grain and the engine honours it** - a composite `PRIMARY KEY` parses into
+`decl_pk` as a list and generation keeps the combination unique:
+
+```sql
+CREATE TABLE sensor_readings (
+    series_id     VARCHAR REFERENCES flight_sensors(series_id),
+    ts            TIMESTAMP,
+    value_double  DOUBLE,
+    PRIMARY KEY (series_id, ts)
+);
+-- measured: 0 duplicate (series_id, ts) pairs; series_id alone repeats, which is the point
+```
+
+A composite key is deliberately not used as a foreign-key target (nothing can reference half of
+one), so the parent still needs its own single-column key - here `flight_sensors.series_id`, which
+is what `sensor_readings.series_id` points at.
 
 ---
 
