@@ -200,6 +200,10 @@ differentiations in e-commerce) is **supported directly**: write `upstream_table
 engine follows this table's foreign key to that table to read the value. It requires a **foreign-key
 path** (declared or inferred); without one the pre-check errors out.
 
+⚠️ **Cross-table grouping resolves on fact and detail tables only.** A downstream, event or metric
+table drops its parent entity before the column is filled, so `upstream_table.column` there falls
+back to `__default__` without saying so. Same-table `__by__` works on every role.
+
 Measured: `item.unit_price` grouped by `prod.category` puts 3C in [500,900] and apparel in [30,90],
 cleanly separated.
 
@@ -526,7 +530,7 @@ Do not wait until everything is configured to check.
 
 ---
 
-## 5. Six easy mistakes
+## 5. Seven easy mistakes
 
 **1. Without `tier_cols` the wrong column gets picked.** The engine finds the tier column by matching
 `tier|level|grade|segment`, so `city_tier` wins first and then gets overwritten with
@@ -566,7 +570,16 @@ legal - the constraint is part of what the dataset ships (it disappears from the
 and the agent reads relationships off the schema), and nothing replaces it: a column with no
 REFERENCES has nothing enforcing its domain at all.
 
-**6. `pre_sql` is a last resort.** It runs before the automatic summary layer and can restate metrics
+**6. Do not group `conditional` by a tier column - the grouping is circular.** A column matching
+`tier|level|grade|segment` is relabelled from actual contribution AFTER every table is generated
+(invariant 5: compute the facts first, label second). So `"__by__": "carriers.tier"` groups the
+facts by the value the column held *before* the backfill, and the database ships the value it
+holds after. Measured: 4,468 fact rows were banded as `gold`, and `carriers.tier` in the finished
+database contains only `B` / `S` / `C` - no row matches the profile that produced it. Group by a
+stable attribute instead (a plan, a class, a region), or band the tier column itself with
+`columns`.
+
+**7. `pre_sql` is a last resort.** It runs before the automatic summary layer and can restate metrics
 and backfill across tables. But anything `conditional` / `formulas` can express should not be SQL -
 SQL bypasses the engine's consistency guarantees and is not reusable.
 

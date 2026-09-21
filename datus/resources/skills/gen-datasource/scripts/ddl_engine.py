@@ -534,7 +534,12 @@ class DDLEngine:
         # it stopped the date generator running and left the whole column NULL. Only a column with
         # no better classification is promoted, which still covers the `iata_code VARCHAR UNIQUE`
         # case this was added for.
-        _TYPED_SEM = ("date", "ts", "amount", "count", "ratio", "measure", "flag")
+        #
+        # `name` is excluded for a different reason: promoting it DID satisfy the constraint, by
+        # replacing 1,200 brand names with `brand_name_1 ... brand_name_1200`. A demo database is
+        # read by an agent and shown to people; a unique column of slugs is not better than a
+        # readable one that collides. `_unique_name` keeps the names and makes them unique.
+        _TYPED_SEM = ("date", "ts", "amount", "count", "ratio", "measure", "flag", "name", "seq")
         _unique_cols = [
             (t, cols[0])
             for t, keys in (getattr(self, "decl_uniq", None) or {}).items()
@@ -1920,6 +1925,26 @@ class DDLEngine:
             return f"{family}{sep}{given}"
         return f"{given}{sep}{family}"
 
+    def _unique_name(self, t, col, candidate):
+        """Make ``candidate`` unique within ``t.col``, keeping it readable.
+
+        Only for a column the DDL declared UNIQUE. The vocabulary is finite and combinations
+        repeat, so a 1,200-row dimension drew 1,101 distinct brand names and the constraint was
+        dropped for the whole table at build time. Suffixing the few that collide keeps 1,200
+        readable names; classifying the column as an identifier instead produced 1,200 unique
+        `brand_name_N` slugs, which satisfies the constraint by discarding what the column is for.
+        """
+        seen = self.__dict__.setdefault("_name_seen", {}).setdefault((t, col), set())
+        name, n = candidate, 1
+        while name in seen:
+            n += 1
+            name = f"{candidate} {n}"
+        seen.add(name)
+        return name
+
+    def _is_declared_unique(self, t, col):
+        return any(cols == [col] for cols in (getattr(self, "decl_uniq", None) or {}).get(t, ()))
+
     def _name_for(self, t, i, rng, ent=None):
         p = self._col_profile(t, "__name__") or self.profile.get("naming", {}).get(t, {})
         # Three layers: the built-in vocabulary, a dataset-wide profile["vocab"] (one override for
@@ -2361,6 +2386,8 @@ class DDLEngine:
                     )
                 elif sem == "name":
                     ent[name] = self._name_for(t, i, rng, ent)
+                    if self._is_declared_unique(t, name):
+                        ent[name] = self._unique_name(t, name, ent[name])
                 elif sem == "enum":
                     # conditional applies to dimensions too (category -> status mix, region -> membership mix)
                     cw = self._cond_pick(self._cond_spec(t, name) or {}, ent)
@@ -2488,7 +2515,10 @@ class DDLEngine:
         name that was populated.
         """
         declared = {col for (tt, col) in (getattr(self, "decl_fk", None) or {}) if tt == t}
-        for fk_col, parent_row in ent.items():
+        # ``list(...)`` on BOTH loops: the body can drop an entry, and CPython validates the dict's
+        # size on every ``__next__`` including the one that would raise StopIteration - so mutating
+        # it here is not a race that sometimes survives, it is a guaranteed RuntimeError.
+        for fk_col, parent_row in list(ent.items()):
             if fk_col not in declared:
                 continue
             parent = self.pk_owner.get(fk_col)
@@ -2501,14 +2531,18 @@ class DDLEngine:
                 inherited = parent_row.get(other)
                 if inherited is None:
                     continue
-                row[other] = inherited
+                # ⚠️ RESOLVE FIRST, WRITE SECOND. The parent's copy of this column is not always a
+                # value THIS column may hold: a parent and child can reference different columns of
+                # the same table, so `p.x` holds `a.code` while `f.x` must hold `a.alt`. Writing
+                # the inherited value and then finding no entity for it leaves `row[other]` naming
+                # a row that does not exist - the exact thing these tests assert against - and the
+                # independently sampled value it replaced was at least self-consistent. When the
+                # inheritance cannot be resolved, the right move is to not inherit.
                 moved = self._pool_entity(self.pk_owner.get(other), self.ref_col_of(t, other), inherited)
-                if moved is not None:
-                    ent[other] = moved
-                else:
-                    # Nothing in the pool carries it, so every attribute read off the old entity
-                    # would describe a row this one no longer points at. Absent beats wrong.
-                    ent.pop(other, None)
+                if moved is None:
+                    continue
+                row[other] = inherited
+                ent[other] = moved
 
     def ref_col_of(self, t, fk_col):
         """The parent column this foreign key actually points at.
@@ -3314,6 +3348,7 @@ class DDLEngine:
             self.rng = random.Random(self.seed)
             self.pools, self.refs, self._fact_rows, self._pending_dim_rows = {}, {}, {}, {}
             self.__dict__.pop("_pool_key_idx", None)
+            self.__dict__.pop("_name_seen", None)
             return self.generate(out, verbose, tolerance, _attempt + 1, t_start)
         res = {
             "tables": sizes,

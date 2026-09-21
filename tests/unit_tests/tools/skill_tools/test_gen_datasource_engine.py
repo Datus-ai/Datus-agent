@@ -2517,3 +2517,65 @@ def test_conditional_bands_a_measure_by_a_cross_table_column(engine_module, tmp_
     )
     assert banded.get("premium", 0) >= 200, banded
     assert all(v < 200 for k, v in banded.items() if k != "premium"), banded
+
+
+@pytest.mark.acceptance
+def test_an_unresolvable_inheritance_is_skipped_not_half_applied(engine_module, tmp_path):
+    """The branch the first version of this fix never executed, and it held a guaranteed crash.
+
+    A parent and child can reference DIFFERENT columns of the same table - `p.x` holds `a.code`
+    while `f.x` must hold `a.alt` - so the parent's copy of the column is a value this column may
+    not hold, and no pooled entity carries it. That path mutated `ent` while iterating it, which
+    CPython rejects on every `__next__` including the final one, so reaching it at all was a
+    RuntimeError rather than a rare race.
+
+    Skipping the inheritance is also the correct outcome, not just the safe one: writing the value
+    and dropping the entity would leave `row[other]` naming a row that does not exist, while the
+    independently sampled value it would have replaced is at least self-consistent.
+    """
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE a (code VARCHAR PRIMARY KEY, alt VARCHAR UNIQUE);"
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, x VARCHAR REFERENCES a(code));"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, pid VARCHAR REFERENCES p(pid),"
+        "  x VARCHAR REFERENCES a(alt), dt TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    total = con.execute("SELECT count(*) FROM f").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM f LEFT JOIN a ON f.x = a.alt WHERE a.alt IS NULL").fetchone()[0]
+
+    assert total > 0, "generation must complete at all"
+    assert orphans == 0, f"{orphans}/{total} rows point at an a.alt that does not exist"
+
+
+@pytest.mark.acceptance
+def test_a_unique_name_column_stays_readable(engine_module, tmp_path):
+    """Two wrong answers were available here and the fix has to beat both.
+
+    Leaving it alone: the vocabulary is finite and combinations repeat, so the column collided with
+    itself and the constraint was dropped for the whole table at build time. Classifying it as an
+    identifier like any other UNIQUE column: 1,200 unique values named `brand_name_1 ...
+    brand_name_1200`, which satisfies the constraint by throwing away what the column is for - a
+    demo database is read by an agent and shown to people.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE brands (brand_id VARCHAR PRIMARY KEY, brand_name VARCHAR UNIQUE, country VARCHAR);"
+        "CREATE TABLE sales (sid VARCHAR PRIMARY KEY,"
+        "  brand_id VARCHAR REFERENCES brands(brand_id), amt DOUBLE, dt TIMESTAMP);",
+        tmp_path,
+        rows=60000,
+    )
+
+    assert [c["sem"] for c in eng.schema["brands"] if c["name"] == "brand_name"] == ["name"]
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT brand_name) FROM brands").fetchone()
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='brands' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+    names = [r[0] for r in con.execute("SELECT brand_name FROM brands").fetchall()]
+
+    assert distinct == rows, "the constraint has to actually hold"
+    assert kept, "and survive into the built database"
+    assert not any(n.startswith("brand_name") for n in names), f"slugs, not names: {names[:3]}"
