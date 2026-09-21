@@ -2065,24 +2065,59 @@ class DDLEngine:
         table owns - so on a fact / detail / downstream / event parent the column came out empty
         and every child pointing at it was an orphan against NULL.
 
-        ⚠️ A column that is this table's OWN foreign key is excluded, however much it is also a
-        target. A 1:1 extension keyed by its parent's natural key is exactly that shape
+        ⚠️ A column this table DECLARES as its own foreign key is excluded, however much it is
+        also a target. A 1:1 extension keyed by its parent's natural key is exactly that shape
         (`accounts.user_id UNIQUE REFERENCES users(user_id)`, with `tx` pointing at
         `accounts.user_id`), and filling it here overwrote a value sampled from `users` with a
         sequence of this table's own: 1,600/1,600 orphans upward and 17,090/17,090 downward, a new
         break of exactly the kind this method exists to close.
+
+        Declared, not inferred: ``self.fks`` also holds columns inference merely guessed are
+        foreign keys, on nothing more than a name another table happens to key. Letting a guess
+        veto a REFERENCES the DDL actually states inverts "declared wins over inferred" - measured
+        on `stores.region_code UNIQUE` referenced by `visits`, where the guess pointed at an
+        unrelated `regions` table and cost the UNIQUE constraint on the parent.
+
+        ⚠️ Only a column ``_key_val`` can actually produce: an integer or a string. A key value is
+        a prefixed business code otherwise, and writing one into a DATE, TIMESTAMP or DOUBLE made
+        the whole column NULL and the child 100% orphaned - shapes that were correct before, since
+        those columns are filled by their own semantic branch and only needed carrying. The same
+        reasoning as the typed-semantic gate on the UNIQUE promotion: a typed column keeps its
+        type, and uniqueness on it is a hole to close elsewhere, not by retyping the column.
         """
         cache = self.__dict__.setdefault("_alt_key_cache", {})
         if t not in cache:
+            pk = self.pk_of(t)
+            mine = {c for (tt, c) in (getattr(self, "decl_fk", None) or {}) if tt == t}
+            typed = {c["name"]: c["type"].upper() for c in self.schema.get(t, ())}
+            cache[t] = tuple(
+                sorted(
+                    rc
+                    for rc in self._alt_ref_cols(t)
+                    if rc != pk and rc not in mine and typed.get(rc, "").startswith(INT_T + STR_T)
+                )
+            )
+        return cache[t]
+
+    def _alt_ref_cols(self, t):
+        """Every column of ``t`` a declared foreign key points at, other than its primary key.
+
+        Wider than ``_alt_key_cols`` on purpose. What a child must read and what this engine may
+        overwrite are two questions, and answering them with one set broke a shape that worked:
+        a DATE / TIMESTAMP / DOUBLE target is filled correctly by its own semantic branch, so it
+        only ever needed carrying to the child - claiming it as well wrote a business code into a
+        typed column and the whole column landed NULL.
+        """
+        cache = self.__dict__.setdefault("_alt_ref_cache", {})
+        if t not in cache:
             own = {c["name"] for c in self.schema.get(t, ())}
             pk = self.pk_of(t)
-            mine = set(self.fks.get(t, ())) | {c for (tt, c) in (getattr(self, "decl_fk", None) or {}) if tt == t}
             cache[t] = tuple(
                 sorted(
                     {
                         rc
                         for (rt, rc) in (getattr(self, "decl_fk", None) or {}).values()
-                        if rt == t and rc and rc != pk and rc in own and rc not in mine
+                        if rt == t and rc and rc != pk and rc in own
                     }
                 )
             )
@@ -2101,7 +2136,7 @@ class DDLEngine:
 
     def _ref_alt(self, t, row):
         """The alternate-key values a child may need, carried on the parent's ref record."""
-        return {c: row[c] for c in self._alt_key_cols(t) if c in row}
+        return {c: row[c] for c in self._alt_ref_cols(t) if c in row}
 
     def _parent_key_val(self, t, fk_col, par, pr):
         """The parent value this child's foreign key must carry.

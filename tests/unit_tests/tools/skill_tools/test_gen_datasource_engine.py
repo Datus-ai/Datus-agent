@@ -2735,6 +2735,11 @@ def test_a_column_that_is_both_a_key_target_and_a_foreign_key_is_left_alone(engi
     cost 1,600/1,600 orphans upward plus 17,090/17,090 downward, a break of exactly the kind the
     method exists to close. The two controls above only cover foreign keys pointing at a primary
     key, so neither of them reaches this.
+
+    Only the direction is asserted. `accounts.user_id UNIQUE` does NOT hold on this shape - foreign
+    keys are sampled with replacement, so the column repeats, the constraint is dropped at build
+    time and `tx` orphans against what survives. That is a separate hole, unchanged by this fix and
+    the same on every version measured; do not read a passing test here as the shape being sound.
     """
     eng, con = _build(
         engine_module,
@@ -2775,3 +2780,72 @@ def test_alternate_keys_restart_when_calibration_restarts(engine_module, tmp_pat
     assert eng._alt_seq[("flight_sensors", "series_id")] == rows, "one value handed out per shipped row"
     assert first == "SER0000001", f"numbering has to start over, got {first}"
     assert last == f"SER{rows:07d}", f"and run to the row count, got {last}"
+
+
+@pytest.mark.acceptance
+def test_an_inferred_foreign_key_does_not_veto_a_declared_key_target(engine_module, tmp_path):
+    """The exclusion above has to read what the DDL declares, not what inference guessed.
+
+    `self.fks` also holds columns inference called foreign keys on nothing more than a name some
+    other table happens to key - here `stores.region_code`, because an unrelated `regions` table
+    keys `region_code`. The DDL says that column is a UNIQUE key `visits` references; letting the
+    guess veto that inverts "declared wins over inferred", and measured it cost the parent its
+    UNIQUE constraint: the column was filled from `regions` instead, repeated, and was dropped.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE regions (region_code VARCHAR PRIMARY KEY, rname VARCHAR);"
+        "CREATE TABLE stores (store_id VARCHAR PRIMARY KEY, region_code VARCHAR UNIQUE, sname VARCHAR);"
+        "CREATE TABLE visits (visit_id VARCHAR PRIMARY KEY,"
+        "  store_id VARCHAR REFERENCES stores(store_id),"
+        "  region_code VARCHAR REFERENCES stores(region_code), ts TIMESTAMP, amt DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    assert "region_code" in eng.fks.get("stores", ()), "the premise: inference does call this a foreign key"
+    assert eng._alt_key_cols("stores") == ("region_code",), "and the declaration has to outrank it"
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT region_code) FROM stores").fetchone()
+    orphans = con.execute(
+        "SELECT count(*) FROM visits v LEFT JOIN stores s USING (region_code) WHERE s.region_code IS NULL"
+    ).fetchone()[0]
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='stores' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+
+    assert distinct == rows, "the declared UNIQUE has to hold"
+    assert kept, "and survive into the built database"
+    assert orphans == 0
+
+
+@pytest.mark.parametrize("col_type", ["DATE", "TIMESTAMP", "DOUBLE", "DECIMAL(18, 2)"])
+@pytest.mark.acceptance
+def test_a_typed_key_target_is_carried_not_rewritten(engine_module, tmp_path, col_type):
+    """What a child must read and what this engine may overwrite are two questions.
+
+    Answering both with one set wrote a prefixed business code into a DATE / TIMESTAMP / DOUBLE
+    column, so the whole column landed NULL and the child was 100% orphaned - shapes that were
+    correct before, because those columns are filled by their own semantic branch and only ever
+    needed carrying to the child. Same reasoning as the typed-semantic gate on the UNIQUE
+    promotion: a typed column keeps its type, and uniqueness on it is closed elsewhere.
+    """
+    eng, con = _build(
+        engine_module,
+        f"CREATE TABLE p (pid VARCHAR PRIMARY KEY, k {col_type} UNIQUE, note VARCHAR);"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, pid VARCHAR REFERENCES p(pid), ts TIMESTAMP,"
+        "  amt DECIMAL(18, 2));"
+        f"CREATE TABLE c (k {col_type} REFERENCES p(k), ts TIMESTAMP, v DOUBLE);",
+        tmp_path,
+        rows=12000,
+    )
+
+    assert eng._alt_key_cols("p") == (), "a typed column is not ours to write"
+    assert eng._alt_ref_cols("p") == ("k",), "but the child still has to be able to read it"
+
+    filled = con.execute("SELECT count(*) FROM p WHERE k IS NOT NULL").fetchone()[0]
+    total = con.execute("SELECT count(*) FROM c").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM c LEFT JOIN p USING (k) WHERE p.k IS NULL").fetchone()[0]
+
+    assert filled == con.execute("SELECT count(*) FROM p").fetchone()[0], "the parent column has to hold values"
+    assert orphans == 0, f"{orphans}/{total} children point at a key that does not exist"
