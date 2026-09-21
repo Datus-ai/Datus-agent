@@ -2212,7 +2212,10 @@ class DBFuncTool:
             return None
         names = sorted({str((a or {}).get("name") or "") for a in (config.get("assertions") or []) if a})
         names = [n for n in names if n]
-        side = Path(config_file).with_suffix(".seen.json")
+        # Dot-prefixed, like the generator's own `.{stem}.meta.json`: this file lives in the
+        # workspace the project publishes, and a visible `checks.seen.json` would ship with it.
+        cfg = Path(config_file)
+        side = cfg.with_name(f".{cfg.stem}.seen.json")
         previous = []
         try:
             if side.exists():

@@ -786,6 +786,46 @@ class TestAssertionsThatDisappear:
         assert "assertion_drift" not in first
 
     @pytest.mark.acceptance
+    def test_the_note_reaches_a_failing_verdict_too(self, tool, tmp_path):
+        """The note is appended on both branches of the next-step line, and a run that is still
+        failing is exactly when a quietly dropped question matters most."""
+        (tmp_path / "checks.json").write_text(
+            json.dumps(
+                {
+                    "assertions": [
+                        {"name": "kept", "expect": "zero", "sql": self.ZERO},
+                        {"name": "doomed", "expect": "zero", "sql": self.ZERO},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert tool.check_datasource_quality(config_path="checks.json").success
+        # second run: drop one, and make the survivor fail
+        (tmp_path / "checks.json").write_text(
+            json.dumps({"assertions": [{"name": "kept", "expect": "zero", "sql": "SELECT count(*) FROM dim_thing"}]}),
+            encoding="utf-8",
+        )
+        result = tool.check_datasource_quality(config_path="checks.json")
+
+        assert result.result["summary"]["ok"] is False
+        assert result.result["assertion_drift"]["removed"] == ["doomed"]
+        assert "doomed" in result.result["next"], result.result["next"]
+        assert "profile" in result.result["next"], "the failing branch keeps its own instruction"
+
+    @pytest.mark.acceptance
+    def test_the_sidecar_does_not_ship_with_the_project(self, tool, tmp_path):
+        """It lands in the workspace the project publishes, so it is dot-prefixed like the
+        generator's own `.{stem}.meta.json`. A visible `checks.seen.json` would be delivered to
+        the user as if it were part of the dataset."""
+        self._run(tool, tmp_path, ["only"])
+
+        visible = sorted(f.name for f in tmp_path.iterdir() if not f.name.startswith("."))
+
+        assert "checks.seen.json" not in visible, visible
+        assert (tmp_path / ".checks.seen.json").exists()
+
+    @pytest.mark.acceptance
     def test_adding_assertions_is_not_drift(self, tool, tmp_path):
         """Growing the suite is the normal direction and must stay quiet, or the note becomes
         noise that teaches the reader to skip it."""
