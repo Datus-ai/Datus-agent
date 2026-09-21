@@ -2727,7 +2727,7 @@ class DDLEngine:
             for c in flag_cols:
                 row[c] = 1 if rng.random() < self._col_profile(t, c).get("p", 0.88) else 0
             for c in other_cols:
-                row.setdefault(c["name"], self._fill_generic(t, c, rng, {"dt": d, "ts": t0}, row))
+                row.setdefault(c["name"], self._fill_generic(t, c, rng, {"dt": d, "ts": t0}, row, ent))
             for c in names:
                 if c not in row and self._is_code_col(t, c):
                     row[c] = self._code_val(t, c, i, d)
@@ -2916,7 +2916,7 @@ class DDLEngine:
                         row[nm] = e[nm]  # inherit product attributes, but never time columns:
                         # a detail row's time comes from the parent fact only (else created_at becomes the listing date)
                     else:
-                        row[nm] = self._fill_generic(t, c, rng, pr, row)
+                        row[nm] = self._fill_generic(t, c, rng, pr, row, ents)
                 tot["gross"] += (
                     sales + disc
                 )  # pre-discount goods amount (list price x qty), feeds the parent "original" column

@@ -2482,3 +2482,38 @@ def test_a_unique_column_elsewhere_does_not_take_a_declared_foreign_key_target(e
     )
 
     assert eng.pk_owner["email"] == "users"
+
+
+@pytest.mark.acceptance
+def test_conditional_bands_a_measure_by_a_cross_table_column(engine_module, tmp_path):
+    """The amount path has always resolved `"__by__": "upstream.column"`, and profile-spec does not
+    say measures are exempt. Threading the row through `_measure_val` without its resolved parents
+    left the cross-table form silently falling back to `__default__` - a half-fix, and the kind of
+    thing that sends the next reader into the engine to find out why."""
+    ddl = (
+        "CREATE TABLE carriers (\n"
+        "  carrier_id VARCHAR PRIMARY KEY,\n"
+        "  service_class VARCHAR, -- premium / economy\n"
+        "  name VARCHAR\n"
+        ");\n"
+        "CREATE TABLE f (\n"
+        "  fid VARCHAR PRIMARY KEY,\n"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id),\n"
+        "  delay_minutes INTEGER,\n"
+        "  dep TIMESTAMP\n"
+        ");"
+    )
+    profile = {
+        "conditional": {
+            "f.delay_minutes": {"__by__": "carriers.service_class", "premium": [200, 400], "__default__": [1, 5]}
+        }
+    }
+    _eng, con = _build(engine_module, ddl, tmp_path, rows=8000, profile=profile)
+
+    banded = dict(
+        con.execute(
+            "SELECT c.service_class, min(f.delay_minutes) FROM f JOIN carriers c USING (carrier_id) GROUP BY 1"
+        ).fetchall()
+    )
+    assert banded.get("premium", 0) >= 200, banded
+    assert all(v < 200 for k, v in banded.items() if k != "premium"), banded
