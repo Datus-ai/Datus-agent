@@ -2849,3 +2849,155 @@ def test_a_typed_key_target_is_carried_not_rewritten(engine_module, tmp_path, co
 
     assert filled == con.execute("SELECT count(*) FROM p").fetchone()[0], "the parent column has to hold values"
     assert orphans == 0, f"{orphans}/{total} children point at a key that does not exist"
+
+
+# --------------------------------------------------------------- the two ends of a directed edge
+
+
+@pytest.mark.acceptance
+def test_a_directed_edge_does_not_start_and_end_in_the_same_place(engine_module, tmp_path):
+    """Each end of the edge is sampled independently, so they collide.
+
+    Measured on a production DDL: 1 route in 13 had `origin == destination` and 403 rows of the
+    fact table were booked on it. The run that found it spent three attempts repairing it with
+    ad-hoc UPDATEs - all three refused, twice because the key was still referenced - and shipped
+    the self-loop anyway. Nothing here is domain-specific: the pair is recognised from the
+    directed-edge vocabulary the engine already uses for its other column conventions.
+    """
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE depots (depot_code VARCHAR PRIMARY KEY, depot_name VARCHAR, region VARCHAR);"
+        "CREATE TABLE lanes (lane_id VARCHAR PRIMARY KEY,"
+        "  origin_depot_code VARCHAR REFERENCES depots(depot_code),"
+        "  destination_depot_code VARCHAR REFERENCES depots(depot_code), distance_km INTEGER);"
+        "CREATE TABLE shipments (shipment_id VARCHAR PRIMARY KEY,"
+        "  lane_id VARCHAR REFERENCES lanes(lane_id), shipped_at TIMESTAMP, freight_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    total, loops = con.execute(
+        "SELECT count(*), count(*) FILTER (WHERE origin_depot_code = destination_depot_code) FROM lanes"
+    ).fetchone()
+
+    assert total > 1, "the shape needs more than one lane to be meaningful"
+    assert loops == 0, f"{loops}/{total} lanes start and end at the same depot"
+
+
+@pytest.mark.acceptance
+def test_two_keys_to_one_parent_that_are_not_an_edge_may_still_agree(engine_module, tmp_path):
+    """The control, and the reason this is a vocabulary rather than a blanket rule.
+
+    `billing_address_id` and `shipping_address_id` both point at `addresses`, and being equal is
+    the common case there, not a defect. A rule that split every pair of keys to one parent would
+    make every order ship to an address it was not billed at.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE addresses (address_id VARCHAR PRIMARY KEY, city VARCHAR, postcode VARCHAR);"
+        "CREATE TABLE orders (order_id VARCHAR PRIMARY KEY,"
+        "  billing_address_id VARCHAR REFERENCES addresses(address_id),"
+        "  shipping_address_id VARCHAR REFERENCES addresses(address_id),"
+        "  ordered_at TIMESTAMP, order_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    same = con.execute("SELECT count(*) FROM orders WHERE billing_address_id = shipping_address_id").fetchone()[0]
+
+    assert eng._opposed_fk_pairs("orders") == (), "these are not the two ends of an edge"
+    assert same > 0, "splitting them would be wrong; the pair has to be left alone"
+
+
+# ------------------------------------------------------- a row budget the pins make unreachable
+
+
+PINNABLE_DDL = """
+CREATE TABLE stores (store_id VARCHAR PRIMARY KEY, store_name VARCHAR, city VARCHAR);
+CREATE TABLE orders (
+    order_id VARCHAR PRIMARY KEY,
+    store_id VARCHAR REFERENCES stores(store_id),
+    ordered_at TIMESTAMP,
+    order_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_lines (
+    line_id VARCHAR PRIMARY KEY,
+    order_id VARCHAR REFERENCES orders(order_id),
+    quantity INTEGER,
+    line_amount DECIMAL(18, 2)
+);
+CREATE TABLE order_events (
+    event_id VARCHAR PRIMARY KEY,
+    order_id VARCHAR REFERENCES orders(order_id),
+    event_type VARCHAR, -- created / picked / shipped
+    occurred_at TIMESTAMP
+);
+"""
+
+
+def _reachability_warning(eng):
+    _err, warn = eng.precheck(strict=False)
+    return [w for w in warn if "calibration can only scale" in w]
+
+
+@pytest.mark.acceptance
+def test_pins_that_make_the_budget_unreachable_are_named_before_generating(engine_module):
+    """The pins can each look modest and still put the target out of reach.
+
+    A pinned DETAIL fixes its parent (pin / lines-per-parent) and therefore every sibling detail
+    of that parent, so the plan grows well past what was pinned. Measured on a production run:
+    two pins covering 70% of the budget - too little for either existing pin check - implied a
+    plan 37% over it, and calibration, which may only scale the unpinned tables, still missed
+    after its three passes. The run spent two whole build cycles chasing the total.
+    """
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile={"table_rows": {"order_lines": 34000}})
+    err, _warn = eng.precheck(strict=False)
+
+    hit = _reachability_warning(eng)
+
+    # ONE pin, 85% of the budget, so neither existing pin check has anything to say: the total is
+    # under `rows * 1.06`, and `orders` / `order_events` are still free for calibration to scale.
+    assert err == [], f"the existing checks must stay quiet, or this proves nothing: {err}"
+    assert hit, "an unreachable budget has to be named before a row is generated"
+    assert "three passes" in hit[0], hit[0]
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        pytest.param({}, id="nothing_pinned"),
+        pytest.param({"table_rows": {"orders": 4000}}, id="one_reachable_pin"),
+        pytest.param({"dim_rows": {"stores": 40}}, id="dimension_pinned"),
+    ],
+)
+@pytest.mark.acceptance
+def test_a_budget_calibration_can_still_reach_is_not_warned_about(engine_module, profile):
+    """The warning has to stay quiet wherever calibration does its job, or it is noise that
+    teaches the reader to skip the pre-check."""
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile=profile)
+
+    assert _reachability_warning(eng) == []
+
+
+@pytest.mark.acceptance
+def test_the_warning_predicts_where_generation_actually_lands(engine_module, tmp_path):
+    """The prediction replays calibration's own update rule, so it cannot promise one outcome
+    while generate() produces another. If these two ever disagree the warning is worse than
+    nothing, because it is the surface the caller is told to trust."""
+    profile = {"table_rows": {"order_lines": 34000}}
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile=profile)
+    predicted = eng._calibration_lands_at(
+        sum(eng.nrows.values()),
+        {t: eng.nrows[t] for t in eng.nrows if eng.roles[t] != "dim" and t not in eng.pinned_rows},
+    )
+
+    _eng2, con = _build(engine_module, PINNABLE_DDL, tmp_path, rows=40000, profile=profile)
+    actual = sum(
+        r[0] for r in con.execute("SELECT count(*) FROM stores UNION ALL SELECT count(*) FROM orders").fetchall()
+    ) + sum(
+        r[0]
+        for r in con.execute("SELECT count(*) FROM order_lines UNION ALL SELECT count(*) FROM order_events").fetchall()
+    )
+
+    assert predicted > 40000 * 1.06, "the point of the fixture is that it overshoots"
+    assert abs(actual / predicted - 1) < 0.25, f"predicted ~{predicted:,}, generation produced {actual:,}"

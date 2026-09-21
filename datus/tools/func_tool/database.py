@@ -2291,6 +2291,31 @@ class DBFuncTool:
             # anything at all, so the caller is told which it got rather than having to infer it
             # from a check detail reading "no metadata, skipped".
             result["generator_meta"] = meta_source or "not found - roles and keys were re-inferred"
+            # What to do with the verdict, in the tool output rather than only in the skill.
+            #
+            # ⚠️ "Stop when the check passes" has been stated in skill prose through six measured
+            # runs and ignored in every one. The most recent spent 406s after `ok: true` - a whole
+            # further gen.py / import / check cycle - polishing generated names, and a run before
+            # it kept going for 7 turns past a pass. Whether saying it HERE works is an open
+            # question; `plan_datasource` carries its own `next` for the same reason, which is that
+            # the model follows tool output more reliably than prose. It is not a mechanical stop:
+            # only the caller can end its own loop.
+            summary = result["summary"]
+            failed = summary.get("failed") or 0
+            result["next"] = (
+                (
+                    "Finished. Every check passes - write the delivery summary and stop. Do not "
+                    "re-run gen.py, re-import or re-check: the build that passed is the one to "
+                    "ship, and a rebuild replaces it with one nothing has verified."
+                )
+                if summary.get("ok")
+                else (
+                    f"{failed} FAIL(s) above. Each one is a defect in the generator profile, not a "
+                    f"threshold to relax: correct profile in data/gen.py, re-run it, then "
+                    f"import_database_file + check_datasource_quality again. Do not hand-write "
+                    f"queries to investigate - the check re-runs for free."
+                )
+            )
             return FuncToolResult(result=result)
 
         except DataFileError as e:

@@ -17,6 +17,7 @@ data. The profile is what makes it look real.
 | Enum domains | **Extracted from DDL inline comments** (`order_status VARCHAR, -- pending / paid / shipped`). `report()` lists which columns were extracted and which end in `...` (incomplete) |
 | Column semantics | id / date / ts / amount / count / ratio / enum / flag / name / seq / measure, from name + type |
 | Row allocation | Fact layer 65-75%, dimensions derived from business density, two-pass total calibration (within 6%) |
+| Directed edges | Two foreign keys to the SAME parent whose names read as the two ends of one edge (`origin`/`destination`, `from`/`to`, `source`/`target`, `sender`/`receiver`, `depart`/`arrive`) never land on the same row: a route from an airport to itself is not a route. A pair OUTSIDE that vocabulary is left alone, because two keys to one parent are often meant to agree (`orders(billing_address_id, shipping_address_id)`) |
 | Denormalised copies | A column this table declares that its PARENT also carries is copied down from the parent row, not sampled again - so `flights.origin_code` agrees with the route it points at |
 | The 17 invariants | Weighted calendar sampling, derived-from-base quantities, child events anchored to parents, monotonic sequences, complete terminal states, FKs sampled from upstream only, layer backfill, stock baseline, zero header/detail amount drift |
 | Type contract | Tables are created with the declared types (a BIGINT key stays BIGINT; DECIMAL(18,2) does not become DOUBLE) |
@@ -120,7 +121,7 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 | `formulas` | Arithmetic between columns | Accounting identities, cost/margin and other derived columns |
 | `enums` | Enum domains and weights | Only when the DDL comments are incomplete |
 | `event_seq` | Status sequence of an event stream | Whenever there is an event table |
-| `table_rows` / `dim_rows` | Pin a table's row count | The user asked for a specific row count |
+| `table_rows` / `dim_rows` | Pin a table's row count | The user asked for a specific row count. **Pinning a DETAIL table also fixes its parent** (pin / lines-per-parent) **and therefore every sibling detail of that parent**, so two modest pins can imply a plan far over `rows` while calibration may only scale what is left. The pre-check replays calibration's three passes and names an unreachable budget before generation, so read it |
 | `dim_kinds` | Dimension kind (drives cardinality) | Inference is wrong |
 | `columns` | Per-column value ranges | Amount/quantity magnitudes are unreasonable |
 | `naming` | Name templates, per table | A specific naming style is needed |

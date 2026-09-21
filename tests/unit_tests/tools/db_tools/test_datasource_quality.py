@@ -675,3 +675,61 @@ def test_a_table_the_generator_built_itself_is_not_called_keyless(con):
     assert pk["status"] == "PASS"
     assert "ods_order" not in pk["detail"], pk["detail"]
     assert "not verified" not in pk["detail"], pk["detail"]
+
+
+class TestVerdictCarriesItsNextStep:
+    """The verdict has to say what to do with it, in the tool output rather than only in prose.
+
+    "Stop when the check passes" has been stated in the skill through six measured runs and
+    ignored in every one; the most recent spent 406s after `ok: true` on a whole further
+    gen.py / import / check cycle. `plan_datasource` already carries a `next` for the same
+    reason - the model follows tool output more reliably than prose.
+    """
+
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        with connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE dim_thing (thing_id BIGINT, thing_name VARCHAR)")
+            con.execute("INSERT INTO dim_thing SELECT i, 'Thing ' || i FROM range(1, 30) t(i)")
+        return DBFuncTool(connector)
+
+    def _next(self, tool, assertions, tmp_path):
+        cfg = tmp_path / "checks.json"
+        cfg.write_text(json.dumps({"assertions": assertions}), encoding="utf-8")
+        result = tool.check_datasource_quality(config_path="checks.json")
+        assert result.success, result.error
+        return result.result["summary"], result.result["next"]
+
+    @pytest.mark.acceptance
+    def test_a_failing_run_is_pointed_at_the_profile_not_at_more_queries(self, tool, tmp_path):
+        summary, nxt = self._next(
+            tool,
+            [{"name": "deliberately false", "expect": "zero", "sql": "SELECT count(*) FROM dim_thing"}],
+            tmp_path,
+        )
+
+        assert summary["ok"] is False
+        assert "profile" in nxt and "gen.py" in nxt
+        assert "hand-write" in nxt, "the alternative it actually reaches for has to be named"
+
+    @pytest.mark.acceptance
+    def test_a_passing_run_says_to_stop(self, tool, tmp_path):
+        summary, nxt = self._next(
+            tool,
+            [{"name": "trivially true", "expect": "zero", "sql": "SELECT count(*) FROM dim_thing WHERE 1 = 0"}],
+            tmp_path,
+        )
+
+        if summary["ok"]:
+            assert "stop" in nxt.lower()
+            assert "re-import" in nxt or "rebuild" in nxt
+        else:
+            # The fixture is a bare two-column table, so a structural check may legitimately fail;
+            # what must hold either way is that the verdict and the instruction agree.
+            assert "profile" in nxt

@@ -938,6 +938,24 @@ class DDLEngine:
             )
         return out
 
+    def _calibration_lands_at(self, planned, free_rows):
+        """Where generate()'s calibration would land, by replaying its own update rule.
+
+        Three passes of ``k = rows / total`` applied to the scalable tables only, with the same
+        ``max(50, int(...))`` floor. Shared with the pre-check so a warning cannot promise one
+        outcome while generation produces another.
+        """
+        free = dict(free_rows)
+        fixed = planned - sum(free.values())
+        total = planned
+        for _ in range(3):
+            if not total or abs(total / self.rows - 1) <= 0.06:
+                break
+            k = self.rows / total
+            free = {t: max(50, int(n * k)) for t, n in free.items()}
+            total = fixed + sum(free.values())
+        return total
+
     def precheck(self, strict=True):
         """Validate the profile before generating: do the referenced tables/columns exist, do formulas cycle, are dimensions oversized.
 
@@ -1201,6 +1219,36 @@ class DDLEngine:
         for t, n in self.nrows.items():
             if self.roles.get(t) == ROLE_DIM and n > self.rows * 0.08:
                 warn.append(f"dimension {t} has {n:,} rows, over 8% of the total; the fact layer gets squeezed")
+        # ⚠️ The pins can each look modest and still make the target unreachable, and neither
+        # check above sees it. A pinned DETAIL fixes its parent (pin / lines-per-parent) and
+        # therefore every sibling detail of that parent, so the plan grows far past what was
+        # pinned. Measured: `flight_sensors: 21,000` + `sensor_readings: 35,000` against
+        # rows=80,000 pins 70% of the budget - too little to trip either check - while the plan
+        # those two imply is 109,727 (+37%). Calibration, which may only scale the three unpinned
+        # tables, reached +11% after its three passes, and the run spent two whole build cycles
+        # chasing the total before giving up.
+        #
+        # Replays calibration's own update rule rather than modelling it, so this cannot drift
+        # from what generate() will actually do.
+        planned = sum(self.nrows.get(t, 0) for t in self.schema)
+        free_rows = {
+            t: self.nrows[t]
+            for t in self.nrows
+            if self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC) and t not in pinned_names
+        }
+        if pinned_names and free_rows and self.rows:
+            reached = self._calibration_lands_at(planned, free_rows)
+            if abs(reached / self.rows - 1) > 0.06:
+                warn.append(
+                    f"the pins imply a plan of {planned:,} rows against rows={self.rows:,} "
+                    f"({100.0 * (planned / self.rows - 1):+.0f}%), and calibration can only scale "
+                    f"{', '.join(sorted(free_rows))} - replaying its three passes lands at "
+                    f"~{reached:,} ({100.0 * (reached / self.rows - 1):+.0f}%), outside the 6% "
+                    f"tolerance. A pinned detail table also fixes its parent and every sibling "
+                    f"detail of that parent, which is where the extra rows come from. Unpin the "
+                    f"detail tables and let rows= do the work, or raise rows= to match."
+                )
+
         dim_total = sum(n for t, n in self.nrows.items() if self.roles.get(t) == ROLE_DIM)
         if dim_total > self.rows * 0.15:
             warn.append(f"dimensions total {dim_total:,} rows, over 15% of the total")
@@ -2560,6 +2608,7 @@ class DDLEngine:
                 else:
                     ent[name] = f"{name}_{i + 1}"
             self._set_alt_keys(t, ent)
+            self._split_opposed_values(t, ent, rng)
             # Effective-date index, so facts/details referencing this entity can enforce "not before it" (invariant 3)
             ent["__eff__"] = self._day_index(ent[eff_c]) if (eff_c and ent.get(eff_c)) else 0
             ent["__eff_ts__"] = None
@@ -2671,6 +2720,69 @@ class DDLEngine:
                     continue
                 row[other] = inherited
                 ent[other] = moved
+
+    # The two ends of a directed edge. A pair of foreign keys to the SAME parent whose names read
+    # like these must not land on the same entity: a route from an airport to itself is not a
+    # route. Deliberately a short list of opposed words rather than "any two keys to one parent" -
+    # `orders(billing_address_id, shipping_address_id)` points twice at `addresses` and being equal
+    # there is the common case, not a defect.
+    EDGE_FROM = re.compile(r"(^|_)(origin|orig|from|source|src|depart|departure|start|sender)(_|$)")
+    EDGE_TO = re.compile(r"(^|_)(destination|dest|dst|to|target|tgt|arrive|arrival|end|receiver)(_|$)")
+
+    def _opposed_fk_pairs(self, t):
+        """Foreign-key column pairs on ``t`` that are the two ends of one directed edge.
+
+        ⚠️ Each end is sampled independently, so they collide: measured on the flights DDL, 1 route
+        in 13 had ``origin_airport_code == destination_airport_code`` and 403 flights were booked
+        on it. A production run found it, spent three attempts trying to repair it with ad-hoc
+        UPDATEs - all three refused, twice by the foreign key still being referenced - and the
+        self-loop shipped anyway.
+        """
+        cache = self.__dict__.setdefault("_opposed_cache", {})
+        if t not in cache:
+            own = [c["name"] for c in self.schema.get(t, ())]
+            pairs = []
+            for a in own:
+                if not self.EDGE_FROM.search(a):
+                    continue
+                par = self.pk_owner.get(a)
+                if not par or par == t:
+                    continue
+                for b in own:
+                    if b != a and self.EDGE_TO.search(b) and self.pk_owner.get(b) == par:
+                        pairs.append((a, b, par))
+            cache[t] = tuple(pairs)
+        return cache[t]
+
+    def _split_opposed_values(self, t, row, rng):
+        """Redraw the far end when both ends of a directed edge landed on the same value."""
+        for a, b, par in self._opposed_fk_pairs(t):
+            up = self.pools.get(par)
+            if not up or len(up) < 2 or a not in row or b not in row:
+                continue
+            col = self.ref_col_of(t, b)
+            for _ in range(8):  # bounded: a two-entity pool can need a few draws
+                if row[b] != row[a]:
+                    break
+                row[b] = rng.choice(up)[col]
+
+    def _split_opposed_entities(self, t, ent, rng):
+        """Same, where the row carries resolved parent entities rather than bare values.
+
+        The entity is redrawn, not just the value written into the row: ``ent`` feeds the
+        effective-date floor, `conditional` grouping and denormalised inheritance, and rewriting
+        one without the other is how a previous fix put a value in the row that belonged to no
+        parent at all.
+        """
+        for a, b, par in self._opposed_fk_pairs(t):
+            up = self.pools.get(par)
+            if not up or len(up) < 2 or a not in ent or b not in ent:
+                continue
+            col = self.ref_col_of(t, b)
+            for _ in range(8):
+                if ent[b].get(col) != ent[a].get(col):
+                    break
+                ent[b] = rng.choice(up)
 
     def ref_col_of(self, t, fk_col):
         """The parent column this foreign key actually points at.
@@ -2805,6 +2917,7 @@ class DDLEngine:
             # Invariant 3: only reference upstream entities already effective that day (no order before registration or before listing)
             for f, (ps, es, cw) in fk_pools.items():
                 ent[f] = self._pick_items(ps, es, cw, d, 1, rng)[0]
+            self._split_opposed_entities(t, ent, rng)
             lo_i = max((e.get("__eff__") or 0) for e in ent.values()) if ent else 0
             if lo_i and (d - self.start).days < lo_i:  # fallback for a day with no effective entity at all
                 d = self.days[self._pick_day_ge(lo_i, rng)]
