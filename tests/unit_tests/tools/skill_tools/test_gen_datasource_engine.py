@@ -174,6 +174,50 @@ def test_foreign_dialect_fails_with_an_actionable_message(engine_module, dialect
 
 
 @pytest.mark.acceptance
+def test_a_forward_foreign_key_is_not_a_dialect_problem(engine_module):
+    """A DDL that names the fact table first and its dimensions after it is the ordinary shape,
+    and DuckDB resolves a REFERENCES target at CREATE time - so the first pass fails on a target
+    that appears further down. Reject it and a valid schema comes back as "rewrite the dialect",
+    which sends the reader to edit syntax that was never wrong: the same file parsed once the
+    statements were reordered."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, cust_id INTEGER REFERENCES customers(id));"
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY, name VARCHAR);",
+        rows=2000,
+    )
+
+    assert sorted(eng.schema) == ["customers", "orders"]
+
+
+@pytest.mark.acceptance
+def test_a_reference_to_a_table_nothing_declares_says_so(engine_module):
+    """The failure that survives the retry pass. It needs the OPPOSITE fix from a dialect error,
+    so it must not borrow that message - and it has to say that ordering is not the cause, or the
+    reader's next move is to shuffle statements that are already fine."""
+    with pytest.raises(ValueError, match="no CREATE in this DDL declares") as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, cust_id INTEGER REFERENCES custmers(id));",
+            rows=2000,
+        )
+
+    assert "rewrite it to DuckDB" not in str(excinfo.value)
+    assert "Declaration ORDER is not the problem" in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+def test_the_parse_failure_does_not_hand_back_a_traceback_into_the_engine(engine_module):
+    """``from None`` on that raise. With the chain attached, Python prints both DuckDB
+    ParserExceptions - each headed by a path into ddl_engine.py - ABOVE the sentence that says
+    what to do, and a `| tail -40` then cuts the sentence off. One measured run followed that
+    path into the engine's parser and spent the rest of its budget there."""
+    with pytest.raises(ValueError) as excinfo:
+        engine_module.DDLEngine("CREATE TABLE t (id INT AUTO_INCREMENT) ENGINE=InnoDB;", rows=2000)
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None or excinfo.value.__suppress_context__
+
+
+@pytest.mark.acceptance
 def test_duckdb_dialect_parses(engine_module):
     eng = engine_module.DDLEngine(
         'CREATE TABLE orders ("order_id" BIGINT PRIMARY KEY, paid_amt DECIMAL(18,2));', rows=2000
@@ -1968,3 +2012,30 @@ def test_a_table_with_no_foreign_key_also_reports_its_demotion(engine_module, ca
     ).report()
 
     assert "sensors carries measures but is planned as a dimension" in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_staging_warning_says_it_is_advisory(engine_module, capsys, monkeypatch):
+    """Every staging failure is already swallowed - the `except` blocks say so in their comments
+    ("never block generating on a staging problem"). That fact stayed in the comments: what the
+    reader got was an internal step name, a DuckDB error and a `!`, with nothing to say whether it
+    mattered. A measured run spent a whole turn hypothesising five different mechanisms for it,
+    then went into ddl_engine.py to find out - the first item on SKILL.md's list of ways to lose a
+    run. The answer is one clause long and belongs in the line."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, order_dt DATE, amt DOUBLE);",
+        rows=2000,
+        extra_tables="summary",
+    )
+    con = eng._scratch_schema()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("Catalog Error: Table with name orders does not exist!")
+
+    monkeypatch.setattr(eng, "_auto_summary_sql", _boom)
+    assert eng._stage_summary_layer(con) is False, "a staging failure must never become a hard stop"
+
+    out = capsys.readouterr().out
+    assert "could not stage the summary layer" in out, out
+    assert "advisory only" in out, out
+    assert "generation is unaffected" in out, out

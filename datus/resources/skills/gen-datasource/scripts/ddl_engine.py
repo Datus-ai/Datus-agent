@@ -265,26 +265,79 @@ class DDLEngine:
                     self._sem_override[(t, c)] = sem
 
     # ---------------------------------------------------------------- parsing
+    @staticmethod
+    def _ddl_parse_error(stmt, exc):
+        """The sentence a reader acts on when a CREATE will not parse.
+
+        Two failures reach here and they need opposite fixes, so the message has to tell them
+        apart. A missing TABLE survives the retry pass only when no statement declares it - a
+        typo, or a table the DDL forgot - and answering that with "rewrite the dialect" sends
+        the reader to edit syntax that parses fine. Everything else really is a dialect the
+        engine does not speak.
+
+        ⚠️ Matched on "Table with name", not on "Catalog Error": a foreign dialect raises the
+        same error class for its TYPES (`NUMBER(19)` -> "Catalog Error: Type with name NUMBER
+        does not exist"), and the looser test claimed Oracle and PostgreSQL DDL referenced a
+        missing table. The suite caught it; the two spellings differ only in that one word.
+        """
+        text = str(exc)
+        if "Table with name" in text and "does not exist" in text:
+            return (
+                f"Cannot parse DDL: {exc}\nStatement: {stmt[:200]}\n"
+                f"This statement references a table that no CREATE in this DDL declares - the "
+                f"engine retried it after every other table existed and it still could not "
+                f"resolve. Check the referenced name for a typo, or add the missing table. "
+                f"Declaration ORDER is not the problem: forward references are retried."
+            )
+        return (
+            f"Cannot parse DDL: {exc}\nStatement: {stmt[:200]}\n"
+            f"The engine parses DuckDB syntax. This looks like another dialect "
+            f"(PostgreSQL/MySQL/StarRocks/Oracle/...): rewrite it to DuckDB first - drop the "
+            f"schema prefix and backticks, map the types, strip PARTITION BY / DISTRIBUTED BY / "
+            f"PROPERTIES / ENGINE / storage clauses and CREATE INDEX, and keep the inline "
+            f"comments (the engine extracts enum domains from them)."
+        )
+
+    @staticmethod
+    def _try_ddl(con, stmt):
+        """Execute one CREATE, retrying once with the foreign-dialect noise stripped.
+
+        Returns the failure, or ``None`` when the statement landed.
+        """
+        try:
+            con.execute(stmt)
+            return None
+        except Exception as e:  # noqa: BLE001 - the caller decides whether this is fatal
+            cleaned = re.sub(r"\b(ENGINE|CHARSET|COLLATE|COMMENT)\s*=?\s*'[^']*'", "", stmt)
+            cleaned = re.sub(r"\bAUTO_INCREMENT\b|\bUNSIGNED\b|\bCOMMENT\s+'[^']*'", "", cleaned, flags=re.I)
+            try:
+                con.execute(cleaned)
+                return None
+            except Exception:  # noqa: BLE001
+                return e
+
     def _parse(self):
         """Let DuckDB parse the DDL - no SQL parser to write, and common dialects just work."""
         con = duckdb.connect(":memory:")
+        pending = []
         for stmt in [s.strip() for s in self.ddl.split(";") if s.strip()]:
-            try:
-                con.execute(stmt)
-            except Exception as e:
-                cleaned = re.sub(r"\b(ENGINE|CHARSET|COLLATE|COMMENT)\s*=?\s*'[^']*'", "", stmt)
-                cleaned = re.sub(r"\bAUTO_INCREMENT\b|\bUNSIGNED\b|\bCOMMENT\s+'[^']*'", "", cleaned, flags=re.I)
-                try:
-                    con.execute(cleaned)
-                except Exception:
-                    raise ValueError(
-                        f"Cannot parse DDL: {e}\nStatement: {stmt[:200]}\n"
-                        f"The engine parses DuckDB syntax. This looks like another dialect "
-                        f"(PostgreSQL/MySQL/StarRocks/Oracle/...): rewrite it to DuckDB first - drop the "
-                        f"schema prefix and backticks, map the types, strip PARTITION BY / DISTRIBUTED BY / "
-                        f"PROPERTIES / ENGINE / storage clauses and CREATE INDEX, and keep the inline "
-                        f"comments (the engine extracts enum domains from them)."
-                    )
+            failure = self._try_ddl(con, stmt)
+            if failure is not None:
+                # ⚠️ NOT an error yet, and treating it as one rejected valid schemas.
+                #
+                # DuckDB resolves a REFERENCES target at CREATE time, so a foreign key pointing
+                # at a table declared FURTHER DOWN the file fails here and succeeds once the
+                # rest exists. Nothing requires a schema to be written parent-first - a DDL that
+                # opens with the fact table and lists its dimensions after it is the ordinary
+                # shape - yet that DDL used to come back as "This looks like another dialect",
+                # which sends the reader off rewriting syntax that was never wrong. The same
+                # file parsed if you reordered it. `_scratch_schema` already retries its own
+                # staging for exactly this reason; this is the same two passes.
+                pending.append((stmt, failure))
+        for stmt, first_failure in pending:
+            if self._try_ddl(con, stmt) is None:
+                continue
+            raise ValueError(self._ddl_parse_error(stmt, first_failure)) from None
         self.ddl_enums = self._scan_ddl_comments()
         self.decl_pk, self.decl_uniq, self.decl_fk = self._scan_constraints(con)
         # Normalised CREATE TABLE text, so the built database can carry the declared
@@ -1895,6 +1948,25 @@ class DDLEngine:
                 out[c] = round(base - disc + ship + tax, 2)
         return out
 
+    #: Appended to every "could not stage" line, and it is not padding.
+    #:
+    #: All three staging failures are already swallowed - each `except` below says so in its own
+    #: comment ("never block generating on a staging problem", "validation is a convenience, never
+    #: a gate"). That fact lived only in the comments. What reached the reader was a sentence
+    #: naming an internal step and a DuckDB error, with a `!` for severity and nothing to say
+    #: whether it mattered.
+    #:
+    #: A measured run spent a full turn on it, hypothesising five different mechanisms in a row
+    #: ("maybe staging executes CREATE TABLE in resolvable order", "maybe it validates
+    #: incrementally", "maybe the validator has trouble with my statement's complexity"), then
+    #: gave up and went into this file to read the parser - which is exactly what SKILL.md's
+    #: budget section lists first among the ways to lose a run. The answer it was looking for is
+    #: one clause long and belongs in the message.
+    _STAGING_IS_ADVISORY = (
+        "\n    (advisory only: generation is unaffected and the profile is not necessarily wrong. "
+        "Staging usually fails on foreign-key order, not on anything you wrote.)"
+    )
+
     def _scratch_schema(self):
         """An empty in-memory copy of the schema this run will build, for planning SQL against.
 
@@ -1913,13 +1985,19 @@ class DDLEngine:
             try:
                 con.execute(sql)
             except Exception:  # noqa: BLE001 - almost always a not-yet-created FK target
-                pending.append(sql)
-        for sql in pending:
+                # The table NAME travels with the statement now. Without it the line could only
+                # quote DuckDB's error, which names whichever table the failing one referenced -
+                # so the message pointed at the neighbour rather than at the table that failed.
+                pending.append((t, sql))
+        for t, sql in pending:
             try:
                 con.execute(sql)
             except Exception as e:  # noqa: BLE001 - a table we cannot build is one we cannot check
                 logger_msg = (str(e).splitlines() or [""])[0]
-                print(f"  ! pre-check could not stage a table for SQL validation: {logger_msg}")
+                print(
+                    f"  ! pre-check could not stage `{t}`, so statements touching it went "
+                    f"unvalidated: {logger_msg}{self._STAGING_IS_ADVISORY}"
+                )
         return con
 
     def _stage_summary_layer(self, con):
@@ -1948,6 +2026,7 @@ class DDLEngine:
             print(
                 "  ! pre-check could not stage the summary layer, so extra_sql was not validated: "
                 + (str(e).splitlines() or [""])[0]
+                + self._STAGING_IS_ADVISORY
             )
             return False
         finally:
@@ -1985,7 +2064,11 @@ class DDLEngine:
         try:
             con = self._scratch_schema()
         except Exception as e:  # noqa: BLE001 - validation is a convenience, never a gate on generating
-            print("  ! pre-check could not stage the schema for SQL validation: " + (str(e).splitlines() or [""])[0])
+            print(
+                "  ! pre-check could not stage the schema, so no statement was validated: "
+                + (str(e).splitlines() or [""])[0]
+                + self._STAGING_IS_ADVISORY
+            )
             return []
 
         problems = []
