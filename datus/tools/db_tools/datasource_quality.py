@@ -351,7 +351,8 @@ class QualityChecker:
             "; ".join(pk_bad)
             if pk_bad
             else (
-                f"{len(pks)} table(s) have a non-null unique key" + _keyless_note(ts, pks)
+                f"{len(pks)} table(s) have a non-null unique key"
+                + _keyless_note(ts, pks, (self.meta or {}).get("roles") or {})
                 if pks
                 else "no generator metadata, so no key was verified - see generator_meta in the result"
             ),
@@ -819,15 +820,20 @@ def summarize(results: Sequence[Dict[str, str]]) -> Dict[str, Any]:
     }
 
 
-def _keyless_note(ts, pks):
+def _keyless_note(ts, pks, known):
     """Name the tables the generator reported no single-column key for.
 
     Saying nothing costs a run: the skill tells the caller to leave a composite-grain table
     keyless, and a count that does not match the table list reads as a key that went missing. A
     measured run spent four minutes searching the checker's source for the reason and then added
     a surrogate primary key to the user's own DDL to make the number add up.
+
+    ``known`` is the generator's own table list (its roles). A summary table the engine built on
+    its own has no entry there and none in ``pks`` either, so without this it would be named as
+    keyless - a table the caller never wrote and cannot declare a key on. ``synthetic_tables`` is
+    not the test: it holds `dim_date` and not `ads_business_daily`.
     """
-    keyless = [t for t in ts if t not in pks]
+    keyless = [t for t in ts if t not in pks and t in known]
     if not keyless:
         return ""
     return f"; no single-column key declared for {', '.join(sorted(keyless))} (not verified)"

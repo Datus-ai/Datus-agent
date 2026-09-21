@@ -631,7 +631,10 @@ def test_a_table_without_a_key_is_named_rather_than_quietly_missing(con):
     list, which reads as a key that went missing: a measured run spent four minutes searching the
     checker's source for the reason and then added a surrogate primary key to the user's own DDL.
     """
-    results = QualityChecker(con, meta={"pks": {"dim_product": "product_id"}}).run()
+    results = QualityChecker(
+        con,
+        meta={"pks": {"dim_product": "product_id"}, "roles": {"dim_product": "dim", "ods_order": "fact"}},
+    ).run()
 
     pk = next(r for r in results if r["check"] == "primary key non-null and unique")
 
@@ -643,9 +646,32 @@ def test_a_table_without_a_key_is_named_rather_than_quietly_missing(con):
 @pytest.mark.acceptance
 def test_nothing_is_said_when_every_table_has_a_key(con):
     """The note must not become a permanent tail on a clean run."""
-    results = QualityChecker(con, meta={"pks": {"dim_product": "product_id", "ods_order": "order_id"}}).run()
+    results = QualityChecker(
+        con,
+        meta={
+            "pks": {"dim_product": "product_id", "ods_order": "order_id"},
+            "roles": {"dim_product": "dim", "ods_order": "fact"},
+        },
+    ).run()
 
     pk = next(r for r in results if r["check"] == "primary key non-null and unique")
 
     assert pk["status"] == "PASS"
+    assert "not verified" not in pk["detail"], pk["detail"]
+
+
+@pytest.mark.acceptance
+def test_a_table_the_generator_built_itself_is_not_called_keyless(con):
+    """The summary layer is not in the generator's schema, so it has no entry in `pks` - and naming
+    it asks the caller to declare a key on a table they never wrote and cannot see in their DDL.
+    `synthetic_tables` is not the test to use: it holds `dim_date` and not `ads_business_daily`."""
+    results = QualityChecker(
+        con,
+        meta={"pks": {"dim_product": "product_id"}, "roles": {"dim_product": "dim"}},
+    ).run()
+
+    pk = next(r for r in results if r["check"] == "primary key non-null and unique")
+
+    assert pk["status"] == "PASS"
+    assert "ods_order" not in pk["detail"], pk["detail"]
     assert "not verified" not in pk["detail"], pk["detail"]

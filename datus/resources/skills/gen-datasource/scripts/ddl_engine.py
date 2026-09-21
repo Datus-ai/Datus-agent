@@ -2064,17 +2064,25 @@ class DDLEngine:
         generator reached it through ``_fill_generic``, which has no branch for an id column the
         table owns - so on a fact / detail / downstream / event parent the column came out empty
         and every child pointing at it was an orphan against NULL.
+
+        ⚠️ A column that is this table's OWN foreign key is excluded, however much it is also a
+        target. A 1:1 extension keyed by its parent's natural key is exactly that shape
+        (`accounts.user_id UNIQUE REFERENCES users(user_id)`, with `tx` pointing at
+        `accounts.user_id`), and filling it here overwrote a value sampled from `users` with a
+        sequence of this table's own: 1,600/1,600 orphans upward and 17,090/17,090 downward, a new
+        break of exactly the kind this method exists to close.
         """
         cache = self.__dict__.setdefault("_alt_key_cache", {})
         if t not in cache:
             own = {c["name"] for c in self.schema.get(t, ())}
             pk = self.pk_of(t)
+            mine = set(self.fks.get(t, ())) | {c for (tt, c) in (getattr(self, "decl_fk", None) or {}) if tt == t}
             cache[t] = tuple(
                 sorted(
                     {
                         rc
                         for (rt, rc) in (getattr(self, "decl_fk", None) or {}).values()
-                        if rt == t and rc and rc != pk and rc in own
+                        if rt == t and rc and rc != pk and rc in own and rc not in mine
                     }
                 )
             )
@@ -3442,6 +3450,7 @@ class DDLEngine:
             self.pools, self.refs, self._fact_rows, self._pending_dim_rows = {}, {}, {}, {}
             self.__dict__.pop("_pool_key_idx", None)
             self.__dict__.pop("_name_seen", None)
+            self._alt_seq = {}  # or the retry hands out values continuing from the discarded pass
             return self.generate(out, verbose, tolerance, _attempt + 1, t_start)
         res = {
             "tables": sizes,

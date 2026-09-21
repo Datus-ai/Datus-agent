@@ -2723,3 +2723,55 @@ def test_an_undeclared_key_the_engine_generated_itself_is_still_verified(engine_
     pks = _meta(eng, tmp_path, name="u")["pks"]
 
     assert pks["orders"] == "order_id"
+
+
+@pytest.mark.acceptance
+def test_a_column_that_is_both_a_key_target_and_a_foreign_key_is_left_alone(engine_module, tmp_path):
+    """The one shape filling alternate keys can break, and the shape the first pass did break.
+
+    A 1:1 extension keyed by its parent's natural key owns a column that is a foreign key going up
+    and a key target coming down. Claiming it overwrote a value sampled from `users` with a
+    sequence of `accounts`' own - `USE0001601` against a parent that stops at `USE0001600` - and
+    cost 1,600/1,600 orphans upward plus 17,090/17,090 downward, a break of exactly the kind the
+    method exists to close. The two controls above only cover foreign keys pointing at a primary
+    key, so neither of them reaches this.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE users (user_id VARCHAR PRIMARY KEY, uname VARCHAR, city VARCHAR);"
+        "CREATE TABLE accounts (account_id VARCHAR PRIMARY KEY,"
+        "  user_id VARCHAR UNIQUE REFERENCES users(user_id), tier VARCHAR);"
+        "CREATE TABLE tx (tx_id VARCHAR PRIMARY KEY, user_id VARCHAR REFERENCES accounts(user_id),"
+        "  ts TIMESTAMP, amt DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+    )
+
+    total = con.execute("SELECT count(*) FROM accounts").fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM accounts a LEFT JOIN users u USING (user_id) WHERE u.user_id IS NULL"
+    ).fetchone()[0]
+
+    assert eng._alt_key_cols("accounts") == (), "a column the table fills from its own parent is not ours to write"
+    assert orphans == 0, f"{orphans}/{total} accounts point at a user that does not exist"
+
+
+@pytest.mark.acceptance
+def test_alternate_keys_restart_when_calibration_restarts(engine_module, tmp_path):
+    """Calibration discards a pass and regenerates. The counter is engine state like `_name_seen`
+    and `_pool_key_idx`, which that block already resets - left running it numbered the shipped
+    rows from where the thrown-away pass had got to, so a 4,218-row table shipped keys starting
+    near 8,000 while its primary key started at 1."""
+    eng, con = _build(
+        engine_module,
+        THREE_LEVEL_DDL,
+        tmp_path,
+        rows=12000,
+        profile={"table_rows": {"flights": 400}},
+    )
+
+    rows, first, last = con.execute("SELECT count(*), min(series_id), max(series_id) FROM flight_sensors").fetchone()
+
+    assert eng._alt_seq[("flight_sensors", "series_id")] == rows, "one value handed out per shipped row"
+    assert first == "SER0000001", f"numbering has to start over, got {first}"
+    assert last == f"SER{rows:07d}", f"and run to the row count, got {last}"
