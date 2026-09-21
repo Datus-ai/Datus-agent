@@ -714,7 +714,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 ci = [
-    { name = "datus-semantic-dosi", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.1.13" },
+    { name = "datus-semantic-dosi", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", specifier = ">=0.1.14" },
     { name = "datus-storage-postgresql", specifier = ">=0.1.5" },
 ]
 dev = [
@@ -794,7 +794,7 @@ wheels = [
 
 [[package]]
 name = "datus-semantic-dosi"
-version = "0.1.13"
+version = "0.1.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datus-semantic-core" },
@@ -803,9 +803,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/64/f5885214b42a096931d94189079ea4eb637cd2085f04f2df008882cfbd2f/datus_semantic_dosi-0.1.13.tar.gz", hash = "sha256:d044ac59a2e5710883b5f55f7c939ebc90f328145dff688892c9767476b8b69b", size = 54664, upload-time = "2026-09-18T08:41:22.625Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/f8/3f938fa8ca0f49608727dffdeaeea58a3593eccda30cceda8d77e0985ec6/datus_semantic_dosi-0.1.14.tar.gz", hash = "sha256:3b4515f8255341a3eb785d8f1ebd51a0ef16c9da7a1d7c7afe8be5be94172578", size = 56442, upload-time = "2026-09-21T13:32:18.056Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/29/ac17c8e19a01d28046a3b29e6388c44698331201489741b158d2401deff5/datus_semantic_dosi-0.1.13-py3-none-any.whl", hash = "sha256:36e94f73539d01e833dda4fdd7b6f4a677fda07490666d75331e61a9521c66d2", size = 43171, upload-time = "2026-09-18T08:41:21.571Z" },
+    { url = "https://files.pythonhosted.org/packages/94/29/81a86c7747842b72eaeac943818be5b6c1217bf4e04fd56e2f71ac198c88/datus_semantic_dosi-0.1.14-py3-none-any.whl", hash = "sha256:1ecdc69f21d25d55b175ce41c61eec488ac3e225eaffeaf84b996e714d694d42", size = 43111, upload-time = "2026-09-21T13:32:17.197Z" },
 ]
 
 [[package]]
