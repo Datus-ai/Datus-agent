@@ -3001,3 +3001,110 @@ def test_the_warning_predicts_where_generation_actually_lands(engine_module, tmp
 
     assert predicted > 40000 * 1.06, "the point of the fixture is that it overshoots"
     assert abs(actual / predicted - 1) < 0.25, f"predicted ~{predicted:,}, generation produced {actual:,}"
+
+
+# ------------------------------------------------- real-world values for a key, without breaking it
+
+NATURAL_KEY_DDL = """
+CREATE TABLE airports (airport_code VARCHAR PRIMARY KEY, name VARCHAR, city VARCHAR);
+CREATE TABLE routes (
+    route_id VARCHAR PRIMARY KEY,
+    origin_airport_code VARCHAR REFERENCES airports(airport_code),
+    destination_airport_code VARCHAR REFERENCES airports(airport_code),
+    distance_miles INTEGER
+);
+CREATE TABLE flights (
+    flight_id VARCHAR PRIMARY KEY,
+    route_id VARCHAR REFERENCES routes(route_id),
+    departed_at TIMESTAMP,
+    passenger_count INTEGER
+);
+"""
+
+REAL_CODES = [
+    ["ATL", "Atlanta"],
+    ["LAX", "Los Angeles"],
+    ["ORD", "Chicago"],
+    ["DFW", "Dallas"],
+    ["DEN", "Denver"],
+    ["JFK", "New York"],
+    ["SFO", "San Francisco"],
+    ["SEA", "Seattle"],
+    ["LAS", "Las Vegas"],
+    ["MCO", "Orlando"],
+]
+NATURAL_KEY_PROFILE = {"joint": {"airports": [{"cols": ["airport_code", "city"], "values": REAL_CODES}]}}
+
+
+@pytest.mark.acceptance
+def test_a_joint_group_on_a_key_does_not_repeat_itself(engine_module, tmp_path):
+    """`joint` is the ONLY mechanism that can put real-world values in a key column, and it
+    sampled with replacement, so on a key it produced duplicates in silence.
+
+    Measured: 10 rows, 6 distinct, PRIMARY KEY dropped at build - and that cascades, because every
+    foreign key pointing at the table is then refused for want of a unique constraint. One
+    natural-key dimension took the constraints off three tables. `enums`, `vocab` and
+    `columns[...]['values']` are all ignored for a key column, and `pre_sql` cannot UPDATE a key
+    that is referenced, so a measured run spent ten minutes finding there was no legal way to ask
+    for `ATL` instead of `AIR0000001`.
+    """
+    _eng, con = _build(engine_module, NATURAL_KEY_DDL, tmp_path, rows=20000, profile=NATURAL_KEY_PROFILE)
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT airport_code) FROM airports").fetchone()
+    codes = {r[0] for r in con.execute("SELECT airport_code FROM airports").fetchall()}
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name IN ('airports', 'routes', 'flights')"
+    ).fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM routes r LEFT JOIN airports a ON r.origin_airport_code = a.airport_code "
+        "WHERE a.airport_code IS NULL"
+    ).fetchone()[0]
+
+    assert distinct == rows, "a key cannot repeat"
+    assert codes <= {c[0] for c in REAL_CODES}, f"the supplied codes are the whole domain: {codes}"
+    assert kept, "the key has to survive into the build, or every foreign key to it is refused too"
+    assert orphans == 0, "and the children still resolve against it"
+
+
+@pytest.mark.acceptance
+def test_the_supplied_combinations_are_the_row_count(engine_module):
+    """Ten real airports means ten rows. Asking for forty can only be answered with a duplicate
+    key, so the plan is capped and the pre-check says so rather than leaving the caller to wonder
+    why `dim_rows` was ignored."""
+    profile = dict(NATURAL_KEY_PROFILE, dim_rows={"airports": 40})
+    eng = engine_module.DDLEngine(NATURAL_KEY_DDL, rows=20000, profile=profile)
+    _err, warn = eng.precheck(strict=False)
+
+    assert eng.nrows["airports"] == len(REAL_CODES)
+    assert any("capped at 10 rows, not 40" in w for w in warn), warn
+
+
+@pytest.mark.acceptance
+def test_a_joint_group_that_is_not_a_key_still_follows_its_weights(engine_module, tmp_path):
+    """The control. Dropping replacement everywhere would break what `joint` is for: a weighted
+    combination over non-key columns has to keep repeating, or the distribution disappears."""
+    profile = {
+        "joint": {
+            "orders": [
+                {
+                    "cols": ["channel", "source"],
+                    "values": [["paid_search", "Google", 20], ["social", "TikTok", 1]],
+                }
+            ]
+        }
+    }
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE customers (customer_id VARCHAR PRIMARY KEY, customer_name VARCHAR);"
+        "CREATE TABLE orders (order_id VARCHAR PRIMARY KEY,"
+        "  customer_id VARCHAR REFERENCES customers(customer_id),"
+        "  channel VARCHAR, source VARCHAR, ordered_at TIMESTAMP, order_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=20000,
+        profile=profile,
+    )
+
+    mix = dict(con.execute("SELECT channel, count(*) FROM orders GROUP BY 1").fetchall())
+
+    assert sum(mix.values()) > 2, "a non-key joint group must repeat, that is the whole point"
+    assert mix.get("paid_search", 0) > mix.get("social", 0), f"and keep its weights: {mix}"

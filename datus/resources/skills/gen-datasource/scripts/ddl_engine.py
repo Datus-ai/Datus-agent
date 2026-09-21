@@ -818,6 +818,15 @@ class DDLEngine:
             if r == ROLE_DATE:
                 n[t] = len(self.days)
         n.update({t: v for t, v in pinned.items() if t in self.schema})  # an explicit user value wins over everything
+        # A key-bearing `joint` group is the row count: ten real airports means ten rows, and
+        # asking for more can only be answered with a duplicate key. Recorded so the pre-check can
+        # say it happened rather than leaving the caller to wonder why `dim_rows` was ignored.
+        self._joint_clamped = {}
+        for t in list(n):
+            limit = self._joint_key_limit(t)
+            if limit is not None and n[t] > limit:
+                self._joint_clamped[t] = (n[t], limit)
+                n[t] = limit
         self.nrows = n
 
     def _guess_kind(self, t):
@@ -1230,6 +1239,13 @@ class DDLEngine:
         #
         # Replays calibration's own update rule rather than modelling it, so this cannot drift
         # from what generate() will actually do.
+        for t, (asked, limit) in (getattr(self, "_joint_clamped", None) or {}).items():
+            warn.append(
+                f"{t} is capped at {limit:,} rows, not {asked:,}: a `joint` group on its key supplies "
+                f"{limit:,} distinct combination(s), and a key cannot repeat. Supply more combinations "
+                f"if the table needs more rows."
+            )
+
         planned = sum(self.nrows.get(t, 0) for t in self.schema)
         free_rows = {
             t: self.nrows[t]
@@ -2238,6 +2254,37 @@ class DDLEngine:
         pre = re.sub(r"[^A-Za-z]", "", col).upper()[:3] or "CD"
         return f"{pre}{d.strftime('%y%m%d')}{i + 1:06d}" if d is not None else f"{pre}{i + 1:06d}"
 
+    def _key_cols(self, t):
+        """Columns of ``t`` that something relies on being unique: its key, its declared UNIQUEs,
+        and any column a declared foreign key points at."""
+        cache = self.__dict__.setdefault("_key_cols_cache", {})
+        if t not in cache:
+            cols = {self.pk_of(t)}
+            for keys in (getattr(self, "decl_uniq", None) or {}).get(t, ()):
+                if len(keys) == 1:
+                    cols.add(keys[0])
+            cols.update(self._alt_ref_cols(t))
+            cache[t] = frozenset(c for c in cols if c)
+        return cache[t]
+
+    def _joint_key_limit(self, t):
+        """How many rows ``t`` can have before a key-bearing ``joint`` group has to repeat itself.
+
+        ⚠️ ``joint`` is the only mechanism that can give a key column real-world values - an
+        `airport_code` of `ATL` rather than `AIR0000001` - and it sampled WITH replacement, so on a
+        key it silently produced duplicates: 10 rows, 6 distinct, and the PRIMARY KEY was dropped
+        at build time. That cascades - every foreign key pointing at the table is refused for want
+        of a unique constraint, so one natural-key dimension took the constraints off three tables.
+        A measured run spent ten minutes discovering there was no legal way to do this: `joint`
+        breaks the key, and `pre_sql` cannot UPDATE a key that is referenced.
+        """
+        limit = None
+        for g in (self.profile.get("joint", {}) or {}).get(t, []):
+            if set(g.get("cols", ())) & self._key_cols(t):
+                n = len({tuple(v[: len(g["cols"])]) for v in g.get("values", ())})
+                limit = n if limit is None else min(limit, n)
+        return limit
+
     def _joint_plan(self, t, n, rng):
         """Joint sampling: related enum columns in one row must be picked as a group (channel/source/campaign, province/city/tier).
         Sampling them independently creates combinations the business does not have, such as 'organic_search + TikTok ad'."""
@@ -2245,7 +2292,15 @@ class DDLEngine:
         for g in (self.profile.get("joint", {}) or {}).get(t, []):
             vals = [tuple(v[: len(g["cols"])]) for v in g["values"]]
             w = [float(v[len(g["cols"])]) if len(v) > len(g["cols"]) else 1.0 for v in g["values"]]
-            out.append((g["cols"], rng.choices(vals, w, k=n)))
+            if set(g.get("cols", ())) & self._key_cols(t):
+                # Without replacement, because a key cannot repeat. Weights are dropped with it:
+                # a key column has one row per value, so there is no distribution left to shape.
+                # ``_plan_rows`` has already clamped ``n`` to the number of distinct combinations,
+                # so this cannot ask for more than it has.
+                uniq = list(dict.fromkeys(vals))
+                out.append((g["cols"], rng.sample(uniq, k=min(n, len(uniq)))))
+            else:
+                out.append((g["cols"], rng.choices(vals, w, k=n)))
         return out
 
     AMT_ROLE = [
