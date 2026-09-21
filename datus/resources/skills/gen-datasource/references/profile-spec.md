@@ -13,7 +13,7 @@ data. The profile is what makes it look real.
 | Capability | Notes |
 |---|---|
 | Table roles | date_dim / dim / fact / detail / downstream / event / metric_daily / snapshot, inferred structurally, never from name prefixes. `date_dim` and `metric_daily` share a shape - a date grain, no foreign key, a few measures - and are told apart by whether every column is a calendar attribute (`year_num`, `quarter_cd`) or the table carries something the date does not determine (`channel`, `gmv`). Force either with `roles` |
-| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect. A composite `PRIMARY KEY (parent_id, ts)` is read and honoured - declare it whenever the grain is two columns, or the quality check fails on duplicates that are not a data problem (§5.6) |
+| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect. **A COMPOSITE `PRIMARY KEY (a, b)` is parsed but not honoured end to end**: generation does not know about it (`pk_of` falls back to the first column), so the combination is unique only by luck, and the quality check verifies that first column alone |
 | Enum domains | **Extracted from DDL inline comments** (`order_status VARCHAR, -- pending / paid / shipped`). `report()` lists which columns were extracted and which end in `...` (incomplete) |
 | Column semantics | id / date / ts / amount / count / ratio / enum / flag / name / seq / measure, from name + type |
 | Row allocation | Fact layer 65-75%, dimensions derived from business density, two-pass total calibration (within 6%) |
@@ -525,7 +525,7 @@ Do not wait until everything is configured to check.
 
 ---
 
-## 5. Six easy mistakes
+## 5. Five easy mistakes
 
 **1. Without `tier_cols` the wrong column gets picked.** The engine finds the tier column by matching
 `tier|level|grade|segment`, so `city_tier` wins first and then gets overwritten with
@@ -551,46 +551,6 @@ cut-off, or move the cut-off past the window.
 **5. `pre_sql` is a last resort.** It runs before the automatic summary layer and can restate metrics
 and backfill across tables. But anything `conditional` / `formulas` can express should not be SQL -
 SQL bypasses the engine's consistency guarantees and is not reusable.
-
-**6. A table whose grain is two columns needs a COMPOSITE primary key, not a single-column one.**
-
-Most DDL that arrives here declares no constraints at all - a measured run took in nine tables with
-zero `PRIMARY KEY`, zero `FOREIGN KEY` and zero `UNIQUE`, and adding them back is the first thing to
-do, because "declared wins over inferred" only helps once something is declared. The trap is doing
-it one column at a time.
-
-**The test is what ONE ROW stands for, not what the table is called.** Ask it of every table before
-writing its key. Whenever the answer needs two nouns, the key is both of them:
-
-| One row is ... | Key |
-|---|---|
-| one reading of one meter / sensor / probe | `(device_id, taken_at)` |
-| one line of one document | `(document_id, line_no)` |
-| the state of one entity on one day | `(entity_id, as_of_date)` |
-| the intersection of two dimensions | both dimension keys |
-
-Give such a table a single-column key and the quality check answers
-`primary key non-null and unique: ... has 11,815 duplicate keys` (measured). The run that hit that
-then spent rounds correcting data which was doing exactly what its schema now forbade. Nothing was
-wrong with the data; the key was - it had declared "one row per X" about a table that holds many
-rows per X.
-
-**Declare the real grain and the engine honours it** - a composite `PRIMARY KEY` parses into
-`decl_pk` as a list and generation keeps the combination unique:
-
-```sql
-CREATE TABLE stock_levels (
-    warehouse_id  VARCHAR REFERENCES warehouses(warehouse_id),
-    sku_id        VARCHAR REFERENCES skus(sku_id),
-    qty_on_hand   INTEGER,
-    PRIMARY KEY (warehouse_id, sku_id)   -- one row per warehouse per SKU
-);
--- measured: 0 duplicate (warehouse_id, sku_id) pairs; warehouse_id alone repeats, which is the point
-```
-
-A composite key is deliberately not used as a foreign-key target (nothing can reference half of
-one), so each parent still needs its own single-column key - here `warehouses.warehouse_id` and
-`skus.sku_id`, which is what the two columns point at.
 
 ---
 

@@ -266,7 +266,7 @@ class DDLEngine:
 
     # ---------------------------------------------------------------- parsing
     @staticmethod
-    def _ddl_parse_error(stmt, exc):
+    def _ddl_parse_error(stmt, exc, declared=frozenset()):
         """The sentence a reader acts on when a CREATE will not parse.
 
         Two failures reach here and they need opposite fixes, so the message has to tell them
@@ -281,7 +281,17 @@ class DDLEngine:
         missing table. The suite caught it; the two spellings differ only in that one word.
         """
         text = str(exc)
-        if "Table with name" in text and "does not exist" in text:
+        missing = DDLEngine._MISSING.search(text)
+        if missing and missing.group(1).lower() in declared:
+            # The target IS declared, so nothing is misspelled: these statements could not be
+            # ordered into a sequence that resolves, which in practice means a cycle.
+            return (
+                f"Cannot parse DDL: {exc}\nStatement: {stmt[:200]}\n"
+                f"`{missing.group(1)}` IS declared in this DDL, so the name is right - but no order "
+                f"of the CREATE statements resolves them all, which means they reference each other "
+                f"in a cycle. Break it: drop one REFERENCES and re-add it as a plain column."
+            )
+        if missing and "does not exist" in text:
             return (
                 f"Cannot parse DDL: {exc}\nStatement: {stmt[:200]}\n"
                 f"This statement references a table that no CREATE in this DDL declares - the "
@@ -297,6 +307,31 @@ class DDLEngine:
             f"PROPERTIES / ENGINE / storage clauses and CREATE INDEX, and keep the inline "
             f"comments (the engine extracts enum domains from them)."
         )
+
+    _DECLARES = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"']?([\w.]+)[`\"']?", re.I)
+    _MISSING = re.compile(r"Table with name (\w+) does not exist", re.I)
+
+    @classmethod
+    def _declared_names(cls, stmts):
+        """Every table this DDL creates, whether or not it parsed."""
+        return {m.group(1).split(".")[-1].lower() for s in stmts for m in [cls._DECLARES.search(s)] if m}
+
+    @classmethod
+    def _blame(cls, leftover, stmts):
+        """Which unparsed statement to report, out of a set that failed together.
+
+        ⚠️ NOT simply the first. When `a -> b` and `b -> xxx` both fail, `a` is first in file order
+        and its error says "Table with name b does not exist" - about a table declared on the very
+        next line. Reporting that sends the reader hunting a typo in `a`, and never mentions `xxx`,
+        which is the only thing actually wrong. Prefer a statement whose missing target no CREATE
+        declares; that is the one the reader has to fix, and the rest fail only because of it.
+        """
+        declared = cls._declared_names(stmts)
+        for stmt, failure in leftover:
+            m = cls._MISSING.search(str(failure))
+            if m and m.group(1).lower() not in declared:
+                return stmt, failure
+        return leftover[0]
 
     @staticmethod
     def _create_until_stuck(items, attempt):
@@ -358,8 +393,8 @@ class DDLEngine:
         stmts = [s.strip() for s in self.ddl.split(";") if s.strip()]
         leftover = self._create_until_stuck(stmts, lambda s: self._try_ddl(con, s))
         if leftover:
-            stmt, first_failure = leftover[0]
-            raise ValueError(self._ddl_parse_error(stmt, first_failure)) from None
+            stmt, failure = self._blame(leftover, stmts)
+            raise ValueError(self._ddl_parse_error(stmt, failure, self._declared_names(stmts))) from None
         self.ddl_enums = self._scan_ddl_comments()
         self.decl_pk, self.decl_uniq, self.decl_fk = self._scan_constraints(con)
         # Normalised CREATE TABLE text, so the built database can carry the declared
@@ -1573,11 +1608,24 @@ class DDLEngine:
         # failure about a distribution the reader never chose: a measured run wrote an assertion
         # over a unit column whose domain had been guessed, and got back "... differentiated by
         # unit: actual 0.9994 (expected 1000~100000)".
+        # Everything that already pins a domain, in `_enum_values_raw`'s own precedence order:
+        # profile['columns'][t.c]['values'] > profile['enums'][c] > ddl_enums[c] > built-in vocab.
+        # Naming a column the reader has already set is worse than saying nothing - the line tells
+        # them to do the thing they did, and repeats itself on the next report.
+        pinned_cols = {
+            key
+            for key, spec in (self.profile.get("columns") or {}).items()
+            if isinstance(spec, dict) and "values" in spec
+        }
+        pinned_names = set(getattr(self, "ddl_enums", {})) | set(self.profile.get("enums") or {})
         guessed = [
             f"{t}.{c['name']}"
             for t in sorted(self.schema)
+            # A date dimension's enums come from the calendar, never from a vocabulary, so
+            # profile['enums'] is a no-op there - `profile_skeleton` already excludes them.
+            if self.roles.get(t) != ROLE_DATE
             for c in self.schema[t]
-            if c["sem"] == "enum" and c["name"] not in getattr(self, "ddl_enums", {})
+            if c["sem"] == "enum" and c["name"] not in pinned_names and f"{t}.{c['name']}" not in pinned_cols
         ]
         if guessed:
             print(
@@ -2016,10 +2064,12 @@ class DDLEngine:
     #: gave up and went into this file to read the parser - which is exactly what SKILL.md's
     #: budget section lists first among the ways to lose a run. The answer it was looking for is
     #: one clause long and belongs in the message.
-    _STAGING_IS_ADVISORY = (
-        "\n    (advisory only: generation is unaffected and the profile is not necessarily wrong. "
-        "Staging usually fails on foreign-key order, not on anything you wrote.)"
-    )
+    #: ⚠️ No cause is named here on purpose. It used to say "usually foreign-key order", which
+    #: `_create_until_stuck` has since made false - ordering is retried until it stops helping, so
+    #: a failure that survives to this line is NOT an ordering problem. It is also appended to
+    #: `_stage_summary_layer`, where the subject is extra_sql and foreign keys are irrelevant.
+    #: What both calls can honestly say is that it does not block anything.
+    _STAGING_IS_ADVISORY = "\n    (advisory only: generation is unaffected and the profile is not necessarily wrong.)"
 
     def _scratch_schema(self):
         """An empty in-memory copy of the schema this run will build, for planning SQL against.

@@ -2062,39 +2062,42 @@ def test_a_staging_warning_says_it_is_advisory(engine_module, capsys, monkeypatc
 
 
 @pytest.mark.acceptance
-def test_a_composite_primary_key_is_honoured_by_generation(engine_module, tmp_path):
-    """SKILL.md step 0 and profile-spec §5.6 both tell the reader to declare the real grain of a
-    readings table as `PRIMARY KEY (parent_id, ts)`. That advice is only worth giving because the
-    engine keeps the COMBINATION unique - pin it, or the docs quietly start lying.
+def test_a_composite_primary_key_is_parsed_but_not_honoured_end_to_end(engine_module, tmp_path):
+    """Pins the LIMITATION, so the docs cannot start promising the capability again.
 
-    The failure it prevents: most DDL arriving here declares no keys at all, and giving a readings
-    table a single-column key instead is a claim its data cannot meet. A measured run declared
-    `series_id` alone and got `sensor_readings.series_id has 11,815 duplicate keys` back from the
-    quality check, then spent rounds correcting data that was doing exactly what a time series does.
+    `_scan_constraints` parses `PRIMARY KEY (a, b)` into `decl_pk` as a list, and that is where it
+    stops: `pk_of` returns the first schema column for anything that is not single-column, and
+    `_dump_meta` writes `pks` from `pk_of` - so the quality check verifies `a` alone and a table
+    whose grain really is two columns reports duplicates however it is declared.
+
+    The second column is a DATE on purpose. An earlier version of this test used a TIMESTAMP and
+    passed, which pinned the entropy of a microsecond clock rather than anything the engine does -
+    the same DDL at day granularity produced 1,313 duplicate pairs and had its constraint dropped.
     """
-    eng = engine_module.DDLEngine(
-        "CREATE TABLE flight_sensors (sensor_id VARCHAR PRIMARY KEY, series_id VARCHAR UNIQUE, unit VARCHAR);"
-        "CREATE TABLE sensor_readings ("
-        "  series_id VARCHAR REFERENCES flight_sensors(series_id),"
-        "  ts TIMESTAMP, value_double DOUBLE, PRIMARY KEY (series_id, ts));",
-        rows=5000,
+    ddl = (
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE readings ("
+        "  meter_id VARCHAR REFERENCES meters(meter_id),"
+        "  read_date DATE, kwh DOUBLE, PRIMARY KEY (meter_id, read_date));"
     )
+    eng = engine_module.DDLEngine(ddl, rows=5000)
 
-    assert eng.decl_pk["sensor_readings"] == ["series_id", "ts"], "both columns must survive parsing"
+    assert eng.decl_pk["readings"] == ["meter_id", "read_date"], "parsing keeps both columns"
+    # ...and every consumer downstream drops the second one.
+    assert eng.pk_of("readings") == eng.schema["readings"][0]["name"]
 
     out = tmp_path / "t.duckdb"
     with contextlib.redirect_stdout(io.StringIO()):
         eng.generate(str(out))
     con = duckdb.connect(str(out), read_only=True)
     dup_pairs = con.execute(
-        "SELECT count(*) FROM (SELECT series_id, ts FROM sensor_readings GROUP BY 1, 2 HAVING count(*) > 1)"
-    ).fetchone()[0]
-    repeated_series = con.execute(
-        "SELECT count(*) FROM (SELECT series_id FROM sensor_readings GROUP BY 1 HAVING count(*) > 1)"
+        "SELECT count(*) FROM (SELECT meter_id, read_date FROM readings GROUP BY 1, 2 HAVING count(*) > 1)"
     ).fetchone()[0]
 
-    assert dup_pairs == 0, "the declared grain must hold"
-    assert repeated_series > 0, "a series with one reading each is not a time series - that is the whole point"
+    assert dup_pairs > 0, (
+        "if this ever passes, generation learned about composite keys - update profile-spec's "
+        "capability table and SKILL.md step 0, which currently tell the reader it cannot"
+    )
 
 
 @pytest.mark.acceptance
@@ -2155,3 +2158,83 @@ def test_every_build_says_to_run_the_check_next(engine_module, tmp_path):
     assert "import_database_file" in text, text
     assert "check_datasource_quality" in text, text
     assert str(out) in text, "the path must be the one just built, so it can be copied verbatim"
+
+
+@pytest.mark.acceptance
+def test_a_broken_reference_downstream_is_the_one_reported(engine_module):
+    """`a -> b` and `b -> xxx` fail together, and `a` is first in file order - so reporting the
+    first leftover says "Table with name b does not exist" about a table declared on the very next
+    line, and never mentions `xxx`, which is the only thing actually wrong. The reader is sent to
+    hunt a typo in the wrong statement."""
+    with pytest.raises(ValueError) as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+            "CREATE TABLE b (id INTEGER PRIMARY KEY, x_id INTEGER REFERENCES xxx(id));",
+            rows=2000,
+        )
+
+    assert "xxx" in str(excinfo.value), str(excinfo.value)
+    assert "Table with name b does not exist" not in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+def test_a_reference_cycle_is_not_called_a_missing_table(engine_module):
+    """Both targets ARE declared, so "no CREATE declares that table" would be a false statement -
+    and the fix it asks for (check the spelling) does not exist."""
+    with pytest.raises(ValueError, match="cycle") as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+            "CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES a(id));",
+            rows=2000,
+        )
+
+    assert "no CREATE in this DDL declares" not in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {"enums": {"unit": ["kWh", "m3"]}},
+        {"columns": {"meters.unit": {"values": ["kWh", "m3"]}}},
+    ],
+    ids=["profile_enums", "profile_columns_values"],
+)
+def test_a_domain_the_reader_already_set_is_not_reported_as_guessed(engine_module, capsys, profile):
+    """The line tells the reader to set `profile['enums']`. Saying it again after they have is the
+    shape this whole branch exists to remove - a hint with no exit, repeating every report.
+    `_enum_values_raw` honours `columns[t.c]['values']` above `enums[c]`, so both count."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE ev (id VARCHAR PRIMARY KEY,"
+        "  meter_id VARCHAR REFERENCES meters(meter_id), read_at TIMESTAMP);",
+        rows=3000,
+        profile=profile,
+    )
+    eng.report()
+
+    guessed = [line for line in capsys.readouterr().out.splitlines() if "GUESSED" in line]
+    assert not guessed, guessed
+
+
+@pytest.mark.acceptance
+def test_an_unstageable_table_is_named_in_the_warning(engine_module, capsys, monkeypatch):
+    """The warning could only quote DuckDB's error before, which names whichever table the failing
+    statement REFERENCED - so it pointed at the neighbour rather than at the table that failed."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id));",
+        rows=2000,
+    )
+    # Every CREATE fails, so the retry gives up and both tables reach the warning.
+    monkeypatch.setattr(eng, "decl_sql", {t: "CREATE TABLE broken (" for t in eng.schema})
+    eng._scratch_schema()
+
+    out = capsys.readouterr().out
+    assert "could not stage `flights`" in out, out
+    assert "could not stage `carriers`" in out, out
+    assert "advisory only" in out
+    # The cause claim was retired: ordering is retried until it stops helping, so a failure that
+    # survives to this line is not an ordering problem.
+    assert "foreign-key order" not in out
