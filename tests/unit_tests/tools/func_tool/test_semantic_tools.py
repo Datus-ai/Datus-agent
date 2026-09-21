@@ -7,7 +7,7 @@ import json
 from enum import Enum
 from importlib import import_module
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -1363,6 +1363,7 @@ class TestListMetrics:
 
     def test_success_from_adapter(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = [{"name": "orders", "subject_path": ["Commerce", "Orders"]}]
         mock_metric = Mock()
         mock_metric.name = "orders"
         mock_metric.description = "Order count"
@@ -1371,7 +1372,7 @@ class TestListMetrics:
         mock_metric.measures = []
         mock_metric.unit = None
         mock_metric.format = None
-        mock_metric.path = ["Sales"]
+        mock_metric.path = ["Ignored", "Adapter", "Path"]
         mock_metric.metadata = {
             "inputs": [{"name": "orders", "offset_window": "1 month"}],
             "non_serializable": object(),
@@ -1391,7 +1392,7 @@ class TestListMetrics:
                 "measures": [],
                 "unit": None,
                 "format": None,
-                "path": ["Sales"],
+                "path": ["Commerce", "Orders"],
                 "metadata": {"inputs": [{"name": "orders", "offset_window": "1 month"}]},
             }
         ]
@@ -1403,8 +1404,14 @@ class TestListMetrics:
         assert "compressed_data" not in envelope
         assert "original_rows" not in envelope
 
-    def test_passes_path_and_pagination_to_adapter(self, semantic_tools_with_adapter):
+    def test_filters_path_with_kb_and_does_not_pass_path_to_adapter(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = [
+            {"name": "M1", "subject_path": ["Finance"]},
+            {"name": "m2", "subject_path": ["Sales"]},
+            {"name": "m3", "subject_path": ["Finance", "Revenue"]},
+            {"name": "", "subject_path": ["Finance"]},
+        ]
         metrics = []
         for name in ("m1", "m2", "m3"):
             metric = Mock()
@@ -1415,22 +1422,112 @@ class TestListMetrics:
             metric.measures = []
             metric.unit = None
             metric.format = None
-            metric.path = ["Finance"]
+            metric.path = None
             metrics.append(metric)
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=metrics):
-            result = tool.list_metrics(path=["Finance"], limit=3, offset=2)
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", return_value=metrics),
+            patch.object(SemanticTools, "_metric_catalog_paging", return_value=(100, 10)),
+        ):
+            result = tool.list_metrics(path=["Finance"], limit=10, offset=0)
 
         assert result.success == 1
         envelope = result.result
-        assert [row["name"] for row in envelope["items"]] == ["m1", "m2", "m3"]
-        assert envelope["total"] is None
-        assert envelope["has_more"] is True
-        assert envelope["extra"] == {"next_offset": 5}
-        mock_adapter.list_metrics.assert_called_once_with(path=["Finance"], limit=3, offset=2)
+        assert [(row["name"], row["path"]) for row in envelope["items"]] == [
+            ("m1", ["Finance"]),
+            ("m3", ["Finance", "Revenue"]),
+        ]
+        assert envelope["total"] == 2
+        assert envelope["has_more"] is False
+        assert envelope["extra"] is None
+        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
+        tool.metric_rag.search_all_metrics.assert_called_once_with(select_fields=["name"])
+
+    def test_path_filtering_happens_before_pagination(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = [
+            {"name": name, "subject_path": ["Metrics", "flights"]} for name in ("m1", "m3", "m5")
+        ]
+        pages = [
+            [SimpleNamespace(name="m1", description="", path=None)],
+            [SimpleNamespace(name="m2", description="", path=None)],
+            [SimpleNamespace(name="m3", description="", path=None)],
+            [SimpleNamespace(name="m4", description="", path=None)],
+            [SimpleNamespace(name="m5", description="", path=None)],
+        ]
+
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=pages),
+            patch.object(SemanticTools, "_metric_catalog_paging", return_value=(1, 10)),
+        ):
+            result = tool.list_metrics(path=["Metrics", "flights"], limit=1, offset=1)
+
+        assert result.success == 1
+        assert [row["name"] for row in result.result["items"]] == ["m3"]
+        assert result.result["total"] == 3
+        assert result.result["has_more"] is True
+        assert result.result["extra"] == {"next_offset": 2}
+        assert mock_adapter.list_metrics.call_args_list == [
+            call(path=None, limit=1, offset=0),
+            call(path=None, limit=1, offset=1),
+            call(path=None, limit=1, offset=2),
+            call(path=None, limit=1, offset=3),
+            call(path=None, limit=1, offset=4),
+        ]
+
+    def test_unknown_kb_path_returns_empty_without_reading_adapter(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = []
+
+        result = tool.list_metrics(path=["Metrics", "missing"])
+
+        assert result.success == 1
+        assert result.result == {"items": [], "total": 0, "has_more": False, "extra": None}
+        mock_adapter.list_metrics.assert_not_called()
+
+    def test_path_query_excludes_kb_metric_missing_from_adapter(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = [
+            {"name": "flight_count", "subject_path": ["Metrics", "flights"]},
+            {"name": "stale_metric", "subject_path": ["Metrics", "flights"]},
+        ]
+        metric = SimpleNamespace(name="flight_count", description="Flights", path=None)
+
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=[[metric], []]),
+            patch.object(SemanticTools, "_metric_catalog_paging", return_value=(100, 10)),
+        ):
+            result = tool.list_metrics(path=["Metrics", "flights"])
+
+        assert result.success == 1
+        assert [(row["name"], row["path"]) for row in result.result["items"]] == [
+            ("flight_count", ["Metrics", "flights"])
+        ]
+        assert result.result["total"] == 1
+
+    @pytest.mark.parametrize("extra_page,expected_success", [([], 1), ([SimpleNamespace(name="m2")], 0)])
+    def test_path_query_handles_catalog_page_cap(self, semantic_tools_with_adapter, extra_page, expected_success):
+        tool, _ = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = [{"name": "missing", "subject_path": ["Metrics", "flights"]}]
+        unrelated = SimpleNamespace(name="m1", description="")
+
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=[[unrelated], extra_page]),
+            patch.object(SemanticTools, "_metric_catalog_paging", return_value=(1, 1)),
+        ):
+            result = tool.list_metrics(path=["Metrics", "flights"])
+
+        assert result.success == expected_success
+        if expected_success:
+            assert result.result["items"] == []
+            assert result.result["total"] == 0
+        else:
+            assert "error_code=400001" in result.error
+            assert "cannot apply the knowledge-base subject path safely" in result.error
 
     def test_drops_null_path_placeholders(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = []
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
             result = tool.list_metrics(path=[None, "", "null"], limit=50, offset=0)
@@ -1440,6 +1537,7 @@ class TestListMetrics:
 
     def test_ignores_non_dict_metric_metadata(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = []
         mock_metric = Mock()
         mock_metric.name = "orders"
         mock_metric.description = ""
@@ -1456,6 +1554,30 @@ class TestListMetrics:
 
         assert result.success == 1
         assert result.result["items"][0]["metadata"] == {}
+        assert result.result["items"][0]["path"] is None
+
+    def test_no_path_keeps_adapter_available_when_kb_read_fails(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.side_effect = RuntimeError("KB unavailable")
+        mock_metric = SimpleNamespace(name="orders", description="Order count", path=["Yaml", "Path"])
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[mock_metric]):
+            result = tool.list_metrics()
+
+        assert result.success == 1
+        assert result.result["items"][0]["name"] == "orders"
+        assert result.result["items"][0]["path"] is None
+        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
+
+    def test_path_query_fails_when_kb_read_fails(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.side_effect = RuntimeError("KB unavailable")
+
+        result = tool.list_metrics(path=["Metrics", "orders"])
+
+        assert result.success == 0
+        assert "KB unavailable" in result.error
+        mock_adapter.list_metrics.assert_not_called()
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter

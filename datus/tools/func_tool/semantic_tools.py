@@ -23,7 +23,7 @@ from agents import Tool
 from pydantic import BaseModel
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import MetricRAG
+from datus.storage.metric.store import MetricRAG, normalize_metric_name
 from datus.tools.func_tool.attribution_utils import (
     AttributionValidationException,
     GenericAttributeAnalyzer,
@@ -49,6 +49,7 @@ from datus.tools.semantic_tools.paging import (
 )
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.compress_utils import DataCompressor
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -388,9 +389,9 @@ class SemanticTools:
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
-        # Keep storage handles for compatibility with older call sites, but
-        # public SemanticTools methods use the semantic adapter as their source
-        # of truth. ContextSearchTools owns RAG/storage discovery.
+        # The semantic adapter remains the source of executable metric definitions.
+        # list_metrics reads the KB only for navigation paths shared with
+        # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
         self.compressor = DataCompressor(model_name=agent_config.active_model().model)
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
@@ -519,7 +520,7 @@ class SemanticTools:
         return None
 
     def _metric_catalog_paging(self) -> Tuple[int, int]:
-        """Page size and page cap for `metric_datasets`, from the adapter's config."""
+        """Page size and page cap for adapter catalog scans, from the adapter's config."""
         return metric_catalog_paging(self.agent_config, self.adapter_type)
 
     def _configured_adapter_type(self) -> Optional[str]:
@@ -855,7 +856,7 @@ class SemanticTools:
         offset: int = 0,
     ) -> FuncToolResult:
         """
-        List available metrics from the semantic adapter.
+        List executable metrics, using the knowledge base for subject paths.
 
         Args:
             path: Optional subject tree path filter (e.g., ["Finance", "Revenue"])
@@ -866,7 +867,7 @@ class SemanticTools:
             FuncToolResult with result as FuncToolListResult:
               - items (List[Dict]): metric rows, each with name, description, type,
                 dimensions, measures, unit, format, path, metadata
-              - total (int | None): full metric count before pagination
+              - total (int | None): full metric count before pagination when path is provided
               - has_more (bool | None): True when offset + len(items) < total
               - extra (dict | None): {"next_offset": int} when has_more is True
 
@@ -883,20 +884,39 @@ class SemanticTools:
             return error
 
         try:
-            async_result = _run_async(adapter.list_metrics(path=path, limit=limit, offset=offset))
+            try:
+                kb_paths = self._metric_subject_paths(path)
+            except Exception as exc:
+                if path:
+                    raise
+                logger.warning(
+                    "Could not load KB metric subject paths; returning the adapter catalog without paths: %s",
+                    exc,
+                )
+                kb_paths = {}
+            if path:
+                if not kb_paths:
+                    return self._build_metrics_envelope([], total=0, offset=offset, limit=limit)
+
+                async_result = self._adapter_metrics_for_names(adapter, set(kb_paths))
+                adapter_metrics = [
+                    self._adapter_metric_row(metric, kb_paths[normalize_metric_name(metric.name)])
+                    for metric in async_result
+                    if normalize_metric_name(metric.name) in kb_paths
+                ]
+                total = len(adapter_metrics)
+                paginated_metrics = adapter_metrics[offset : offset + limit]
+                return self._build_metrics_envelope(
+                    paginated_metrics,
+                    total=total,
+                    offset=offset,
+                    limit=limit,
+                )
+
+            async_result = _run_async(adapter.list_metrics(path=None, limit=limit, offset=offset))
             adapter_metrics = [
-                {
-                    "name": m.name,
-                    "description": m.description,
-                    "type": getattr(m, "type", None),
-                    "dimensions": getattr(m, "dimensions", []),
-                    "measures": getattr(m, "measures", []),
-                    "unit": getattr(m, "unit", None),
-                    "format": getattr(m, "format", None),
-                    "path": getattr(m, "path", None),
-                    "metadata": _normalize_metric_metadata(getattr(m, "metadata", None)),
-                }
-                for m in async_result
+                self._adapter_metric_row(metric, kb_paths.get(normalize_metric_name(metric.name)))
+                for metric in async_result
             ]
             # Adapter path has no guaranteed upstream total — leave it None so consumers
             # know to use has_more / len(items) < limit as the pagination hint.
@@ -908,6 +928,68 @@ class SemanticTools:
                 success=0,
                 error=f"Failed to list metrics: {str(e)}",
             )
+
+    def _metric_subject_paths(self, path: Optional[List[str]]) -> Dict[str, List[str]]:
+        """Return datasource-scoped KB subject paths keyed by normalized metric name."""
+        rows = self.metric_rag.search_all_metrics(select_fields=["name"])
+        paths: Dict[str, List[str]] = {}
+        for row in rows:
+            name = normalize_metric_name(row.get("name"))
+            raw_path = row.get("subject_path")
+            if not name or not isinstance(raw_path, list):
+                continue
+            subject_path = _normalize_name_list(raw_path)
+            if subject_path and (not path or subject_path[: len(path)] == path):
+                paths[name] = subject_path
+        return paths
+
+    @staticmethod
+    def _adapter_metric_row(metric: Any, subject_path: Optional[List[str]]) -> Dict[str, Any]:
+        """Serialize adapter-owned metric fields with the KB-owned navigation path."""
+        return {
+            "name": metric.name,
+            "description": metric.description,
+            "type": getattr(metric, "type", None),
+            "dimensions": getattr(metric, "dimensions", []),
+            "measures": getattr(metric, "measures", []),
+            "unit": getattr(metric, "unit", None),
+            "format": getattr(metric, "format", None),
+            "path": subject_path,
+            "metadata": _normalize_metric_metadata(getattr(metric, "metadata", None)),
+        }
+
+    def _adapter_metrics_for_names(self, adapter: BaseSemanticAdapter, names: set[str]) -> List[Any]:
+        """Read unfiltered adapter pages until every KB candidate is found or the catalog ends."""
+        page_size, max_pages = self._metric_catalog_paging()
+        matched: List[Any] = []
+        found: set[str] = set()
+        offset = 0
+
+        for _ in range(max_pages):
+            page = list(_run_async(adapter.list_metrics(path=None, limit=page_size, offset=offset)))
+            if not page:
+                return matched
+
+            for metric in page:
+                name = normalize_metric_name(getattr(metric, "name", None))
+                if name in names and name not in found:
+                    matched.append(metric)
+                    found.add(name)
+
+            if found == names:
+                return matched
+            offset += len(page)
+
+        if not list(_run_async(adapter.list_metrics(path=None, limit=page_size, offset=offset))):
+            return matched
+
+        raise DatusException(
+            ErrorCode.TOOL_EXECUTION_FAILED,
+            message=(
+                f"Metric catalog still returning rows after {max_pages} pages; "
+                "cannot apply the knowledge-base subject path safely."
+            ),
+        )
 
     @staticmethod
     def _build_metrics_envelope(
