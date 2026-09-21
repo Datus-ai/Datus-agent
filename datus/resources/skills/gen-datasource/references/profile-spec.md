@@ -13,7 +13,7 @@ data. The profile is what makes it look real.
 | Capability | Notes |
 |---|---|
 | Table roles | date_dim / dim / fact / detail / downstream / event / metric_daily / snapshot, inferred structurally, never from name prefixes. `date_dim` and `metric_daily` share a shape - a date grain, no foreign key, a few measures - and are told apart by whether every column is a calendar attribute (`year_num`, `quarter_cd`) or the table carries something the date does not determine (`channel`, `gmv`). Force either with `roles` |
-| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect |
+| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect. **A COMPOSITE `PRIMARY KEY (a, b)` is parsed but not honoured end to end**: generation does not know about it (`pk_of` falls back to the first column), so the combination is unique only by luck, and the quality check verifies that first column alone |
 | Enum domains | **Extracted from DDL inline comments** (`order_status VARCHAR, -- pending / paid / shipped`). `report()` lists which columns were extracted and which end in `...` (incomplete) |
 | Column semantics | id / date / ts / amount / count / ratio / enum / flag / name / seq / measure, from name + type |
 | Row allocation | Fact layer 65-75%, dimensions derived from business density, two-pass total calibration (within 6%) |

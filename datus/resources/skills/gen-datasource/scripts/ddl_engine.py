@@ -265,26 +265,144 @@ class DDLEngine:
                     self._sem_override[(t, c)] = sem
 
     # ---------------------------------------------------------------- parsing
+    @staticmethod
+    def _ddl_parse_error(stmt, exc, declared=frozenset()):
+        """The sentence a reader acts on when a CREATE will not parse.
+
+        Two failures reach here and they need opposite fixes, so the message has to tell them
+        apart. A missing TABLE survives the retry pass only when no statement declares it - a
+        typo, or a table the DDL forgot - and answering that with "rewrite the dialect" sends
+        the reader to edit syntax that parses fine. Everything else really is a dialect the
+        engine does not speak.
+
+        ⚠️ Matched on "Table with name", not on "Catalog Error": a foreign dialect raises the
+        same error class for its TYPES (`NUMBER(19)` -> "Catalog Error: Type with name NUMBER
+        does not exist"), and the looser test claimed Oracle and PostgreSQL DDL referenced a
+        missing table. The suite caught it; the two spellings differ only in that one word.
+        """
+        text = str(exc)
+        missing = DDLEngine._MISSING.search(text)
+        if missing and missing.group(1).lower() in declared:
+            # The target IS declared, so nothing is misspelled: these statements could not be
+            # ordered into a sequence that resolves, which in practice means a cycle.
+            return (
+                f"Cannot parse DDL: {exc}\nStatement: {stmt[:200]}\n"
+                f"`{missing.group(1)}` IS declared in this DDL, so the name is right - but no order "
+                f"of the CREATE statements resolves them all, which means they reference each other "
+                f"in a cycle. Break it: drop one REFERENCES and re-add it as a plain column."
+            )
+        if missing and "does not exist" in text:
+            return (
+                f"Cannot parse DDL: {exc}\nStatement: {stmt[:200]}\n"
+                f"This statement references a table that no CREATE in this DDL declares - the "
+                f"engine retried it after every other table existed and it still could not "
+                f"resolve. Check the referenced name for a typo, or add the missing table. "
+                f"Declaration ORDER is not the problem: forward references are retried."
+            )
+        return (
+            f"Cannot parse DDL: {exc}\nStatement: {stmt[:200]}\n"
+            f"The engine parses DuckDB syntax. This looks like another dialect "
+            f"(PostgreSQL/MySQL/StarRocks/Oracle/...): rewrite it to DuckDB first - drop the "
+            f"schema prefix and backticks, map the types, strip PARTITION BY / DISTRIBUTED BY / "
+            f"PROPERTIES / ENGINE / storage clauses and CREATE INDEX, and keep the inline "
+            f"comments (the engine extracts enum domains from them)."
+        )
+
+    _DECLARES = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"']?([\w.]+)[`\"']?", re.I)
+    _MISSING = re.compile(r"Table with name (\w+) does not exist", re.I)
+
+    @classmethod
+    def _declared_names(cls, stmts):
+        """Every table this DDL creates, whether or not it parsed."""
+        return {m.group(1).split(".")[-1].lower() for s in stmts for m in [cls._DECLARES.search(s)] if m}
+
+    @classmethod
+    def _blame(cls, leftover, stmts):
+        """Which unparsed statement to report, out of a set that failed together.
+
+        ⚠️ NOT simply the first. When `a -> b` and `b -> xxx` both fail, `a` is first in file order
+        and its error says "Table with name b does not exist" - about a table declared on the very
+        next line. Reporting that sends the reader hunting a typo in `a`, and never mentions `xxx`,
+        which is the only thing actually wrong. Prefer a statement whose missing target no CREATE
+        declares; that is the one the reader has to fix, and the rest fail only because of it.
+        """
+        declared = cls._declared_names(stmts)
+        for stmt, first, _last in leftover:
+            m = cls._MISSING.search(str(first))
+            if m and m.group(1).lower() not in declared:
+                return stmt, first
+        # Nothing names an undeclared table, so the remaining failures are either a cycle or a
+        # second problem that was hidden behind a dependency. A LAST failure that is no longer
+        # about a missing table is the latter: everything it needed got created and it still will
+        # not parse, which makes it the statement to report and the reason to report.
+        for stmt, _first, last in leftover:
+            if not cls._MISSING.search(str(last)):
+                return stmt, last
+        return leftover[0][0], leftover[0][1]
+
+    @staticmethod
+    def _create_until_stuck(items, attempt):
+        """Retry ``attempt`` over ``items`` until a whole pass adds nothing.
+
+        ⚠️ ONE RETRY PASS ONLY RESOLVES A REFERENCE ONE LEVEL DEEP. With ``a -> b -> c`` declared
+        in that order, the retry meets ``a`` again before ``b`` exists and gives up on a schema
+        that is perfectly valid - and, worse, reports it as a table nothing declares, which sends
+        the reader looking for a typo in a name that is right there. Passes repeat while any
+        statement lands; that terminates because every pass either shrinks the list or ends it.
+
+        Returns ``(item, first failure, last failure)``. Both are needed: the first names what was
+        missing when nothing else existed, which is the state the reader's DDL describes, while the
+        last is what still blocks the statement after everything that COULD be created has been -
+        and those differ when a statement has a second problem hiding behind its dependency.
+        """
+        pending = [(item, None, None) for item in items]
+        while pending:
+            rest, progressed = [], False
+            for item, first, _last in pending:
+                failure = attempt(item)
+                if failure is None:
+                    progressed = True
+                else:
+                    rest.append((item, first if first is not None else failure, failure))
+            pending = rest
+            if not progressed:
+                break
+        return pending
+
+    @staticmethod
+    def _try_ddl(con, stmt):
+        """Execute one CREATE, retrying once with the foreign-dialect noise stripped.
+
+        Returns the failure, or ``None`` when the statement landed.
+        """
+        try:
+            con.execute(stmt)
+            return None
+        except Exception as e:  # noqa: BLE001 - the caller decides whether this is fatal
+            cleaned = re.sub(r"\b(ENGINE|CHARSET|COLLATE|COMMENT)\s*=?\s*'[^']*'", "", stmt)
+            cleaned = re.sub(r"\bAUTO_INCREMENT\b|\bUNSIGNED\b|\bCOMMENT\s+'[^']*'", "", cleaned, flags=re.I)
+            try:
+                con.execute(cleaned)
+                return None
+            except Exception:  # noqa: BLE001
+                return e
+
     def _parse(self):
         """Let DuckDB parse the DDL - no SQL parser to write, and common dialects just work."""
         con = duckdb.connect(":memory:")
-        for stmt in [s.strip() for s in self.ddl.split(";") if s.strip()]:
-            try:
-                con.execute(stmt)
-            except Exception as e:
-                cleaned = re.sub(r"\b(ENGINE|CHARSET|COLLATE|COMMENT)\s*=?\s*'[^']*'", "", stmt)
-                cleaned = re.sub(r"\bAUTO_INCREMENT\b|\bUNSIGNED\b|\bCOMMENT\s+'[^']*'", "", cleaned, flags=re.I)
-                try:
-                    con.execute(cleaned)
-                except Exception:
-                    raise ValueError(
-                        f"Cannot parse DDL: {e}\nStatement: {stmt[:200]}\n"
-                        f"The engine parses DuckDB syntax. This looks like another dialect "
-                        f"(PostgreSQL/MySQL/StarRocks/Oracle/...): rewrite it to DuckDB first - drop the "
-                        f"schema prefix and backticks, map the types, strip PARTITION BY / DISTRIBUTED BY / "
-                        f"PROPERTIES / ENGINE / storage clauses and CREATE INDEX, and keep the inline "
-                        f"comments (the engine extracts enum domains from them)."
-                    )
+        # ⚠️ A FAILED CREATE IS NOT AN ERROR YET, and treating it as one rejected valid schemas.
+        #
+        # DuckDB resolves a REFERENCES target at CREATE time, so a foreign key pointing at a table
+        # declared FURTHER DOWN the file fails on the first pass and succeeds once the rest exists.
+        # Nothing requires a schema to be written parent-first - a DDL that opens with the fact
+        # table and lists its dimensions after it is the ordinary shape - yet that DDL used to come
+        # back as "This looks like another dialect", which sends the reader off rewriting syntax
+        # that was never wrong. The same file parsed if you reordered it.
+        stmts = [s.strip() for s in self.ddl.split(";") if s.strip()]
+        leftover = self._create_until_stuck(stmts, lambda s: self._try_ddl(con, s))
+        if leftover:
+            stmt, failure = self._blame(leftover, stmts)
+            raise ValueError(self._ddl_parse_error(stmt, failure, self._declared_names(stmts))) from None
         self.ddl_enums = self._scan_ddl_comments()
         self.decl_pk, self.decl_uniq, self.decl_fk = self._scan_constraints(con)
         # Normalised CREATE TABLE text, so the built database can carry the declared
@@ -1432,6 +1550,16 @@ class DDLEngine:
             # reasoning them through by hand, which one production run did at length.
             print("  every statement above planned against the schema; columns and types check out")
 
+        # Last line of the report, because it is the question the reader has once they have read it.
+        # Both traced runs called this before writing `gen.py` and then spent 30+ minutes inventing
+        # their own verification; naming the loop here puts it in front of them at the moment the
+        # plan becomes a file. `generate()` repeats it after every build - see `_next_step`.
+        print(
+            "then: write gen.py from profile_skeleton (fill calendar), run it once, and go straight to"
+            "\n  import_database_file + check_datasource_quality. The check is the verification step;"
+            "\n  correcting a default is what it is for, and designing one up front is not."
+        )
+
     def _preview_ent(self, t, rng):
         """A stand-in row for the name preview.
 
@@ -1479,6 +1607,46 @@ class DDLEngine:
         ]
         if unknown:
             print(f"  unrecognised, will be filled as free text: {unknown[:12]}{' ...' if len(unknown) > 12 else ''}")
+        # ⚠️ THE MIDDLE GROUND, and it was the only one of the three nobody reported.
+        #
+        # The report already names what it EXTRACTED a domain for (from DDL comments) and what it
+        # did not recognise at all (free text). Between them sits a column recognised as an enum
+        # whose values nothing declared - the engine fills it from a built-in vocabulary, which is
+        # a business decision made by a default. Silent, and it surfaces much later as a quality
+        # failure about a distribution the reader never chose: a measured run wrote an assertion
+        # over a unit column whose domain had been guessed, and got back "... differentiated by
+        # unit: actual 0.9994 (expected 1000~100000)".
+        # Everything that already pins a domain, in `_enum_values_raw`'s own precedence order:
+        # profile['columns'][t.c]['values'] > profile['enums'][c] > ddl_enums[c] > built-in vocab.
+        # Naming a column the reader has already set is worse than saying nothing - the line tells
+        # them to do the thing they did, and repeats itself on the next report.
+        pinned_cols = {
+            key
+            for key, spec in (self.profile.get("columns") or {}).items()
+            if isinstance(spec, dict) and "values" in spec
+        }
+        # NON-EMPTY only, matching `_enum_values_raw`'s `if g:` - `profile_skeleton` emits
+        # `"col": []` as a placeholder, so treating a key as a decision would silence the
+        # line for exactly the reader who pasted the skeleton and filled nothing in.
+        pinned_names = set(getattr(self, "ddl_enums", {})) | {
+            col for col, vals in (self.profile.get("enums") or {}).items() if vals
+        }
+        guessed = [
+            f"{t}.{c['name']}"
+            for t in sorted(self.schema)
+            # A date dimension's enums come from the calendar, never from a vocabulary, so
+            # profile['enums'] is a no-op there - `profile_skeleton` already excludes them.
+            if self.roles.get(t) != ROLE_DATE
+            for c in self.schema[t]
+            if c["sem"] == "enum" and c["name"] not in pinned_names and f"{t}.{c['name']}" not in pinned_cols
+        ]
+        if guessed:
+            print(
+                f"  value domains GUESSED for {len(guessed)} enum column(s) - nothing declared them: "
+                f"{guessed[:12]}{' ...' if len(guessed) > 12 else ''}\n"
+                f"    Set profile['enums'] for any whose real values you know, or put them in a DDL "
+                f"comment. An assertion about a guessed domain is measuring the default, not the business."
+            )
 
     # ---------------------------------------------------------------- generation
     DEFAULT_VOCAB = {
@@ -1895,6 +2063,27 @@ class DDLEngine:
                 out[c] = round(base - disc + ship + tax, 2)
         return out
 
+    #: Appended to every "could not stage" line, and it is not padding.
+    #:
+    #: All three staging failures are already swallowed - each `except` below says so in its own
+    #: comment ("never block generating on a staging problem", "validation is a convenience, never
+    #: a gate"). That fact lived only in the comments. What reached the reader was a sentence
+    #: naming an internal step and a DuckDB error, with a `!` for severity and nothing to say
+    #: whether it mattered.
+    #:
+    #: A measured run spent a full turn on it, hypothesising five different mechanisms in a row
+    #: ("maybe staging executes CREATE TABLE in resolvable order", "maybe it validates
+    #: incrementally", "maybe the validator has trouble with my statement's complexity"), then
+    #: gave up and went into this file to read the parser - which is exactly what SKILL.md's
+    #: budget section lists first among the ways to lose a run. The answer it was looking for is
+    #: one clause long and belongs in the message.
+    #: ⚠️ No cause is named here on purpose. It used to say "usually foreign-key order", which
+    #: `_create_until_stuck` has since made false - ordering is retried until it stops helping, so
+    #: a failure that survives to this line is NOT an ordering problem. It is also appended to
+    #: `_stage_summary_layer`, where the subject is extra_sql and foreign keys are irrelevant.
+    #: What both calls can honestly say is that it does not block anything.
+    _STAGING_IS_ADVISORY = "\n    (advisory only: generation is unaffected and the profile is not necessarily wrong.)"
+
     def _scratch_schema(self):
         """An empty in-memory copy of the schema this run will build, for planning SQL against.
 
@@ -1904,22 +2093,33 @@ class DDLEngine:
         once after everything else exists.
         """
         con = duckdb.connect(":memory:")
-        pending = []
+        # The table NAME travels with the statement. Without it the warning below could only quote
+        # DuckDB's error, which names whichever table the failing one REFERENCED - so it pointed at
+        # the neighbour rather than at the table that failed.
+        items = []
         for t, cols in self.schema.items():
             sql = getattr(self, "decl_sql", {}).get(t)
             if not sql:
                 body = ", ".join(f'"{c["name"]}" {c["type"]}' for c in cols)
                 sql = f'CREATE TABLE "{t}" ({body})'
+            items.append((t, sql))
+
+        def _stage(item):  # noqa: ANN001 - local helper
             try:
-                con.execute(sql)
-            except Exception:  # noqa: BLE001 - almost always a not-yet-created FK target
-                pending.append(sql)
-        for sql in pending:
-            try:
-                con.execute(sql)
-            except Exception as e:  # noqa: BLE001 - a table we cannot build is one we cannot check
-                logger_msg = (str(e).splitlines() or [""])[0]
-                print(f"  ! pre-check could not stage a table for SQL validation: {logger_msg}")
+                con.execute(item[1])
+                return None
+            except Exception as e:  # noqa: BLE001 - almost always a not-yet-created FK target
+                return e
+
+        # Same repeated-pass rule as `_parse`: a foreign-key chain more than one level deep needs
+        # more than one retry, and a table left unstaged here silently stops validating the SQL
+        # that touches it.
+        for (t, _sql), _first, failure in self._create_until_stuck(items, _stage):
+            logger_msg = (str(failure).splitlines() or [""])[0]
+            print(
+                f"  ! pre-check could not stage `{t}`, so statements touching it went "
+                f"unvalidated: {logger_msg}{self._STAGING_IS_ADVISORY}"
+            )
         return con
 
     def _stage_summary_layer(self, con):
@@ -1948,6 +2148,7 @@ class DDLEngine:
             print(
                 "  ! pre-check could not stage the summary layer, so extra_sql was not validated: "
                 + (str(e).splitlines() or [""])[0]
+                + self._STAGING_IS_ADVISORY
             )
             return False
         finally:
@@ -1985,7 +2186,11 @@ class DDLEngine:
         try:
             con = self._scratch_schema()
         except Exception as e:  # noqa: BLE001 - validation is a convenience, never a gate on generating
-            print("  ! pre-check could not stage the schema for SQL validation: " + (str(e).splitlines() or [""])[0])
+            print(
+                "  ! pre-check could not stage the schema, so no statement was validated: "
+                + (str(e).splitlines() or [""])[0]
+                + self._STAGING_IS_ADVISORY
+            )
             return []
 
         problems = []
@@ -3004,7 +3209,34 @@ class DDLEngine:
                 f"build {res['t_db']:.2f}s total {res['t_total']:.2f}s{extra} | "
                 f"{Path(out).stat().st_size / 1e6:.1f} MB | {self.start} ~ {self.end}"
             )
+            print(self._next_step(out))
         return res
+
+    @staticmethod
+    def _next_step(out):
+        """What to do with the database that was just built.
+
+        ⚠️ THE ONE PLACE THIS INSTRUCTION IS READ AT THE MOMENT IT APPLIES. SKILL.md carries the
+        same rule, and SKILL.md is loaded once, at the top of a session that then runs for dozens
+        of turns - by the time this decision is made it is tens of thousands of tokens back. This
+        line is printed by every build, immediately before the reader picks what to do next.
+
+        And what they pick is the whole cost. Two measured runs, two models, same shape: 79% of the
+        wall clock went to the stretch BEFORE the first `import_database_file`, and once the check
+        was finally run it converged in three rounds either way (13 and 7 minutes). Neither was
+        stuck - both were verifying, by hand. One wrote duckdb queries against successive
+        `raw2/raw3/raw4` builds for 43 minutes; the other read the engine's source for 33. The
+        check answers the same questions in one call and its assertions re-run for free on the next
+        build, which is why SKILL.md lists hand-written verification among the three ways to lose a
+        run.
+        """
+        return (
+            f"  NEXT: import_database_file(path={out!r}, mode='replace')\n"
+            f"        then check_datasource_quality(config_path='data/checks.json')\n"
+            f"  Run these now, before inspecting the build. Hand-written queries against it answer"
+            f" one question each and are paid for every time; the check answers all of them in one"
+            f" call and re-runs for free."
+        )
 
     def _backfill_tiers(self, o):
         """Backfill the tier column from actual contribution (invariant 5): compute the facts first, label second."""

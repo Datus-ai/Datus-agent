@@ -9,10 +9,13 @@ LLM is told to write, the DDL it is told to normalise, and the two column classe
 filled with nothing.
 """
 
+import contextlib
 import importlib.util
+import io
 import sys
 from pathlib import Path
 
+import duckdb
 import pytest
 
 SKILL_DIR = Path(__file__).resolve().parents[4] / "datus" / "resources" / "skills" / "gen-datasource"
@@ -171,6 +174,67 @@ def test_foreign_dialect_fails_with_an_actionable_message(engine_module, dialect
     has to name the fix - most users paste DDL exported from their real warehouse."""
     with pytest.raises(ValueError, match="rewrite it to DuckDB"):
         engine_module.DDLEngine(ddl, rows=2000)
+
+
+@pytest.mark.acceptance
+def test_a_forward_foreign_key_is_not_a_dialect_problem(engine_module):
+    """A DDL that names the fact table first and its dimensions after it is the ordinary shape,
+    and DuckDB resolves a REFERENCES target at CREATE time - so the first pass fails on a target
+    that appears further down. Reject it and a valid schema comes back as "rewrite the dialect",
+    which sends the reader to edit syntax that was never wrong: the same file parsed once the
+    statements were reordered."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, cust_id INTEGER REFERENCES customers(id));"
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY, name VARCHAR);",
+        rows=2000,
+    )
+
+    assert sorted(eng.schema) == ["customers", "orders"]
+
+
+@pytest.mark.acceptance
+def test_a_reference_chain_resolves_however_deep_it_is(engine_module):
+    """One retry pass only resolves a reference ONE level deep. With `a -> b -> c` declared in that
+    order, the retry meets `a` again before `b` exists - and the schema is valid. Worse than
+    failing, it failed as "no CREATE in this DDL declares that table", sending the reader to hunt a
+    typo in a name that is three lines further down. Passes now repeat while any statement lands."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+        "CREATE TABLE b (id INTEGER PRIMARY KEY, c_id INTEGER REFERENCES c(id));"
+        "CREATE TABLE c (id INTEGER PRIMARY KEY, name VARCHAR);",
+        rows=2000,
+    )
+
+    assert sorted(eng.schema) == ["a", "b", "c"]
+    assert eng.decl_fk, "the chain must survive as declared foreign keys, not just parse"
+
+
+@pytest.mark.acceptance
+def test_a_reference_to_a_table_nothing_declares_says_so(engine_module):
+    """The failure that survives the retry pass. It needs the OPPOSITE fix from a dialect error,
+    so it must not borrow that message - and it has to say that ordering is not the cause, or the
+    reader's next move is to shuffle statements that are already fine."""
+    with pytest.raises(ValueError, match="no CREATE in this DDL declares") as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, cust_id INTEGER REFERENCES custmers(id));",
+            rows=2000,
+        )
+
+    assert "rewrite it to DuckDB" not in str(excinfo.value)
+    assert "Declaration ORDER is not the problem" in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+def test_the_parse_failure_does_not_hand_back_a_traceback_into_the_engine(engine_module):
+    """``from None`` on that raise. With the chain attached, Python prints both DuckDB
+    ParserExceptions - each headed by a path into ddl_engine.py - ABOVE the sentence that says
+    what to do, and a `| tail -40` then cuts the sentence off. One measured run followed that
+    path into the engine's parser and spent the rest of its budget there."""
+    with pytest.raises(ValueError) as excinfo:
+        engine_module.DDLEngine("CREATE TABLE t (id INT AUTO_INCREMENT) ENGINE=InnoDB;", rows=2000)
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None or excinfo.value.__suppress_context__
 
 
 @pytest.mark.acceptance
@@ -1968,3 +2032,255 @@ def test_a_table_with_no_foreign_key_also_reports_its_demotion(engine_module, ca
     ).report()
 
     assert "sensors carries measures but is planned as a dimension" in capsys.readouterr().out
+
+
+@pytest.mark.acceptance
+def test_a_staging_warning_says_it_is_advisory(engine_module, capsys, monkeypatch):
+    """Every staging failure is already swallowed - the `except` blocks say so in their comments
+    ("never block generating on a staging problem"). That fact stayed in the comments: what the
+    reader got was an internal step name, a DuckDB error and a `!`, with nothing to say whether it
+    mattered. A measured run spent a whole turn hypothesising five different mechanisms for it,
+    then went into ddl_engine.py to find out - the first item on SKILL.md's list of ways to lose a
+    run. The answer is one clause long and belongs in the line."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, order_dt DATE, amt DOUBLE);",
+        rows=2000,
+        extra_tables="summary",
+    )
+    con = eng._scratch_schema()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("Catalog Error: Table with name orders does not exist!")
+
+    monkeypatch.setattr(eng, "_auto_summary_sql", _boom)
+    assert eng._stage_summary_layer(con) is False, "a staging failure must never become a hard stop"
+
+    out = capsys.readouterr().out
+    assert "could not stage the summary layer" in out, out
+    assert "advisory only" in out, out
+    assert "generation is unaffected" in out, out
+
+
+@pytest.mark.acceptance
+def test_a_composite_primary_key_is_parsed_but_not_honoured_end_to_end(engine_module, tmp_path):
+    """Pins the LIMITATION, so the docs cannot start promising the capability again.
+
+    `_scan_constraints` parses `PRIMARY KEY (a, b)` into `decl_pk` as a list, and that is where it
+    stops: `pk_of` returns the first schema column for anything that is not single-column, and
+    `_dump_meta` writes `pks` from `pk_of` - so the quality check verifies `a` alone and a table
+    whose grain really is two columns reports duplicates however it is declared.
+
+    The second column is a DATE on purpose. An earlier version of this test used a TIMESTAMP and
+    passed, which pinned the entropy of a microsecond clock rather than anything the engine does -
+    the same DDL at day granularity produced 1,313 duplicate pairs and had its constraint dropped.
+    """
+    ddl = (
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE readings ("
+        "  meter_id VARCHAR REFERENCES meters(meter_id),"
+        "  read_date DATE, kwh DOUBLE, PRIMARY KEY (meter_id, read_date));"
+    )
+    eng = engine_module.DDLEngine(ddl, rows=5000)
+
+    assert eng.decl_pk["readings"] == ["meter_id", "read_date"], "parsing keeps both columns"
+    # ...and every consumer downstream drops the second one.
+    assert eng.pk_of("readings") == eng.schema["readings"][0]["name"]
+
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    con = duckdb.connect(str(out), read_only=True)
+    dup_pairs = con.execute(
+        "SELECT count(*) FROM (SELECT meter_id, read_date FROM readings GROUP BY 1, 2 HAVING count(*) > 1)"
+    ).fetchone()[0]
+
+    assert dup_pairs > 0, (
+        "if this ever passes, generation learned about composite keys - update profile-spec's "
+        "capability table and SKILL.md step 0, which currently tell the reader it cannot"
+    )
+
+
+@pytest.mark.acceptance
+def test_a_guessed_enum_domain_is_named(engine_module, capsys):
+    """The report already names what it EXTRACTED a domain for and what it did not recognise at
+    all. Between them sat the column recognised as an enum whose values nothing declared - filled
+    from a built-in vocabulary, silently. It surfaces much later as a quality failure about a
+    distribution nobody chose: a measured run wrote an assertion about `flight_sensors.unit`, whose
+    domain had been guessed, and got back "sensor series differentiated by unit: actual 0.9994
+    (expected 1000~100000)"."""
+    # One column per line: the comment scanner anchors the column name at the start of the line,
+    # so two columns on one line hand the comment to the first of them.
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE meters (\n"
+        "  meter_id VARCHAR PRIMARY KEY,\n"
+        "  unit VARCHAR\n"
+        ");\n"
+        "CREATE TABLE usage_events (\n"
+        "  event_id VARCHAR PRIMARY KEY,\n"
+        "  meter_id VARCHAR REFERENCES meters(meter_id),\n"
+        "  read_at TIMESTAMP,\n"
+        "  state VARCHAR, -- pending / settled / disputed\n"
+        "  kwh INTEGER\n"
+        ");",
+        rows=3000,
+    )
+    eng.report()
+    out = capsys.readouterr().out
+
+    named = out.split("GUESSED", 1)[1].split("\n")[0]
+    assert "value domains GUESSED" in out, out
+    assert "meters.unit" in named, "the undeclared enum must be named"
+    # `state` HAS a DDL comment, so it is extracted rather than guessed - naming it here would
+    # send the reader to re-declare something the engine already read.
+    assert "usage_events.state" not in named, named
+
+
+@pytest.mark.acceptance
+def test_every_build_says_to_run_the_check_next(engine_module, tmp_path):
+    """The instruction exists in SKILL.md too, and SKILL.md is loaded once at the top of a session
+    that then runs for dozens of turns. Two measured runs, two models: 79% of the wall clock went
+    to the stretch BEFORE the first `import_database_file` - one writing duckdb queries against
+    successive builds for 43 minutes, the other reading the engine's source for 33 - and once the
+    check finally ran it converged in three rounds either way. This line is printed at the moment
+    that choice is made."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id), scheduled_departure TIMESTAMP);",
+        rows=3000,
+    )
+    out = tmp_path / "datasource.duckdb"
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        eng.generate(str(out))
+    text = buf.getvalue()
+
+    assert "import_database_file" in text, text
+    assert "check_datasource_quality" in text, text
+    assert str(out) in text, "the path must be the one just built, so it can be copied verbatim"
+
+
+@pytest.mark.acceptance
+def test_a_broken_reference_downstream_is_the_one_reported(engine_module):
+    """`a -> b` and `b -> xxx` fail together, and `a` is first in file order - so reporting the
+    first leftover says "Table with name b does not exist" about a table declared on the very next
+    line, and never mentions `xxx`, which is the only thing actually wrong. The reader is sent to
+    hunt a typo in the wrong statement."""
+    with pytest.raises(ValueError) as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+            "CREATE TABLE b (id INTEGER PRIMARY KEY, x_id INTEGER REFERENCES xxx(id));",
+            rows=2000,
+        )
+
+    assert "xxx" in str(excinfo.value), str(excinfo.value)
+    assert "Table with name b does not exist" not in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+def test_a_reference_cycle_is_not_called_a_missing_table(engine_module):
+    """Both targets ARE declared, so "no CREATE declares that table" would be a false statement -
+    and the fix it asks for (check the spelling) does not exist."""
+    with pytest.raises(ValueError, match="cycle") as excinfo:
+        engine_module.DDLEngine(
+            "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+            "CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES a(id));",
+            rows=2000,
+        )
+
+    assert "no CREATE in this DDL declares" not in str(excinfo.value)
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    "profile",
+    [
+        {"enums": {"unit": ["kWh", "m3"]}},
+        {"columns": {"meters.unit": {"values": ["kWh", "m3"]}}},
+    ],
+    ids=["profile_enums", "profile_columns_values"],
+)
+def test_a_domain_the_reader_already_set_is_not_reported_as_guessed(engine_module, capsys, profile):
+    """The line tells the reader to set `profile['enums']`. Saying it again after they have is the
+    shape this whole branch exists to remove - a hint with no exit, repeating every report.
+    `_enum_values_raw` honours `columns[t.c]['values']` above `enums[c]`, so both count."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE ev (id VARCHAR PRIMARY KEY,"
+        "  meter_id VARCHAR REFERENCES meters(meter_id), read_at TIMESTAMP);",
+        rows=3000,
+        profile=profile,
+    )
+    eng.report()
+
+    guessed = [line for line in capsys.readouterr().out.splitlines() if "GUESSED" in line]
+    assert not guessed, guessed
+
+
+@pytest.mark.acceptance
+def test_an_unstageable_table_is_named_in_the_warning(engine_module, capsys, monkeypatch):
+    """The warning could only quote DuckDB's error before, which names whichever table the failing
+    statement REFERENCED - so it pointed at the neighbour rather than at the table that failed."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id));",
+        rows=2000,
+    )
+    # Every CREATE fails, so the retry gives up and both tables reach the warning.
+    monkeypatch.setattr(eng, "decl_sql", {t: "CREATE TABLE broken (" for t in eng.schema})
+    eng._scratch_schema()
+
+    out = capsys.readouterr().out
+    assert "could not stage `flights`" in out, out
+    assert "could not stage `carriers`" in out, out
+    assert "advisory only" in out
+    # The cause claim was retired: ordering is retried until it stops helping, so a failure that
+    # survives to this line is not an ordering problem.
+    assert "foreign-key order" not in out
+
+
+@pytest.mark.acceptance
+def test_a_problem_hiding_behind_a_dependency_is_reported_not_the_dependency(engine_module):
+    """A statement can fail twice for different reasons: first because its FK target does not
+    exist yet, then - once everything creatable has been created - because of something else
+    entirely, a bad type say. Reporting the first failure then blames a dependency that has since
+    been satisfied and never mentions what is actually blocking it.
+
+    Driven through `_blame` directly rather than through DuckDB: which of the two errors a real
+    CREATE surfaces first is up to the binder (measured: it reports an unknown TYPE before an
+    unknown TABLE), so a DDL fixture would pin DuckDB's internals, not this decision.
+    """
+    stmts = [
+        "CREATE TABLE a (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE b (a_id INTEGER REFERENCES a(id), v NUMBER(19))",
+    ]
+    leftover = [
+        (
+            stmts[1],
+            Exception("Catalog Error: Table with name a does not exist!"),
+            Exception("Type with name NUMBER does not exist!"),
+        )
+    ]
+
+    stmt, failure = engine_module.DDLEngine._blame(leftover, stmts)
+
+    assert stmt == stmts[1]
+    assert "NUMBER" in str(failure), "the surviving blocker, not the dependency it hid behind"
+
+
+@pytest.mark.acceptance
+def test_an_empty_enum_placeholder_is_not_a_decision(engine_module, capsys):
+    """`profile_skeleton` emits `"col": []` for every domain it could not fill, so a reader who
+    pastes the skeleton and fills nothing in has empty lists everywhere. `_enum_values_raw` skips
+    those (`if g:`) and falls back to the built-in vocabulary - the domain is still guessed, and
+    the line has to keep saying so or it goes quiet for exactly the reader who needs it."""
+    ddl = (
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE ev (id VARCHAR PRIMARY KEY,"
+        "  meter_id VARCHAR REFERENCES meters(meter_id), read_at TIMESTAMP);"
+    )
+    engine_module.DDLEngine(ddl, rows=3000, profile={"enums": {"unit": []}}).report()
+
+    out = capsys.readouterr().out
+    assert "meters.unit" in out.split("GUESSED", 1)[1].split("\n")[0], out

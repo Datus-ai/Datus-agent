@@ -182,6 +182,13 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    ```
    plan_datasource(ddl=<the normalised DDL>, rows=80000, months=17)
    ```
+   **If the DDL declares no keys, add them before this call** - "declared wins over inferred" only
+   helps once something is declared, and a measured run took in nine tables with zero PRIMARY KEY,
+   zero FOREIGN KEY and zero UNIQUE. Single-column keys only: a composite `PRIMARY KEY (a, b)`
+   parses, but generation does not know about it and the quality check verifies `a` alone, so a
+   table whose grain really is two columns will report duplicates whatever you declare. That is an
+   engine limitation, not something to fix in the DDL - leave such a table keyless and say so in
+   the delivery summary.
    It returns the engine's whole plan - row allocation per table, table roles, column semantics,
    the resolved date window, sample names, business codes, the daily-metric grid - and generates
    nothing. **This is the answer to every "what will the engine do with my DDL" question, and it
