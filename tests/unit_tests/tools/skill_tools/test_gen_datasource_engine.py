@@ -2284,3 +2284,115 @@ def test_an_empty_enum_placeholder_is_not_a_decision(engine_module, capsys):
 
     out = capsys.readouterr().out
     assert "meters.unit" in out.split("GUESSED", 1)[1].split("\n")[0], out
+
+
+# --------------------------------------------------------------------------- engine defects
+# Four generation defects found by reading what a measured run did with its 49 turns. It was not
+# avoiding the quality check: it was working around these, one at a time, from the source.
+
+
+def _build(engine_module, ddl, tmp_path, rows=5000, profile=None):
+    eng = engine_module.DDLEngine(ddl, rows=rows, profile=profile or {})
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    return eng, duckdb.connect(str(out), read_only=True)
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_to_a_unique_column_samples_from_it(engine_module, tmp_path):
+    """SQL lets a foreign key reference any unique column. `decl_fk` has always recorded WHICH
+    column, and every sampling site read the parent's PRIMARY KEY instead - so the child was filled
+    from the wrong column and matched nothing. Measured before the fix: 100% orphans, against 0%
+    for the same DDL with the target declared PRIMARY KEY. Invariant 6 says FKs are sampled from
+    upstream; this was the schema shape that broke it silently."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, series_id VARCHAR UNIQUE, unit VARCHAR);"
+        "CREATE TABLE c (series_id VARCHAR REFERENCES p(series_id), ts TIMESTAMP, v DOUBLE);",
+        tmp_path,
+    )
+
+    total = con.execute("SELECT count(*) FROM c").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM c LEFT JOIN p USING (series_id) WHERE p.series_id IS NULL").fetchone()[
+        0
+    ]
+
+    assert total > 0
+    assert orphans == 0, f"{orphans}/{total} child rows point at no parent"
+
+
+@pytest.mark.acceptance
+def test_a_unique_column_does_not_collide_with_itself(engine_module, tmp_path):
+    """`iata_code UNIQUE` was classified `enum` by name and drew from a 4-value built-in
+    vocabulary: five rows, three distinct codes, and the constraint dropped for the whole table at
+    build time. A UNIQUE column says every value differs; enum semantics say pick from a short
+    list. Only one of those can be honoured."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, iata_code VARCHAR UNIQUE, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id), dep TIMESTAMP);",
+        tmp_path,
+    )
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT iata_code) FROM carriers").fetchone()
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='carriers' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+
+    assert distinct == rows, f"{rows - distinct} duplicate values in a UNIQUE column"
+    assert kept, "the constraint was dropped at build time, so the database does not carry it"
+
+
+@pytest.mark.acceptance
+def test_a_denormalised_column_agrees_with_the_parent_it_points_at(engine_module, tmp_path):
+    """A fact carrying both `route_id` and `origin_code` is stating that they agree. Each was
+    sampled independently - the flight drew a route, then drew an unrelated airport - so 95% of
+    rows said their route starts at one airport and the flight at another. Both columns are
+    individually legal, so no assertion in `checks.json` can express the contradiction."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin_code VARCHAR REFERENCES airports(code), dist INTEGER);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  route_id VARCHAR REFERENCES routes(route_id),"
+        "  origin_code VARCHAR REFERENCES airports(code), dep TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    total = con.execute("SELECT count(*) FROM flights").fetchone()[0]
+    disagree = con.execute(
+        "SELECT count(*) FROM flights f JOIN routes r USING (route_id) WHERE f.origin_code <> r.origin_code"
+    ).fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM flights f LEFT JOIN airports a ON f.origin_code = a.code WHERE a.code IS NULL"
+    ).fetchone()[0]
+
+    assert disagree == 0, f"{disagree}/{total} flights disagree with the route they point at"
+    assert orphans == 0, "inheriting must not invent an airport that does not exist"
+
+
+@pytest.mark.acceptance
+def test_conditional_bands_a_measure_column_not_only_an_amount(engine_module, tmp_path):
+    """profile-spec documents the numeric form as "different [lo, hi] per group" with no mention
+    that it means amount columns only. A measure column accepted the banding and generated the
+    fallback range anyway: `delay_minutes` banded at [200, 400] for weather came out 0-8, and the
+    run went into the engine source to find out why."""
+    ddl = (
+        "CREATE TABLE d (\n"
+        "  delay_id VARCHAR PRIMARY KEY,\n"
+        "  delay_type VARCHAR, -- weather / carrier / security\n"
+        "  delay_minutes INTEGER\n"
+        ");"
+    )
+    profile = {
+        "conditional": {"d.delay_minutes": {"__by__": "delay_type", "weather": [200, 400], "__default__": [1, 5]}}
+    }
+    _eng, con = _build(engine_module, ddl, tmp_path, rows=8000, profile=profile)
+
+    banded = dict(con.execute("SELECT delay_type, min(delay_minutes) FROM d GROUP BY 1").fetchall())
+    assert banded.get("weather", 0) >= 200, banded
+    assert all(v < 200 for k, v in banded.items() if k != "weather"), banded

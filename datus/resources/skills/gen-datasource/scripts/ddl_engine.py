@@ -483,6 +483,22 @@ class DDLEngine:
         for t, cols in self.decl_pk.items():  # 1. keys declared in the DDL
             if len(cols) == 1 and t in self.schema:
                 pk[cols[0]] = t
+        # 1b. A single-column UNIQUE is a key too, and SQL lets a foreign key reference one.
+        #
+        # ⚠️ WITHOUT THIS EVERY SUCH CHILD ROW IS AN ORPHAN. `decl_uniq` was parsed, written into
+        # the metadata, and read by nothing else - so a child whose FK pointed at a UNIQUE column
+        # found no parent pool here, fell through to the generic filler, and invented its own
+        # values: measured at 100% orphans against 0% for the same DDL with the target declared
+        # PRIMARY KEY. That is invariant 6 ("FKs sampled from upstream only") broken by a schema
+        # the engine accepted without a word.
+        #
+        # `setdefault`, so a real PRIMARY KEY on the same column still wins.
+        for t, keys in (getattr(self, "decl_uniq", None) or {}).items():
+            if t not in self.schema:
+                continue
+            for cols in keys:
+                if len(cols) == 1:
+                    pk.setdefault(cols[0], t)
         for (t, col), (ref_t, _rc) in self.decl_fk.items():  # 2. FK targets declared in the DDL
             if ref_t in self.schema:
                 pk.setdefault(col, ref_t)
@@ -500,8 +516,21 @@ class DDLEngine:
                     and (t, c["name"]) not in ovr
                 ):
                     c["sem"] = "enum"
-        # A declared PK/FK column must be generated with id semantics even when it is not named *_id (else it gets text placeholders)
-        for t, col in list(self.decl_fk) + [(t, c[0]) for t, c in self.decl_pk.items() if len(c) == 1]:
+        # A declared PK/FK/UNIQUE column must be generated with id semantics even when it is not
+        # named *_id (else it gets text placeholders).
+        #
+        # ⚠️ UNIQUE belongs in this list, and leaving it out is what made a unique column collide
+        # with itself. `carriers.iata_code UNIQUE` was classified `enum` by name, so it drew from a
+        # 4-value built-in vocabulary - five rows, three distinct codes, and the UNIQUE constraint
+        # dropped for the whole table at build time. The column says every value differs; enum
+        # semantics say pick from a short list. Only one of those can be honoured.
+        _unique_cols = [
+            (t, cols[0])
+            for t, keys in (getattr(self, "decl_uniq", None) or {}).items()
+            for cols in keys
+            if len(cols) == 1
+        ]
+        for t, col in list(self.decl_fk) + [(t, c[0]) for t, c in self.decl_pk.items() if len(c) == 1] + _unique_cols:
             for c in self.schema.get(t, []):
                 if c["name"] == col and (t, col) not in ovr:
                     c["sem"] = "id"
@@ -1925,7 +1954,7 @@ class DDLEngine:
         if blamed:
             self._demoted[t] = blamed
 
-    def _measure_val(self, t, name, rng):
+    def _measure_val(self, t, name, rng, row=None, ents=None):
         """A measure, honouring `columns['t.col']['range']`.
 
         Both measure paths ignored the range, so the slot the skeleton writes and the warning
@@ -1938,6 +1967,16 @@ class DDLEngine:
         the range instead, which is closer to how bounded measures actually sit than a uniform.
         """
         lo, hi = self._col_profile(t, name).get("range", MEASURE_RANGE)
+        # ⚠️ `conditional` used to stop at the amount columns, and nothing said so.
+        #
+        # profile-spec documents the numeric form as "Numeric column: different [lo, hi] per
+        # group" - no mention that it means amount only. A measure column took the banding
+        # silently and generated the fallback range anyway: a run that banded `delay_minutes` at
+        # [200, 400] for weather got 0-8, and went into this file to find out why. The grouping
+        # column is resolved exactly as `_gen_fact` resolves it for an amount.
+        cr = self._cond_pick(self._cond_spec(t, name) or {}, row or {}, ents, t)
+        if isinstance(cr, (list, tuple)) and len(cr) == 2:
+            lo, hi = cr
         if lo > 0:
             return round(lognorm_between(rng, lo, hi), 3)
         return round(bounded_gauss(rng, (lo + hi) / 2, (hi - lo) / 4, lo, hi), 3)
@@ -2304,9 +2343,7 @@ class DDLEngine:
                 if sem == "id" and name in self.pk_owner and self.pk_owner[name] != t:
                     up = self.pools.get(self.pk_owner[name])
                     ent[name] = (
-                        rng.choices([e[self.pk_of(self.pk_owner[name])] for e in up], [e["__w__"] ** 0.55 for e in up])[
-                            0
-                        ]
+                        rng.choices([e[self.ref_col_of(t, name)] for e in up], [e["__w__"] ** 0.55 for e in up])[0]
                         if up
                         else ""
                     )
@@ -2351,7 +2388,7 @@ class DDLEngine:
                     # to set a value that changed nothing: a GPA declared (0.0, 4.0) still came out
                     # at 49.02. The two measure paths also disagreed on the fallback - 0.1-50 here
                     # against 0.1-40 in `_fill_generic` - so neither matched what was documented.
-                    ent[name] = self._measure_val(t, name, rng)
+                    ent[name] = self._measure_val(t, name, rng, ent)
                 elif self._is_code_col(t, name):
                     ent[name] = self._code_val(t, name, i)
                 else:
@@ -2401,6 +2438,53 @@ class DDLEngine:
         self.pools[t] = pool
         self._pending_dim_rows[t] = (([c["name"] for c in cols]), rows)
         o.write(t, [c["name"] for c in cols], rows)
+
+    def _inherit_denormalised(self, t, row, ent):
+        """Copy a denormalised column down from the parent row it belongs to.
+
+        ⚠️ A FACT THAT CARRIES BOTH `route_id` AND `origin_code` IS STATING THAT THEY AGREE. Each
+        was sampled independently - the flight drew a route, then drew an airport that had nothing
+        to do with it - so the row said its route starts at one airport and the flight at another.
+        Measured: 95% of rows disagreed with the route they pointed at. Every join through the two
+        keys returns a different answer, and no assertion in `checks.json` can express the
+        contradiction because each column is individually legal.
+
+        Deliberately narrow, because the alternative is clobbering columns that only happen to
+        share a name. All three must hold: the column is a DECLARED foreign key of this table, the
+        table also has a foreign key to some parent P, and P carries a column of the same name that
+        was itself populated. That is the denormalised-copy shape and very little else.
+        """
+        for fk_col, parent_row in ent.items():
+            parent = self.pk_owner.get(fk_col)
+            if not parent:
+                continue
+            parent_cols = {c["name"] for c in self.schema.get(parent, ())}
+            for other in ent:
+                if other == fk_col or other not in parent_cols:
+                    continue
+                inherited = parent_row.get(other)
+                if inherited is not None:
+                    row[other] = inherited
+
+    def ref_col_of(self, t, fk_col):
+        """The parent column this foreign key actually points at.
+
+        ⚠️ NOT the parent's PRIMARY KEY, which is what every sampling site used to read. SQL lets a
+        foreign key reference any unique column, `_scan_constraints` has always captured which one
+        as the second half of its `decl_fk` value, and nothing consumed it - so a child pointing at
+        a UNIQUE non-PK column was filled from the parent's PK instead and matched nothing:
+        measured at 100% orphans, against 0% for the same DDL with the target declared PRIMARY KEY.
+
+        Falls back to the PK, which is both the overwhelmingly common case and what an INFERRED
+        (undeclared) foreign key means.
+        """
+        declared = (getattr(self, "decl_fk", None) or {}).get((t, fk_col))
+        if declared:
+            ref_t, ref_c = declared
+            if ref_c and any(c["name"] == ref_c for c in self.schema.get(ref_t, ())):
+                return ref_c
+        owner = self.pk_owner.get(fk_col)
+        return self.pk_of(owner) if owner else fk_col
 
     def pk_of(self, t):
         d = getattr(self, "decl_pk", {}).get(t)
@@ -2515,7 +2599,8 @@ class DDLEngine:
                 d = self.days[self._pick_day_ge(lo_i, rng)]
             row = {pk: self._pk_val(t, i, d)}
             for f, e in ent.items():
-                row[f] = e[self.pk_of(self.pk_owner[f])]
+                row[f] = e[self.ref_col_of(t, f)]
+            self._inherit_denormalised(t, row, ent)
             for jcols, jvals in joint:
                 row.update(dict(zip(jcols, jvals[i])))
             for c in date_cols:
@@ -2593,7 +2678,7 @@ class DDLEngine:
             for c in flag_cols:
                 row[c] = 1 if rng.random() < self._col_profile(t, c).get("p", 0.88) else 0
             for c in other_cols:
-                row.setdefault(c["name"], self._fill_generic(t, c, rng, {"dt": d, "ts": t0}))
+                row.setdefault(c["name"], self._fill_generic(t, c, rng, {"dt": d, "ts": t0}, row))
             for c in names:
                 if c not in row and self._is_code_col(t, c):
                     row[c] = self._code_val(t, c, i, d)
@@ -2782,7 +2867,7 @@ class DDLEngine:
                         row[nm] = e[nm]  # inherit product attributes, but never time columns:
                         # a detail row's time comes from the parent fact only (else created_at becomes the listing date)
                     else:
-                        row[nm] = self._fill_generic(t, c, rng, pr)
+                        row[nm] = self._fill_generic(t, c, rng, pr, row)
                 tot["gross"] += (
                     sales + disc
                 )  # pre-discount goods amount (list price x qty), feeds the parent "original" column
@@ -2852,7 +2937,10 @@ class DDLEngine:
         for ref, r in zip(self.refs[par], rows):
             ref["amt"] = r[idx[amt_cols[0]]]
 
-    def _fill_generic(self, t, c, rng, pr=None):
+    def _fill_generic(self, t, c, rng, pr=None, row=None, ents=None):
+        """``row`` / ``ents`` are the grouping context `conditional` needs - the row being built
+        and its resolved parents. Optional because most callers fill a column that does not read
+        them; a measure column does (see `_measure_val`)."""
         sem, name = c["sem"], c["name"]
         if sem == "enum":
             vals, ws = self._enum_values(t, name)
@@ -2866,7 +2954,7 @@ class DDLEngine:
         if sem == "amount":
             return round(lognorm_between(rng, 5, 300), 2)
         if sem == "measure":
-            return self._measure_val(t, name, rng)
+            return self._measure_val(t, name, rng, row, ents)
         if sem == "ts":
             # Invariant 3: a child timestamp is the parent moment plus a non-negative offset, clamped
             # to the cut-off. "A random moment on the same day" is not enough - about half the detail
@@ -2923,7 +3011,7 @@ class DDLEngine:
                 up = self.pools.get(self.pk_owner[f])
                 if up:
                     e = rng.choices(up, cum_weights=self._pool_cum(self.pk_owner[f]))[0]
-                    row[f] = e[self.pk_of(self.pk_owner[f])]
+                    row[f] = e[self.ref_col_of(t, f)]
                     row["__sla__"] = next((v for k, v in e.items() if "sla" in k and isinstance(v, (int, float))), 6)
             sla = int(row.pop("__sla__", 6)) or 6
             s_dt = pr["dt"] + timedelta(days=rng.choices([0, 1, 2, 3], [0.42, 0.34, 0.18, 0.06])[0])
@@ -2956,7 +3044,7 @@ class DDLEngine:
             for c in cols:
                 if c["name"] in row:
                     continue
-                row[c["name"]] = self._fill_generic(t, c, rng, {"dt": s_dt})
+                row[c["name"]] = self._fill_generic(t, c, rng, {"dt": s_dt}, row)
             self._apply_formulas(t, row)
             rows.append([row.get(c, "") for c in names])
             refs.append(
@@ -3026,7 +3114,7 @@ class DDLEngine:
                 for c in cols:
                     if c["name"] in row:
                         continue
-                    row[c["name"]] = self._fill_generic(t, c, rng, {"dt": ts.date()})
+                    row[c["name"]] = self._fill_generic(t, c, rng, {"dt": ts.date()}, row)
                 self._apply_formulas(t, row)
                 rows.append([row[c] for c in names])
         o.write(t, names, rows)
@@ -3107,7 +3195,7 @@ class DDLEngine:
                 for c in cols:
                     if c["name"] in row:
                         continue
-                    row[c["name"]] = self._fill_generic(t, c, rng, {"dt": d})
+                    row[c["name"]] = self._fill_generic(t, c, rng, {"dt": d}, row)
                 self._apply_formulas(t, row)
                 rows.append([row[c] for c in names])
         o.write(t, names, rows)

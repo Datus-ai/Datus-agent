@@ -13,10 +13,11 @@ data. The profile is what makes it look real.
 | Capability | Notes |
 |---|---|
 | Table roles | date_dim / dim / fact / detail / downstream / event / metric_daily / snapshot, inferred structurally, never from name prefixes. `date_dim` and `metric_daily` share a shape - a date grain, no foreign key, a few measures - and are told apart by whether every column is a calendar attribute (`year_num`, `quarter_cd`) or the table carries something the date does not determine (`channel`, `gmv`). Force either with `roles` |
-| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY win**; inference only fills gaps. Renamed keys (`deal.buyer -> cust.cid`) still connect. **A COMPOSITE `PRIMARY KEY (a, b)` is parsed but not honoured end to end**: generation does not know about it (`pk_of` falls back to the first column), so the combination is unique only by luck, and the quality check verifies that first column alone |
+| Primary and foreign keys | **Declared PRIMARY KEY / FOREIGN KEY / UNIQUE win**; inference only fills gaps. A foreign key may reference a UNIQUE column, not only a primary key, and the child is sampled from the column the DDL names. Renamed keys (`deal.buyer -> cust.cid`) still connect. **A COMPOSITE `PRIMARY KEY (a, b)` is parsed but not honoured end to end**: generation does not know about it (`pk_of` falls back to the first column), so the combination is unique only by luck, and the quality check verifies that first column alone |
 | Enum domains | **Extracted from DDL inline comments** (`order_status VARCHAR, -- pending / paid / shipped`). `report()` lists which columns were extracted and which end in `...` (incomplete) |
 | Column semantics | id / date / ts / amount / count / ratio / enum / flag / name / seq / measure, from name + type |
 | Row allocation | Fact layer 65-75%, dimensions derived from business density, two-pass total calibration (within 6%) |
+| Denormalised copies | A column this table declares that its PARENT also carries is copied down from the parent row, not sampled again - so `flights.origin_code` agrees with the route it points at |
 | The 17 invariants | Weighted calendar sampling, derived-from-base quantities, child events anchored to parents, monotonic sequences, complete terminal states, FKs sampled from upstream only, layer backfill, stock baseline, zero header/detail amount drift |
 | Type contract | Tables are created with the declared types (a BIGINT key stays BIGINT; DECIMAL(18,2) does not become DOUBLE) |
 | Table/column comments | Written per role; overridable in the profile |
@@ -525,7 +526,7 @@ Do not wait until everything is configured to check.
 
 ---
 
-## 5. Five easy mistakes
+## 5. Six easy mistakes
 
 **1. Without `tier_cols` the wrong column gets picked.** The engine finds the tier column by matching
 `tier|level|grade|segment`, so `city_tier` wins first and then gets overwritten with
@@ -548,7 +549,19 @@ completely, and the final month's YoY can collapse from +40% to +3%. The data is
 quality check cannot see it - only a YoY question exposes it. Either pull the window inside the
 cut-off, or move the cut-off past the window.
 
-**5. `pre_sql` is a last resort.** It runs before the automatic summary layer and can restate metrics
+**5. `pre_sql` cannot UPDATE a foreign-key column.** DuckDB refuses to rewrite a column that
+children reference, so `UPDATE flights SET origin_code = ...` fails once anything points at it -
+and a run that met this spent rounds working out why a statement its pre-check had validated
+still would not execute. The pre-check plans against an empty schema, where no child rows exist
+yet, so it cannot see this coming.
+
+Two ways out, and the first is usually right: **do not restate what the engine already aligns.**
+A denormalised column that also exists on a parent table is copied down from the row it belongs
+to, so `flights.origin_code` already agrees with its route without any SQL. When the value really
+is yours to compute, drop the `REFERENCES` on that column - a denormalised copy does not need its
+own constraint, the parent's key already enforces the domain.
+
+**6. `pre_sql` is a last resort.** It runs before the automatic summary layer and can restate metrics
 and backfill across tables. But anything `conditional` / `formulas` can express should not be SQL -
 SQL bypasses the engine's consistency guarantees and is not reusable.
 
