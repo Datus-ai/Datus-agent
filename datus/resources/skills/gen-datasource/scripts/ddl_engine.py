@@ -483,25 +483,29 @@ class DDLEngine:
         for t, cols in self.decl_pk.items():  # 1. keys declared in the DDL
             if len(cols) == 1 and t in self.schema:
                 pk[cols[0]] = t
-        # 1b. A single-column UNIQUE is a key too, and SQL lets a foreign key reference one.
+        for (t, col), (ref_t, _rc) in self.decl_fk.items():  # 2. FK targets declared in the DDL
+            if ref_t in self.schema:
+                pk.setdefault(col, ref_t)
+        # 2b. A single-column UNIQUE is a key too, and SQL lets a foreign key reference one.
         #
         # ⚠️ WITHOUT THIS EVERY SUCH CHILD ROW IS AN ORPHAN. `decl_uniq` was parsed, written into
         # the metadata, and read by nothing else - so a child whose FK pointed at a UNIQUE column
-        # found no parent pool here, fell through to the generic filler, and invented its own
+        # found no parent pool here, fell through to the generic filler and invented its own
         # values: measured at 100% orphans against 0% for the same DDL with the target declared
         # PRIMARY KEY. That is invariant 6 ("FKs sampled from upstream only") broken by a schema
         # the engine accepted without a word.
         #
-        # `setdefault`, so a real PRIMARY KEY on the same column still wins.
+        # ⚠️ AFTER the declared foreign keys, not before. A UNIQUE column on an unrelated table
+        # shares nothing but a name, and running first let it take that name: `users.email UNIQUE`
+        # + `contacts.email UNIQUE` + `tickets.email REFERENCES users(email)` handed `email` to
+        # `contacts`. An explicit REFERENCES states which table is meant; a UNIQUE elsewhere does
+        # not, so it fills gaps rather than claiming.
         for t, keys in (getattr(self, "decl_uniq", None) or {}).items():
             if t not in self.schema:
                 continue
             for cols in keys:
                 if len(cols) == 1:
                     pk.setdefault(cols[0], t)
-        for (t, col), (ref_t, _rc) in self.decl_fk.items():  # 2. FK targets declared in the DDL
-            if ref_t in self.schema:
-                pk.setdefault(col, ref_t)
         for t, cols in self.schema.items():  # 3. only guess when nothing is declared: first id column
             ids = [c["name"] for c in cols if c["sem"] == "id"]
             if ids:
@@ -524,11 +528,19 @@ class DDLEngine:
         # 4-value built-in vocabulary - five rows, three distinct codes, and the UNIQUE constraint
         # dropped for the whole table at build time. The column says every value differs; enum
         # semantics say pick from a short list. Only one of those can be honoured.
+        # ⚠️ UNIQUE ONLY UPGRADES A COLUMN THAT IS NOT ALREADY SOMETHING. A primary or foreign key
+        # IS an identifier whatever it is called, but UNIQUE lands on natural keys of every type -
+        # `report_date DATE UNIQUE` on a calendar table is ordinary, and forcing id semantics onto
+        # it stopped the date generator running and left the whole column NULL. Only a column with
+        # no better classification is promoted, which still covers the `iata_code VARCHAR UNIQUE`
+        # case this was added for.
+        _TYPED_SEM = ("date", "ts", "amount", "count", "ratio", "measure", "flag")
         _unique_cols = [
             (t, cols[0])
             for t, keys in (getattr(self, "decl_uniq", None) or {}).items()
             for cols in keys
             if len(cols) == 1
+            and any(c["name"] == cols[0] and c["sem"] not in _TYPED_SEM for c in self.schema.get(t, ()))
         ]
         for t, col in list(self.decl_fk) + [(t, c[0]) for t, c in self.decl_pk.items() if len(c) == 1] + _unique_cols:
             for c in self.schema.get(t, []):
@@ -2439,6 +2451,20 @@ class DDLEngine:
         self._pending_dim_rows[t] = (([c["name"] for c in cols]), rows)
         o.write(t, [c["name"] for c in cols], rows)
 
+    def _pool_entity(self, table, col, value):
+        """The pooled parent row whose ``col`` holds ``value``, or None.
+
+        Indexed once per (table, col) - `_inherit_denormalised` needs to repoint an entity for
+        every fact row, and a linear scan of a dimension pool per row is not affordable. The pools
+        a fact samples are built before it runs, so the index cannot go stale within a pass; it is
+        dropped whenever generation restarts (see `generate`'s calibration retry).
+        """
+        idx = self.__dict__.setdefault("_pool_key_idx", {})
+        key = (table, col)
+        if key not in idx:
+            idx[key] = {e[col]: e for e in self.pools.get(table, ()) if col in e}
+        return idx[key].get(value)
+
     def _inherit_denormalised(self, t, row, ent):
         """Copy a denormalised column down from the parent row it belongs to.
 
@@ -2449,22 +2475,40 @@ class DDLEngine:
         keys returns a different answer, and no assertion in `checks.json` can express the
         contradiction because each column is individually legal.
 
+        ⚠️ THE ENTITY MOVES WITH THE VALUE. Rewriting `row` alone leaves `ent[other]` pointing at
+        the airport that was just discarded, and everything downstream reads attributes off that
+        entity - `_gen_fact`'s enum backfill, and `_cond_pick`'s cross-table `__by__`. Measured
+        after a first attempt that only rewrote `row`: the route/airport contradiction was gone and
+        a new one had grown in its place, 4,168 of 5,640 rows carrying a `region` belonging to the
+        abandoned airport. Trading one inconsistency for another is not a fix.
+
         Deliberately narrow, because the alternative is clobbering columns that only happen to
         share a name. All three must hold: the column is a DECLARED foreign key of this table, the
-        table also has a foreign key to some parent P, and P carries a column of the same name that
-        was itself populated. That is the denormalised-copy shape and very little else.
+        table also has a declared foreign key to some parent P, and P carries a column of the same
+        name that was populated.
         """
+        declared = {col for (tt, col) in (getattr(self, "decl_fk", None) or {}) if tt == t}
         for fk_col, parent_row in ent.items():
+            if fk_col not in declared:
+                continue
             parent = self.pk_owner.get(fk_col)
             if not parent:
                 continue
             parent_cols = {c["name"] for c in self.schema.get(parent, ())}
-            for other in ent:
-                if other == fk_col or other not in parent_cols:
+            for other in list(ent):
+                if other == fk_col or other not in declared or other not in parent_cols:
                     continue
                 inherited = parent_row.get(other)
-                if inherited is not None:
-                    row[other] = inherited
+                if inherited is None:
+                    continue
+                row[other] = inherited
+                moved = self._pool_entity(self.pk_owner.get(other), self.ref_col_of(t, other), inherited)
+                if moved is not None:
+                    ent[other] = moved
+                else:
+                    # Nothing in the pool carries it, so every attribute read off the old entity
+                    # would describe a row this one no longer points at. Absent beats wrong.
+                    ent.pop(other, None)
 
     def ref_col_of(self, t, fk_col):
         """The parent column this foreign key actually points at.
@@ -2478,12 +2522,17 @@ class DDLEngine:
         Falls back to the PK, which is both the overwhelmingly common case and what an INFERRED
         (undeclared) foreign key means.
         """
-        declared = (getattr(self, "decl_fk", None) or {}).get((t, fk_col))
-        if declared:
-            ref_t, ref_c = declared
-            if ref_c and any(c["name"] == ref_c for c in self.schema.get(ref_t, ())):
-                return ref_c
         owner = self.pk_owner.get(fk_col)
+        declared = (getattr(self, "decl_fk", None) or {}).get((t, fk_col))
+        # ⚠️ ONLY when the declared parent IS the pool being sampled. `pk_owner` is keyed by column
+        # name across the whole schema, so a column named `code` can be owned by `airports` while
+        # this table's FK declares `countries(iso2)`. Returning the declared column then indexes an
+        # `airports` row by `iso2` - KeyError, and the whole generate dies. Picking the wrong
+        # parent is a pre-existing inaccuracy; crashing on it would be a new failure.
+        if declared and declared[0] == owner:
+            ref_c = declared[1]
+            if ref_c and any(c["name"] == ref_c for c in self.schema.get(owner, ())):
+                return ref_c
         return self.pk_of(owner) if owner else fk_col
 
     def pk_of(self, t):
@@ -3264,6 +3313,7 @@ class DDLEngine:
                 self.nrows[t] = max(50, int(self.nrows[t] * k))
             self.rng = random.Random(self.seed)
             self.pools, self.refs, self._fact_rows, self._pending_dim_rows = {}, {}, {}, {}
+            self.__dict__.pop("_pool_key_idx", None)
             return self.generate(out, verbose, tolerance, _attempt + 1, t_start)
         res = {
             "tables": sizes,

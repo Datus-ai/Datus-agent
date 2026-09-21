@@ -2396,3 +2396,89 @@ def test_conditional_bands_a_measure_column_not_only_an_amount(engine_module, tm
     banded = dict(con.execute("SELECT delay_type, min(delay_minutes) FROM d GROUP BY 1").fetchall())
     assert banded.get("weather", 0) >= 200, banded
     assert all(v < 200 for k, v in banded.items() if k != "weather"), banded
+
+
+# The three shapes the first version of these fixes walked straight into. Each one passed the
+# tests above and broke something the tests above do not look at.
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_whose_declared_parent_is_not_the_sampled_pool_still_builds(engine_module, tmp_path):
+    """`pk_owner` is keyed by column NAME across the whole schema, so `code` can be owned by
+    `airports` while this table's foreign key declares `countries(iso2)`. Trusting the declaration
+    then indexes an `airports` row by `iso2` - KeyError, and the whole generate dies. Picking the
+    wrong parent is a pre-existing inaccuracy; crashing on it would be new."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, city VARCHAR);"
+        "CREATE TABLE countries (country_id VARCHAR PRIMARY KEY, iso2 VARCHAR UNIQUE, cname VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  code VARCHAR REFERENCES countries(iso2), dep TIMESTAMP);",
+        tmp_path,
+    )
+
+    assert con.execute("SELECT count(*) FROM flights").fetchone()[0] > 0
+
+
+@pytest.mark.acceptance
+def test_a_unique_constraint_does_not_blank_a_typed_column(engine_module, tmp_path):
+    """A primary or foreign key IS an identifier whatever it is called, so forcing id semantics on
+    it is safe. UNIQUE is not: it lands on natural keys of every type, and `report_date DATE
+    UNIQUE` on a calendar table is ordinary. Promoting it stopped the date generator running and
+    left the entire column NULL."""
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE calendar (cal_id VARCHAR PRIMARY KEY, report_date DATE UNIQUE, label VARCHAR);"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, cal_id VARCHAR REFERENCES calendar(cal_id), v DOUBLE);",
+        tmp_path,
+    )
+
+    assert [c["sem"] for c in eng.schema["calendar"] if c["name"] == "report_date"] == ["date"]
+    total, nulls = con.execute("SELECT count(*), count(*) FILTER (WHERE report_date IS NULL) FROM calendar").fetchone()
+    assert nulls == 0, f"{nulls}/{total} rows lost their date"
+
+
+@pytest.mark.acceptance
+def test_inheriting_a_column_moves_its_entity_too(engine_module, tmp_path):
+    """Rewriting `row` alone leaves `ent[other]` pointing at the parent that was just discarded,
+    and the enum backfill and cross-table `__by__` both read attributes off that entity. A first
+    attempt at this fix removed the route/airport contradiction and grew a new one in its place:
+    4,168 of 5,640 rows carried a `region` belonging to the abandoned airport. Trading one
+    inconsistency for another is not a fix, so both are asserted here."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, region VARCHAR, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin_code VARCHAR REFERENCES airports(code), dist INTEGER);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  route_id VARCHAR REFERENCES routes(route_id),"
+        "  origin_code VARCHAR REFERENCES airports(code), region VARCHAR, dep TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    route_mismatch = con.execute(
+        "SELECT count(*) FROM flights f JOIN routes r USING (route_id) WHERE f.origin_code <> r.origin_code"
+    ).fetchone()[0]
+    attribute_mismatch = con.execute(
+        "SELECT count(*) FROM flights f JOIN airports a ON f.origin_code = a.code WHERE f.region <> a.region"
+    ).fetchone()[0]
+
+    assert route_mismatch == 0, "the contradiction this fix exists for"
+    assert attribute_mismatch == 0, "and the one the first attempt created"
+
+
+@pytest.mark.acceptance
+def test_a_unique_column_elsewhere_does_not_take_a_declared_foreign_key_target(engine_module):
+    """An explicit REFERENCES states which table is meant; a UNIQUE column on an unrelated table
+    shares nothing but a name. Registering UNIQUE keys before the declared foreign keys let
+    `contacts.email` claim `email` out from under `tickets.email REFERENCES users(email)`."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE users (user_id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE);"
+        "CREATE TABLE contacts (contact_id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE);"
+        "CREATE TABLE tickets (ticket_id VARCHAR PRIMARY KEY,"
+        "  email VARCHAR REFERENCES users(email), opened_at TIMESTAMP);",
+        rows=3000,
+    )
+
+    assert eng.pk_owner["email"] == "users"
