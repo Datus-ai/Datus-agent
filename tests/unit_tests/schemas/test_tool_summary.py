@@ -430,12 +430,19 @@ class TestSemanticFormatters:
         )
         assert out == "2/5 metrics+"
 
-    def test_get_dimensions(self):
+    def test_get_metric(self):
         out = _summarize(
-            "get_dimensions",
-            {"success": 1, "result": {"items": [{"name": "region"}], "total": 1, "has_more": False}},
+            "get_metric",
+            {"success": 1, "result": {"name": "revenue", "dimensions": [{"name": "region"}]}},
         )
         assert out == "1 dimension"
+
+    def test_get_metric_without_resolvable_dimensions(self):
+        out = _summarize(
+            "get_metric",
+            {"success": 1, "result": {"name": "revenue", "dimensions_error": "planner unavailable"}},
+        )
+        assert out == "no dims"
 
     def test_query_metrics_rows_and_cols(self):
         out = _summarize(
@@ -1065,7 +1072,7 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("write_query", {"rows_written": 99999, "table_name": "schema.very_long_table"}),
     # semantic
     ("list_metrics", {"items": [{"name": "m"} for _ in range(50)], "total": 9999, "has_more": True}),
-    ("get_dimensions", {"items": [{"name": "d"} for _ in range(50)], "total": 9999}),
+    ("get_metric", {"name": "m", "dimensions": [{"name": "d"} for _ in range(50)]}),
     ("query_metrics", {"columns": ["x"] * 50, "data": {"original_rows": 99999}}),
     ("validate_semantic", {"valid": False, "issues": list(range(999))}),
     ("search_metrics", [{}] * 99),

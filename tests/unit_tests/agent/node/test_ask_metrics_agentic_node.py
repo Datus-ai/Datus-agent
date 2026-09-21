@@ -22,12 +22,18 @@ def _semantic_tools(adapter=True):
     tools.adapter = Mock() if adapter else None
     tools._adapter_unavailable_message.return_value = "semantic adapter missing"
     tools._configured_adapter_type.return_value = "metricflow" if adapter else None
-    for name in ("list_metrics", "get_dimensions", "query_metrics", "validate_semantic", "attribution_analyze"):
+    for name in (
+        "list_metrics",
+        "get_metric",
+        "query_metrics",
+        "validate_semantic",
+        "attribution_analyze",
+    ):
         setattr(tools, name, Mock(name=name))
     tools.available_tools.return_value = (
         [
             _fake_function_tool(tools.list_metrics),
-            _fake_function_tool(tools.get_dimensions),
+            _fake_function_tool(tools.get_metric),
             _fake_function_tool(tools.query_metrics),
             _fake_function_tool(tools.validate_semantic),
             _fake_function_tool(tools.attribution_analyze),
@@ -81,7 +87,13 @@ class TestAskMetricsAgenticNode:
             ),
             (
                 "semantic_tools.*",
-                {"list_metrics", "get_dimensions", "query_metrics", "validate_semantic", "attribution_analyze"},
+                {
+                    "list_metrics",
+                    "get_metric",
+                    "query_metrics",
+                    "validate_semantic",
+                    "attribution_analyze",
+                },
             ),
         ],
     )
@@ -146,7 +158,7 @@ class TestAskMetricsAgenticNode:
             "search_metrics",
             "get_metrics",
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -391,7 +403,7 @@ class TestAskMetricsAgenticNode:
             "search_metrics",
             "get_metrics",
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -654,7 +666,7 @@ class TestAskMetricsAgenticNode:
         assert node.subject_tree_mode == "none"
         assert [tool.name for tool in node.tools] == [
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -756,7 +768,7 @@ class TestAskMetricsAgenticNode:
 
         node, _, _ = _make_node(real_agent_config, tree={})
         action_history_manager = ActionHistoryManager()
-        for action_type in ("query_metrics", "get_dimensions", "query_metrics"):
+        for action_type in ("query_metrics", "get_metric", "query_metrics"):
             action_history_manager.add_action(
                 ActionHistory.create_action(
                     role=ActionRole.TOOL,
@@ -776,7 +788,7 @@ class TestAskMetricsAgenticNode:
             )
         )
 
-        assert result.execution_stats["tools_used"] == ["get_dimensions", "query_metrics"]
+        assert result.execution_stats["tools_used"] == ["get_metric", "query_metrics"]
 
     def test_success_result_uses_last_output_fallback_and_stringifies(self, real_agent_config, mock_llm_create):
         from datus.schemas.action_history import ActionHistoryManager
@@ -806,7 +818,7 @@ class TestAskMetricsAgenticNode:
 
         assert {tool.name for tool in node.tools} == {
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
             "search_metrics",

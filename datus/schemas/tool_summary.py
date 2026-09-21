@@ -505,8 +505,15 @@ def _fmt_list_metrics(result: Any) -> str:
     return _envelope_with_label(result, "metric", "metrics")
 
 
-def _fmt_get_dimensions(result: Any) -> str:
-    return _envelope_with_label(result, "dimension", "dimensions")
+def _fmt_get_metric(result: Any) -> str:
+    """One metric with its dimensions, so summarize the dimension count."""
+    if isinstance(result, dict):
+        dimensions = result.get("dimensions")
+        if isinstance(dimensions, list):
+            return pluralize(len(dimensions), "dimension")
+        if result.get("dimensions_error"):
+            return "no dims"
+    return ""
 
 
 def _fmt_query_metrics(result: Any) -> str:
@@ -1260,7 +1267,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "write_query": _fmt_write_query,
         # Semantic tools
         "list_metrics": _fmt_list_metrics,
-        "get_dimensions": _fmt_get_dimensions,
+        "get_metric": _fmt_get_metric,
         "query_metrics": _fmt_query_metrics,
         "validate_semantic": _fmt_validate_semantic,
         "attribution_analyze": _fmt_attribution_analyze,

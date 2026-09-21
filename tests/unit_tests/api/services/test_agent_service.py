@@ -334,7 +334,6 @@ class TestConstants:
             "context_search_tools.search_metrics",
             "context_search_tools.get_metrics",
             "semantic_tools.list_metrics",
-            "semantic_tools.get_dimensions",
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
@@ -384,7 +383,7 @@ class TestConstants:
         """semantic_tools category is registered with its core methods."""
         assert "semantic_tools" in VALID_TOOL_METHODS
         assert "list_metrics" in VALID_TOOL_METHODS["semantic_tools"]
-        assert "get_dimensions" in VALID_TOOL_METHODS["semantic_tools"]
+        assert "get_metric" in VALID_TOOL_METHODS["semantic_tools"]
 
 
 class TestAgentServiceInit:

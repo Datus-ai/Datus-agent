@@ -96,6 +96,103 @@ def _normalize_metric_metadata(raw) -> dict:
     return safe_metadata
 
 
+# Metadata keys an adapter may publish that describe how a metric derives from
+# other metrics. They are the dependency edges of the metric graph, so the
+# summary row carries them while the bulkier per-metric detail stays in
+# ``get_metric``.
+_METRIC_DERIVATION_KEYS = ("derive_family", "derive_base", "derive_expr")
+
+# Metadata keys promoted onto the detail row alongside the derivation edges.
+# ``window`` carries the partition rule (which dimensions a windowed metric
+# excludes, and the rank direction), which a caller needs to query it correctly.
+_METRIC_DETAIL_KEYS = ("window", "window_family", "window_function", "subset_of", "requires_time_axis")
+
+
+def _metric_summary_row(metric: Any, subject_path: Optional[List[str]] = None) -> dict:
+    """One ``list_metrics`` row: identity plus how the metric derives.
+
+    ``subject_path`` is the knowledge-base navigation path, which the caller owns
+    because the KB — not the adapter — is the source of truth for it. An adapter
+    may publish a ``path`` of its own; it is deliberately ignored so that the
+    navigation path a caller reads here is the one the subject tree shows.
+
+    Deliberately omits ``measures`` (compiled internal measure names, unusable as
+    tool arguments), ``dimensions`` (adapters publish an empty list here because
+    the catalog only knows model-wide dimensions — ``get_metric`` verifies them
+    per metric), and ``unit``/``format`` when unset.
+    """
+    metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
+    row = {
+        "name": getattr(metric, "name", None),
+        "description": getattr(metric, "description", None),
+        "kind": metadata.get("base_kind") or getattr(metric, "type", None),
+    }
+    for key in _METRIC_DERIVATION_KEYS:
+        value = metadata.get(key)
+        if value is not None:
+            row[key] = value
+    for key in ("time_dimension",):
+        value = metadata.get(key)
+        if value is not None:
+            row[key] = value
+    for key in ("unit", "format"):
+        value = getattr(metric, key, None)
+        if value is not None:
+            row[key] = value
+    if subject_path:
+        row["path"] = subject_path
+    return row
+
+
+def _required_partition_dimensions(row: Mapping[str, Any]) -> List[str]:
+    """Dimensions a windowed metric needs in the query to partition correctly.
+
+    A ``query_dimensions_except`` partition sums or ranks over every query
+    dimension *except* the listed ones. Leave an excluded dimension out of the
+    query and there is nothing to exclude: the partition collapses to a single
+    row and the metric returns a different number without failing. Surfacing the
+    list lets a caller include them up front.
+
+    Only covers the metric's own window. A composite metric inherits the
+    requirement from its inputs, which needs the dependency edges an adapter does
+    not publish for compose metrics yet.
+    """
+    window = row.get("window")
+    if not isinstance(window, dict):
+        return []
+
+    required: List[str] = []
+    for value in window.values():
+        if not isinstance(value, dict):
+            continue
+        partition = value.get("partition")
+        if not isinstance(partition, dict) or partition.get("mode") != "query_dimensions_except":
+            continue
+        for dimension in _normalize_name_list(partition.get("exclude")):
+            if dimension not in required:
+                required.append(dimension)
+    return required
+
+
+def _metric_detail_row(metric: Any, subject_path: Optional[List[str]] = None) -> dict:
+    """One ``get_metric`` row: the summary plus the detail needed to query it.
+
+    ``measures`` stays out for the same reason it stays out of the summary: the
+    names are compiled internals, unusable as tool arguments, and they dominate
+    the row — 386 of 561 tokens for a metric built from 21 of them.
+    """
+    row = _metric_summary_row(metric, subject_path)
+    metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
+    for key in _METRIC_DETAIL_KEYS:
+        value = metadata.get(key)
+        if value is not None:
+            row[key] = value
+    datasets = _normalize_dataset_names(metadata.get("datasets"))
+    if datasets:
+        row["datasets"] = datasets
+    return row
+
+
 def _normalize_dataset_names(raw: Any) -> List[str]:
     """Dataset names an adapter reports for a metric, as a list of non-empty strings.
 
@@ -192,9 +289,23 @@ _METRIC_DATASETS_MAX_PAGES = METRIC_CATALOG_MAX_PAGES
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
 
+# Token budget for a ``query_metrics`` payload, well above the ``DataCompressor``
+# default of 1024. A metric query returns aggregated rows whose width the caller
+# chose explicitly through ``metrics``/``dimensions``: 16 metrics over 32 grouped
+# rows is ~2.4k tokens, which the old budget cut down by dropping metric columns —
+# losing the requested metric to save a few hundred tokens. Row compression still
+# applies above this budget, where result size is driven by dimension cardinality
+# rather than by the caller's column choice.
+METRIC_RESULT_TOKEN_BUDGET = 8000
+
+# ``get_metric`` resolves names against one catalog read. The bound is a safety
+# net for an adapter that never stops paging, not a page size: callers name the
+# metrics they want, so the catalog is scanned once and filtered.
+_METRIC_DETAIL_CATALOG_LIMIT = 1000
+
 
 def extract_time_query_capabilities(raw_dimensions) -> Dict[str, Any]:
-    """Extract the metric-level time contract carried by ``get_dimensions``."""
+    """Extract the metric-level time contract carried by the adapter's dimensions."""
     candidates = []
     for dimension in raw_dimensions or []:
         if isinstance(dimension, dict):
@@ -343,7 +454,7 @@ class SemanticTools:
         """Return list of all tool method names for wizard display."""
         return [
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "validate_semantic",
             "attribution_analyze",
@@ -393,7 +504,10 @@ class SemanticTools:
         # list_metrics reads the KB only for navigation paths shared with
         # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
-        self.compressor = DataCompressor(model_name=agent_config.active_model().model)
+        self.compressor = DataCompressor(
+            model_name=agent_config.active_model().model,
+            token_threshold=METRIC_RESULT_TOKEN_BUDGET,
+        )
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
         self._query_metrics_result_cache_counter = 0
 
@@ -465,6 +579,34 @@ class SemanticTools:
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         return self._query_metrics_result_cache.get(cache_key)
+
+    @staticmethod
+    def _drop_compiled_sql(metadata: dict) -> dict:
+        """Drop a non-dry-run result's compiled SQL body.
+
+        ``dry_run`` callers need the SQL itself — that is the whole point of the
+        call, and the publish-evidence gate hashes it. A regular query already
+        carries the rows the SQL produced, so the body is pure payload: it runs
+        to tens of thousands of characters while the data beside it is barely a
+        thousand.
+        """
+        if "sql" not in metadata:
+            return metadata
+        remaining = dict(metadata)
+        remaining.pop("sql")
+        return remaining
+
+    @staticmethod
+    def _visible_columns(columns: Optional[List[str]], compressed: Any) -> List[str]:
+        """Columns present in the compressed payload, in their original order."""
+        original = list(columns or [])
+        if not isinstance(compressed, dict):
+            return original
+        removed = compressed.get("removed_columns")
+        if not removed:
+            return original
+        dropped = {str(column) for column in removed}
+        return [column for column in original if column not in dropped]
 
     def metric_datasets(self) -> Optional[Dict[str, List[str]]]:
         """Metric name -> datasets it reads, for the tool-transformer context.
@@ -843,7 +985,7 @@ class SemanticTools:
 
         return [
             trans_to_function_tool(self.list_metrics),
-            trans_to_function_tool(self.get_dimensions),
+            trans_to_function_tool(self.get_metric),
             trans_to_function_tool(self.query_metrics),
             trans_to_function_tool(self.validate_semantic),
             trans_to_function_tool(self.attribution_analyze),
@@ -852,11 +994,15 @@ class SemanticTools:
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
-        limit: int = 100,
+        limit: int = 200,
         offset: int = 0,
     ) -> FuncToolResult:
         """
         List executable metrics, using the knowledge base for subject paths.
+
+        Returns one summary row per metric: enough to choose metrics and to see
+        how they derive from each other, without the per-metric detail that only
+        matters once a metric is chosen. Call get_metric for that detail.
 
         Args:
             path: Optional subject tree path filter (e.g., ["Finance", "Revenue"])
@@ -865,16 +1011,23 @@ class SemanticTools:
 
         Returns:
             FuncToolResult with result as FuncToolListResult:
-              - items (List[Dict]): metric rows, each with name, description, type,
-                dimensions, measures, unit, format, path, metadata
+              - items (List[Dict]): metric summaries. Always name, description and
+                kind (aggregate / ratio / expression). Present when the metric has
+                them: derive_family ("compose" for metrics combined by a formula,
+                "window" for metrics ranked or re-aggregated over a partition;
+                absent for atoms aggregated straight off the source),
+                derive_expr (the formula, for compose metrics), derive_base (the
+                upstream metric, for window metrics), time_dimension, path.
               - total (int | None): full metric count before pagination when path is provided
               - has_more (bool | None): True when offset + len(items) < total
               - extra (dict | None): {"next_offset": int} when has_more is True
 
+            derive_expr and derive_base give the dependency edges between metrics:
+            follow them to decompose a composite metric into its inputs.
+
             Pagination: call again with offset=extra.next_offset until
-            has_more is False. Default limit=100; override if you need bigger
-            pages. list_metrics never compresses — use the limit to control
-            response size.
+            has_more is False. list_metrics never compresses — use the limit to
+            control response size.
         """
         # Normalize null values from LLM
         path = _normalize_optional_path(path)
@@ -900,7 +1053,7 @@ class SemanticTools:
 
                 async_result = self._adapter_metrics_for_names(adapter, set(kb_paths))
                 adapter_metrics = [
-                    self._adapter_metric_row(metric, kb_paths[normalize_metric_name(metric.name)])
+                    _metric_summary_row(metric, kb_paths[normalize_metric_name(metric.name)])
                     for metric in async_result
                     if normalize_metric_name(metric.name) in kb_paths
                 ]
@@ -915,7 +1068,7 @@ class SemanticTools:
 
             async_result = _run_async(adapter.list_metrics(path=None, limit=limit, offset=offset))
             adapter_metrics = [
-                self._adapter_metric_row(metric, kb_paths.get(normalize_metric_name(metric.name)))
+                _metric_summary_row(metric, kb_paths.get(normalize_metric_name(metric.name)))
                 for metric in async_result
             ]
             # Adapter path has no guaranteed upstream total — leave it None so consumers
@@ -942,21 +1095,6 @@ class SemanticTools:
             if subject_path and (not path or subject_path[: len(path)] == path):
                 paths[name] = subject_path
         return paths
-
-    @staticmethod
-    def _adapter_metric_row(metric: Any, subject_path: Optional[List[str]]) -> Dict[str, Any]:
-        """Serialize adapter-owned metric fields with the KB-owned navigation path."""
-        return {
-            "name": metric.name,
-            "description": metric.description,
-            "type": getattr(metric, "type", None),
-            "dimensions": getattr(metric, "dimensions", []),
-            "measures": getattr(metric, "measures", []),
-            "unit": getattr(metric, "unit", None),
-            "format": getattr(metric, "format", None),
-            "path": subject_path,
-            "metadata": _normalize_metric_metadata(getattr(metric, "metadata", None)),
-        }
 
     def _adapter_metrics_for_names(self, adapter: BaseSemanticAdapter, names: set[str]) -> List[Any]:
         """Read unfiltered adapter pages until every KB candidate is found or the catalog ends."""
@@ -991,6 +1129,111 @@ class SemanticTools:
             ),
         )
 
+    def get_metric(
+        self,
+        name: str,
+        path: Optional[List[str]] = None,
+    ) -> FuncToolResult:
+        """
+        Get full detail for one metric, including its queryable dimensions.
+
+        Use it after list_metrics has narrowed the candidates down; list_metrics
+        omits this detail because it is large and only matters per chosen metric.
+        Describes one metric per call — issue the calls in parallel to describe
+        several.
+
+        Args:
+            name: Metric name to describe, exactly as returned by list_metrics
+            path: Optional subject tree path (e.g., ["Finance", "Revenue"])
+
+        Returns:
+            FuncToolResult with result as a dict carrying every list_metrics
+            field plus, when the adapter reports them:
+              - dimensions (List[Dict]): dimensions queryable for this metric,
+                verified by the adapter. Group by these in query_metrics.
+                ``recommended`` is a grouping-selection hint, not an allow/deny
+                flag: a dimension with ``recommended=false`` can still be
+                grouped explicitly. ``recommendation_source`` explains whether
+                the adapter declared or inferred that classification.
+              - required_dimensions (List[str]): dimensions this metric
+                partitions by excluding. Leave one out and the partition
+                collapses, changing the result without raising — pass them to
+                query_metrics.
+              - window: the partition and rank rule behind those requirements.
+              - time_dimension, time_granularities: the metric's time axis and
+                the grains the adapter compiles for it.
+              - datasets: the datasets the metric reads.
+        """
+        name = str(normalize_null(name) or "").strip()
+        path = _normalize_optional_path(path)
+        logger.debug(f"get_metric called: name={name}, path={path}")
+        adapter, error = self._require_adapter("get_metric")
+        if error:
+            return error
+
+        if not name:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "get_metric requires a metric name. Call list_metrics first and pass a name exactly as returned."
+                ),
+            )
+
+        try:
+            metric = next(
+                (
+                    candidate
+                    for candidate in _run_async(
+                        adapter.list_metrics(path=path, limit=_METRIC_DETAIL_CATALOG_LIMIT, offset=0)
+                    )
+                    if str(getattr(candidate, "name", "") or "") == name
+                ),
+                None,
+            )
+        except Exception as e:
+            logger.error(f"Error reading the metric catalog: {e}")
+            return FuncToolResult(success=0, error=f"Failed to get metric detail: {str(e)}")
+
+        if metric is None:
+            return FuncToolResult(
+                success=0,
+                error=f"Unknown metric {name!r}. Call list_metrics for the available names.",
+            )
+
+        try:
+            # The KB, not the adapter, owns the navigation path — same rule
+            # list_metrics follows, so both tools name a metric the same way.
+            subject_path = self._metric_subject_paths(None).get(normalize_metric_name(name))
+        except Exception as exc:
+            logger.warning("get_metric could not read the KB subject path for %s: %s", name, exc)
+            subject_path = None
+
+        row = _metric_detail_row(metric, subject_path)
+        try:
+            dimensions = _run_async(adapter.get_dimensions(metric_name=name, path=path))
+        except Exception as e:
+            # Detail the caller can still use should survive a failing sub-query.
+            logger.warning("get_metric could not resolve dimensions for %s: %s", name, e)
+            row["dimensions_error"] = str(e)
+        else:
+            rows = _normalize_dimension_rows(dimensions)
+            capabilities = extract_time_query_capabilities(dimensions)
+            for dimension_row in rows:
+                # Promoted to the metric level below; per-dimension copies would
+                # repeat the same answer once per dimension.
+                dimension_row.pop("is_primary_time", None)
+                dimension_row.pop("time_granularities", None)
+            row["dimensions"] = rows
+            if capabilities.get("time_dimension"):
+                row["time_dimension"] = capabilities["time_dimension"]
+            if capabilities.get("time_granularities"):
+                row["time_granularities"] = capabilities["time_granularities"]
+        required = _required_partition_dimensions(row)
+        if required:
+            row["required_dimensions"] = required
+
+        return FuncToolResult(success=1, result=row)
+
     @staticmethod
     def _build_metrics_envelope(
         items: List[dict],
@@ -1017,68 +1260,6 @@ class SemanticTools:
             success=1,
             result=FuncToolListResult(items=items, total=total, has_more=has_more, extra=extra).model_dump(),
         )
-
-    def get_dimensions(
-        self,
-        metric_name: str,
-        path: Optional[List[str]] = None,
-    ) -> FuncToolResult:
-        """
-        Get available dimensions for a specific metric.
-        Returns dimension objects from the semantic adapter.
-
-        Args:
-            metric_name: Name of the metric
-            path: Optional subject tree path (e.g., ["Finance", "Revenue"])
-
-        Returns:
-            FuncToolResult with result as FuncToolListResult:
-              - items (List[Dict]): dimension rows. Adapter dimensions expose
-                their full schema (name, type, expr, ...); storage dimensions
-                fall back to a minimal {"name": ...} shape when only names are
-                stored. Every returned item is queryable. ``recommended`` is
-                a grouping-selection hint, not an allow/deny flag: an item
-                with ``recommended=false`` can still be explicitly grouped.
-                ``recommendation_source`` explains the adapter's declared or
-                inferred classification.
-              - total, has_more: dimensions isn't paginated, so total equals
-                len(items) and has_more is False.
-              - extra.time_dimension: canonical metric time dimension, or None.
-              - extra.time_granularities: adapter-advertised grains ordered
-                finest to coarsest; the first item is the default. These are
-                discovery hints rather than an exhaustive allowlist; the
-                adapter validates explicitly requested grains.
-        """
-        # Normalize null values from LLM
-        path = _normalize_optional_path(path)
-        logger.debug(f"get_dimensions called: metric={metric_name}, path={path}")
-        adapter, error = self._require_adapter("get_dimensions")
-        if error:
-            return error
-
-        try:
-            dimensions = _run_async(adapter.get_dimensions(metric_name=metric_name, path=path))
-            items = _normalize_dimension_rows(dimensions)
-            extra = extract_time_query_capabilities(dimensions)
-            for item in items:
-                item.pop("is_primary_time", None)
-                item.pop("time_granularities", None)
-            return FuncToolResult(
-                success=1,
-                result=FuncToolListResult(
-                    items=items,
-                    total=len(items),
-                    has_more=False,
-                    extra=extra,
-                ).model_dump(),
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting dimensions: {e}")
-            return FuncToolResult(
-                success=0,
-                error=f"Failed to get dimensions: {str(e)}",
-            )
 
     # Dosi binding names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
@@ -1109,7 +1290,7 @@ class SemanticTools:
 
         Args:
             metrics: List of metric names to query
-            dimensions: Optional list of dimensions to group by (from get_dimensions).
+            dimensions: Optional list of dimensions to group by (from get_metric).
                         With Dosi, use reserved `metric_time` for the selected metric's
                         primary time axis and pass its grain via `time_granularity`.
             path: Optional subject tree path (from list_subject_tree)
@@ -1250,11 +1431,24 @@ class SemanticTools:
                         "The complete uncompressed query result is cached and will be used for final output; "
                         "do not re-query only because the returned data is a compressed preview."
                     )
+                # The compiled SQL is ~97% of a typical query payload (61k of 63k
+                # characters for a 4-column result) and nothing downstream reads it
+                # outside dry-run publish evidence.
+                safe_metadata = self._drop_compiled_sql(safe_metadata)
 
+            # Column order in the result follows adapter compilation, not the
+            # request, so without this the compressor gives up whichever column
+            # happens to sit in the middle. The caller named its dimensions and
+            # metrics in priority order; honour that and drop from the far end.
+            compressed = self.compressor.compress(result.data, column_priority=dimensions + metrics)
             result_dict = {
                 "result_id": cache_key,
-                "columns": result.columns,
-                "data": self.compressor.compress(result.data),
+                # ``columns`` must describe the rows actually returned: the compressor
+                # drops columns to fit its budget and records them in
+                # ``removed_columns``. Reporting the pre-compression list would send a
+                # caller looking for a column that is not in ``data``.
+                "columns": self._visible_columns(result.columns, compressed),
+                "data": compressed,
                 "metadata": safe_metadata,
             }
 
@@ -1513,7 +1707,7 @@ class SemanticTools:
 
         Args:
             metric_name: Metric to analyze(from list_metrics/search_metrics)
-            candidate_dimensions: List of dimensions to evaluate (from get_dimensions)
+            candidate_dimensions: List of dimensions to evaluate (from get_metric)
             baseline_start: Inclusive baseline start date in an OSI half-open range (e.g., "2026-01-01")
             baseline_end: Exclusive baseline end date (e.g., "2026-01-08" for Jan 1-7)
             current_start: Inclusive current start date in an OSI half-open range (e.g., "2026-01-08")

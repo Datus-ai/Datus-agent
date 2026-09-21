@@ -21,8 +21,8 @@ from datus.cli.action_display.tool_content import (
     _build_doc_search_result,
     _build_generate_sql_summary_id,
     _build_get_detail,
-    _build_get_dimensions,
     _build_get_document,
+    _build_get_metric,
     _build_get_metrics,
     _build_get_reference_sql,
     _build_glob,
@@ -1229,13 +1229,13 @@ class TestBuildListMetricsSemantic:
 
 
 @pytest.mark.ci
-class TestBuildGetDimensions:
+class TestBuildGetMetric:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "get_dimensions"},
+            input_data={"function_name": "get_metric"},
             output_data={"raw_output": '{"success": 1, "result": ["dim1", "dim2"]}'},
         )
-        tc = _build_get_dimensions(a, verbose=False)
+        tc = _build_get_metric(a, verbose=False)
         assert "2 dimensions" in tc.compact_result
 
 
@@ -1932,7 +1932,7 @@ class TestAllToolsRegistered:
         "search_semantic_objects",
         # Semantic
         "list_metrics",
-        "get_dimensions",
+        "get_metric",
         "query_metrics",
         "validate_semantic",
         "attribution_analyze",

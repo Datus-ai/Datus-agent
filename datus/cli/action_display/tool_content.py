@@ -1557,8 +1557,8 @@ def _build_list_metrics_semantic(action: ActionHistory, verbose: bool) -> ToolCa
     return _build_search_generic(action, verbose, "metric", "metrics")
 
 
-def _build_get_dimensions(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """get_dimensions: show dimension count."""
+def _build_get_metric(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """get_metric: show the metric's dimension count."""
     return _build_simple_list(action, verbose, "dimensions")
 
 
@@ -2173,7 +2173,7 @@ class ToolCallContentBuilder:
 
         # Semantic tools
         self._registry["list_metrics"] = _build_list_metrics_semantic
-        self._registry["get_dimensions"] = _build_get_dimensions
+        self._registry["get_metric"] = _build_get_metric
         self._registry["query_metrics"] = _build_query_metrics
         self._registry["validate_semantic"] = _build_validate_semantic
         self._registry["attribution_analyze"] = _build_attribution_analyze
