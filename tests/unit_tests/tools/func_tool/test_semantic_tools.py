@@ -1522,6 +1522,7 @@ class TestListMetrics:
             assert result.result["items"] == []
             assert result.result["total"] == 0
         else:
+            assert "error_code=400001" in result.error
             assert "cannot apply the knowledge-base subject path safely" in result.error
 
     def test_drops_null_path_placeholders(self, semantic_tools_with_adapter):

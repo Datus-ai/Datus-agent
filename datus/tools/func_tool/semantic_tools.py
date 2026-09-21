@@ -49,6 +49,7 @@ from datus.tools.semantic_tools.paging import (
 )
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.compress_utils import DataCompressor
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -982,9 +983,12 @@ class SemanticTools:
         if not list(_run_async(adapter.list_metrics(path=None, limit=page_size, offset=offset))):
             return matched
 
-        raise RuntimeError(
-            f"Metric catalog still returning rows after {max_pages} pages; "
-            "cannot apply the knowledge-base subject path safely."
+        raise DatusException(
+            ErrorCode.TOOL_EXECUTION_FAILED,
+            message=(
+                f"Metric catalog still returning rows after {max_pages} pages; "
+                "cannot apply the knowledge-base subject path safely."
+            ),
         )
 
     @staticmethod
