@@ -4619,6 +4619,11 @@ profile. <code>validate_semantic</code>, <code>list_metrics</code>, <code>get_di
 <code>query_metrics</code> are routed through the native engine. For time queries, pass
 <code>metric_time</code> as the dimension and the grain separately; a returned column such
 as <code>metric_time__&lt;grain&gt;</code> is an output/order key.</p>
+<p><code>get_dimensions</code> preserves the native metric-scoped order and classification.
+Every returned field is queryable. Use <code>recommended=true</code> as the default set
+for analytical grouping; <code>recommended=false</code> is only a selection hint and does
+not reject an explicit group-by. <code>recommendation_source</code> records whether that
+classification was declared or inferred (for example, a measure or key).</p>
 <p>The unified <code>semantic_modeling</code> workflow lists valid and repairable existing
 models separately. It binds a valid target or plans the same repairable model
 in place, applies the requested changes, validates the exact final artifact,
