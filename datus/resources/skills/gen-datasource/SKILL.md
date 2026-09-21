@@ -184,12 +184,12 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    ```
    **If the DDL declares no keys, add them before this call** - "declared wins over inferred" only
    helps once something is declared, and a measured run took in nine tables with zero PRIMARY KEY,
-   zero FOREIGN KEY and zero UNIQUE. Give each one the key its GRAIN implies, which is not always a
-   single column: a readings / measurements / line-items table is keyed by
-   `PRIMARY KEY (parent_id, <the column that separates the rows>)`, and declaring `parent_id` alone
-   is a claim the data cannot meet - one run earned `primary key non-null and unique: ... has 11,815
-   duplicate keys` from the quality check that way, then spent rounds fixing data that was never
-   wrong. Composite keys are read and honoured; `references/profile-spec.md` §5.6 has the shape.
+   zero FOREIGN KEY and zero UNIQUE. For each table ask what ONE ROW stands for, and key it by
+   that. **When the answer needs two nouns, so does the key**: a single column there declares "one
+   row per X" about a table holding many rows per X, and the quality check comes back with
+   `primary key non-null and unique: ... has 11,815 duplicate keys` - which one run then spent
+   rounds "fixing" in data that was never wrong. Composite keys are read and honoured;
+   `references/profile-spec.md` §5.6 has the test and the shape.
    It returns the engine's whole plan - row allocation per table, table roles, column semantics,
    the resolved date window, sample names, business codes, the daily-metric grid - and generates
    nothing. **This is the answer to every "what will the engine do with my DDL" question, and it

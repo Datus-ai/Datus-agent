@@ -556,35 +556,41 @@ SQL bypasses the engine's consistency guarantees and is not reusable.
 
 Most DDL that arrives here declares no constraints at all - a measured run took in nine tables with
 zero `PRIMARY KEY`, zero `FOREIGN KEY` and zero `UNIQUE`, and adding them back is the first thing to
-do, because "declared wins over inferred" only helps once something is declared. The trap is doing it
-one column at a time. A readings / measurements / line-items table has no single-column key:
+do, because "declared wins over inferred" only helps once something is declared. The trap is doing
+it one column at a time.
 
-```sql
-CREATE TABLE meter_readings (meter_id VARCHAR, read_at TIMESTAMP, kwh DOUBLE);
-```
+**The test is what ONE ROW stands for, not what the table is called.** Ask it of every table before
+writing its key. Whenever the answer needs two nouns, the key is both of them:
 
-Its grain is `(meter_id, read_at)` - one meter has many readings, by definition. Declaring
-`meter_id VARCHAR PRIMARY KEY` states the opposite, and the quality check answers it with
+| One row is ... | Key |
+|---|---|
+| one reading of one meter / sensor / probe | `(device_id, taken_at)` |
+| one line of one document | `(document_id, line_no)` |
+| the state of one entity on one day | `(entity_id, as_of_date)` |
+| the intersection of two dimensions | both dimension keys |
+
+Give such a table a single-column key and the quality check answers
 `primary key non-null and unique: ... has 11,815 duplicate keys` (measured). The run that hit that
 then spent rounds correcting data which was doing exactly what its schema now forbade. Nothing was
-wrong with the data; the key was.
+wrong with the data; the key was - it had declared "one row per X" about a table that holds many
+rows per X.
 
 **Declare the real grain and the engine honours it** - a composite `PRIMARY KEY` parses into
 `decl_pk` as a list and generation keeps the combination unique:
 
 ```sql
-CREATE TABLE meter_readings (
-    meter_id  VARCHAR REFERENCES meters(meter_id),
-    read_at   TIMESTAMP,
-    kwh       DOUBLE,
-    PRIMARY KEY (meter_id, read_at)
+CREATE TABLE stock_levels (
+    warehouse_id  VARCHAR REFERENCES warehouses(warehouse_id),
+    sku_id        VARCHAR REFERENCES skus(sku_id),
+    qty_on_hand   INTEGER,
+    PRIMARY KEY (warehouse_id, sku_id)   -- one row per warehouse per SKU
 );
--- measured: 0 duplicate (meter_id, read_at) pairs; meter_id alone repeats, which is the point
+-- measured: 0 duplicate (warehouse_id, sku_id) pairs; warehouse_id alone repeats, which is the point
 ```
 
 A composite key is deliberately not used as a foreign-key target (nothing can reference half of
-one), so the parent still needs its own single-column key - here `meters.meter_id`, which is what
-`meter_readings.meter_id` points at.
+one), so each parent still needs its own single-column key - here `warehouses.warehouse_id` and
+`skus.sku_id`, which is what the two columns point at.
 
 ---
 
