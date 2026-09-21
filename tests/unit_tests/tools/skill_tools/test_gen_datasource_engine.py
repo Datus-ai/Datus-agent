@@ -3052,18 +3052,35 @@ def test_a_joint_group_on_a_key_does_not_repeat_itself(engine_module, tmp_path):
 
     rows, distinct = con.execute("SELECT count(*), count(DISTINCT airport_code) FROM airports").fetchone()
     codes = {r[0] for r in con.execute("SELECT airport_code FROM airports").fetchall()}
-    kept = con.execute(
-        "SELECT count(*) FROM duckdb_constraints() WHERE table_name IN ('airports', 'routes', 'flights')"
-    ).fetchone()[0]
-    orphans = con.execute(
-        "SELECT count(*) FROM routes r LEFT JOIN airports a ON r.origin_airport_code = a.airport_code "
-        "WHERE a.airport_code IS NULL"
-    ).fetchone()[0]
+    # Each constraint on its own, not an aggregate count: the cascade is the point here, and a
+    # total of "some constraints" would pass with the two foreign keys silently missing.
+    kinds = {
+        (r[0], r[1])
+        for r in con.execute(
+            "SELECT table_name, constraint_type FROM duckdb_constraints() "
+            "WHERE table_name IN ('airports', 'routes', 'flights')"
+        ).fetchall()
+    }
+    orphans = {
+        "routes.origin": con.execute(
+            "SELECT count(*) FROM routes r LEFT JOIN airports a ON r.origin_airport_code = a.airport_code "
+            "WHERE a.airport_code IS NULL"
+        ).fetchone()[0],
+        "routes.destination": con.execute(
+            "SELECT count(*) FROM routes r LEFT JOIN airports a "
+            "ON r.destination_airport_code = a.airport_code WHERE a.airport_code IS NULL"
+        ).fetchone()[0],
+        "flights.route_id": con.execute(
+            "SELECT count(*) FROM flights f LEFT JOIN routes r USING (route_id) WHERE r.route_id IS NULL"
+        ).fetchone()[0],
+    }
 
     assert distinct == rows, "a key cannot repeat"
     assert codes <= {c[0] for c in REAL_CODES}, f"the supplied codes are the whole domain: {codes}"
-    assert kept, "the key has to survive into the build, or every foreign key to it is refused too"
-    assert orphans == 0, "and the children still resolve against it"
+    assert ("airports", "PRIMARY KEY") in kinds, f"the key itself has to survive the build: {kinds}"
+    assert ("routes", "FOREIGN KEY") in kinds, f"and so must the keys pointing at it: {kinds}"
+    assert ("flights", "FOREIGN KEY") in kinds, f"including one level further down: {kinds}"
+    assert orphans == {k: 0 for k in orphans}, orphans
 
 
 @pytest.mark.acceptance
@@ -3108,3 +3125,102 @@ def test_a_joint_group_that_is_not_a_key_still_follows_its_weights(engine_module
 
     assert sum(mix.values()) > 2, "a non-key joint group must repeat, that is the whole point"
     assert mix.get("paid_search", 0) > mix.get("social", 0), f"and keep its weights: {mix}"
+
+
+@pytest.mark.acceptance
+def test_distinct_combinations_that_repeat_a_key_are_still_capped(engine_module, tmp_path):
+    """Distinct TUPLES are not distinct KEYS.
+
+    `[["ATL", "Atlanta"], ["ATL", "Atlanta Metro"]]` is two combinations and one duplicate key,
+    which drops the PRIMARY KEY at build time and with it every foreign key pointing at the table -
+    measured at 5 rows, 4 distinct, and constraints gone from three tables.
+    """
+    duplicated = [["ATL", "Atlanta"], ["ATL", "Atlanta Metro"]] + REAL_CODES[1:5]
+    profile = {"joint": {"airports": [{"cols": ["airport_code", "city"], "values": duplicated}]}}
+    eng, con = _build(engine_module, NATURAL_KEY_DDL, tmp_path, rows=12000, profile=profile)
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT airport_code) FROM airports").fetchone()
+    kinds = {r[0] for r in con.execute("SELECT constraint_type FROM duckdb_constraints()").fetchall()}
+
+    assert eng._joint_key_limit("airports") == 5, "one row per key value, not per combination"
+    assert distinct == rows
+    assert "PRIMARY KEY" in kinds
+
+
+@pytest.mark.acceptance
+def test_a_column_that_only_looks_like_a_key_is_not_treated_as_one(engine_module):
+    """`pk_of` always answers - it falls back to the first column - so on a keyless time series it
+    named the FOREIGN KEY as the key. A `joint` group on that column would then be drawn without
+    replacement and the table clamped to the number of combinations, for a column that repeats by
+    design."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE series (series_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE readings (series_id VARCHAR REFERENCES series(series_id), ts TIMESTAMP, v DOUBLE);",
+        rows=8000,
+        profile={},
+    )
+
+    assert eng.pk_of("readings") == "series_id", "the premise: the guess picks the foreign key"
+    assert "series_id" not in eng._key_cols("readings")
+    assert eng._key_cols("series") == frozenset({"series_id"})
+
+
+@pytest.mark.acceptance
+def test_the_two_ends_may_reference_different_unique_columns(engine_module, tmp_path):
+    """Compared as entities, not as values. `origin_port_id` resolves through `ports.port_id` and
+    `destination_iata` through `ports.iata`, so two values naming the SAME port are never equal and
+    a value comparison finds nothing to fix."""
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE ports (port_id VARCHAR PRIMARY KEY, iata VARCHAR UNIQUE, city VARCHAR);"
+        "CREATE TABLE lanes (lane_id VARCHAR PRIMARY KEY,"
+        "  origin_port_id VARCHAR REFERENCES ports(port_id),"
+        "  destination_iata VARCHAR REFERENCES ports(iata), distance_km INTEGER);"
+        "CREATE TABLE trips (trip_id VARCHAR PRIMARY KEY, lane_id VARCHAR REFERENCES lanes(lane_id),"
+        "  started_at TIMESTAMP, freight_amount DECIMAL(18, 2));",
+        tmp_path,
+        rows=12000,
+    )
+
+    total = con.execute("SELECT count(*) FROM lanes").fetchone()[0]
+    loops = con.execute(
+        "SELECT count(*) FROM lanes l JOIN ports a ON l.origin_port_id = a.port_id "
+        "JOIN ports b ON l.destination_iata = b.iata WHERE a.port_id = b.port_id"
+    ).fetchone()[0]
+
+    assert eng._opposed_fk_pairs("lanes"), "the premise: these are recognised as one edge"
+    assert total > 1
+    assert loops == 0, f"{loops}/{total} lanes start and end at the same port"
+
+
+@pytest.mark.acceptance
+def test_the_replay_stops_where_calibration_stops(engine_module):
+    """`generate()` rescales before attempts 2 and 3 and never after attempt 3, so the replay gets
+    two updates.
+
+    This fixture is the boundary that makes the count matter: two updates land at 43,019 (+7.5%,
+    outside tolerance, which is where generation really finishes) and a third would reach 41,544
+    (+3.9%, inside) - so replaying one update too many would have reported a budget as reachable
+    and withheld the warning.
+    """
+    eng = engine_module.DDLEngine(PINNABLE_DDL, rows=40000, profile={"table_rows": {"order_lines": 22000}})
+    planned = sum(eng.nrows.values())
+    free = {t: eng.nrows[t] for t in eng.nrows if eng.roles[t] != "dim" and t not in eng.pinned_rows}
+
+    def replay(passes):
+        scaled, fixed, total = dict(free), planned - sum(free.values()), planned
+        for _ in range(passes):
+            if not total or abs(total / 40000 - 1) <= 0.06:
+                break
+            k = 40000 / total
+            scaled = {t: max(50, int(n * k)) for t, n in scaled.items()}
+            total = fixed + sum(scaled.values())
+        return total
+
+    landed = eng._calibration_lands_at(planned, free)
+
+    assert landed == replay(2), "two updates, because generate() rescales before attempts 2 and 3"
+    assert abs(replay(3) / 40000 - 1) <= 0.06 < abs(landed / 40000 - 1), (
+        f"the fixture must be the boundary: two -> {landed:,}, three -> {replay(3):,}"
+    )
+    assert _reachability_warning(eng), "and the warning has to actually fire at two updates"

@@ -957,7 +957,10 @@ class DDLEngine:
         free = dict(free_rows)
         fixed = planned - sum(free.values())
         total = planned
-        for _ in range(3):
+        # Two updates, not three: `generate()` rescales before attempts 2 and 3 and never after
+        # attempt 3 (`_attempt < 3`). A third update here brings the simulation inside tolerance
+        # for a run that will finish outside it, which suppresses the warning this exists to give.
+        for _ in range(2):
             if not total or abs(total / self.rows - 1) <= 0.06:
                 break
             k = self.rows / total
@@ -2259,13 +2262,43 @@ class DDLEngine:
         and any column a declared foreign key points at."""
         cache = self.__dict__.setdefault("_key_cols_cache", {})
         if t not in cache:
-            cols = {self.pk_of(t)}
+            # ⚠️ `_meta_key`, not `pk_of`. `pk_of` always answers - it falls back to the first
+            # column - so on a keyless time series it named the FOREIGN KEY as the key, and a
+            # `joint` group on that column would then be drawn without replacement and the table
+            # clamped to the number of combinations, for a column that repeats by design.
+            cols = set()
+            primary = self._meta_key(t)
+            if primary:
+                cols.add(primary)
             for keys in (getattr(self, "decl_uniq", None) or {}).get(t, ()):
                 if len(keys) == 1:
                     cols.add(keys[0])
             cols.update(self._alt_ref_cols(t))
             cache[t] = frozenset(c for c in cols if c)
         return cache[t]
+
+    def _joint_key_rows(self, t, g):
+        """The value rows a key-bearing ``joint`` group may actually use.
+
+        ⚠️ Distinct TUPLES are not enough: `[["ATL", "Atlanta"], ["ATL", "Atlanta Metro"]]` is two
+        distinct combinations and one duplicate key, which drops the PRIMARY KEY at build time and
+        with it every foreign key pointing at the table. At most one row per value of each key
+        column in the group, in the order supplied so the result is stable.
+        """
+        cols = list(g.get("cols", ()))
+        keys = [c for c in cols if c in self._key_cols(t)]
+        out, seen = [], {c: set() for c in keys}
+        for v in g.get("values", ()) or ():
+            tup = tuple(v[: len(cols)])
+            if len(tup) < len(cols):
+                continue
+            picked = {c: tup[cols.index(c)] for c in keys}
+            if any(picked[c] in seen[c] for c in keys):
+                continue
+            for c in keys:
+                seen[c].add(picked[c])
+            out.append(tup)
+        return out
 
     def _joint_key_limit(self, t):
         """How many rows ``t`` can have before a key-bearing ``joint`` group has to repeat itself.
@@ -2281,7 +2314,7 @@ class DDLEngine:
         limit = None
         for g in (self.profile.get("joint", {}) or {}).get(t, []):
             if set(g.get("cols", ())) & self._key_cols(t):
-                n = len({tuple(v[: len(g["cols"])]) for v in g.get("values", ())})
+                n = len(self._joint_key_rows(t, g))
                 limit = n if limit is None else min(limit, n)
         return limit
 
@@ -2295,9 +2328,9 @@ class DDLEngine:
             if set(g.get("cols", ())) & self._key_cols(t):
                 # Without replacement, because a key cannot repeat. Weights are dropped with it:
                 # a key column has one row per value, so there is no distribution left to shape.
-                # ``_plan_rows`` has already clamped ``n`` to the number of distinct combinations,
-                # so this cannot ask for more than it has.
-                uniq = list(dict.fromkeys(vals))
+                # The same projection-unique subset ``_plan_rows`` sized the table from, or the
+                # plan and the rows would disagree about which combinations exist.
+                uniq = self._joint_key_rows(t, g)
                 out.append((g["cols"], rng.sample(uniq, k=min(n, len(uniq)))))
             else:
                 out.append((g["cols"], rng.choices(vals, w, k=n)))
@@ -2810,16 +2843,25 @@ class DDLEngine:
         return cache[t]
 
     def _split_opposed_values(self, t, row, rng):
-        """Redraw the far end when both ends of a directed edge landed on the same value."""
+        """Redraw the far end when both ends of a directed edge landed on the same PARENT.
+
+        ⚠️ Compared as entities, not as values. The two ends may reference different unique columns
+        of the same parent - `origin_port_id` at `ports.port_id`, `destination_iata` at
+        `ports.iata` - and then two values that name the SAME port are never equal, so a value
+        comparison finds nothing to fix and the self-loop ships. Excluding the resolved parent also
+        removes the retry loop that could, on a two-row pool, return the same end every time.
+        """
         for a, b, par in self._opposed_fk_pairs(t):
             up = self.pools.get(par)
             if not up or len(up) < 2 or a not in row or b not in row:
                 continue
-            col = self.ref_col_of(t, b)
-            for _ in range(8):  # bounded: a two-entity pool can need a few draws
-                if row[b] != row[a]:
-                    break
-                row[b] = rng.choice(up)[col]
+            near = self._pool_entity(par, self.ref_col_of(t, a), row[a])
+            far = self._pool_entity(par, self.ref_col_of(t, b), row[b])
+            if near is None or far is not near:
+                continue
+            other = [e for e in up if e is not near]
+            if other:
+                row[b] = rng.choice(other)[self.ref_col_of(t, b)]
 
     def _split_opposed_entities(self, t, ent, rng):
         """Same, where the row carries resolved parent entities rather than bare values.
@@ -2833,11 +2875,11 @@ class DDLEngine:
             up = self.pools.get(par)
             if not up or len(up) < 2 or a not in ent or b not in ent:
                 continue
-            col = self.ref_col_of(t, b)
-            for _ in range(8):
-                if ent[b].get(col) != ent[a].get(col):
-                    break
-                ent[b] = rng.choice(up)
+            if ent[b] is not ent[a]:
+                continue
+            other = [e for e in up if e is not ent[a]]
+            if other:
+                ent[b] = rng.choice(other)
 
     def ref_col_of(self, t, fk_col):
         """The parent column this foreign key actually points at.

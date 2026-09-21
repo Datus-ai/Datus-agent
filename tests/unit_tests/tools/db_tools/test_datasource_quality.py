@@ -720,19 +720,43 @@ class TestVerdictCarriesItsNextStep:
 
     @pytest.mark.acceptance
     def test_a_passing_run_says_to_stop(self, tool, tmp_path):
-        summary, nxt = self._next(
-            tool,
-            [{"name": "trivially true", "expect": "zero", "sql": "SELECT count(*) FROM dim_thing WHERE 1 = 0"}],
-            tmp_path,
-        )
+        """Asserted unconditionally, so the passing arm of the message is actually exercised.
 
-        if summary["ok"]:
-            assert "stop" in nxt.lower()
-            assert "re-import" in nxt or "rebuild" in nxt
-        else:
-            # The fixture is a bare two-column table, so a structural check may legitimately fail;
-            # what must hold either way is that the verdict and the instruction agree.
-            assert "profile" in nxt
+        A one-table fixture cannot satisfy the structural checks that need a head distribution,
+        table comments and non-placeholder names, so those three are skipped rather than faked -
+        the subject here is what the verdict SAYS, not what the checker measures.
+        """
+        cfg = tmp_path / "checks.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "skip": [
+                        "long-tail concentration",
+                        "metadata comments",
+                        "semantic naming",
+                        "date dimension present",
+                        "aggregation density",
+                        "time signal",
+                    ],
+                    "assertions": [
+                        {
+                            "name": "trivially true",
+                            "expect": "zero",
+                            "sql": "SELECT count(*) FROM dim_thing WHERE 1 = 0",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = tool.check_datasource_quality(config_path="checks.json")
+        assert result.success, result.error
+        summary, nxt = result.result["summary"], result.result["next"]
+
+        assert summary["ok"] is True, [c for c in result.result["checks"] if c["status"] == "FAIL"]
+        assert "stop" in nxt.lower()
+        assert "re-import" in nxt or "rebuild" in nxt
+        assert "No check failed" in nxt, "a WARN is not a pass, and the wording must not say it is"
 
 
 class TestAssertionsThatDisappear:

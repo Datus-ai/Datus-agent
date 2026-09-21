@@ -2357,7 +2357,8 @@ class DBFuncTool:
             )
             result["next"] = (
                 (
-                    "Finished. Every check passes - write the delivery summary and stop. Do not "
+                    "Finished. No check failed - write the delivery summary and stop, carrying "
+                    "over any WARN details it still reports. Do not "
                     "re-run gen.py, re-import or re-check: the build that passed is the one to "
                     "ship, and a rebuild replaces it with one nothing has verified."
                 )
