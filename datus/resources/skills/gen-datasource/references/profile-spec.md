@@ -557,34 +557,34 @@ SQL bypasses the engine's consistency guarantees and is not reusable.
 Most DDL that arrives here declares no constraints at all - a measured run took in nine tables with
 zero `PRIMARY KEY`, zero `FOREIGN KEY` and zero `UNIQUE`, and adding them back is the first thing to
 do, because "declared wins over inferred" only helps once something is declared. The trap is doing it
-one column at a time. A reading / measurement / line-item table does not have a single-column key:
+one column at a time. A readings / measurements / line-items table has no single-column key:
 
 ```sql
-CREATE TABLE sensor_readings (series_id VARCHAR, ts TIMESTAMP, value_double DOUBLE);
+CREATE TABLE meter_readings (meter_id VARCHAR, read_at TIMESTAMP, kwh DOUBLE);
 ```
 
-Its grain is `(series_id, ts)` - one series has many readings, by definition. Writing
-`series_id VARCHAR PRIMARY KEY` declares the opposite, and the run that did it got
-`primary key non-null and unique: sensor_readings.series_id has 11,815 duplicate keys` from the
-quality check, then spent rounds trying to fix data that was doing exactly what the schema now said
-it must not. Nothing was wrong with the data; the key was.
+Its grain is `(meter_id, read_at)` - one meter has many readings, by definition. Declaring
+`meter_id VARCHAR PRIMARY KEY` states the opposite, and the quality check answers it with
+`primary key non-null and unique: ... has 11,815 duplicate keys` (measured). The run that hit that
+then spent rounds correcting data which was doing exactly what its schema now forbade. Nothing was
+wrong with the data; the key was.
 
 **Declare the real grain and the engine honours it** - a composite `PRIMARY KEY` parses into
 `decl_pk` as a list and generation keeps the combination unique:
 
 ```sql
-CREATE TABLE sensor_readings (
-    series_id     VARCHAR REFERENCES flight_sensors(series_id),
-    ts            TIMESTAMP,
-    value_double  DOUBLE,
-    PRIMARY KEY (series_id, ts)
+CREATE TABLE meter_readings (
+    meter_id  VARCHAR REFERENCES meters(meter_id),
+    read_at   TIMESTAMP,
+    kwh       DOUBLE,
+    PRIMARY KEY (meter_id, read_at)
 );
--- measured: 0 duplicate (series_id, ts) pairs; series_id alone repeats, which is the point
+-- measured: 0 duplicate (meter_id, read_at) pairs; meter_id alone repeats, which is the point
 ```
 
 A composite key is deliberately not used as a foreign-key target (nothing can reference half of
-one), so the parent still needs its own single-column key - here `flight_sensors.series_id`, which
-is what `sensor_readings.series_id` points at.
+one), so the parent still needs its own single-column key - here `meters.meter_id`, which is what
+`meter_readings.meter_id` points at.
 
 ---
 

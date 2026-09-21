@@ -193,6 +193,23 @@ def test_a_forward_foreign_key_is_not_a_dialect_problem(engine_module):
 
 
 @pytest.mark.acceptance
+def test_a_reference_chain_resolves_however_deep_it_is(engine_module):
+    """One retry pass only resolves a reference ONE level deep. With `a -> b -> c` declared in that
+    order, the retry meets `a` again before `b` exists - and the schema is valid. Worse than
+    failing, it failed as "no CREATE in this DDL declares that table", sending the reader to hunt a
+    typo in a name that is three lines further down. Passes now repeat while any statement lands."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
+        "CREATE TABLE b (id INTEGER PRIMARY KEY, c_id INTEGER REFERENCES c(id));"
+        "CREATE TABLE c (id INTEGER PRIMARY KEY, name VARCHAR);",
+        rows=2000,
+    )
+
+    assert sorted(eng.schema) == ["a", "b", "c"]
+    assert eng.decl_fk, "the chain must survive as declared foreign keys, not just parse"
+
+
+@pytest.mark.acceptance
 def test_a_reference_to_a_table_nothing_declares_says_so(engine_module):
     """The failure that survives the retry pass. It needs the OPPOSITE fix from a dialect error,
     so it must not borrow that message - and it has to say that ordering is not the cause, or the
@@ -2078,3 +2095,63 @@ def test_a_composite_primary_key_is_honoured_by_generation(engine_module, tmp_pa
 
     assert dup_pairs == 0, "the declared grain must hold"
     assert repeated_series > 0, "a series with one reading each is not a time series - that is the whole point"
+
+
+@pytest.mark.acceptance
+def test_a_guessed_enum_domain_is_named(engine_module, capsys):
+    """The report already names what it EXTRACTED a domain for and what it did not recognise at
+    all. Between them sat the column recognised as an enum whose values nothing declared - filled
+    from a built-in vocabulary, silently. It surfaces much later as a quality failure about a
+    distribution nobody chose: a measured run wrote an assertion about `flight_sensors.unit`, whose
+    domain had been guessed, and got back "sensor series differentiated by unit: actual 0.9994
+    (expected 1000~100000)"."""
+    # One column per line: the comment scanner anchors the column name at the start of the line,
+    # so two columns on one line hand the comment to the first of them.
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE meters (\n"
+        "  meter_id VARCHAR PRIMARY KEY,\n"
+        "  unit VARCHAR\n"
+        ");\n"
+        "CREATE TABLE usage_events (\n"
+        "  event_id VARCHAR PRIMARY KEY,\n"
+        "  meter_id VARCHAR REFERENCES meters(meter_id),\n"
+        "  read_at TIMESTAMP,\n"
+        "  state VARCHAR, -- pending / settled / disputed\n"
+        "  kwh INTEGER\n"
+        ");",
+        rows=3000,
+    )
+    eng.report()
+    out = capsys.readouterr().out
+
+    named = out.split("GUESSED", 1)[1].split("\n")[0]
+    assert "value domains GUESSED" in out, out
+    assert "meters.unit" in named, "the undeclared enum must be named"
+    # `state` HAS a DDL comment, so it is extracted rather than guessed - naming it here would
+    # send the reader to re-declare something the engine already read.
+    assert "usage_events.state" not in named, named
+
+
+@pytest.mark.acceptance
+def test_every_build_says_to_run_the_check_next(engine_module, tmp_path):
+    """The instruction exists in SKILL.md too, and SKILL.md is loaded once at the top of a session
+    that then runs for dozens of turns. Two measured runs, two models: 79% of the wall clock went
+    to the stretch BEFORE the first `import_database_file` - one writing duckdb queries against
+    successive builds for 43 minutes, the other reading the engine's source for 33 - and once the
+    check finally ran it converged in three rounds either way. This line is printed at the moment
+    that choice is made."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id), scheduled_departure TIMESTAMP);",
+        rows=3000,
+    )
+    out = tmp_path / "datasource.duckdb"
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        eng.generate(str(out))
+    text = buf.getvalue()
+
+    assert "import_database_file" in text, text
+    assert "check_datasource_quality" in text, text
+    assert str(out) in text, "the path must be the one just built, so it can be copied verbatim"

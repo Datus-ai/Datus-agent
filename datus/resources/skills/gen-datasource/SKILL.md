@@ -186,10 +186,10 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    helps once something is declared, and a measured run took in nine tables with zero PRIMARY KEY,
    zero FOREIGN KEY and zero UNIQUE. Give each one the key its GRAIN implies, which is not always a
    single column: a readings / measurements / line-items table is keyed by
-   `PRIMARY KEY (parent_id, ts)`, and declaring `parent_id` alone is a claim the data cannot meet -
-   one run earned `sensor_readings.series_id has 11,815 duplicate keys` from the quality check that
-   way and then spent rounds fixing data that was never wrong. Composite keys are read and honoured;
-   `references/profile-spec.md` §5.6 has the shape.
+   `PRIMARY KEY (parent_id, <the column that separates the rows>)`, and declaring `parent_id` alone
+   is a claim the data cannot meet - one run earned `primary key non-null and unique: ... has 11,815
+   duplicate keys` from the quality check that way, then spent rounds fixing data that was never
+   wrong. Composite keys are read and honoured; `references/profile-spec.md` §5.6 has the shape.
    It returns the engine's whole plan - row allocation per table, table roles, column semantics,
    the resolved date window, sample names, business codes, the daily-metric grid - and generates
    nothing. **This is the answer to every "what will the engine do with my DDL" question, and it
