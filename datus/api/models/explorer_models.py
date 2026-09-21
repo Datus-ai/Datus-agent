@@ -136,6 +136,16 @@ class MetricDimensionItem(BaseModel):
     type: Optional[str] = Field(None, description="Dimension type, e.g. 'time', 'string', 'number'")
     description: Optional[str] = Field(None, description="Dimension description")
     is_primary_key: Optional[bool] = Field(None, description="Whether the dimension is a primary key")
+    recommended: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether the dimension is recommended for analytical grouping; false does not prevent an explicit group-by"
+        ),
+    )
+    recommendation_source: Optional[str] = Field(
+        None,
+        description="How the grouping recommendation was declared or inferred",
+    )
 
 
 class MetricDimensionsData(BaseModel):

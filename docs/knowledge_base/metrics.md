@@ -130,7 +130,7 @@ query_metrics(
 | Parameter | Meaning |
 | --- | --- |
 | `metrics` | One or more exact metric names. |
-| `dimensions` | Dimensions returned by `get_dimensions`; with Dosi, `metric_time` selects the primary time axis. |
+| `dimensions` | Fields returned by `get_dimensions`; with Dosi, `metric_time` selects the primary time axis. Prefer `recommended=true` for automatic grouping, while `recommended=false` remains explicitly queryable. |
 | `path` | Optional subject-tree path used to disambiguate a metric. |
 | `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. ISO dates and relative values such as `-7d` or `now` are supported by the adapter. |
 | `time_granularity` | `day`, `week`, `month`, `quarter`, or `year`. |

@@ -1486,8 +1486,15 @@ class TestGetDimensions:
                 "type": "time",
                 "is_primary_time": True,
                 "time_granularities": ["month", "quarter", "year"],
+                "recommended": True,
+                "recommendation_source": "inferred:time",
             },
-            {"name": "event_type", "type": "categorical"},
+            {
+                "name": "event_id",
+                "type": "categorical",
+                "recommended": False,
+                "recommendation_source": "inferred:primary_key",
+            },
         ]
 
         with patch(
@@ -1503,6 +1510,10 @@ class TestGetDimensions:
         }
         assert "is_primary_time" not in result.result["items"][0]
         assert "time_granularities" not in result.result["items"][0]
+        assert result.result["items"][0]["recommended"] is True
+        assert result.result["items"][0]["recommendation_source"] == "inferred:time"
+        assert result.result["items"][1]["recommended"] is False
+        assert result.result["items"][1]["recommendation_source"] == "inferred:primary_key"
 
     def test_no_adapter_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.get_dimensions("revenue")

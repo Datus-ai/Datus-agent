@@ -62,6 +62,12 @@ profile. `validate_semantic`, `list_metrics`, `get_dimensions`, and
 `metric_time` as the dimension and the grain separately; a returned column such
 as `metric_time__<grain>` is an output/order key.
 
+`get_dimensions` preserves the native metric-scoped order and classification.
+Every returned field is queryable. Use `recommended=true` as the default set
+for analytical grouping; `recommended=false` is only a selection hint and does
+not reject an explicit group-by. `recommendation_source` records whether that
+classification was declared or inferred (for example, a measure or key).
+
 The unified `semantic_modeling` workflow lists valid and repairable existing
 models separately. It binds a valid target or plans the same repairable model
 in place, applies the requested changes, validates the exact final artifact,
