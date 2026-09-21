@@ -2195,6 +2195,42 @@ class DBFuncTool:
         return meta, display
 
     @mcp_tool()
+    def _assertion_drift(self, config_file, config):
+        """Which assertions disappeared since the last check on this config file.
+
+        ⚠️ The assertions are written by the caller, so ``ok: true`` is not a fixed bar. A measured
+        run failed one it could not satisfy - "passengers differ by aircraft size", expected
+        1.5-4.5, measured 1.018 - and reached a pass by REPLACING that entry with a different
+        assertion rather than by fixing the data. The instruction it was given covers relaxing a
+        threshold and says nothing about deleting the question, so nothing objected, and every
+        `ok: true` after that point overstated what had been verified.
+
+        Reported rather than refused: dropping an assertion is sometimes right (it was wrong, or it
+        asked about a column the DDL does not have). What must not happen is it going unmentioned.
+        """
+        if config_file is None:
+            return None
+        names = sorted({str((a or {}).get("name") or "") for a in (config.get("assertions") or []) if a})
+        names = [n for n in names if n]
+        side = Path(config_file).with_suffix(".seen.json")
+        previous = []
+        try:
+            if side.exists():
+                previous = [str(x) for x in (json.loads(side.read_text(encoding="utf-8")) or [])]
+        except Exception:
+            previous = []
+        try:
+            side.write_text(json.dumps(names, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass  # a read-only workspace must not fail the check
+        if not previous:
+            return None
+        removed = [n for n in previous if n not in names]
+        added = [n for n in names if n not in previous]
+        if not removed:
+            return None
+        return {"removed": removed, "added": added, "kept": len(names) - len(added)}
+
     def check_datasource_quality(
         self,
         config_path: Optional[str] = "",
@@ -2291,6 +2327,9 @@ class DBFuncTool:
             # anything at all, so the caller is told which it got rather than having to infer it
             # from a check detail reading "no metadata, skipped".
             result["generator_meta"] = meta_source or "not found - roles and keys were re-inferred"
+            drift = self._assertion_drift(resolved.resolved if config_path else None, config)
+            if drift:
+                result["assertion_drift"] = drift
             # What to do with the verdict, in the tool output rather than only in the skill.
             #
             # ⚠️ "Stop when the check passes" has been stated in skill prose through six measured
@@ -2302,18 +2341,30 @@ class DBFuncTool:
             # only the caller can end its own loop.
             summary = result["summary"]
             failed = summary.get("failed") or 0
+            drift_note = (
+                ""
+                if not drift
+                else (
+                    f" NOTE: {len(drift['removed'])} assertion(s) present on the previous run are gone "
+                    f"from this one ({', '.join(drift['removed'][:4])}"
+                    f"{' ...' if len(drift['removed']) > 4 else ''}). A passing check is only worth the "
+                    f"assertions it still contains - put them back, or say in the delivery summary "
+                    f"which ones you dropped and why."
+                )
+            )
             result["next"] = (
                 (
                     "Finished. Every check passes - write the delivery summary and stop. Do not "
                     "re-run gen.py, re-import or re-check: the build that passed is the one to "
                     "ship, and a rebuild replaces it with one nothing has verified."
                 )
+                + drift_note
                 if summary.get("ok")
                 else (
                     f"{failed} FAIL(s) above. Each one is a defect in the generator profile, not a "
                     f"threshold to relax: correct profile in data/gen.py, re-run it, then "
                     f"import_database_file + check_datasource_quality again. Do not hand-write "
-                    f"queries to investigate - the check re-runs for free."
+                    f"queries to investigate - the check re-runs for free." + drift_note
                 )
             )
             return FuncToolResult(result=result)

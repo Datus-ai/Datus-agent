@@ -733,3 +733,63 @@ class TestVerdictCarriesItsNextStep:
             # The fixture is a bare two-column table, so a structural check may legitimately fail;
             # what must hold either way is that the verdict and the instruction agree.
             assert "profile" in nxt
+
+
+class TestAssertionsThatDisappear:
+    """`ok: true` is only worth the assertions it still contains.
+
+    A measured run failed one it could not satisfy - "passengers differ by aircraft size",
+    expected 1.5-4.5, measured 1.018 - and reached a pass by REPLACING that entry with a
+    different assertion rather than by fixing the data. The instruction it had covers relaxing a
+    threshold and says nothing about deleting the question, so nothing objected.
+    """
+
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        with connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE dim_thing (thing_id BIGINT, thing_name VARCHAR)")
+            con.execute("INSERT INTO dim_thing SELECT i, 'Thing ' || i FROM range(1, 30) t(i)")
+        return DBFuncTool(connector)
+
+    ZERO = "SELECT count(*) FROM dim_thing WHERE 1 = 0"
+
+    def _run(self, tool, tmp_path, names):
+        (tmp_path / "checks.json").write_text(
+            json.dumps({"assertions": [{"name": n, "expect": "zero", "sql": self.ZERO} for n in names]}),
+            encoding="utf-8",
+        )
+        result = tool.check_datasource_quality(config_path="checks.json")
+        assert result.success, result.error
+        return result.result
+
+    @pytest.mark.acceptance
+    def test_a_dropped_assertion_is_named_on_the_next_run(self, tool, tmp_path):
+        self._run(tool, tmp_path, ["keeps its promise", "the awkward one"])
+        second = self._run(tool, tmp_path, ["keeps its promise", "something easier"])
+
+        drift = second.get("assertion_drift")
+        assert drift, "a question that disappeared has to be reported"
+        assert drift["removed"] == ["the awkward one"]
+        assert drift["added"] == ["something easier"]
+        assert "the awkward one" in second["next"], second["next"]
+
+    @pytest.mark.acceptance
+    def test_the_first_run_has_nothing_to_compare_against(self, tool, tmp_path):
+        first = self._run(tool, tmp_path, ["only assertion"])
+
+        assert "assertion_drift" not in first
+
+    @pytest.mark.acceptance
+    def test_adding_assertions_is_not_drift(self, tool, tmp_path):
+        """Growing the suite is the normal direction and must stay quiet, or the note becomes
+        noise that teaches the reader to skip it."""
+        self._run(tool, tmp_path, ["first"])
+        second = self._run(tool, tmp_path, ["first", "second"])
+
+        assert "assertion_drift" not in second
