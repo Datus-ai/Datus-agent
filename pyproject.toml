@@ -219,9 +219,10 @@ ci = [
     # validated against its runtime API and authoring contract, so whatever the
     # resolver picks is an installable pair; the marker keeps platforms
     # without a dosi-engine wheel resolvable (wheels exist for manylinux
-    # x86_64/aarch64 and macOS arm64). 0.1.13 is the floor because it requires
-    # semantic-core>=0.2.5 for the native attribution contract while retaining
-    # the current Ossie authoring and relationship-path validation behavior.
+    # x86_64/aarch64 and macOS arm64). 0.1.14 is the floor because it requires
+    # semantic-core>=0.2.6 and provides the dimension recommendation metadata
+    # consumed by Explorer, while retaining the current Ossie authoring and
+    # relationship-path validation behavior.
     # Datus-backend pins exactly for its image; being a dependency group, this
     # line is never inherited by the backend's own resolution.
     "datus-semantic-dosi>=0.1.14 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'darwin')",
