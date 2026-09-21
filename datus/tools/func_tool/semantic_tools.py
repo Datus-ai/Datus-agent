@@ -388,9 +388,9 @@ class SemanticTools:
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
-        # Keep storage handles for compatibility with older call sites, but
-        # public SemanticTools methods use the semantic adapter as their source
-        # of truth. ContextSearchTools owns RAG/storage discovery.
+        # The semantic adapter remains the source of executable metric definitions.
+        # list_metrics reads the KB only for navigation paths shared with
+        # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
         self.compressor = DataCompressor(model_name=agent_config.active_model().model)
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
@@ -519,7 +519,7 @@ class SemanticTools:
         return None
 
     def _metric_catalog_paging(self) -> Tuple[int, int]:
-        """Page size and page cap for `metric_datasets`, from the adapter's config."""
+        """Page size and page cap for adapter catalog scans, from the adapter's config."""
         return metric_catalog_paging(self.agent_config, self.adapter_type)
 
     def _configured_adapter_type(self) -> Optional[str]:
