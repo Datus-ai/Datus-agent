@@ -2284,3 +2284,298 @@ def test_an_empty_enum_placeholder_is_not_a_decision(engine_module, capsys):
 
     out = capsys.readouterr().out
     assert "meters.unit" in out.split("GUESSED", 1)[1].split("\n")[0], out
+
+
+# --------------------------------------------------------------------------- engine defects
+# Four generation defects found by reading what a measured run did with its 49 turns. It was not
+# avoiding the quality check: it was working around these, one at a time, from the source.
+
+
+def _build(engine_module, ddl, tmp_path, rows=5000, profile=None):
+    eng = engine_module.DDLEngine(ddl, rows=rows, profile=profile or {})
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    return eng, duckdb.connect(str(out), read_only=True)
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_to_a_unique_column_samples_from_it(engine_module, tmp_path):
+    """SQL lets a foreign key reference any unique column. `decl_fk` has always recorded WHICH
+    column, and every sampling site read the parent's PRIMARY KEY instead - so the child was filled
+    from the wrong column and matched nothing. Measured before the fix: 100% orphans, against 0%
+    for the same DDL with the target declared PRIMARY KEY. Invariant 6 says FKs are sampled from
+    upstream; this was the schema shape that broke it silently."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, series_id VARCHAR UNIQUE, unit VARCHAR);"
+        "CREATE TABLE c (series_id VARCHAR REFERENCES p(series_id), ts TIMESTAMP, v DOUBLE);",
+        tmp_path,
+    )
+
+    total = con.execute("SELECT count(*) FROM c").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM c LEFT JOIN p USING (series_id) WHERE p.series_id IS NULL").fetchone()[
+        0
+    ]
+
+    assert total > 0
+    assert orphans == 0, f"{orphans}/{total} child rows point at no parent"
+
+
+@pytest.mark.acceptance
+def test_a_unique_column_does_not_collide_with_itself(engine_module, tmp_path):
+    """`iata_code UNIQUE` was classified `enum` by name and drew from a 4-value built-in
+    vocabulary: five rows, three distinct codes, and the constraint dropped for the whole table at
+    build time. A UNIQUE column says every value differs; enum semantics say pick from a short
+    list. Only one of those can be honoured."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE carriers (carrier_id VARCHAR PRIMARY KEY, iata_code VARCHAR UNIQUE, name VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id), dep TIMESTAMP);",
+        tmp_path,
+    )
+
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT iata_code) FROM carriers").fetchone()
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='carriers' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+
+    assert distinct == rows, f"{rows - distinct} duplicate values in a UNIQUE column"
+    assert kept, "the constraint was dropped at build time, so the database does not carry it"
+
+
+@pytest.mark.acceptance
+def test_a_denormalised_column_agrees_with_the_parent_it_points_at(engine_module, tmp_path):
+    """A fact carrying both `route_id` and `origin_code` is stating that they agree. Each was
+    sampled independently - the flight drew a route, then drew an unrelated airport - so 95% of
+    rows said their route starts at one airport and the flight at another. Both columns are
+    individually legal, so no assertion in `checks.json` can express the contradiction."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin_code VARCHAR REFERENCES airports(code), dist INTEGER);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  route_id VARCHAR REFERENCES routes(route_id),"
+        "  origin_code VARCHAR REFERENCES airports(code), dep TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    total = con.execute("SELECT count(*) FROM flights").fetchone()[0]
+    disagree = con.execute(
+        "SELECT count(*) FROM flights f JOIN routes r USING (route_id) WHERE f.origin_code <> r.origin_code"
+    ).fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM flights f LEFT JOIN airports a ON f.origin_code = a.code WHERE a.code IS NULL"
+    ).fetchone()[0]
+
+    assert disagree == 0, f"{disagree}/{total} flights disagree with the route they point at"
+    assert orphans == 0, "inheriting must not invent an airport that does not exist"
+
+
+@pytest.mark.acceptance
+def test_conditional_bands_a_measure_column_not_only_an_amount(engine_module, tmp_path):
+    """profile-spec documents the numeric form as "different [lo, hi] per group" with no mention
+    that it means amount columns only. A measure column accepted the banding and generated the
+    fallback range anyway: `delay_minutes` banded at [200, 400] for weather came out 0-8, and the
+    run went into the engine source to find out why."""
+    ddl = (
+        "CREATE TABLE d (\n"
+        "  delay_id VARCHAR PRIMARY KEY,\n"
+        "  delay_type VARCHAR, -- weather / carrier / security\n"
+        "  delay_minutes INTEGER\n"
+        ");"
+    )
+    profile = {
+        "conditional": {"d.delay_minutes": {"__by__": "delay_type", "weather": [200, 400], "__default__": [1, 5]}}
+    }
+    _eng, con = _build(engine_module, ddl, tmp_path, rows=8000, profile=profile)
+
+    banded = dict(con.execute("SELECT delay_type, min(delay_minutes) FROM d GROUP BY 1").fetchall())
+    assert banded.get("weather", 0) >= 200, banded
+    assert all(v < 200 for k, v in banded.items() if k != "weather"), banded
+
+
+# The three shapes the first version of these fixes walked straight into. Each one passed the
+# tests above and broke something the tests above do not look at.
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_whose_declared_parent_is_not_the_sampled_pool_still_builds(engine_module, tmp_path):
+    """`pk_owner` is keyed by column NAME across the whole schema, so `code` can be owned by
+    `airports` while this table's foreign key declares `countries(iso2)`. Trusting the declaration
+    then indexes an `airports` row by `iso2` - KeyError, and the whole generate dies. Picking the
+    wrong parent is a pre-existing inaccuracy; crashing on it would be new."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, city VARCHAR);"
+        "CREATE TABLE countries (country_id VARCHAR PRIMARY KEY, iso2 VARCHAR UNIQUE, cname VARCHAR);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  code VARCHAR REFERENCES countries(iso2), dep TIMESTAMP);",
+        tmp_path,
+    )
+
+    assert con.execute("SELECT count(*) FROM flights").fetchone()[0] > 0
+
+
+@pytest.mark.acceptance
+def test_a_unique_constraint_does_not_blank_a_typed_column(engine_module, tmp_path):
+    """A primary or foreign key IS an identifier whatever it is called, so forcing id semantics on
+    it is safe. UNIQUE is not: it lands on natural keys of every type, and `report_date DATE
+    UNIQUE` on a calendar table is ordinary. Promoting it stopped the date generator running and
+    left the entire column NULL."""
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE calendar (cal_id VARCHAR PRIMARY KEY, report_date DATE UNIQUE, label VARCHAR);"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, cal_id VARCHAR REFERENCES calendar(cal_id), v DOUBLE);",
+        tmp_path,
+    )
+
+    assert [c["sem"] for c in eng.schema["calendar"] if c["name"] == "report_date"] == ["date"]
+    total, nulls = con.execute("SELECT count(*), count(*) FILTER (WHERE report_date IS NULL) FROM calendar").fetchone()
+    assert nulls == 0, f"{nulls}/{total} rows lost their date"
+
+
+@pytest.mark.acceptance
+def test_inheriting_a_column_moves_its_entity_too(engine_module, tmp_path):
+    """Rewriting `row` alone leaves `ent[other]` pointing at the parent that was just discarded,
+    and the enum backfill and cross-table `__by__` both read attributes off that entity. A first
+    attempt at this fix removed the route/airport contradiction and grew a new one in its place:
+    4,168 of 5,640 rows carried a `region` belonging to the abandoned airport. Trading one
+    inconsistency for another is not a fix, so both are asserted here."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE airports (code VARCHAR PRIMARY KEY, region VARCHAR, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin_code VARCHAR REFERENCES airports(code), dist INTEGER);"
+        "CREATE TABLE flights (flight_id VARCHAR PRIMARY KEY,"
+        "  route_id VARCHAR REFERENCES routes(route_id),"
+        "  origin_code VARCHAR REFERENCES airports(code), region VARCHAR, dep TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    route_mismatch = con.execute(
+        "SELECT count(*) FROM flights f JOIN routes r USING (route_id) WHERE f.origin_code <> r.origin_code"
+    ).fetchone()[0]
+    attribute_mismatch = con.execute(
+        "SELECT count(*) FROM flights f JOIN airports a ON f.origin_code = a.code WHERE f.region <> a.region"
+    ).fetchone()[0]
+
+    assert route_mismatch == 0, "the contradiction this fix exists for"
+    assert attribute_mismatch == 0, "and the one the first attempt created"
+
+
+@pytest.mark.acceptance
+def test_a_unique_column_elsewhere_does_not_take_a_declared_foreign_key_target(engine_module):
+    """An explicit REFERENCES states which table is meant; a UNIQUE column on an unrelated table
+    shares nothing but a name. Registering UNIQUE keys before the declared foreign keys let
+    `contacts.email` claim `email` out from under `tickets.email REFERENCES users(email)`."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE users (user_id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE);"
+        "CREATE TABLE contacts (contact_id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE);"
+        "CREATE TABLE tickets (ticket_id VARCHAR PRIMARY KEY,"
+        "  email VARCHAR REFERENCES users(email), opened_at TIMESTAMP);",
+        rows=3000,
+    )
+
+    assert eng.pk_owner["email"] == "users"
+
+
+@pytest.mark.acceptance
+def test_conditional_bands_a_measure_by_a_cross_table_column(engine_module, tmp_path):
+    """The amount path has always resolved `"__by__": "upstream.column"`, and profile-spec does not
+    say measures are exempt. Threading the row through `_measure_val` without its resolved parents
+    left the cross-table form silently falling back to `__default__` - a half-fix, and the kind of
+    thing that sends the next reader into the engine to find out why."""
+    ddl = (
+        "CREATE TABLE carriers (\n"
+        "  carrier_id VARCHAR PRIMARY KEY,\n"
+        "  service_class VARCHAR, -- premium / economy\n"
+        "  name VARCHAR\n"
+        ");\n"
+        "CREATE TABLE f (\n"
+        "  fid VARCHAR PRIMARY KEY,\n"
+        "  carrier_id VARCHAR REFERENCES carriers(carrier_id),\n"
+        "  delay_minutes INTEGER,\n"
+        "  dep TIMESTAMP\n"
+        ");"
+    )
+    profile = {
+        "conditional": {
+            "f.delay_minutes": {"__by__": "carriers.service_class", "premium": [200, 400], "__default__": [1, 5]}
+        }
+    }
+    _eng, con = _build(engine_module, ddl, tmp_path, rows=8000, profile=profile)
+
+    banded = dict(
+        con.execute(
+            "SELECT c.service_class, min(f.delay_minutes) FROM f JOIN carriers c USING (carrier_id) GROUP BY 1"
+        ).fetchall()
+    )
+    assert banded.get("premium", 0) >= 200, banded
+    assert all(v < 200 for k, v in banded.items() if k != "premium"), banded
+
+
+@pytest.mark.acceptance
+def test_an_unresolvable_inheritance_is_skipped_not_half_applied(engine_module, tmp_path):
+    """The branch the first version of this fix never executed, and it held a guaranteed crash.
+
+    A parent and child can reference DIFFERENT columns of the same table - `p.x` holds `a.code`
+    while `f.x` must hold `a.alt` - so the parent's copy of the column is a value this column may
+    not hold, and no pooled entity carries it. That path mutated `ent` while iterating it, which
+    CPython rejects on every `__next__` including the final one, so reaching it at all was a
+    RuntimeError rather than a rare race.
+
+    Skipping the inheritance is also the correct outcome, not just the safe one: writing the value
+    and dropping the entity would leave `row[other]` naming a row that does not exist, while the
+    independently sampled value it would have replaced is at least self-consistent.
+    """
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE a (code VARCHAR PRIMARY KEY, alt VARCHAR UNIQUE);"
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, x VARCHAR REFERENCES a(code));"
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, pid VARCHAR REFERENCES p(pid),"
+        "  x VARCHAR REFERENCES a(alt), dt TIMESTAMP);",
+        tmp_path,
+        rows=8000,
+    )
+
+    total = con.execute("SELECT count(*) FROM f").fetchone()[0]
+    orphans = con.execute("SELECT count(*) FROM f LEFT JOIN a ON f.x = a.alt WHERE a.alt IS NULL").fetchone()[0]
+
+    assert total > 0, "generation must complete at all"
+    assert orphans == 0, f"{orphans}/{total} rows point at an a.alt that does not exist"
+
+
+@pytest.mark.acceptance
+def test_a_unique_name_column_stays_readable(engine_module, tmp_path):
+    """Two wrong answers were available here and the fix has to beat both.
+
+    Leaving it alone: the vocabulary is finite and combinations repeat, so the column collided with
+    itself and the constraint was dropped for the whole table at build time. Classifying it as an
+    identifier like any other UNIQUE column: 1,200 unique values named `brand_name_1 ...
+    brand_name_1200`, which satisfies the constraint by throwing away what the column is for - a
+    demo database is read by an agent and shown to people.
+    """
+    eng, con = _build(
+        engine_module,
+        "CREATE TABLE brands (brand_id VARCHAR PRIMARY KEY, brand_name VARCHAR UNIQUE, country VARCHAR);"
+        "CREATE TABLE sales (sid VARCHAR PRIMARY KEY,"
+        "  brand_id VARCHAR REFERENCES brands(brand_id), amt DOUBLE, dt TIMESTAMP);",
+        tmp_path,
+        rows=60000,
+    )
+
+    assert [c["sem"] for c in eng.schema["brands"] if c["name"] == "brand_name"] == ["name"]
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT brand_name) FROM brands").fetchone()
+    kept = con.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE table_name='brands' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+    names = [r[0] for r in con.execute("SELECT brand_name FROM brands").fetchall()]
+
+    assert distinct == rows, "the constraint has to actually hold"
+    assert kept, "and survive into the built database"
+    assert not any(n.startswith("brand_name") for n in names), f"slugs, not names: {names[:3]}"
