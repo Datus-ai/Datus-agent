@@ -351,7 +351,7 @@ class QualityChecker:
             "; ".join(pk_bad)
             if pk_bad
             else (
-                f"{len(pks)} table(s) have a non-null unique key"
+                f"{len(pks)} table(s) have a non-null unique key" + _keyless_note(ts, pks)
                 if pks
                 else "no generator metadata, so no key was verified - see generator_meta in the result"
             ),
@@ -817,3 +817,17 @@ def summarize(results: Sequence[Dict[str, str]]) -> Dict[str, Any]:
         "failures": [r for r in results if r["status"] == FAIL],
         "warnings": [r for r in results if r["status"] == WARN],
     }
+
+
+def _keyless_note(ts, pks):
+    """Name the tables the generator reported no single-column key for.
+
+    Saying nothing costs a run: the skill tells the caller to leave a composite-grain table
+    keyless, and a count that does not match the table list reads as a key that went missing. A
+    measured run spent four minutes searching the checker's source for the reason and then added
+    a surrogate primary key to the user's own DDL to make the number add up.
+    """
+    keyless = [t for t in ts if t not in pks]
+    if not keyless:
+        return ""
+    return f"; no single-column key declared for {', '.join(sorted(keyless))} (not verified)"

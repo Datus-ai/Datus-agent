@@ -213,6 +213,7 @@ class DDLEngine:
         self._enum_cache = {}
         self._fact_rows, self._pending_dim_rows, self._id_base = {}, {}, {}
         self._code_seq = {}  # (table, column) -> codes handed out, so _fill_generic never repeats one
+        self._alt_seq = {}  # (table, column) -> alternate-key values handed out, same reason
         self.schema = self._parse()
         self.synthetic = set()
         if self.extra_tables in ("date_dim", "all"):
@@ -860,6 +861,28 @@ class DDLEngine:
         return Calendar(promos, slows, disrupts)
 
     # ---------------------------------------------------------------- structural metadata
+    def _meta_key(self, t):
+        """The column the quality check may verify as this table's key, or None when it has none.
+
+        ⚠️ This used to be ``pk_of`` for every table, and ``pk_of`` always answers - it falls back
+        to the first column. A table left deliberately keyless therefore shipped its FIRST COLUMN
+        as a primary key, and on a time series that column is the foreign key: a measured run
+        failed with "sensor_readings.series_id has 16,377 duplicate keys" for a table whose DDL
+        declares no key at all. The advice that went with the limitation - leave such a table
+        keyless and say so - could not be followed, because following it still produced a hard
+        failure, so the run instead invented a surrogate primary key and altered the user's schema.
+
+        A declared composite key is reported as none for the same reason: no single column of it
+        is unique, so there is nothing a one-column check can verify.
+        """
+        declared = getattr(self, "decl_pk", {}).get(t)
+        if declared:
+            return declared[0] if len(declared) == 1 else None
+        col = self.pk_of(t)  # a guess, so it has to earn the name
+        if col in self.fks.get(t, ()) or (t, col) in (getattr(self, "decl_fk", None) or {}):
+            return None  # a foreign key is the parent's key, never this table's
+        return col
+
     def _dump_meta(self, db_path, sizes):
         """Persist the engine inference so the quality check reuses it, instead of re-deriving a second, conflicting view."""
         import json
@@ -882,7 +905,7 @@ class DDLEngine:
             "roles": dict(self.roles),
             "synthetic_tables": sorted(made),
             "fks": {t: v for t, v in self.fks.items() if v},
-            "pks": {t: self.pk_of(t) for t in self.schema},
+            "pks": {t: c for t in self.schema for c in [self._meta_key(t)] if c},
             "col_sem": {f"{t}.{c['name']}": c["sem"] for t, cols in self.schema.items() for c in cols},
             "rows": sizes,
             "fingerprint": self._fingerprint(),
@@ -2024,11 +2047,72 @@ class DDLEngine:
 
     def _pk_val(self, t, i, d=None):
         """Primary-key values honour the declared type: an integer PK gets integers, only VARCHAR gets a prefixed business code."""
-        pk = self.pk_of(t)
-        if self._is_int_col(t, pk):
-            return self._id_base.setdefault(t, (len(self._id_base) + 1) * 10_000_000 + 1) + i
-        prefix = re.sub(r"_id$|_key$|_no$", "", pk).upper()[:3] or "ENT"
+        return self._key_val(t, self.pk_of(t), i, d)
+
+    def _key_val(self, t, col, i, d=None):
+        """One key column's i-th value. Shared so an alternate key is typed like a primary one."""
+        if self._is_int_col(t, col):
+            return self._id_base.setdefault((t, col), (len(self._id_base) + 1) * 10_000_000 + 1) + i
+        prefix = re.sub(r"_id$|_key$|_no$", "", col).upper()[:3] or "ENT"
         return f"{prefix}{d.strftime('%y%m%d')}{i + 1:07d}" if d is not None else f"{prefix}{i + 1:07d}"
+
+    def _alt_key_cols(self, t):
+        """Columns of ``t`` that some declared foreign key points at, other than its primary key.
+
+        ⚠️ A parent's UNIQUE column is a real key to its children, and no generator filled one.
+        ``_gen_dim`` reached it through a catch-all that produced ``series_id_1``; every other
+        generator reached it through ``_fill_generic``, which has no branch for an id column the
+        table owns - so on a fact / detail / downstream / event parent the column came out empty
+        and every child pointing at it was an orphan against NULL.
+        """
+        cache = self.__dict__.setdefault("_alt_key_cache", {})
+        if t not in cache:
+            own = {c["name"] for c in self.schema.get(t, ())}
+            pk = self.pk_of(t)
+            cache[t] = tuple(
+                sorted(
+                    {
+                        rc
+                        for (rt, rc) in (getattr(self, "decl_fk", None) or {}).values()
+                        if rt == t and rc and rc != pk and rc in own
+                    }
+                )
+            )
+        return cache[t]
+
+    def _set_alt_keys(self, t, row):
+        """Give each of those columns a unique value of its own.
+
+        Counted per (table, column) rather than by a loop index: these generators nest loops - a
+        detail row per parent, an event row per stage - and a reused index hands out duplicates,
+        the same reason the code-column branch keeps its own ``_code_seq``.
+        """
+        for col in self._alt_key_cols(t):
+            seq = self._alt_seq[(t, col)] = self._alt_seq.get((t, col), 0) + 1
+            row[col] = self._key_val(t, col, seq - 1)
+
+    def _ref_alt(self, t, row):
+        """The alternate-key values a child may need, carried on the parent's ref record."""
+        return {c: row[c] for c in self._alt_key_cols(t) if c in row}
+
+    def _parent_key_val(self, t, fk_col, par, pr):
+        """The parent value this child's foreign key must carry.
+
+        ⚠️ ``pr["pk"]`` is the parent's PRIMARY KEY, and the detail / downstream / event
+        generators wrote it into the child unconditionally - correct only when the foreign key
+        happens to point at the primary key. Pointed at a UNIQUE column instead, the child was
+        filled with primary-key values and matched nothing: measured at 100% orphans on a
+        three-level DDL (fact -> detail -> detail), which is the shape ``_gen_fact``'s own
+        sampling site - the one ``ref_col_of`` was wired into - never reaches.
+
+        Falls back to the primary key when the parent's record does not carry the column. Every
+        record built today does, so this is unreachable as the code stands; it stays because the
+        alternative on a shape nobody anticipated is a KeyError that kills the whole generate.
+        """
+        ref_c = self.ref_col_of(t, fk_col)
+        if ref_c == self.pk_of(par):
+            return pr["pk"]
+        return (pr.get("alt") or {}).get(ref_c, pr["pk"])
 
     CODE_COL = re.compile(r"(^|_)(no|code|sn|serial|sku|number|barcode|ref)$")
     # Semantics whose own branch fills the column before the code fallback is reached, in both
@@ -2432,6 +2516,7 @@ class DDLEngine:
                     ent[name] = self._code_val(t, name, i)
                 else:
                     ent[name] = f"{name}_{i + 1}"
+            self._set_alt_keys(t, ent)
             # Effective-date index, so facts/details referencing this entity can enforce "not before it" (invariant 3)
             ent["__eff__"] = self._day_index(ent[eff_c]) if (eff_c and ent.get(eff_c)) else 0
             ent["__eff_ts__"] = None
@@ -2766,11 +2851,13 @@ class DDLEngine:
                 if c not in row and self._is_code_col(t, c):
                     row[c] = self._code_val(t, c, i, d)
                 row.setdefault(c, "")
+            self._set_alt_keys(t, row)
             self._apply_formulas(t, row)
             rows.append([row[c] for c in names])
             refs.append(
                 {
                     "pk": row[pk],
+                    "alt": self._ref_alt(t, row),
                     "dt": d,
                     "ts": t0,
                     "status": row.get(status_col, ""),
@@ -2899,7 +2986,7 @@ class DDLEngine:
             tot = {"gross": 0.0, "net": 0.0, "discount": 0.0, "cost": 0.0, "refund": 0.0}
             for j, e in enumerate(picks):
                 no += 1
-                row = {pk: self._pk_val(t, no - 1), fk: pr["pk"]}
+                row = {pk: self._pk_val(t, no - 1), fk: self._parent_key_val(t, fk, par, pr)}
                 ents = {item_col: e} if (item_col and e) else None
                 if item_col and e:
                     row[item_col] = e[pool_pk]
@@ -2958,11 +3045,13 @@ class DDLEngine:
                 tot["discount"] += disc
                 tot["cost"] += tcost
                 tot["refund"] += ramt
+                self._set_alt_keys(t, row)
                 self._apply_formulas(t, row)
                 rows.append([row[c] for c in names])
                 refs.append(
                     {
                         "pk": row[pk],
+                        "alt": self._ref_alt(t, row),
                         "dt": pr["dt"],
                         "ts": pr.get("ts"),
                         "status": pr.get("status", ""),
@@ -3087,7 +3176,7 @@ class DDLEngine:
         )
         rows, refs = [], []
         for i, pr in enumerate(picks):
-            row = {pk: self._pk_val(t, i), fk: pr["pk"]}
+            row = {pk: self._pk_val(t, i), fk: self._parent_key_val(t, fk, par, pr)}
             for f in self.fks[t]:
                 if f == fk or f not in self.pk_owner:
                     continue
@@ -3128,11 +3217,13 @@ class DDLEngine:
                 if c["name"] in row:
                     continue
                 row[c["name"]] = self._fill_generic(t, c, rng, {"dt": s_dt}, row)
+            self._set_alt_keys(t, row)
             self._apply_formulas(t, row)
             rows.append([row.get(c, "") for c in names])
             refs.append(
                 {
                     "pk": row[pk],
+                    "alt": self._ref_alt(t, row),
                     "dt": s_dt,
                     "end": e_dt if done else None,
                     "status": row.get(status_col, ""),
@@ -3183,7 +3274,7 @@ class DDLEngine:
                     else None
                 )
                 ts = chain.step(avg_hours=span * 24 / max(1, len(seq) - 1), cap=cap, pin=pin)
-                row = {pk: self._pk_val(t, no - 1), fk: pr["pk"]}
+                row = {pk: self._pk_val(t, no - 1), fk: self._parent_key_val(t, fk, par, pr)}
                 if seq_col:
                     row[seq_col] = j + 1
                 if type_col:
@@ -3198,6 +3289,7 @@ class DDLEngine:
                     if c["name"] in row:
                         continue
                     row[c["name"]] = self._fill_generic(t, c, rng, {"dt": ts.date()}, row)
+                self._set_alt_keys(t, row)
                 self._apply_formulas(t, row)
                 rows.append([row[c] for c in names])
         o.write(t, names, rows)
@@ -3279,6 +3371,7 @@ class DDLEngine:
                     if c["name"] in row:
                         continue
                     row[c["name"]] = self._fill_generic(t, c, rng, {"dt": d}, row)
+                self._set_alt_keys(t, row)
                 self._apply_formulas(t, row)
                 rows.append([row[c] for c in names])
         o.write(t, names, rows)

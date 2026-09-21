@@ -622,3 +622,30 @@ def test_the_weekday_check_honours_the_declared_weekly_shape(shape, ratio, expec
     checker._weekly_verdict("orders", "paid_amount", ratio)
 
     assert checker.results[0][1] == expected, checker.results[0]
+
+
+@pytest.mark.acceptance
+def test_a_table_without_a_key_is_named_rather_than_quietly_missing(con):
+    """The generator now omits a table it has no single-column key for, instead of passing off its
+    first column as a primary key. Omitting it silently leaves the count not matching the table
+    list, which reads as a key that went missing: a measured run spent four minutes searching the
+    checker's source for the reason and then added a surrogate primary key to the user's own DDL.
+    """
+    results = QualityChecker(con, meta={"pks": {"dim_product": "product_id"}}).run()
+
+    pk = next(r for r in results if r["check"] == "primary key non-null and unique")
+
+    assert pk["status"] == "PASS"
+    assert "ods_order" in pk["detail"], pk["detail"]
+    assert "not verified" in pk["detail"], pk["detail"]
+
+
+@pytest.mark.acceptance
+def test_nothing_is_said_when_every_table_has_a_key(con):
+    """The note must not become a permanent tail on a clean run."""
+    results = QualityChecker(con, meta={"pks": {"dim_product": "product_id", "ods_order": "order_id"}}).run()
+
+    pk = next(r for r in results if r["check"] == "primary key non-null and unique")
+
+    assert pk["status"] == "PASS"
+    assert "not verified" not in pk["detail"], pk["detail"]

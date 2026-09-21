@@ -2579,3 +2579,147 @@ def test_a_unique_name_column_stays_readable(engine_module, tmp_path):
     assert distinct == rows, "the constraint has to actually hold"
     assert kept, "and survive into the built database"
     assert not any(n.startswith("brand_name") for n in names), f"slugs, not names: {names[:3]}"
+
+
+# --------------------------------------------------------------------------- keys a parent owns
+# The FK-to-UNIQUE fix landed on `_gen_fact`'s sampling site, and the test above reaches it with a
+# two-table DDL. Three levels take a different path entirely: a detail / downstream / event row
+# gets its parent key from the parent's ref record, which carried the PRIMARY KEY and nothing else.
+
+THREE_LEVEL_DDL = """
+CREATE TABLE flights (
+    flight_id VARCHAR PRIMARY KEY,
+    scheduled_departure TIMESTAMP,
+    passenger_count INTEGER,
+    ticket_revenue DECIMAL(18, 2)
+);
+CREATE TABLE flight_sensors (
+    sensor_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    series_id VARCHAR UNIQUE,
+    series_name VARCHAR
+);
+CREATE TABLE sensor_readings (
+    series_id VARCHAR REFERENCES flight_sensors(series_id),
+    ts TIMESTAMP,
+    value_double DOUBLE
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_foreign_key_to_a_unique_column_on_a_detail_parent(engine_module, tmp_path):
+    """The same defect one level deeper, which is where a real DDL puts it.
+
+    `flight_sensors` is a detail of `flights`, so its rows come from `_gen_detail` and its children
+    read `pr["pk"]` - the PRIMARY KEY - whatever the foreign key declares. Measured on the DDL a
+    production run was given: 25,464 of 25,464 sensor_readings orphaned, the child column holding
+    `SEN0000001` (a `sensor_id` value) while `flight_sensors.series_id` was NULL on every row,
+    because no generator but `_gen_dim` ever filled a key column the table owns but is not keyed by.
+    """
+    _eng, con = _build(engine_module, THREE_LEVEL_DDL, tmp_path, rows=30000)
+
+    total = con.execute("SELECT count(*) FROM sensor_readings").fetchone()[0]
+    orphans = con.execute(
+        "SELECT count(*) FROM sensor_readings r LEFT JOIN flight_sensors p USING (series_id) WHERE p.series_id IS NULL"
+    ).fetchone()[0]
+    rows, distinct = con.execute("SELECT count(*), count(DISTINCT series_id) FROM flight_sensors").fetchone()
+
+    assert total > 0, "generation must complete at all"
+    assert orphans == 0, f"{orphans}/{total} readings point at a series that does not exist"
+    assert distinct == rows, "the parent's UNIQUE column has to hold, not just be non-null"
+
+
+@pytest.mark.acceptance
+def test_the_unique_target_keeps_its_declared_type(engine_module, tmp_path):
+    """An integer alternate key must not be handed a `SER0000001`, or the build refuses the CTAS."""
+    _eng, con = _build(
+        engine_module,
+        "CREATE TABLE f (fid VARCHAR PRIMARY KEY, dt TIMESTAMP, amt DECIMAL(18, 2));"
+        "CREATE TABLE p (pid VARCHAR PRIMARY KEY, fid VARCHAR REFERENCES f(fid), serial_no BIGINT UNIQUE);"
+        "CREATE TABLE c (serial_no BIGINT REFERENCES p(serial_no), ts TIMESTAMP, v DOUBLE);",
+        tmp_path,
+        rows=20000,
+    )
+
+    orphans = con.execute("SELECT count(*) FROM c LEFT JOIN p USING (serial_no) WHERE p.serial_no IS NULL").fetchone()[
+        0
+    ]
+    kind = con.execute("SELECT typeof(serial_no) FROM p LIMIT 1").fetchone()[0]
+
+    assert orphans == 0
+    assert kind == "BIGINT", f"an integer key must stay integral, got {kind}"
+
+
+@pytest.mark.acceptance
+def test_the_fix_does_not_touch_a_foreign_key_that_points_at_a_primary_key(engine_module, tmp_path):
+    """The overwhelmingly common shape goes through the same line now, so it needs pinning."""
+    _eng, con = _build(engine_module, THREE_LEVEL_DDL, tmp_path, rows=30000)
+
+    orphans = con.execute(
+        "SELECT count(*) FROM flight_sensors s LEFT JOIN flights f USING (flight_id) WHERE f.flight_id IS NULL"
+    ).fetchone()[0]
+
+    assert orphans == 0
+
+
+# --------------------------------------------------------------------------- keys a table has not
+
+
+def _meta(eng, tmp_path, name="t"):
+    import json
+
+    out = tmp_path / f"{name}.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        eng.generate(str(out))
+    return json.loads((tmp_path / f".{name}.meta.json").read_text())
+
+
+@pytest.mark.acceptance
+def test_a_keyless_table_is_reported_keyless_rather_than_given_its_first_column(engine_module, tmp_path):
+    """`pk_of` always answers - it falls back to the first column - and the metadata used to pass
+    that guess to the quality check as a primary key. On a time series the first column is the
+    foreign key, so the check demanded it be unique and a measured run failed with
+    "sensor_readings.series_id has 16,377 duplicate keys" for a table that declares no key at all.
+    The instructions told the caller to leave such a table keyless; following them still failed, so
+    the run added a surrogate primary key to the user's own DDL instead."""
+    eng = engine_module.DDLEngine(THREE_LEVEL_DDL, rows=30000, profile={})
+
+    pks = _meta(eng, tmp_path)["pks"]
+
+    assert "sensor_readings" not in pks, f"a foreign key is not this table's key: {pks}"
+    assert pks["flight_sensors"] == "sensor_id"
+    assert pks["flights"] == "flight_id"
+
+
+@pytest.mark.acceptance
+def test_a_declared_composite_key_is_reported_as_no_single_column_key(engine_module, tmp_path):
+    """Nothing a one-column check can verify, and promoting `a` invents a constraint the DDL never
+    declared: `PRIMARY KEY (warehouse_id, sku_id)` is not a promise that `warehouse_id` is unique."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE sku (sku_id VARCHAR PRIMARY KEY, sku_name VARCHAR);"
+        "CREATE TABLE stock_levels (warehouse_id VARCHAR, sku_id VARCHAR REFERENCES sku(sku_id),"
+        "  on_hand INTEGER, PRIMARY KEY (warehouse_id, sku_id));",
+        rows=8000,
+        profile={},
+    )
+
+    pks = _meta(eng, tmp_path, name="c")["pks"]
+
+    assert "stock_levels" not in pks, f"no single column of a composite key is the key: {pks}"
+    assert pks["sku"] == "sku_id"
+
+
+@pytest.mark.acceptance
+def test_an_undeclared_key_the_engine_generated_itself_is_still_verified(engine_module, tmp_path):
+    """The guess has to keep earning its place: where the engine really did generate the column as
+    a key, dropping it from the metadata would silently retire the check that catches duplicates."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (order_id VARCHAR, order_date TIMESTAMP, amount DECIMAL(18, 2));",
+        rows=6000,
+        profile={},
+    )
+
+    pks = _meta(eng, tmp_path, name="u")["pks"]
+
+    assert pks["orders"] == "order_id"
