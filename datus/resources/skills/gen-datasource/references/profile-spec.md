@@ -555,11 +555,16 @@ and a run that met this spent rounds working out why a statement its pre-check h
 still would not execute. The pre-check plans against an empty schema, where no child rows exist
 yet, so it cannot see this coming.
 
-Two ways out, and the first is usually right: **do not restate what the engine already aligns.**
-A denormalised column that also exists on a parent table is copied down from the row it belongs
-to, so `flights.origin_code` already agrees with its route without any SQL. When the value really
-is yours to compute, drop the `REFERENCES` on that column - a denormalised copy does not need its
-own constraint, the parent's key already enforces the domain.
+**The way out is usually not needing the UPDATE at all.** A denormalised column that also exists
+on a parent table is copied down from the row it belongs to, so `flights.origin_code` already
+agrees with its route before any SQL runs - measured at 0 disagreements over 7,520 rows.
+
+If the value really is yours to compute, **the result still has to be a key that exists in the
+parent**: the column is a foreign key, and a computed value that no parent row carries is an
+orphan the quality check will find. Do not reach for dropping the `REFERENCES` to make the UPDATE
+legal - the constraint is part of what the dataset ships (it disappears from the built database,
+and the agent reads relationships off the schema), and nothing replaces it: a column with no
+REFERENCES has nothing enforcing its domain at all.
 
 **6. `pre_sql` is a last resort.** It runs before the automatic summary layer and can restate metrics
 and backfill across tables. But anything `conditional` / `formulas` can express should not be SQL -
