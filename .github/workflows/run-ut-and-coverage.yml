@@ -99,9 +99,7 @@ jobs:
           # posture as the runtime image, which bakes it for egress-less pods.
           EXT_DIR="${GITHUB_WORKSPACE}/.duckdb/extensions"
           echo "DATUS_DUCKDB_EXTENSION_DIRECTORY=$EXT_DIR" >> "$GITHUB_ENV"
-          # Preserve the source-installed semantic core and Dosi adapter above.
-          # A syncing `uv run` would restore the locked core without restoring Dosi.
-          uv run --no-sync python - <<'PY'
+          uv run python - <<'PY'
           import os
           import duckdb
 
