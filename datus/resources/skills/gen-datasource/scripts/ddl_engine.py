@@ -327,11 +327,18 @@ class DDLEngine:
         declares; that is the one the reader has to fix, and the rest fail only because of it.
         """
         declared = cls._declared_names(stmts)
-        for stmt, failure in leftover:
-            m = cls._MISSING.search(str(failure))
+        for stmt, first, _last in leftover:
+            m = cls._MISSING.search(str(first))
             if m and m.group(1).lower() not in declared:
-                return stmt, failure
-        return leftover[0]
+                return stmt, first
+        # Nothing names an undeclared table, so the remaining failures are either a cycle or a
+        # second problem that was hidden behind a dependency. A LAST failure that is no longer
+        # about a missing table is the latter: everything it needed got created and it still will
+        # not parse, which makes it the statement to report and the reason to report.
+        for stmt, _first, last in leftover:
+            if not cls._MISSING.search(str(last)):
+                return stmt, last
+        return leftover[0][0], leftover[0][1]
 
     @staticmethod
     def _create_until_stuck(items, attempt):
@@ -343,19 +350,20 @@ class DDLEngine:
         the reader looking for a typo in a name that is right there. Passes repeat while any
         statement lands; that terminates because every pass either shrinks the list or ends it.
 
-        Returns the leftovers as ``(item, first failure)``. The FIRST failure, not the last: it
-        names what was missing when nothing else had been created yet, which is the state the
-        reader's DDL describes.
+        Returns ``(item, first failure, last failure)``. Both are needed: the first names what was
+        missing when nothing else existed, which is the state the reader's DDL describes, while the
+        last is what still blocks the statement after everything that COULD be created has been -
+        and those differ when a statement has a second problem hiding behind its dependency.
         """
-        pending = [(item, None) for item in items]
+        pending = [(item, None, None) for item in items]
         while pending:
             rest, progressed = [], False
-            for item, first in pending:
+            for item, first, _last in pending:
                 failure = attempt(item)
                 if failure is None:
                     progressed = True
                 else:
-                    rest.append((item, first if first is not None else failure))
+                    rest.append((item, first if first is not None else failure, failure))
             pending = rest
             if not progressed:
                 break
@@ -1617,7 +1625,12 @@ class DDLEngine:
             for key, spec in (self.profile.get("columns") or {}).items()
             if isinstance(spec, dict) and "values" in spec
         }
-        pinned_names = set(getattr(self, "ddl_enums", {})) | set(self.profile.get("enums") or {})
+        # NON-EMPTY only, matching `_enum_values_raw`'s `if g:` - `profile_skeleton` emits
+        # `"col": []` as a placeholder, so treating a key as a decision would silence the
+        # line for exactly the reader who pasted the skeleton and filled nothing in.
+        pinned_names = set(getattr(self, "ddl_enums", {})) | {
+            col for col, vals in (self.profile.get("enums") or {}).items() if vals
+        }
         guessed = [
             f"{t}.{c['name']}"
             for t in sorted(self.schema)
@@ -2101,7 +2114,7 @@ class DDLEngine:
         # Same repeated-pass rule as `_parse`: a foreign-key chain more than one level deep needs
         # more than one retry, and a table left unstaged here silently stops validating the SQL
         # that touches it.
-        for (t, _sql), failure in self._create_until_stuck(items, _stage):
+        for (t, _sql), _first, failure in self._create_until_stuck(items, _stage):
             logger_msg = (str(failure).splitlines() or [""])[0]
             print(
                 f"  ! pre-check could not stage `{t}`, so statements touching it went "

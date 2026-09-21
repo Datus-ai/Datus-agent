@@ -2238,3 +2238,49 @@ def test_an_unstageable_table_is_named_in_the_warning(engine_module, capsys, mon
     # The cause claim was retired: ordering is retried until it stops helping, so a failure that
     # survives to this line is not an ordering problem.
     assert "foreign-key order" not in out
+
+
+@pytest.mark.acceptance
+def test_a_problem_hiding_behind_a_dependency_is_reported_not_the_dependency(engine_module):
+    """A statement can fail twice for different reasons: first because its FK target does not
+    exist yet, then - once everything creatable has been created - because of something else
+    entirely, a bad type say. Reporting the first failure then blames a dependency that has since
+    been satisfied and never mentions what is actually blocking it.
+
+    Driven through `_blame` directly rather than through DuckDB: which of the two errors a real
+    CREATE surfaces first is up to the binder (measured: it reports an unknown TYPE before an
+    unknown TABLE), so a DDL fixture would pin DuckDB's internals, not this decision.
+    """
+    stmts = [
+        "CREATE TABLE a (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE b (a_id INTEGER REFERENCES a(id), v NUMBER(19))",
+    ]
+    leftover = [
+        (
+            stmts[1],
+            Exception("Catalog Error: Table with name a does not exist!"),
+            Exception("Type with name NUMBER does not exist!"),
+        )
+    ]
+
+    stmt, failure = engine_module.DDLEngine._blame(leftover, stmts)
+
+    assert stmt == stmts[1]
+    assert "NUMBER" in str(failure), "the surviving blocker, not the dependency it hid behind"
+
+
+@pytest.mark.acceptance
+def test_an_empty_enum_placeholder_is_not_a_decision(engine_module, capsys):
+    """`profile_skeleton` emits `"col": []` for every domain it could not fill, so a reader who
+    pastes the skeleton and fills nothing in has empty lists everywhere. `_enum_values_raw` skips
+    those (`if g:`) and falls back to the built-in vocabulary - the domain is still guessed, and
+    the line has to keep saying so or it goes quiet for exactly the reader who needs it."""
+    ddl = (
+        "CREATE TABLE meters (meter_id VARCHAR PRIMARY KEY, unit VARCHAR);"
+        "CREATE TABLE ev (id VARCHAR PRIMARY KEY,"
+        "  meter_id VARCHAR REFERENCES meters(meter_id), read_at TIMESTAMP);"
+    )
+    engine_module.DDLEngine(ddl, rows=3000, profile={"enums": {"unit": []}}).report()
+
+    out = capsys.readouterr().out
+    assert "meters.unit" in out.split("GUESSED", 1)[1].split("\n")[0], out
