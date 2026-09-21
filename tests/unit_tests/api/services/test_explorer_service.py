@@ -689,7 +689,14 @@ class TestExplorerServiceMetricDimensions:
         adapter = MagicMock()
         adapter.get_dimensions = AsyncMock(
             return_value=[
-                SimpleNamespace(name="region", type="string", description="Sales region", is_primary_key=False),
+                SimpleNamespace(
+                    name="region",
+                    type="string",
+                    description="Sales region",
+                    is_primary_key=False,
+                    recommended=True,
+                    recommendation_source="declared",
+                ),
                 SimpleNamespace(
                     name="metric_time",
                     type="time",
@@ -697,6 +704,8 @@ class TestExplorerServiceMetricDimensions:
                     is_primary_key=None,
                     is_primary_time=True,
                     time_granularities=["month", "quarter", "year"],
+                    recommended=True,
+                    recommendation_source="inferred:time",
                 ),
             ]
         )
@@ -716,6 +725,8 @@ class TestExplorerServiceMetricDimensions:
         assert result.data.metric == "revenue"
         assert [d.name for d in result.data.dimensions] == ["region", "metric_time"]
         assert result.data.dimensions[0].type == "string"
+        assert result.data.dimensions[0].recommended is True
+        assert result.data.dimensions[0].recommendation_source == "declared"
         assert result.data.dimensions[1].type == "time"
         assert result.data.time_dimension == "metric_time"
         assert result.data.time_granularities == ["month", "quarter", "year"]

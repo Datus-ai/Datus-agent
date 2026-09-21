@@ -53,6 +53,11 @@ first/last/nth value、向前或向后 offset，以及基于 ROWS 或 RANGE 的�
 原生 engine 执行。时间查询用 `metric_time` 作为 dimension，并把粒度单独
 传入；返回的 `metric_time__<grain>` 是对应的结果列/order key。
 
+`get_dimensions` 会保留原生 engine 针对该指标返回的顺序和分类。所有返回字段
+都可以查询；默认分析分组优先选择 `recommended=true`。`recommended=false` 只是
+选择建议，不会禁止显式 group-by。`recommendation_source` 用于说明该分类是显式
+声明还是推断结果（例如 measure 或 key）。
+
 统一 `semantic_modeling` 会分别列出有效模型和可修复模型：有效模型直接绑定，
 可修复模型按原名称原地规划和修改。最终由 Host 校验确切 YAML，并把该 artifact
 完整同步到 Knowledge Base。

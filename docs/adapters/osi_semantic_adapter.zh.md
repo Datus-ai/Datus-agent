@@ -110,7 +110,7 @@ semantic_model:
 - 一个物理表对应一个 canonical dataset。不要为不同 SQL 或不同指标重复声明同一张表。
 - dataset 使用 OSI core 的 `fields`，不是 MetricFlow 的 `dimensions`。
 - dataset `source` 是表名字符串，不是 `{table: ...}`。
-- **字段角色由结构决定。** 带 `dimension:` 块的 field 是可用于分组/筛选的维度；不带块的 field 是行级表达式,用于记录列语义并支撑 metric 表达式。只被指标聚合的列（余额、金额、预计算比率）声明为不带块的普通 field,`get_dimensions` 不会把它们列为维度。字段级 `type` hint 不属于 authoring 契约。
+- **分组推荐与 OSI field 形态是两件事。** 只要 field 对指标可达，无论是否带 `dimension:` 块，都可能出现在原生、指标级的 `get_dimensions` 结果中。D-DIM `is_dimension` 可以显式控制 `recommended`；未声明时，Dosi 会根据时间、主键、唯一键、关系键和 measure 角色推断。`recommended=false` 只是选择建议，不会禁止 group-by。字段级 `type` hint 不属于 authoring 契约。
 - **键声明只以源 DDL 为准。** 将 DDL 声明的物理主键写入 `primary_key`，将唯一约束或覆盖整表的普通列唯一索引写入 `unique_keys`，保留完整复合键及其列顺序。JOIN 模式和 profiling 不能证明键成立，语义建模不会扫描表数据来发现或验证键。DDL 未提供可用键时，省略该键及依赖它的新关系，继续完成其余建模。
 - 复合主键包含时间维度列（月度快照表）是合法的：编译器在 lowering 时保留时间维度并自动消解 identifier 冲突。
 - 时间字段用 `dimension.is_time: true` 标记，Datus 的 `time_granularity` hint 写进 `custom_extensions`。

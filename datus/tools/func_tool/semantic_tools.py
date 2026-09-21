@@ -937,7 +937,11 @@ class SemanticTools:
               - items (List[Dict]): dimension rows. Adapter dimensions expose
                 their full schema (name, type, expr, ...); storage dimensions
                 fall back to a minimal {"name": ...} shape when only names are
-                stored.
+                stored. Every returned item is queryable. ``recommended`` is
+                a grouping-selection hint, not an allow/deny flag: an item
+                with ``recommended=false`` can still be explicitly grouped.
+                ``recommendation_source`` explains the adapter's declared or
+                inferred classification.
               - total, has_more: dimensions isn't paginated, so total equals
                 len(items) and has_more is False.
               - extra.time_dimension: canonical metric time dimension, or None.
