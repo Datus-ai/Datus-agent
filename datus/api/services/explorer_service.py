@@ -801,8 +801,8 @@ class ExplorerService:
                     type=getattr(d, "type", None),
                     description=getattr(d, "description", None),
                     is_primary_key=getattr(d, "is_primary_key", None),
-                    recommended=getattr(d, "recommended", None),
-                    recommendation_source=getattr(d, "recommendation_source", None),
+                    recommended=d.recommended,
+                    recommendation_source=d.recommendation_source,
                 )
                 for d in (dimensions or [])
             ]
