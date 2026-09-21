@@ -208,6 +208,26 @@ def _normalize_dataset_names(raw: Any) -> List[str]:
     return []
 
 
+def _normalize_pagination_bound(value: Any, *, default: int, minimum: int) -> int:
+    """Coerce an LLM-supplied paging bound to an int.
+
+    A tool schema declaring ``int`` does not stop a model from sending ``"200"``,
+    and adapters use these values in arithmetic and slicing — a string reaches
+    them as ``TypeError: slice indices must be integers``, which surfaces as a
+    failed call the caller cannot act on. Anything unusable falls back to the
+    default rather than failing the listing.
+    """
+    value = normalize_null(value)
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        bound = int(value)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring non-numeric paging bound %r; using %d.", value, default)
+        return default
+    return max(minimum, bound)
+
+
 def _normalize_name_list(value) -> List[str]:
     """Normalize LLM-provided string/list arguments into a clean list of names."""
     value = normalize_null(value)
@@ -302,6 +322,11 @@ METRIC_RESULT_TOKEN_BUDGET = 8000
 # net for an adapter that never stops paging, not a page size: callers name the
 # metrics they want, so the catalog is scanned once and filtered.
 _METRIC_DETAIL_CATALOG_LIMIT = 1000
+
+# Default page for ``list_metrics``. The slimmed summary rows make a whole
+# catalog cheap — 78 metrics is ~4.2k tokens — so the default page covers most
+# models in one call.
+_LIST_METRICS_DEFAULT_LIMIT = 200
 
 
 def extract_time_query_capabilities(raw_dimensions) -> Dict[str, Any]:
@@ -994,7 +1019,7 @@ class SemanticTools:
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
-        limit: int = 200,
+        limit: int = _LIST_METRICS_DEFAULT_LIMIT,
         offset: int = 0,
     ) -> FuncToolResult:
         """
@@ -1029,8 +1054,10 @@ class SemanticTools:
             has_more is False. list_metrics never compresses — use the limit to
             control response size.
         """
-        # Normalize null values from LLM
+        # Normalize null values and stringified numbers from LLM
         path = _normalize_optional_path(path)
+        limit = _normalize_pagination_bound(limit, default=_LIST_METRICS_DEFAULT_LIMIT, minimum=1)
+        offset = _normalize_pagination_bound(offset, default=0, minimum=0)
         logger.debug(f"list_metrics called: path={path}, limit={limit}, offset={offset}")
         adapter, error = self._require_adapter("list_metrics")
         if error:

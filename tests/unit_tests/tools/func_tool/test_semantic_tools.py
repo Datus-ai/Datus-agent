@@ -1511,6 +1511,47 @@ class TestListMetrics:
         assert "compressed_data" not in envelope
         assert "original_rows" not in envelope
 
+    @pytest.mark.parametrize(
+        "limit, offset, expected_limit, expected_offset",
+        [
+            ("200", "0", 200, 0),  # both stringified, as a model actually sent them
+            ("50", 0, 50, 0),
+            (50, "10", 50, 10),
+            ("abc", 0, 200, 0),  # unusable -> default, not a failed call
+            (None, None, 200, 0),
+            ("null", "none", 200, 0),
+            (0, -5, 1, 0),  # clamped: a zero page or negative offset means nothing
+        ],
+    )
+    def test_paging_bounds_accept_what_a_model_actually_sends(
+        self, semantic_tools_with_adapter, limit, offset, expected_limit, expected_offset
+    ):
+        """A schema declaring ``int`` does not stop a model sending ``"200"``.
+
+        Adapters slice and add with these values, so a string arrives as
+        ``TypeError: slice indices must be integers`` — a failed call whose error
+        tells the caller nothing about what to do differently.
+        """
+        tool, mock_adapter = semantic_tools_with_adapter
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
+            result = tool.list_metrics(limit=limit, offset=offset)
+
+        assert result.success == 1
+        assert mock_adapter.list_metrics.call_args.kwargs["limit"] == expected_limit
+        assert mock_adapter.list_metrics.call_args.kwargs["offset"] == expected_offset
+
+    def test_paging_bounds_reach_the_adapter_as_ints(self, semantic_tools_with_adapter):
+        """Coercion must produce real ints — ``"200"`` slices nothing."""
+        tool, mock_adapter = semantic_tools_with_adapter
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
+            tool.list_metrics(limit="200", offset="0")
+
+        kwargs = mock_adapter.list_metrics.call_args.kwargs
+        assert type(kwargs["limit"]) is int
+        assert type(kwargs["offset"]) is int
+
     def test_summary_row_carries_the_dependency_edges(self, semantic_tools_with_adapter):
         """derive_expr / derive_base are what make a composite metric decomposable.
 
