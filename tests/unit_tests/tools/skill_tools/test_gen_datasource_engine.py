@@ -3989,3 +3989,82 @@ def test_no_proposal_when_the_shared_column_has_no_siblings(engine_module, capsy
     eng.report()
 
     assert "is guessed as the key of" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- the plan lands on the budget before pass 1
+
+FOUNDRY_DDL = """
+CREATE TABLE dim_device (
+    device_id VARCHAR PRIMARY KEY,
+    device_name VARCHAR
+);
+CREATE TABLE wafer_lot (
+    lot_id VARCHAR PRIMARY KEY,
+    device_id VARCHAR REFERENCES dim_device(device_id),
+    start_time TIMESTAMP,
+    wafer_qty_start INTEGER,
+    lot_status VARCHAR, -- RUNNING / DONE
+    cost_usd DECIMAL(12, 2)
+);
+CREATE TABLE wafer (
+    wafer_key VARCHAR PRIMARY KEY,
+    lot_id VARCHAR REFERENCES wafer_lot(lot_id),
+    slot_no INTEGER,
+    sort_yield_pct DECIMAL(6, 3)
+);
+CREATE TABLE probe_die_result (
+    die_id VARCHAR PRIMARY KEY,
+    wafer_key VARCHAR REFERENCES wafer(wafer_key),
+    die_x INTEGER,
+    pass_fail VARCHAR, -- PASS / FAIL
+    test_time_ms INTEGER
+);
+CREATE TABLE lot_process_run (
+    run_id VARCHAR PRIMARY KEY,
+    lot_id VARCHAR REFERENCES wafer_lot(lot_id),
+    track_in_time TIMESTAMP,
+    process_time_sec INTEGER
+);
+CREATE TABLE fdc_run_summary (
+    summary_id VARCHAR PRIMARY KEY,
+    run_id VARCHAR REFERENCES lot_process_run(run_id),
+    mean_value DOUBLE
+);
+"""
+FOUNDRY_FANOUT = {"wafer": 8, "probe_die_result": 18, "lot_process_run": 20, "fdc_run_summary": 5}
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_tree_is_planned_on_the_budget_not_calibrated_down_from_a_multiple(engine_module):
+    """The fact layer is allocated for 1.8 lines per parent, and a declared fan-out tree multiplied
+    that to 1,341,886 planned rows against a budget of 80,000 on a 12-table foundry DDL. generate()
+    only calibrates after a full pass, so pass 1 built the 1.3M rows: 1.6 GB and 40 seconds here,
+    and inside a 2 GiB sandbox the process was killed - twice, with the trace ending at the call."""
+    eng = engine_module.DDLEngine(FOUNDRY_DDL, rows=80_000, profile={"per_parent": FOUNDRY_FANOUT})
+
+    planned = sum(eng.nrows[t] for t in eng.schema)
+    assert abs(planned / 80_000 - 1) <= 0.06, f"planned {planned:,} against 80,000"
+    lots = eng.nrows["wafer_lot"]
+    assert eng.nrows["wafer"] == lots * 8 and eng.nrows["probe_die_result"] == lots * 8 * 18, eng.nrows
+    assert eng.nrows["fdc_run_summary"] == lots * 20 * 5, eng.nrows
+
+
+@pytest.mark.acceptance
+def test_the_first_pass_of_a_fan_out_tree_is_the_right_size(engine_module, tmp_path):
+    """The plan is what pass 1 builds, so a plan on the budget means no oversized pass at all."""
+    eng = engine_module.DDLEngine(FOUNDRY_DDL, rows=40_000, profile={"per_parent": FOUNDRY_FANOUT})
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = eng.generate(str(out))
+
+    assert result["attempts"] == 1, f"pass 1 should already land: {result['attempts']} passes, {result['rows']:,} rows"
+    assert abs(result["rows"] / 40_000 - 1) <= 0.06, result["rows"]
+
+
+@pytest.mark.acceptance
+def test_prescaling_leaves_a_plan_that_already_fits_alone(engine_module):
+    """No fan-out, no pin: the ordinary allocation is already within tolerance and must not move."""
+    eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile=FLIGHT_BASE)
+    planned = sum(eng.nrows[t] for t in eng.schema)
+
+    assert abs(planned / 6000 - 1) <= 0.06, planned
