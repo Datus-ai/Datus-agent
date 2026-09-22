@@ -164,6 +164,37 @@ DATE_DIM_COLS = [
 ]
 
 
+# A key named after the thing it identifies, for a table that declared none. `_id` / `_key` are
+# already classified `id`; these are the families that are not, and that `_semantic` sends to
+# `enum` or `text` because on a FACT table that is what they are - `orders.currency_code` is an
+# attribute, `currencies.currency_code` is a key. The suffix cannot tell them apart, so the test
+# is whether the column is named after ITS OWN table (see `DDLEngine._natural_keys`).
+NATURAL_KEY_SUFFIX = re.compile(r"(^|_)(code|cd|uuid|guid|slug|handle)$")
+
+
+def _stem(word: str) -> str:
+    """`airports` -> `airport`, `countries` -> `countrie`, `routes` -> `route`.
+
+    Deliberately not a real singulariser: it only has to make two names comparable by prefix, and
+    `countrie` still prefixes `country_code` once both sides are stemmed. Guard 4 in
+    `_natural_keys` is what stops a loose match from becoming a key.
+    """
+    w = word.lower()
+    for suffix in ("ies", "es", "s"):
+        if len(w) > len(suffix) + 2 and w.endswith(suffix):
+            return w[: -len(suffix)]
+    return w
+
+
+def _named_after(table: str, col: str) -> bool:
+    """Is ``col`` named after ``table`` - `airports.airport_code`, `skus.sku`, `countries.country`?"""
+    t, c = _stem(table), _stem(col)
+    # The table name can carry a qualifier the column drops (`flight_sensors` -> `sensor_id`), so
+    # the last token of the table is enough on that side.
+    tails = {t, _stem(table.split("_")[-1])}
+    return any(c == x or c.startswith(x) or x.startswith(c) for x in tails if x)
+
+
 def _semantic(col: str, dtype: str) -> str:
     dtype = dtype.upper()
     for pat, types, sem in SEMANTIC:
@@ -477,6 +508,44 @@ class DDLEngine:
                     self._partial_enums = getattr(self, "_partial_enums", set()) | {col}
         return out
 
+    def _natural_keys(self):
+        """Tables keyed by a name rather than by an `_id`, where the DDL declared nothing.
+
+        ⚠️ Without this the key is invisible to every downstream step. `_semantic` sends `_code` to
+        `enum` and `slug` / `uuid` to `text`, and both the key guess and the foreign-key inference
+        read `sem == "id"` - so on a bare DDL keyed by `airport_code`, `routes.origin_airport_code`
+        pointed at nothing. Measured on a production DDL with no keys at all: 5 of the 12 foreign
+        keys a reader would draw were inferred, the `airports` dimension was an island, and the
+        plan said none of it.
+
+        Four guards, because the suffix alone is not the signal - `orders.currency_code` is an
+        attribute and `currencies.currency_code` is a key:
+
+        1. the table declares no PRIMARY KEY (a declaration always wins);
+        2. the table has no `_id` / `_key` column - `flights.flight_number` matches the naming and
+           is NOT unique, one flight number per day, so anything more key-shaped takes precedence;
+        3. the column is named after its own table;
+        4. something references it, or it is the first column. A key nothing points at buys
+           nothing and only risks being wrong.
+        """
+        out = {}
+        referenced = {rc for (rt, rc) in (getattr(self, "decl_fk", None) or {}).values() if rc}
+        for t, cols in self.schema.items():
+            if self.decl_pk.get(t):
+                continue
+            names = [c["name"] for c in cols]
+            if any(re.search(r"(_id|_key)$", n) for n in names):
+                continue
+            for n in names:
+                if not (NATURAL_KEY_SUFFIX.search(n) or _named_after(t, n)):
+                    continue
+                if not _named_after(t, n):
+                    continue
+                if n in referenced or n == names[0]:
+                    out[n] = t
+                    break
+        return out
+
     # ---------------------------------------------------------------- inference
     def _infer(self):
         ov = self.profile.get("roles", {})
@@ -552,6 +621,47 @@ class DDLEngine:
             for c in self.schema.get(t, []):
                 if c["name"] == col and (t, col) not in ovr:
                     c["sem"] = "id"
+        # A name-keyed table, and every column anywhere that carries that name. Forcing the
+        # semantic - rather than special-casing each sampling site - is what makes the existing
+        # `sem == "id"` tests see it: the key guess, the foreign-key inference and all three
+        # sampling paths then need no change at all.
+        self.natural_keys = self._natural_keys()
+        for col, owner in self.natural_keys.items():
+            for t, cols in self.schema.items():
+                for c in cols:
+                    if c["name"] == col and (t, col) not in ovr:
+                        c["sem"] = "id"
+            pk.setdefault(col, owner)
+        # A key referenced under a longer name. `routes.origin_airport_code` is the `airports` key
+        # with a qualifier in front, and nothing inferred it: `pk_owner` is indexed by exact column
+        # name, so on a bare DDL the whole `airports` dimension was an island - 8 of the 12 edges a
+        # reader would draw. Measured on the two DDLs this work is based on, requiring a `_`
+        # boundary before the key name adds exactly those 4 edges and not one anywhere else.
+        #
+        # Declared keys still win: `setdefault`, and `decl_fk` was written into `pk` first.
+        #
+        # Resolved against a SNAPSHOT of the keys, then applied everywhere, in two passes. One pass
+        # made the result depend on table order: the first table to claim `origin_airport_code` put
+        # it in `pk`, and every later table with the same column was skipped by the "already a key"
+        # guard - so `flights` linked and `routes`, two lines further down the DDL, kept 20/20
+        # orphans.
+        known = dict(pk)
+        self.renamed_keys = {}
+        for t, cols in self.schema.items():
+            owned = {c for c, owner in known.items() if owner == t} | set(self.decl_pk.get(t, ()))
+            for c in cols:
+                n = c["name"]
+                if n in known or n in owned:
+                    continue
+                for key, owner in known.items():
+                    if owner != t and n.endswith(f"_{key}"):
+                        self.renamed_keys[(t, n)] = (owner, key)
+                        break
+        for (t, n), (owner, _key) in self.renamed_keys.items():
+            for c in self.schema.get(t, ()):
+                if c["name"] == n and (t, n) not in ovr:
+                    c["sem"] = "id"
+            pk.setdefault(n, owner)
         for t, cols in self.schema.items():
             declared = [col for (tt, col) in self.decl_fk if tt == t]
             own_pk = self.decl_pk.get(t, [cols[0]["name"]])[0]
@@ -1492,6 +1602,18 @@ class DDLEngine:
         nd_pk, nd_fk = len(self.decl_pk), len(self.decl_fk)
         if nd_pk or nd_fk:
             print(f"declared in the DDL: {nd_pk} primary key(s), {nd_fk} foreign key(s) (they win over inference)")
+        # What was INFERRED has to say so. A silent guess is worse than no guess: the engine's
+        # inference on a keyless DDL used to be wrong in three ways - 8 of 12 edges, one ownership
+        # reversed, a whole dimension unlinked - and the plan mentioned none of it, so the reader
+        # had no way to correct what it could not see.
+        nat = getattr(self, "natural_keys", None) or {}
+        ren = getattr(self, "renamed_keys", None) or {}
+        if nat or ren:
+            print("INFERRED keys - nothing declared these, so check them and declare any that are wrong:")
+            for col, owner in sorted(nat.items(), key=lambda kv: kv[1]):
+                print(f"  {owner}.{col} reads as the key of {owner} (the column is named after the table)")
+            for (t, col), (owner, key) in sorted(ren.items()):
+                print(f"  {t}.{col} -> {owner}.{key} (the key under a longer name)")
         for t, col in sorted(getattr(self, "_demoted", {}).items()):
             print(
                 f"! {t} carries measures but is planned as a dimension, because "

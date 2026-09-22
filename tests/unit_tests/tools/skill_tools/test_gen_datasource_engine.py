@@ -3224,3 +3224,125 @@ def test_the_replay_stops_where_calibration_stops(engine_module):
         f"the fixture must be the boundary: two -> {landed:,}, three -> {replay(3):,}"
     )
     assert _reachability_warning(eng), "and the warning has to actually fire at two updates"
+
+
+# ------------------------------------------------------ keys a bare DDL never declared
+
+BARE_KEYED_BY_CODE = """
+CREATE TABLE airports (
+    airport_code VARCHAR,
+    name VARCHAR,
+    city VARCHAR
+);
+CREATE TABLE routes (
+    route_id VARCHAR,
+    origin_airport_code VARCHAR,
+    destination_airport_code VARCHAR,
+    distance_miles INTEGER
+);
+CREATE TABLE flights (
+    flight_id VARCHAR,
+    flight_number VARCHAR,
+    route_id VARCHAR,
+    origin_airport_code VARCHAR,
+    destination_airport_code VARCHAR,
+    departed_at TIMESTAMP,
+    passenger_count INTEGER
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_table_keyed_by_its_own_name_is_recognised(engine_module, tmp_path):
+    """`_semantic` sends `_code` to `enum`, and both the key guess and the foreign-key inference
+    read `sem == "id"`, so on a DDL with no keys at all the `airports` dimension was an island:
+    8 of the 12 edges a reader would draw, and the plan said nothing about the gap.
+    """
+    eng, con = _build(engine_module, BARE_KEYED_BY_CODE, tmp_path, rows=30000)
+
+    edges = {t: sorted(v) for t, v in eng.fks.items() if v}
+    orphans = {
+        f"{t}.{c}": con.execute(
+            f"SELECT count(*) FROM {t} WHERE {c} NOT IN (SELECT airport_code FROM airports)"
+        ).fetchone()[0]
+        for t in ("routes", "flights")
+        for c in ("origin_airport_code", "destination_airport_code")
+    }
+
+    assert eng.natural_keys == {"airport_code": "airports"}
+    assert eng.pk_owner["airport_code"] == "airports"
+    assert edges == {
+        "routes": ["destination_airport_code", "origin_airport_code"],
+        "flights": ["destination_airport_code", "origin_airport_code", "route_id"],
+    }, f"every edge a reader would draw, and no others: {edges}"
+    assert orphans == {k: 0 for k in orphans}, orphans
+
+
+@pytest.mark.acceptance
+def test_the_same_key_under_a_longer_name_still_connects(engine_module):
+    """`pk_owner` is indexed by exact column name, so a qualified copy of the key was invisible.
+
+    Resolved in two passes against a snapshot: one pass made the answer depend on table order,
+    because the first table to claim `origin_airport_code` put it in the key map and the guard
+    then skipped every later table with the same column - `flights` linked and `routes`, two
+    statements further down, kept every row orphaned.
+    """
+    eng = engine_module.DDLEngine(BARE_KEYED_BY_CODE, rows=30000, profile={})
+
+    named = {f"{t}.{c}" for (t, c) in eng.renamed_keys}
+
+    assert named == {
+        "routes.origin_airport_code",
+        "routes.destination_airport_code",
+        "flights.origin_airport_code",
+        "flights.destination_airport_code",
+    }, named
+
+
+@pytest.mark.acceptance
+def test_an_attribute_that_merely_shares_a_suffix_is_not_a_key(engine_module):
+    """The control, and the reason the test is the table-name match rather than the suffix.
+
+    `orders.currency_code` is an attribute; `currencies.currency_code` is a key. Reading the
+    suffix alone would make every order's currency a foreign key into a table that may not exist,
+    and would take `payments.currency_code` with it.
+    """
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE orders (order_no VARCHAR, currency_code VARCHAR, country_code VARCHAR,"
+        "  ordered_at TIMESTAMP, order_amount DECIMAL(18, 2));"
+        "CREATE TABLE payments (payment_no VARCHAR, order_no VARCHAR, currency_code VARCHAR,"
+        "  paid_at TIMESTAMP, paid_amount DECIMAL(18, 2));",
+        rows=20000,
+        profile={},
+    )
+
+    assert "currency_code" not in eng.natural_keys
+    assert "country_code" not in eng.natural_keys
+    assert not any(c == "currency_code" for (_t, c) in eng.renamed_keys)
+
+
+@pytest.mark.acceptance
+def test_a_more_key_shaped_column_wins(engine_module):
+    """`flights.flight_number` is named after its table and matches the naming, and it is NOT
+    unique - one flight number per day. Anything ending `_id` / `_key` takes precedence, which is
+    also what keeps `orders.order_no` from displacing `orders.order_id`."""
+    eng = engine_module.DDLEngine(BARE_KEYED_BY_CODE, rows=30000, profile={})
+
+    assert "flight_number" not in eng.natural_keys, "the table has flight_id; that is the key"
+    assert eng.pk_owner["flight_id"] == "flights"
+
+
+@pytest.mark.acceptance
+def test_a_declared_key_is_never_second_guessed(engine_module):
+    """Inference only fills gaps. A table that declares its key keeps it, even where the naming
+    rule would have picked a different column."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE airports (airport_pk VARCHAR PRIMARY KEY, airport_code VARCHAR, city VARCHAR);"
+        "CREATE TABLE routes (route_id VARCHAR PRIMARY KEY,"
+        "  origin VARCHAR REFERENCES airports(airport_pk), distance_miles INTEGER);",
+        rows=20000,
+        profile={},
+    )
+
+    assert eng.natural_keys == {}
+    assert eng.pk_owner["airport_pk"] == "airports"
