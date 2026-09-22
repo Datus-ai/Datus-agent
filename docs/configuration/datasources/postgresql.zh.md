@@ -22,7 +22,7 @@ agent:
         password: ${POSTGRES_PASSWORD}
         database: analytics
         schema: public
-        sslmode: require
+        sslmode: verify-full
         timeout_seconds: 30
 ```
 
@@ -41,7 +41,7 @@ agent:
 
 ## TLS 与命名空间
 
-`sslmode` 会传给 psycopg2/libpq。Adapter 默认值是 `prefer`；上面的含凭据基础示例使用 `require`，避免 TLS 不可用时静默回退到明文传输。当前 profile 没有 `sslrootcert` 字段；证书校验模式依赖 libpq 的标准证书目录和环境配置。不要在 datasource 中加入 adapter 不支持的证书字段。
+`sslmode` 会传给 psycopg2/libpq。Adapter 默认值是 `prefer`；上面的含凭据基础示例使用 `verify-full`，会加密连接、校验 CA 证书链，并验证 `host` 与服务端证书匹配。当前 profile 没有 `sslrootcert` 字段，因此必须通过 libpq 标准证书目录或环境配置可信 CA，并使用与证书匹配的 hostname。不要在 datasource 中加入 adapter 不支持的证书字段。
 
 `database` 是初始 PostgreSQL database，`schema` 默认是 `public`。常规发现会过滤系统 database/schema；访问其他 database 仍取决于网络连通性和 role 权限。
 
