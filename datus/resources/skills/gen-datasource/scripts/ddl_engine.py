@@ -164,6 +164,37 @@ DATE_DIM_COLS = [
 ]
 
 
+# A key named after the thing it identifies, for a table that declared none. `_id` / `_key` are
+# already classified `id`; these are the families that are not, and that `_semantic` sends to
+# `enum` or `text` because on a FACT table that is what they are - `orders.currency_code` is an
+# attribute, `currencies.currency_code` is a key. The suffix cannot tell them apart, so the test
+# is whether the column is named after ITS OWN table (see `DDLEngine._natural_keys`).
+NATURAL_KEY_SUFFIX = re.compile(r"(^|_)(code|cd|uuid|guid|slug|handle)$")
+
+
+def _stem(word: str) -> str:
+    """`airports` -> `airport`, `countries` -> `countrie`, `routes` -> `route`.
+
+    Deliberately not a real singulariser: it only has to make two names comparable by prefix, and
+    `countrie` still prefixes `country_code` once both sides are stemmed. Guard 4 in
+    `_natural_keys` is what stops a loose match from becoming a key.
+    """
+    w = word.lower()
+    for suffix in ("ies", "es", "s"):
+        if len(w) > len(suffix) + 2 and w.endswith(suffix):
+            return w[: -len(suffix)]
+    return w
+
+
+def _named_after(table: str, col: str) -> bool:
+    """Is ``col`` named after ``table`` - `airports.airport_code`, `skus.sku`, `countries.country`?"""
+    t, c = _stem(table), _stem(col)
+    # The table name can carry a qualifier the column drops (`flight_sensors` -> `sensor_id`), so
+    # the last token of the table is enough on that side.
+    tails = {t, _stem(table.split("_")[-1])}
+    return any(c == x or c.startswith(x) or x.startswith(c) for x in tails if x)
+
+
 def _semantic(col: str, dtype: str) -> str:
     dtype = dtype.upper()
     for pat, types, sem in SEMANTIC:
@@ -477,6 +508,44 @@ class DDLEngine:
                     self._partial_enums = getattr(self, "_partial_enums", set()) | {col}
         return out
 
+    def _natural_keys(self):
+        """Tables keyed by a name rather than by an `_id`, where the DDL declared nothing.
+
+        ⚠️ Without this the key is invisible to every downstream step. `_semantic` sends `_code` to
+        `enum` and `slug` / `uuid` to `text`, and both the key guess and the foreign-key inference
+        read `sem == "id"` - so on a bare DDL keyed by `airport_code`, `routes.origin_airport_code`
+        pointed at nothing. Measured on a production DDL with no keys at all: 5 of the 12 foreign
+        keys a reader would draw were inferred, the `airports` dimension was an island, and the
+        plan said none of it.
+
+        Four guards, because the suffix alone is not the signal - `orders.currency_code` is an
+        attribute and `currencies.currency_code` is a key:
+
+        1. the table declares no PRIMARY KEY (a declaration always wins);
+        2. the table has no `_id` / `_key` column - `flights.flight_number` matches the naming and
+           is NOT unique, one flight number per day, so anything more key-shaped takes precedence;
+        3. the column is named after its own table;
+        4. something references it, or it is the first column. A key nothing points at buys
+           nothing and only risks being wrong.
+        """
+        out = {}
+        referenced = {rc for (rt, rc) in (getattr(self, "decl_fk", None) or {}).values() if rc}
+        for t, cols in self.schema.items():
+            if self.decl_pk.get(t):
+                continue
+            names = [c["name"] for c in cols]
+            if any(re.search(r"(_id|_key)$", n) for n in names):
+                continue
+            for n in names:
+                if not (NATURAL_KEY_SUFFIX.search(n) or _named_after(t, n)):
+                    continue
+                if not _named_after(t, n):
+                    continue
+                if n in referenced or n == names[0]:
+                    out[n] = t
+                    break
+        return out
+
     # ---------------------------------------------------------------- inference
     def _infer(self):
         ov = self.profile.get("roles", {})
@@ -552,6 +621,47 @@ class DDLEngine:
             for c in self.schema.get(t, []):
                 if c["name"] == col and (t, col) not in ovr:
                     c["sem"] = "id"
+        # A name-keyed table, and every column anywhere that carries that name. Forcing the
+        # semantic - rather than special-casing each sampling site - is what makes the existing
+        # `sem == "id"` tests see it: the key guess, the foreign-key inference and all three
+        # sampling paths then need no change at all.
+        self.natural_keys = self._natural_keys()
+        for col, owner in self.natural_keys.items():
+            for t, cols in self.schema.items():
+                for c in cols:
+                    if c["name"] == col and (t, col) not in ovr:
+                        c["sem"] = "id"
+            pk.setdefault(col, owner)
+        # A key referenced under a longer name. `routes.origin_airport_code` is the `airports` key
+        # with a qualifier in front, and nothing inferred it: `pk_owner` is indexed by exact column
+        # name, so on a bare DDL the whole `airports` dimension was an island - 8 of the 12 edges a
+        # reader would draw. Measured on the two DDLs this work is based on, requiring a `_`
+        # boundary before the key name adds exactly those 4 edges and not one anywhere else.
+        #
+        # Declared keys still win: `setdefault`, and `decl_fk` was written into `pk` first.
+        #
+        # Resolved against a SNAPSHOT of the keys, then applied everywhere, in two passes. One pass
+        # made the result depend on table order: the first table to claim `origin_airport_code` put
+        # it in `pk`, and every later table with the same column was skipped by the "already a key"
+        # guard - so `flights` linked and `routes`, two lines further down the DDL, kept 20/20
+        # orphans.
+        known = dict(pk)
+        self.renamed_keys = {}
+        for t, cols in self.schema.items():
+            owned = {c for c, owner in known.items() if owner == t} | set(self.decl_pk.get(t, ()))
+            for c in cols:
+                n = c["name"]
+                if n in known or n in owned:
+                    continue
+                for key, owner in known.items():
+                    if owner != t and n.endswith(f"_{key}"):
+                        self.renamed_keys[(t, n)] = (owner, key)
+                        break
+        for (t, n), (owner, _key) in self.renamed_keys.items():
+            for c in self.schema.get(t, ()):
+                if c["name"] == n and (t, n) not in ovr:
+                    c["sem"] = "id"
+            pk.setdefault(n, owner)
         for t, cols in self.schema.items():
             declared = [col for (tt, col) in self.decl_fk if tt == t]
             own_pk = self.decl_pk.get(t, [cols[0]["name"]])[0]
@@ -700,6 +810,45 @@ class DDLEngine:
     DETAIL_PER_PARENT = 1.8
     DOWNSTREAM_PER_PARENT = 0.6  # a shipment / claim / repayment does not follow every document
 
+    def _fanout_parent(self, t):
+        """The table a fixed fan-out counts from. `_doc_parent` first, then any declared parent,
+        so this works on a table the engine classified as something other than a detail."""
+        par = self._doc_parent(t)
+        if par:
+            return par
+        for f in self.fks.get(t, []):
+            owner = self.pk_owner.get(f)
+            if owner and owner != t:
+                return owner
+        return None
+
+    def _apply_fanout(self, n):
+        """``profile['per_parent']``: this table has exactly N rows for each row of its parent.
+
+        ⚠️ There was no way to say this, and for a whole class of schema the fan-out IS the grain:
+        a lot has exactly 16 wafers and a wafer exactly 10 probed die, an invoice has one line per
+        ordered item, a sensor channel one reading per interval. The engine offers a stochastic
+        1.8 lines per parent, which destroys that grain, and pinning `table_rows` instead expresses
+        the counts but leaves calibration nothing to scale - measured on a 12-table foundry DDL,
+        the pins implied a plan 24% over budget that three passes could not recover. Faced with
+        those two, a production run abandoned the engine and hand-wrote 886 lines of generator,
+        which took 24 minutes of its 44.
+
+        Applied to a fresh allocation AND after every calibration rescale, so scaling the root
+        fact carries the whole tree with it coherently - which is why these tables are derived
+        rather than pinned: pinning them would freeze the tree and make the budget unreachable
+        again.
+        """
+        fixed = getattr(self, "fixed_fanout", None) or {}
+        if not fixed:
+            return n
+        for _ in range(len(fixed) + 1):  # a fan-out of a fan-out settles on the next pass
+            for t, k in fixed.items():
+                par = self._fanout_parent(t)
+                if par and par in n:
+                    n[t] = max(1, int(n[par] * k))
+        return n
+
     def _doc_parent(self, t):
         """The document a detail row belongs to, resolved from declared keys at planning time.
 
@@ -818,6 +967,21 @@ class DDLEngine:
             if r == ROLE_DATE:
                 n[t] = len(self.days)
         n.update({t: v for t, v in pinned.items() if t in self.schema})  # an explicit user value wins over everything
+        self.fixed_fanout = {
+            t: int(k)
+            for t, k in (self.profile.get("per_parent", {}) or {}).items()
+            if t in self.schema and isinstance(k, (int, float)) and int(k) >= 1
+        }
+        self._apply_fanout(n)
+        # A key-bearing `joint` group is the row count: ten real airports means ten rows, and
+        # asking for more can only be answered with a duplicate key. Recorded so the pre-check can
+        # say it happened rather than leaving the caller to wonder why `dim_rows` was ignored.
+        self._joint_clamped = {}
+        for t in list(n):
+            limit = self._joint_key_limit(t)
+            if limit is not None and n[t] > limit:
+                self._joint_clamped[t] = (n[t], limit)
+                n[t] = limit
         self.nrows = n
 
     def _guess_kind(self, t):
@@ -937,6 +1101,27 @@ class DDLEngine:
                 re.findall(r"CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+[\"`]?(\w+)", str(self.profile.get(key, "")), re.I)
             )
         return out
+
+    def _calibration_lands_at(self, planned, free_rows):
+        """Where generate()'s calibration would land, by replaying its own update rule.
+
+        Three passes of ``k = rows / total`` applied to the scalable tables only, with the same
+        ``max(50, int(...))`` floor. Shared with the pre-check so a warning cannot promise one
+        outcome while generation produces another.
+        """
+        free = dict(free_rows)
+        fixed = planned - sum(free.values())
+        total = planned
+        # Two updates, not three: `generate()` rescales before attempts 2 and 3 and never after
+        # attempt 3 (`_attempt < 3`). A third update here brings the simulation inside tolerance
+        # for a run that will finish outside it, which suppresses the warning this exists to give.
+        for _ in range(2):
+            if not total or abs(total / self.rows - 1) <= 0.06:
+                break
+            k = self.rows / total
+            free = {t: max(50, int(n * k)) for t, n in free.items()}
+            total = fixed + sum(free.values())
+        return total
 
     def precheck(self, strict=True):
         """Validate the profile before generating: do the referenced tables/columns exist, do formulas cycle, are dimensions oversized.
@@ -1201,6 +1386,76 @@ class DDLEngine:
         for t, n in self.nrows.items():
             if self.roles.get(t) == ROLE_DIM and n > self.rows * 0.08:
                 warn.append(f"dimension {t} has {n:,} rows, over 8% of the total; the fact layer gets squeezed")
+        # ⚠️ The pins can each look modest and still make the target unreachable, and neither
+        # check above sees it. A pinned DETAIL fixes its parent (pin / lines-per-parent) and
+        # therefore every sibling detail of that parent, so the plan grows far past what was
+        # pinned. Measured: `flight_sensors: 21,000` + `sensor_readings: 35,000` against
+        # rows=80,000 pins 70% of the budget - too little to trip either check - while the plan
+        # those two imply is 109,727 (+37%). Calibration, which may only scale the three unpinned
+        # tables, reached +11% after its three passes, and the run spent two whole build cycles
+        # chasing the total before giving up.
+        #
+        # Replays calibration's own update rule rather than modelling it, so this cannot drift
+        # from what generate() will actually do.
+        for t, k in (self.profile.get("per_parent", {}) or {}).items():
+            if t not in self.schema:
+                err.append(f"per_parent: table `{t}` is not in the DDL")
+                continue
+            if not isinstance(k, (int, float)) or int(k) < 1:
+                err.append(f"per_parent[{t}]: {k!r} is not a row count; give a whole number >= 1")
+                continue
+            if not self._fanout_parent(t):
+                err.append(
+                    f"per_parent[{t}]: {t} has no parent to count from - it references no other table, "
+                    f"so 'N rows per parent row' has no meaning here"
+                )
+            elif self.roles.get(self._fanout_parent(t)) in (ROLE_DATE, ROLE_DIM, ROLE_METRIC):
+                # A dimension is sized by business density and calibration never scales it, so a
+                # tree rooted in one cannot grow toward `rows=` - and `_gen_detail` needs its
+                # parent in `refs`, which a dimension never enters, so the exact grain is lost too.
+                err.append(
+                    f"per_parent[{t}]: its parent {self._fanout_parent(t)} is planned as a "
+                    f"{self.roles.get(self._fanout_parent(t))}, which calibration never scales and the "
+                    f"detail generator cannot read rows from. A fan-out has to hang off a fact or a "
+                    f"detail - set profile['roles'] = {{{self._fanout_parent(t)!r}: 'fact'}} if that is "
+                    f"what it is"
+                )
+            elif self.roles.get(t) not in (ROLE_DETAIL, ROLE_DOWNSTREAM):
+                # The row COUNT is honoured for every role, because every generator reads nrows.
+                # Exact lines per parent are the detail generator's mechanism, so a table the
+                # engine reads as something else gets the count and not the grain.
+                warn.append(
+                    f"per_parent[{t}]: {t} is planned as a {self.roles.get(t)}, so it gets the row "
+                    f"count ({k} x its parent) but not one row per parent - the exact fan-out is the "
+                    f"detail generator's. Set profile['roles'] = {{{t!r}: 'detail'}} if the grain matters"
+                )
+
+        for t, (asked, limit) in (getattr(self, "_joint_clamped", None) or {}).items():
+            warn.append(
+                f"{t} is capped at {limit:,} rows, not {asked:,}: a `joint` group on its key supplies "
+                f"{limit:,} distinct combination(s), and a key cannot repeat. Supply more combinations "
+                f"if the table needs more rows."
+            )
+
+        planned = sum(self.nrows.get(t, 0) for t in self.schema)
+        free_rows = {
+            t: self.nrows[t]
+            for t in self.nrows
+            if self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC) and t not in pinned_names
+        }
+        if pinned_names and free_rows and self.rows:
+            reached = self._calibration_lands_at(planned, free_rows)
+            if abs(reached / self.rows - 1) > 0.06:
+                warn.append(
+                    f"the pins imply a plan of {planned:,} rows against rows={self.rows:,} "
+                    f"({100.0 * (planned / self.rows - 1):+.0f}%), and calibration can only scale "
+                    f"{', '.join(sorted(free_rows))} - replaying its three passes lands at "
+                    f"~{reached:,} ({100.0 * (reached / self.rows - 1):+.0f}%), outside the 6% "
+                    f"tolerance. A pinned detail table also fixes its parent and every sibling "
+                    f"detail of that parent, which is where the extra rows come from. Unpin the "
+                    f"detail tables and let rows= do the work, or raise rows= to match."
+                )
+
         dim_total = sum(n for t, n in self.nrows.items() if self.roles.get(t) == ROLE_DIM)
         if dim_total > self.rows * 0.15:
             warn.append(f"dimensions total {dim_total:,} rows, over 15% of the total")
@@ -1425,6 +1680,25 @@ class DDLEngine:
         nd_pk, nd_fk = len(self.decl_pk), len(self.decl_fk)
         if nd_pk or nd_fk:
             print(f"declared in the DDL: {nd_pk} primary key(s), {nd_fk} foreign key(s) (they win over inference)")
+        # What was INFERRED has to say so. A silent guess is worse than no guess: the engine's
+        # inference on a keyless DDL used to be wrong in three ways - 8 of 12 edges, one ownership
+        # reversed, a whole dimension unlinked - and the plan mentioned none of it, so the reader
+        # had no way to correct what it could not see.
+        fan = getattr(self, "fixed_fanout", None) or {}
+        if fan:
+            print(
+                "fixed fan-out: "
+                + ", ".join(f"{t} = {k} x {self._fanout_parent(t) or '?'}" for t, k in sorted(fan.items()))
+                + " (derived from the parent, so calibration scales the parent and these follow)"
+            )
+        nat = getattr(self, "natural_keys", None) or {}
+        ren = getattr(self, "renamed_keys", None) or {}
+        if nat or ren:
+            print("INFERRED keys - nothing declared these, so check them and declare any that are wrong:")
+            for col, owner in sorted(nat.items(), key=lambda kv: kv[1]):
+                print(f"  {owner}.{col} reads as the key of {owner} (the column is named after the table)")
+            for (t, col), (owner, key) in sorted(ren.items()):
+                print(f"  {t}.{col} -> {owner}.{key} (the key under a longer name)")
         for t, col in sorted(getattr(self, "_demoted", {}).items()):
             print(
                 f"! {t} carries measures but is planned as a dimension, because "
@@ -1764,16 +2038,41 @@ class DDLEngine:
     }
 
     def _topo(self):
+        """Generation order: by role, and within a role by dependency.
+
+        ⚠️ Dependency COUNT is not a topological order, and the difference is not cosmetic. In a
+        chain A -> B -> C inside one bucket, B and C both have one dependency, so the tie broke on
+        dict order and the child could be generated before its parent. Its parent then had no refs
+        yet, `_parent_of` called it an orphan, and `_gen_detail` fell through to `_gen_fact`, which
+        invents the key: measured on a 12-table foundry DDL, `probe_die_result` came out
+        **100% orphaned against `wafer`** on the stock engine with no profile at all, and with the
+        roles set so the whole chain was one bucket the order came out exactly reversed -
+        probe, then wafer, then wafer_lot.
+
+        Kahn's algorithm, seeded with the old count order so that genuinely independent tables
+        keep the order they had and nothing else moves.
+        """
         order, seen = [], set()
         buckets = [ROLE_DATE, ROLE_DIM, ROLE_FACT, ROLE_DETAIL, ROLE_DOWNSTREAM, ROLE_EVENT, ROLE_SNAPSHOT, ROLE_METRIC]
         for role in buckets:
             group = [t for t, r in self.roles.items() if r == role]
-            # dimensions can reference each other (product -> seller); order by dependency count
             group.sort(key=lambda t: len([f for f in self.fks[t] if self.pk_owner.get(f) in group]))
-            for t in group:
-                if t not in seen:
+            inside = set(group)
+            deps = {
+                t: {self.pk_owner[f] for f in self.fks[t] if self.pk_owner.get(f) in inside and self.pk_owner[f] != t}
+                for t in group
+            }
+            remaining = list(group)
+            while remaining:
+                ready = [t for t in remaining if not (deps[t] - seen)]
+                if not ready:
+                    # A cycle within the bucket. Emit what is left in the old order rather than
+                    # hanging: a key cycle is the DDL's to fix and generation still has to finish.
+                    ready = remaining[:]
+                for t in ready:
                     order.append(t)
                     seen.add(t)
+                remaining = [t for t in remaining if t not in seen]
         return order
 
     # ---------------------------------------------------------------- conditional distributions / column formulas
@@ -2190,6 +2489,67 @@ class DDLEngine:
         pre = re.sub(r"[^A-Za-z]", "", col).upper()[:3] or "CD"
         return f"{pre}{d.strftime('%y%m%d')}{i + 1:06d}" if d is not None else f"{pre}{i + 1:06d}"
 
+    def _key_cols(self, t):
+        """Columns of ``t`` that something relies on being unique: its key, its declared UNIQUEs,
+        and any column a declared foreign key points at."""
+        cache = self.__dict__.setdefault("_key_cols_cache", {})
+        if t not in cache:
+            # ⚠️ `_meta_key`, not `pk_of`. `pk_of` always answers - it falls back to the first
+            # column - so on a keyless time series it named the FOREIGN KEY as the key, and a
+            # `joint` group on that column would then be drawn without replacement and the table
+            # clamped to the number of combinations, for a column that repeats by design.
+            cols = set()
+            primary = self._meta_key(t)
+            if primary:
+                cols.add(primary)
+            for keys in (getattr(self, "decl_uniq", None) or {}).get(t, ()):
+                if len(keys) == 1:
+                    cols.add(keys[0])
+            cols.update(self._alt_ref_cols(t))
+            cache[t] = frozenset(c for c in cols if c)
+        return cache[t]
+
+    def _joint_key_rows(self, t, g):
+        """The value rows a key-bearing ``joint`` group may actually use.
+
+        ⚠️ Distinct TUPLES are not enough: `[["ATL", "Atlanta"], ["ATL", "Atlanta Metro"]]` is two
+        distinct combinations and one duplicate key, which drops the PRIMARY KEY at build time and
+        with it every foreign key pointing at the table. At most one row per value of each key
+        column in the group, in the order supplied so the result is stable.
+        """
+        cols = list(g.get("cols", ()))
+        keys = [c for c in cols if c in self._key_cols(t)]
+        out, seen = [], {c: set() for c in keys}
+        for v in g.get("values", ()) or ():
+            tup = tuple(v[: len(cols)])
+            if len(tup) < len(cols):
+                continue
+            picked = {c: tup[cols.index(c)] for c in keys}
+            if any(picked[c] in seen[c] for c in keys):
+                continue
+            for c in keys:
+                seen[c].add(picked[c])
+            out.append(tup)
+        return out
+
+    def _joint_key_limit(self, t):
+        """How many rows ``t`` can have before a key-bearing ``joint`` group has to repeat itself.
+
+        ⚠️ ``joint`` is the only mechanism that can give a key column real-world values - an
+        `airport_code` of `ATL` rather than `AIR0000001` - and it sampled WITH replacement, so on a
+        key it silently produced duplicates: 10 rows, 6 distinct, and the PRIMARY KEY was dropped
+        at build time. That cascades - every foreign key pointing at the table is refused for want
+        of a unique constraint, so one natural-key dimension took the constraints off three tables.
+        A measured run spent ten minutes discovering there was no legal way to do this: `joint`
+        breaks the key, and `pre_sql` cannot UPDATE a key that is referenced.
+        """
+        limit = None
+        for g in (self.profile.get("joint", {}) or {}).get(t, []):
+            if set(g.get("cols", ())) & self._key_cols(t):
+                n = len(self._joint_key_rows(t, g))
+                limit = n if limit is None else min(limit, n)
+        return limit
+
     def _joint_plan(self, t, n, rng):
         """Joint sampling: related enum columns in one row must be picked as a group (channel/source/campaign, province/city/tier).
         Sampling them independently creates combinations the business does not have, such as 'organic_search + TikTok ad'."""
@@ -2197,7 +2557,15 @@ class DDLEngine:
         for g in (self.profile.get("joint", {}) or {}).get(t, []):
             vals = [tuple(v[: len(g["cols"])]) for v in g["values"]]
             w = [float(v[len(g["cols"])]) if len(v) > len(g["cols"]) else 1.0 for v in g["values"]]
-            out.append((g["cols"], rng.choices(vals, w, k=n)))
+            if set(g.get("cols", ())) & self._key_cols(t):
+                # Without replacement, because a key cannot repeat. Weights are dropped with it:
+                # a key column has one row per value, so there is no distribution left to shape.
+                # The same projection-unique subset ``_plan_rows`` sized the table from, or the
+                # plan and the rows would disagree about which combinations exist.
+                uniq = self._joint_key_rows(t, g)
+                out.append((g["cols"], rng.sample(uniq, k=min(n, len(uniq)))))
+            else:
+                out.append((g["cols"], rng.choices(vals, w, k=n)))
         return out
 
     AMT_ROLE = [
@@ -2560,6 +2928,7 @@ class DDLEngine:
                 else:
                     ent[name] = f"{name}_{i + 1}"
             self._set_alt_keys(t, ent)
+            self._split_opposed_values(t, ent, rng)
             # Effective-date index, so facts/details referencing this entity can enforce "not before it" (invariant 3)
             ent["__eff__"] = self._day_index(ent[eff_c]) if (eff_c and ent.get(eff_c)) else 0
             ent["__eff_ts__"] = None
@@ -2671,6 +3040,78 @@ class DDLEngine:
                     continue
                 row[other] = inherited
                 ent[other] = moved
+
+    # The two ends of a directed edge. A pair of foreign keys to the SAME parent whose names read
+    # like these must not land on the same entity: a route from an airport to itself is not a
+    # route. Deliberately a short list of opposed words rather than "any two keys to one parent" -
+    # `orders(billing_address_id, shipping_address_id)` points twice at `addresses` and being equal
+    # there is the common case, not a defect.
+    EDGE_FROM = re.compile(r"(^|_)(origin|orig|from|source|src|depart|departure|start|sender)(_|$)")
+    EDGE_TO = re.compile(r"(^|_)(destination|dest|dst|to|target|tgt|arrive|arrival|end|receiver)(_|$)")
+
+    def _opposed_fk_pairs(self, t):
+        """Foreign-key column pairs on ``t`` that are the two ends of one directed edge.
+
+        ⚠️ Each end is sampled independently, so they collide: measured on the flights DDL, 1 route
+        in 13 had ``origin_airport_code == destination_airport_code`` and 403 flights were booked
+        on it. A production run found it, spent three attempts trying to repair it with ad-hoc
+        UPDATEs - all three refused, twice by the foreign key still being referenced - and the
+        self-loop shipped anyway.
+        """
+        cache = self.__dict__.setdefault("_opposed_cache", {})
+        if t not in cache:
+            own = [c["name"] for c in self.schema.get(t, ())]
+            pairs = []
+            for a in own:
+                if not self.EDGE_FROM.search(a):
+                    continue
+                par = self.pk_owner.get(a)
+                if not par or par == t:
+                    continue
+                for b in own:
+                    if b != a and self.EDGE_TO.search(b) and self.pk_owner.get(b) == par:
+                        pairs.append((a, b, par))
+            cache[t] = tuple(pairs)
+        return cache[t]
+
+    def _split_opposed_values(self, t, row, rng):
+        """Redraw the far end when both ends of a directed edge landed on the same PARENT.
+
+        ⚠️ Compared as entities, not as values. The two ends may reference different unique columns
+        of the same parent - `origin_port_id` at `ports.port_id`, `destination_iata` at
+        `ports.iata` - and then two values that name the SAME port are never equal, so a value
+        comparison finds nothing to fix and the self-loop ships. Excluding the resolved parent also
+        removes the retry loop that could, on a two-row pool, return the same end every time.
+        """
+        for a, b, par in self._opposed_fk_pairs(t):
+            up = self.pools.get(par)
+            if not up or len(up) < 2 or a not in row or b not in row:
+                continue
+            near = self._pool_entity(par, self.ref_col_of(t, a), row[a])
+            far = self._pool_entity(par, self.ref_col_of(t, b), row[b])
+            if near is None or far is not near:
+                continue
+            other = [e for e in up if e is not near]
+            if other:
+                row[b] = rng.choice(other)[self.ref_col_of(t, b)]
+
+    def _split_opposed_entities(self, t, ent, rng):
+        """Same, where the row carries resolved parent entities rather than bare values.
+
+        The entity is redrawn, not just the value written into the row: ``ent`` feeds the
+        effective-date floor, `conditional` grouping and denormalised inheritance, and rewriting
+        one without the other is how a previous fix put a value in the row that belonged to no
+        parent at all.
+        """
+        for a, b, par in self._opposed_fk_pairs(t):
+            up = self.pools.get(par)
+            if not up or len(up) < 2 or a not in ent or b not in ent:
+                continue
+            if ent[b] is not ent[a]:
+                continue
+            other = [e for e in up if e is not ent[a]]
+            if other:
+                ent[b] = rng.choice(other)
 
     def ref_col_of(self, t, fk_col):
         """The parent column this foreign key actually points at.
@@ -2805,6 +3246,7 @@ class DDLEngine:
             # Invariant 3: only reference upstream entities already effective that day (no order before registration or before listing)
             for f, (ps, es, cw) in fk_pools.items():
                 ent[f] = self._pick_items(ps, es, cw, d, 1, rng)[0]
+            self._split_opposed_entities(t, ent, rng)
             lo_i = max((e.get("__eff__") or 0) for e in ent.values()) if ent else 0
             if lo_i and (d - self.start).days < lo_i:  # fallback for a day with no effective entity at all
                 d = self.days[self._pick_day_ge(lo_i, rng)]
@@ -3009,8 +3451,11 @@ class DDLEngine:
         reason_cols = [c["name"] for c in cols if re.search(r"reason|cause", c["name"])]
         refund_p = self.profile.get("refund_rate", 0.055)
         rows, agg, no, refs = [], {}, 0, []
+        exact = (getattr(self, "fixed_fanout", None) or {}).get(t)
         for pi, pr in enumerate(prefs):
-            k = self._lines_for(lines_per_doc, rng)
+            # A declared fan-out is a count, not a mean: `_lines_for` spreads around it, which is
+            # right for order lines and wrong for the 16 wafers in a lot.
+            k = exact if exact else self._lines_for(lines_per_doc, rng)
             if pool and eff_cum:
                 picks = self._pick_items(pool, eff_sorted, eff_cum, pr["dt"], k, rng)
             else:
@@ -3472,15 +3917,19 @@ class DDLEngine:
         self._dump_meta(out, sizes)
         total = sum(sizes.values())
         dev = total / self.rows - 1
+        fixed_fanout = getattr(self, "fixed_fanout", None) or {}
         free = [
             t
             for t in self.nrows
-            if self.roles[t] not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC) and t not in getattr(self, "pinned_rows", {})
+            if self.roles[t] not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC)
+            and t not in getattr(self, "pinned_rows", {})
+            and t not in fixed_fanout  # derived from its parent, so it follows rather than scales
         ]
         if abs(dev) > tolerance and _attempt < 3 and free:
             k = self.rows / total
             for t in free:
                 self.nrows[t] = max(50, int(self.nrows[t] * k))
+            self._apply_fanout(self.nrows)  # the tree follows its root
             self.rng = random.Random(self.seed)
             self.pools, self.refs, self._fact_rows, self._pending_dim_rows = {}, {}, {}, {}
             self.__dict__.pop("_pool_key_idx", None)

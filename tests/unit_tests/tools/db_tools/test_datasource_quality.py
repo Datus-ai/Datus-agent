@@ -675,3 +675,185 @@ def test_a_table_the_generator_built_itself_is_not_called_keyless(con):
     assert pk["status"] == "PASS"
     assert "ods_order" not in pk["detail"], pk["detail"]
     assert "not verified" not in pk["detail"], pk["detail"]
+
+
+class TestVerdictCarriesItsNextStep:
+    """The verdict has to say what to do with it, in the tool output rather than only in prose.
+
+    "Stop when the check passes" has been stated in the skill through six measured runs and
+    ignored in every one; the most recent spent 406s after `ok: true` on a whole further
+    gen.py / import / check cycle. `plan_datasource` already carries a `next` for the same
+    reason - the model follows tool output more reliably than prose.
+    """
+
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        with connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE dim_thing (thing_id BIGINT, thing_name VARCHAR)")
+            con.execute("INSERT INTO dim_thing SELECT i, 'Thing ' || i FROM range(1, 30) t(i)")
+        return DBFuncTool(connector)
+
+    def _next(self, tool, assertions, tmp_path):
+        cfg = tmp_path / "checks.json"
+        cfg.write_text(json.dumps({"assertions": assertions}), encoding="utf-8")
+        result = tool.check_datasource_quality(config_path="checks.json")
+        assert result.success, result.error
+        return result.result["summary"], result.result["next"]
+
+    @pytest.mark.acceptance
+    def test_a_failing_run_is_pointed_at_the_profile_not_at_more_queries(self, tool, tmp_path):
+        summary, nxt = self._next(
+            tool,
+            [{"name": "deliberately false", "expect": "zero", "sql": "SELECT count(*) FROM dim_thing"}],
+            tmp_path,
+        )
+
+        assert summary["ok"] is False
+        assert "profile" in nxt and "gen.py" in nxt
+        assert "hand-write" in nxt, "the alternative it actually reaches for has to be named"
+
+    @pytest.mark.acceptance
+    def test_a_passing_run_says_to_stop(self, tool, tmp_path):
+        """Asserted unconditionally, so the passing arm of the message is actually exercised.
+
+        A one-table fixture cannot satisfy the structural checks that need a head distribution,
+        table comments and non-placeholder names, so those three are skipped rather than faked -
+        the subject here is what the verdict SAYS, not what the checker measures.
+        """
+        cfg = tmp_path / "checks.json"
+        cfg.write_text(
+            json.dumps(
+                {
+                    "skip": [
+                        "long-tail concentration",
+                        "metadata comments",
+                        "semantic naming",
+                        "date dimension present",
+                        "aggregation density",
+                        "time signal",
+                    ],
+                    "assertions": [
+                        {
+                            "name": "trivially true",
+                            "expect": "zero",
+                            "sql": "SELECT count(*) FROM dim_thing WHERE 1 = 0",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = tool.check_datasource_quality(config_path="checks.json")
+        assert result.success, result.error
+        summary, nxt = result.result["summary"], result.result["next"]
+
+        assert summary["ok"] is True, [c for c in result.result["checks"] if c["status"] == "FAIL"]
+        assert "stop" in nxt.lower()
+        assert "re-import" in nxt or "rebuild" in nxt
+        assert "No check failed" in nxt, "a WARN is not a pass, and the wording must not say it is"
+
+
+class TestAssertionsThatDisappear:
+    """`ok: true` is only worth the assertions it still contains.
+
+    A measured run failed one it could not satisfy - "passengers differ by aircraft size",
+    expected 1.5-4.5, measured 1.018 - and reached a pass by REPLACING that entry with a
+    different assertion rather than by fixing the data. The instruction it had covers relaxing a
+    threshold and says nothing about deleting the question, so nothing objected.
+    """
+
+    @pytest.fixture
+    def tool(self, tmp_path, monkeypatch):
+        from datus.tools.db_tools.config import DuckDBConfig
+        from datus.tools.db_tools.duckdb_connector import DuckdbConnector
+        from datus.tools.func_tool.database import DBFuncTool
+
+        monkeypatch.chdir(tmp_path)
+        connector = DuckdbConnector(DuckDBConfig(db_path=str(tmp_path / "target.duckdb")))
+        with connector.exclusive_connection() as con:
+            con.execute("CREATE TABLE dim_thing (thing_id BIGINT, thing_name VARCHAR)")
+            con.execute("INSERT INTO dim_thing SELECT i, 'Thing ' || i FROM range(1, 30) t(i)")
+        return DBFuncTool(connector)
+
+    ZERO = "SELECT count(*) FROM dim_thing WHERE 1 = 0"
+
+    def _run(self, tool, tmp_path, names):
+        (tmp_path / "checks.json").write_text(
+            json.dumps({"assertions": [{"name": n, "expect": "zero", "sql": self.ZERO} for n in names]}),
+            encoding="utf-8",
+        )
+        result = tool.check_datasource_quality(config_path="checks.json")
+        assert result.success, result.error
+        return result.result
+
+    @pytest.mark.acceptance
+    def test_a_dropped_assertion_is_named_on_the_next_run(self, tool, tmp_path):
+        self._run(tool, tmp_path, ["keeps its promise", "the awkward one"])
+        second = self._run(tool, tmp_path, ["keeps its promise", "something easier"])
+
+        drift = second.get("assertion_drift")
+        assert drift, "a question that disappeared has to be reported"
+        assert drift["removed"] == ["the awkward one"]
+        assert drift["added"] == ["something easier"]
+        assert "the awkward one" in second["next"], second["next"]
+
+    @pytest.mark.acceptance
+    def test_the_first_run_has_nothing_to_compare_against(self, tool, tmp_path):
+        first = self._run(tool, tmp_path, ["only assertion"])
+
+        assert "assertion_drift" not in first
+
+    @pytest.mark.acceptance
+    def test_the_note_reaches_a_failing_verdict_too(self, tool, tmp_path):
+        """The note is appended on both branches of the next-step line, and a run that is still
+        failing is exactly when a quietly dropped question matters most."""
+        (tmp_path / "checks.json").write_text(
+            json.dumps(
+                {
+                    "assertions": [
+                        {"name": "kept", "expect": "zero", "sql": self.ZERO},
+                        {"name": "doomed", "expect": "zero", "sql": self.ZERO},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert tool.check_datasource_quality(config_path="checks.json").success
+        # second run: drop one, and make the survivor fail
+        (tmp_path / "checks.json").write_text(
+            json.dumps({"assertions": [{"name": "kept", "expect": "zero", "sql": "SELECT count(*) FROM dim_thing"}]}),
+            encoding="utf-8",
+        )
+        result = tool.check_datasource_quality(config_path="checks.json")
+
+        assert result.result["summary"]["ok"] is False
+        assert result.result["assertion_drift"]["removed"] == ["doomed"]
+        assert "doomed" in result.result["next"], result.result["next"]
+        assert "profile" in result.result["next"], "the failing branch keeps its own instruction"
+
+    @pytest.mark.acceptance
+    def test_the_sidecar_does_not_ship_with_the_project(self, tool, tmp_path):
+        """It lands in the workspace the project publishes, so it is dot-prefixed like the
+        generator's own `.{stem}.meta.json`. A visible `checks.seen.json` would be delivered to
+        the user as if it were part of the dataset."""
+        self._run(tool, tmp_path, ["only"])
+
+        visible = sorted(f.name for f in tmp_path.iterdir() if not f.name.startswith("."))
+
+        assert "checks.seen.json" not in visible, visible
+        assert (tmp_path / ".checks.seen.json").exists()
+
+    @pytest.mark.acceptance
+    def test_adding_assertions_is_not_drift(self, tool, tmp_path):
+        """Growing the suite is the normal direction and must stay quiet, or the note becomes
+        noise that teaches the reader to skip it."""
+        self._run(tool, tmp_path, ["first"])
+        second = self._run(tool, tmp_path, ["first", "second"])
+
+        assert "assertion_drift" not in second

@@ -182,9 +182,14 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    ```
    plan_datasource(ddl=<the normalised DDL>, rows=80000, months=17)
    ```
-   **If the DDL declares no keys, add them before this call** - "declared wins over inferred" only
-   helps once something is declared, and a measured run took in nine tables with zero PRIMARY KEY,
-   zero FOREIGN KEY and zero UNIQUE. Single-column keys only: a composite `PRIMARY KEY (a, b)`
+   **Call it with the DDL AS GIVEN, before adding anything.** If the DDL declares no keys the
+   plan proposes them - under `INFERRED keys`, with the reason for each - and reviewing a proposal
+   is far cheaper than authoring one: a measured run that took in nine tables with zero PRIMARY
+   KEY, zero FOREIGN KEY and zero UNIQUE spent 868s of a single turn designing the key graph by
+   hand, against 469s on a DDL that arrived with its keys. Read the block, then **declare the ones
+   it got wrong** and re-run this call; "declared wins over inferred" applies to whatever you
+   declare. Adding keys first is not free - it costs that turn and throws the proposal away.
+   Single-column keys only: a composite `PRIMARY KEY (a, b)`
    parses, but generation does not know about it, so the combination is unique only by luck. That
    is an engine limitation, not something to fix in the DDL - leave such a table keyless and say so
    in the delivery summary. The key check reports a keyless table as keyless and moves on, so this
