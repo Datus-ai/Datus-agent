@@ -223,6 +223,8 @@ class DDLEngine:
             "all"      both
         Extra tables give the agent two competing definitions and carry no user DDL constraints, hence off by default."""
         assert extra_tables in ("none", "date_dim", "summary", "all"), extra_tables
+        if not isinstance(rows, (int, float)) or isinstance(rows, bool) or rows < 1:
+            raise ValueError(f"rows must be a positive number of rows to generate, got {rows!r}")
         self.extra_tables = extra_tables
         self.ddl = ddl
         self.rows = rows
@@ -988,8 +990,10 @@ class DDLEngine:
                     continue
                 progressed = True
         rest = [t for t in facts + details if t not in settled]
-        # What a pin fixed, directly or through lines-per-parent, stays fixed: calibration and the
-        # pre-scale below may only move the rest, or a pinned parent's lines drift off the band.
+        # What a pin fixed, directly or through lines-per-parent, the pre-scale below leaves alone,
+        # or a pinned parent's lines drift off the band before a row exists. Calibration between
+        # passes may still move those details: with everything else pinned they are how the budget
+        # is reached at all (`test_calibration_reaches_the_budget_through_the_detail_table`).
         self._settled_rows = set(settled)
         left = max(0.0, budget * block / tot - sum(settled.values()))
         unit = left / (sum(weights[t] for t in rest) or 1)

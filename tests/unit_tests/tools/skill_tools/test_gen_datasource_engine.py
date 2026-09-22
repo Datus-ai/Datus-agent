@@ -4071,3 +4071,12 @@ def test_prescaling_leaves_a_plan_that_already_fits_alone(engine_module):
 
     again = eng._prescale_to_budget(dict(eng.nrows))
     assert again == eng.nrows
+
+
+@pytest.mark.parametrize("rows", [0, -5, None, True])
+@pytest.mark.acceptance
+def test_a_row_budget_that_is_not_positive_is_refused_at_construction(engine_module, rows):
+    """The plan divides by the budget as soon as the engine is built; a zero used to surface as a
+    ZeroDivisionError from inside the allocator rather than as the configuration error it is."""
+    with pytest.raises(ValueError, match="rows must be a positive"):
+        engine_module.DDLEngine(FLIGHT_DDL, rows=rows, profile=FLIGHT_BASE)
