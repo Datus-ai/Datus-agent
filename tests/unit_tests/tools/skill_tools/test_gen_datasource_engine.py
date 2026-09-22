@@ -3935,7 +3935,7 @@ def test_a_fractional_fan_out_is_planned_and_reported(engine_module, capsys):
     assert "delays = one row on 25% of flights" in out, out
 
 
-@pytest.mark.parametrize("bad", [0, -1, 0.0, True, "0.25"])
+@pytest.mark.parametrize("bad", [0, -1, 0.0, True, "0.25", 1.5])
 @pytest.mark.acceptance
 def test_a_fan_out_that_is_not_a_count_or_a_share_is_refused(engine_module, bad):
     eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile={**FLIGHT_BASE, "per_parent": {"delays": bad}})

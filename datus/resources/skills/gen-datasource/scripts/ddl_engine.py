@@ -1018,7 +1018,10 @@ class DDLEngine:
         self.fixed_fanout = {
             t: (int(k) if k >= 1 else float(k))
             for t, k in (self.profile.get("per_parent", {}) or {}).items()
-            if t in self.schema and isinstance(k, (int, float)) and not isinstance(k, bool) and k > 0
+            if t in self.schema
+            and isinstance(k, (int, float))
+            and not isinstance(k, bool)
+            and (0 < k < 1 or (k >= 1 and float(k) == int(k)))
         }
         self._apply_fanout(n)
         # A key-bearing `joint` group is the row count: ten real airports means ten rows, and
@@ -1500,7 +1503,9 @@ class DDLEngine:
             if t not in self.schema:
                 err.append(f"per_parent: table `{t}` is not in the DDL")
                 continue
-            if not isinstance(k, (int, float)) or isinstance(k, bool) or k <= 0:
+            whole = isinstance(k, (int, float)) and not isinstance(k, bool) and k >= 1 and float(k) == int(k)
+            share = isinstance(k, (int, float)) and not isinstance(k, bool) and 0 < k < 1
+            if not (whole or share):  # 1.5 is neither: it would be silently truncated to 1
                 err.append(
                     f"per_parent[{t}]: {k!r} is not a fan-out; give a whole number >= 1 (rows per parent row) "
                     f"or a fraction between 0 and 1 (the share of parent rows that get one row)"
