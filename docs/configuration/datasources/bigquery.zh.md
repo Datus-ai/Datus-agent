@@ -19,9 +19,14 @@ agent:
         catalog: ${BIGQUERY_PROJECT}
         database: ${BIGQUERY_DATASET}
         location: ${BIGQUERY_LOCATION:-US}
-        credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
-        billing_project_id: ${BIGQUERY_BILLING_PROJECT}
         timeout_seconds: 60
+```
+
+这份基础配置使用 Google Application Default Credentials（ADC），并以 `catalog` 作为默认计费 project。需要使用 service-account 文件或独立计费 project 时，仅在对应环境变量已设置的情况下添加以下字段：
+
+```yaml
+credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
+billing_project_id: ${BIGQUERY_BILLING_PROJECT}
 ```
 
 托管环境可以使用 base64 编码的 service-account 文档：

@@ -22,7 +22,7 @@ agent:
         password: ${HOLOGRES_ACCESS_KEY_SECRET}
         database: ${HOLOGRES_DATABASE}
         schema: public
-        sslmode: prefer
+        sslmode: require
         timeout_seconds: 30
 ```
 
@@ -45,7 +45,7 @@ agent:
 
 Do not include a URI scheme, credentials, path, query, or fragment in `host`. When both `host` and `port` carry a port, they must agree. Hologres public endpoints commonly use port `80`; use the value shown for your instance.
 
-The adapter exposes `sslmode` but not a custom `sslrootcert` profile field. Objects can be addressed as `table`, `schema.table`, or `database.schema.table`; Hologres internal schemas are filtered from normal discovery.
+The adapter default is `sslmode: prefer`; the credentialed baseline above uses `require` so it cannot silently fall back to plaintext. The adapter exposes `sslmode` but not a custom `sslrootcert` profile field. Objects can be addressed as `table`, `schema.table`, or `database.schema.table`; Hologres internal schemas are filtered from normal discovery.
 
 ## Verify the connection
 

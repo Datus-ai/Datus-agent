@@ -24,10 +24,13 @@ uri: sqlite:///data/analytics.sqlite
 如果要在一个 datasource 中暴露多个文件，用 glob 替换 `uri`：
 
 ```yaml
-benchmark:
-  type: sqlite
-  path_pattern: benchmark/databases/**/*.sqlite
-  database: california_schools  # 可选：初始文件名（不含扩展名）
+agent:
+  services:
+    datasources:
+      benchmark:
+        type: sqlite
+        path_pattern: benchmark/databases/**/*.sqlite
+        database: california_schools  # 可选：初始文件名（不含扩展名）
 ```
 
 ## 参数

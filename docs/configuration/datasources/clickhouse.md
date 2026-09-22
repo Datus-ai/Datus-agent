@@ -39,7 +39,7 @@ agent:
 
 Connect to the HTTP endpoint (`8123` by default), not the native TCP port (`9000` by default). Objects use `database.table`; do not add a `schema` field.
 
-The adapter profile currently has no TLS/HTTPS flag. Place a compatible HTTP endpoint or trusted proxy in front of ClickHouse when transport requirements differ.
+The adapter profile currently has no TLS/HTTPS flag. Do not send credentials over an untrusted plaintext network: use an HTTPS-capable external proxy or encrypted tunnel, or keep the connection on an isolated trusted network.
 
 ## Verify the connection
 

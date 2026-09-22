@@ -22,7 +22,7 @@ agent:
         password: ${POSTGRES_PASSWORD}
         database: analytics
         schema: public
-        sslmode: prefer
+        sslmode: require
         timeout_seconds: 30
 ```
 
@@ -41,7 +41,7 @@ agent:
 
 ## TLS and namespaces
 
-`sslmode` is passed to psycopg2/libpq. The profile exposes `sslmode` but does not expose an `sslrootcert` field; verifying modes therefore rely on libpq's standard certificate locations and environment. Do not add unsupported certificate keys to the datasource profile.
+`sslmode` is passed to psycopg2/libpq. The adapter default is `prefer`; the credentialed baseline above uses `require` so it cannot silently fall back to plaintext. The profile does not expose an `sslrootcert` field; verifying modes therefore rely on libpq's standard certificate locations and environment. Do not add unsupported certificate keys to the datasource profile.
 
 The configured `database` is the initial PostgreSQL database and `schema` defaults to `public`. Datus filters system databases/schemas during normal discovery. Access to additional databases still depends on network reachability and role permissions.
 

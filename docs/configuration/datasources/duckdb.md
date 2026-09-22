@@ -12,12 +12,14 @@ agent:
         type: duckdb
         uri: duckdb:///data/analytics.duckdb
         read_only: false
-        enable_external_access: true
+        enable_external_access: false
         memory_limit: 2GB
         default: true
 ```
 
 Use `duckdb:///:memory:` for a process-local in-memory database. Multiple files can be discovered with `path_pattern`, using the same rules as [SQLite](sqlite.md).
+
+The adapter default remains `true` for compatibility, but the baseline above disables external file and extension access. Set it to `true` only for a trusted workload that needs those capabilities. The Iceberg profile below opts in because it must load extensions and reach external storage.
 
 ## Parameters
 
@@ -34,21 +36,25 @@ Use `duckdb:///:memory:` for a process-local in-memory database. Multiple files 
 ## Iceberg REST catalog
 
 ```yaml
-lakehouse:
-  type: duckdb
-  uri: duckdb:///:memory:
-  iceberg:
-    catalog_uri: ${ICEBERG_REST_URI}
-    warehouse: s3://analytics-warehouse/
-    catalog_alias: lake
-    client_id: ${ICEBERG_CLIENT_ID}
-    client_secret: ${ICEBERG_CLIENT_SECRET}
-    oauth2_server_uri: ${ICEBERG_OAUTH_TOKEN_URI}
-    s3_region: us-east-1
-    s3_endpoint: ${S3_ENDPOINT}
-    s3_access_key_id: ${S3_ACCESS_KEY_ID}
-    s3_secret_access_key: ${S3_SECRET_ACCESS_KEY}
-    read_only: true
+agent:
+  services:
+    datasources:
+      lakehouse:
+        type: duckdb
+        uri: "duckdb:///:memory:"
+        enable_external_access: true
+        iceberg:
+          catalog_uri: ${ICEBERG_REST_URI}
+          warehouse: s3://analytics-warehouse/
+          catalog_alias: lake
+          client_id: ${ICEBERG_CLIENT_ID}
+          client_secret: ${ICEBERG_CLIENT_SECRET}
+          oauth2_server_uri: ${ICEBERG_OAUTH_TOKEN_URI}
+          s3_region: us-east-1
+          s3_endpoint: ${S3_ENDPOINT}
+          s3_access_key_id: ${S3_ACCESS_KEY_ID}
+          s3_secret_access_key: ${S3_SECRET_ACCESS_KEY}
+          read_only: true
 ```
 
 `catalog_uri` and `warehouse` are required inside `iceberg`. `catalog_alias` defaults to `lake`. OAuth fields create a DuckDB Iceberg secret; `token` can be supplied instead. S3 credentials accept the `s3_*` names shown above or their `aws_*` aliases. Advanced attach options include `endpoint_type`, `authorization_type`, `access_delegation_mode`, `support_nested_namespaces`, `support_stage_create`, `max_table_staleness`, and `purge_requested`.

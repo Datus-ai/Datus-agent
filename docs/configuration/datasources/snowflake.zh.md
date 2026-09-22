@@ -30,14 +30,17 @@ agent:
 使用内存 secret 的 key-pair 认证：
 
 ```yaml
-snowflake_ci:
-  type: snowflake
-  account: ${SNOWFLAKE_ACCOUNT}
-  username: ${SNOWFLAKE_USER}
-  private_key: ${SNOWFLAKE_PRIVATE_KEY}
-  warehouse: ${SNOWFLAKE_WAREHOUSE}
-  database: ANALYTICS
-  schema: PUBLIC
+agent:
+  services:
+    datasources:
+      snowflake_ci:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USER}
+        private_key: ${SNOWFLAKE_PRIVATE_KEY}
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        database: ANALYTICS
+        schema: PUBLIC
 ```
 
 本地密钥文件可把 `private_key` 换成 `private_key_file`；仅当 PEM 已加密时才设置 `private_key_file_pwd`。

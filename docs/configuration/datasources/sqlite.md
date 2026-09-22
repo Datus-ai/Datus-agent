@@ -24,10 +24,13 @@ uri: sqlite:///data/analytics.sqlite
 To expose several files as databases within one datasource, replace `uri` with a glob:
 
 ```yaml
-benchmark:
-  type: sqlite
-  path_pattern: benchmark/databases/**/*.sqlite
-  database: california_schools  # optional initial file stem
+agent:
+  services:
+    datasources:
+      benchmark:
+        type: sqlite
+        path_pattern: benchmark/databases/**/*.sqlite
+        database: california_schools  # optional initial file stem
 ```
 
 ## Parameters

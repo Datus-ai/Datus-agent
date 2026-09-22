@@ -31,18 +31,21 @@ agent:
 IAM authentication:
 
 ```yaml
-redshift_iam:
-  type: redshift
-  host: ${REDSHIFT_HOST}
-  port: 5439
-  username: ${REDSHIFT_USER}
-  database: analytics
-  schema: public
-  iam: true
-  cluster_identifier: analytics-cluster
-  region: us-east-1
-  # access_key_id: ${AWS_ACCESS_KEY_ID}
-  # secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+agent:
+  services:
+    datasources:
+      redshift_iam:
+        type: redshift
+        host: ${REDSHIFT_HOST}
+        port: 5439
+        username: ${REDSHIFT_USER}
+        database: analytics
+        schema: public
+        iam: true
+        cluster_identifier: analytics-cluster
+        region: us-east-1
+        # access_key_id: ${AWS_ACCESS_KEY_ID}
+        # secret_access_key: ${AWS_SECRET_ACCESS_KEY}
 ```
 
 When the runtime already has an AWS role or standard AWS credentials, omit the static access-key fields.

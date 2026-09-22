@@ -22,7 +22,7 @@ agent:
         password: ${HOLOGRES_ACCESS_KEY_SECRET}
         database: ${HOLOGRES_DATABASE}
         schema: public
-        sslmode: prefer
+        sslmode: require
         timeout_seconds: 30
 ```
 
@@ -45,7 +45,7 @@ agent:
 
 `host` 中不要包含 URI scheme、凭证、路径、query 或 fragment。`host` 和 `port` 同时携带端口时必须一致。Hologres 公网 endpoint 常用 80 端口，但应以当前实例显示的值为准。
 
-Adapter 暴露 `sslmode`，但没有自定义 `sslrootcert` profile 字段。对象可写成 `table`、`schema.table` 或 `database.schema.table`；常规发现会过滤 Hologres 内部 schema。
+Adapter 默认值是 `sslmode: prefer`；上面的含凭据基础示例使用 `require`，避免 TLS 不可用时静默回退到明文传输。Adapter 暴露 `sslmode`，但没有自定义 `sslrootcert` profile 字段。对象可写成 `table`、`schema.table` 或 `database.schema.table`；常规发现会过滤 Hologres 内部 schema。
 
 ## 验证连接
 

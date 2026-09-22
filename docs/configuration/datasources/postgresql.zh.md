@@ -22,7 +22,7 @@ agent:
         password: ${POSTGRES_PASSWORD}
         database: analytics
         schema: public
-        sslmode: prefer
+        sslmode: require
         timeout_seconds: 30
 ```
 
@@ -41,7 +41,7 @@ agent:
 
 ## TLS 与命名空间
 
-`sslmode` 会传给 psycopg2/libpq。当前 profile 暴露 `sslmode`，但没有 `sslrootcert` 字段；证书校验模式依赖 libpq 的标准证书目录和环境配置。不要在 datasource 中加入 adapter 不支持的证书字段。
+`sslmode` 会传给 psycopg2/libpq。Adapter 默认值是 `prefer`；上面的含凭据基础示例使用 `require`，避免 TLS 不可用时静默回退到明文传输。当前 profile 没有 `sslrootcert` 字段；证书校验模式依赖 libpq 的标准证书目录和环境配置。不要在 datasource 中加入 adapter 不支持的证书字段。
 
 `database` 是初始 PostgreSQL database，`schema` 默认是 `public`。常规发现会过滤系统 database/schema；访问其他 database 仍取决于网络连通性和 role 权限。
 

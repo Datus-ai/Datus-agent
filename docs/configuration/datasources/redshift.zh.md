@@ -31,18 +31,21 @@ agent:
 IAM 认证：
 
 ```yaml
-redshift_iam:
-  type: redshift
-  host: ${REDSHIFT_HOST}
-  port: 5439
-  username: ${REDSHIFT_USER}
-  database: analytics
-  schema: public
-  iam: true
-  cluster_identifier: analytics-cluster
-  region: us-east-1
-  # access_key_id: ${AWS_ACCESS_KEY_ID}
-  # secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+agent:
+  services:
+    datasources:
+      redshift_iam:
+        type: redshift
+        host: ${REDSHIFT_HOST}
+        port: 5439
+        username: ${REDSHIFT_USER}
+        database: analytics
+        schema: public
+        iam: true
+        cluster_identifier: analytics-cluster
+        region: us-east-1
+        # access_key_id: ${AWS_ACCESS_KEY_ID}
+        # secret_access_key: ${AWS_SECRET_ACCESS_KEY}
 ```
 
 运行环境已有 AWS role 或标准 AWS credentials 时，不要再配置静态 access key。

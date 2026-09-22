@@ -19,9 +19,14 @@ agent:
         catalog: ${BIGQUERY_PROJECT}
         database: ${BIGQUERY_DATASET}
         location: ${BIGQUERY_LOCATION:-US}
-        credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
-        billing_project_id: ${BIGQUERY_BILLING_PROJECT}
         timeout_seconds: 60
+```
+
+This base profile uses Google Application Default Credentials (ADC) and the configured `catalog` as the billing project. To use a service-account file or a separate billing project, add these fields only when the referenced environment variables are set:
+
+```yaml
+credentials_path: ${GOOGLE_APPLICATION_CREDENTIALS}
+billing_project_id: ${BIGQUERY_BILLING_PROJECT}
 ```
 
 Hosted deployments can use a base64-encoded service-account document:

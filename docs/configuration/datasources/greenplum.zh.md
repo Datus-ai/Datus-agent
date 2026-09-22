@@ -22,7 +22,7 @@ agent:
         password: ${GREENPLUM_PASSWORD}
         database: analytics
         schema: public
-        sslmode: prefer
+        sslmode: require
         timeout_seconds: 30
 ```
 
@@ -42,6 +42,8 @@ agent:
 ## Greenplum 行为
 
 对象使用 `database.schema.table`。Datus 会在可用时读取 Greenplum 分布策略和存储元数据，并从常规发现中排除内部 schema。连接 profile 与 [PostgreSQL](postgresql.md) 保持一致，不包含 coordinator/segment 管理字段。
+
+Adapter 默认值是 `sslmode: prefer`；上面的含凭据基础示例使用 `require`，避免 TLS 不可用时静默回退到明文传输。
 
 ## 验证连接
 

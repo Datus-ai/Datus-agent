@@ -39,7 +39,7 @@ agent:
 
 应连接 HTTP endpoint（默认 `8123`），不要使用 native TCP 端口（默认 `9000`）。对象使用 `database.table`，不要添加 `schema`。
 
-当前 adapter profile 没有 TLS/HTTPS 开关。如果传输要求不同，需要为 ClickHouse 提供兼容 HTTP endpoint 或可信代理。
+当前 adapter profile 没有 TLS/HTTPS 开关。不要通过不可信的明文网络传输凭证；应使用外部支持 HTTPS 的代理或加密隧道，或将连接限制在隔离的可信网络内。
 
 ## 验证连接
 

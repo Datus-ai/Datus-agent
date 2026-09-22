@@ -22,7 +22,7 @@ agent:
         password: ${GREENPLUM_PASSWORD}
         database: analytics
         schema: public
-        sslmode: prefer
+        sslmode: require
         timeout_seconds: 30
 ```
 
@@ -42,6 +42,8 @@ agent:
 ## Greenplum behavior
 
 Objects use `database.schema.table`. Datus reads Greenplum distribution policy and storage metadata when available and removes Greenplum internal schemas from normal discovery. The connection profile intentionally matches [PostgreSQL](postgresql.md); the adapter does not add coordinator/segment management fields.
+
+The adapter default is `sslmode: prefer`; the credentialed baseline above uses `require` so it cannot silently fall back to plaintext.
 
 ## Verify the connection
 

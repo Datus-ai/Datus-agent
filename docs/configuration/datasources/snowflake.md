@@ -30,14 +30,17 @@ agent:
 Key-pair authentication with an in-memory secret:
 
 ```yaml
-snowflake_ci:
-  type: snowflake
-  account: ${SNOWFLAKE_ACCOUNT}
-  username: ${SNOWFLAKE_USER}
-  private_key: ${SNOWFLAKE_PRIVATE_KEY}
-  warehouse: ${SNOWFLAKE_WAREHOUSE}
-  database: ANALYTICS
-  schema: PUBLIC
+agent:
+  services:
+    datasources:
+      snowflake_ci:
+        type: snowflake
+        account: ${SNOWFLAKE_ACCOUNT}
+        username: ${SNOWFLAKE_USER}
+        private_key: ${SNOWFLAKE_PRIVATE_KEY}
+        warehouse: ${SNOWFLAKE_WAREHOUSE}
+        database: ANALYTICS
+        schema: PUBLIC
 ```
 
 For a local key file, replace `private_key` with `private_key_file` and add `private_key_file_pwd` only when the PEM is encrypted.
