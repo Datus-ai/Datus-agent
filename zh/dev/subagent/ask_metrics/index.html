@@ -5283,7 +5283,7 @@
 <ul>
 <li>优先使用主题树中的直接指标匹配，而不是搜索。</li>
 <li>只有在主题树缺失、不完整或存在歧义时才使用 <code>search_metrics</code>。</li>
-<li>分组、过滤或归因前会先调用 <code>get_dimensions</code>。</li>
+<li>分组、过滤或归因前会先调用 <code>get_metric</code>。</li>
 <li><code>query_metrics</code> 是查询指标值的主要工具。</li>
 <li>变化解释和贡献分析问题使用 <code>attribution_analyze</code>。</li>
 <li>默认工具面不包含原始 SQL 工具。</li>
@@ -5314,8 +5314,8 @@
 <td>从语义适配器列出可执行指标</td>
 </tr>
 <tr>
-<td><code>semantic_tools.get_dimensions</code></td>
-<td>发现可用于分组、过滤和归因的维度</td>
+<td><code>semantic_tools.get_metric</code></td>
+<td>描述单个指标：可查询维度、时间轴和粒度</td>
 </tr>
 <tr>
 <td><code>semantic_tools.query_metrics</code></td>
@@ -5356,7 +5356,7 @@
 </span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
 </span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
 </span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">"1.0"</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_dimensions,semantic_tools.query_metrics"</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">"context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"</span>
 </span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
 </span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">"Answer</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">metric</span><span class="nv"> </span><span class="s">questions</span><span class="nv"> </span><span class="s">using</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">semantic</span><span class="nv"> </span><span class="s">layer."</span>
 </span></code></pre></div>

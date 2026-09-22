@@ -5330,7 +5330,7 @@
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="p">)</span>
 </span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
 </span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># 获取可查询维度和指标的主要时间轴。</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">get_dimensions</span><span class="p">(</span><span class="n">metric_name</span><span class="o">=</span><span class="s2">"bank_failure_count"</span><span class="p">)</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">get_metric</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"bank_failure_count"</span><span class="p">)</span>
 </span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
 </span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="c1"># 按年执行两个指标。</span>
 </span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="n">query_metrics</span><span class="p">(</span>
@@ -5355,7 +5355,7 @@
 </tr>
 <tr>
 <td><code>dimensions</code></td>
-<td><code>get_dimensions</code> 返回的字段；在 Dosi 中，<code>metric_time</code> 表示指标的主要时间轴。自动选择分组字段时优先使用 <code>recommended=true</code>；<code>recommended=false</code> 仍可显式查询。</td>
+<td><code>get_metric</code> 返回的字段；在 Dosi 中，<code>metric_time</code> 表示指标的主要时间轴。自动选择分组字段时优先使用 <code>recommended=true</code>；<code>recommended=false</code> 仍可显式查询。</td>
 </tr>
 <tr>
 <td><code>path</code></td>
