@@ -123,6 +123,7 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 | `formulas` | Arithmetic between columns | Accounting identities, cost/margin and other derived columns |
 | `enums` | Enum domains and weights | Only when the DDL comments are incomplete |
 | `event_seq` | Status sequence of an event stream | Whenever there is an event table |
+| `per_parent` | **Exactly N rows for each row of the parent** — `{"wafer": 16, "probe_die_result": 10}` reads as 16 wafers per lot and 10 probed die per wafer. Use it when the fan-out IS the grain; `table_rows` expresses the same counts but freezes them, and calibration then has nothing to scale. These tables are DERIVED: calibration scales the root and the whole tree follows, so `rows=` still lands. The exact one-row-per-parent grain is the detail generator's, so set `roles` to `detail` as well — the pre-check says so when the table is planned as something else |
 | `table_rows` / `dim_rows` | Pin a table's row count | The user asked for a specific row count. **Pinning a DETAIL table also fixes its parent** (pin / lines-per-parent) **and therefore every sibling detail of that parent**, so two modest pins can imply a plan far over `rows` while calibration may only scale what is left. The pre-check replays calibration's three passes and names an unreachable budget before generation, so read it |
 | `dim_kinds` | Dimension kind (drives cardinality) | Inference is wrong |
 | `columns` | Per-column value ranges | Amount/quantity magnitudes are unreasonable |

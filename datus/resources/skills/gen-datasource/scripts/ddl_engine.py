@@ -810,6 +810,45 @@ class DDLEngine:
     DETAIL_PER_PARENT = 1.8
     DOWNSTREAM_PER_PARENT = 0.6  # a shipment / claim / repayment does not follow every document
 
+    def _fanout_parent(self, t):
+        """The table a fixed fan-out counts from. `_doc_parent` first, then any declared parent,
+        so this works on a table the engine classified as something other than a detail."""
+        par = self._doc_parent(t)
+        if par:
+            return par
+        for f in self.fks.get(t, []):
+            owner = self.pk_owner.get(f)
+            if owner and owner != t:
+                return owner
+        return None
+
+    def _apply_fanout(self, n):
+        """``profile['per_parent']``: this table has exactly N rows for each row of its parent.
+
+        ⚠️ There was no way to say this, and for a whole class of schema the fan-out IS the grain:
+        a lot has exactly 16 wafers and a wafer exactly 10 probed die, an invoice has one line per
+        ordered item, a sensor channel one reading per interval. The engine offers a stochastic
+        1.8 lines per parent, which destroys that grain, and pinning `table_rows` instead expresses
+        the counts but leaves calibration nothing to scale - measured on a 12-table foundry DDL,
+        the pins implied a plan 24% over budget that three passes could not recover. Faced with
+        those two, a production run abandoned the engine and hand-wrote 886 lines of generator,
+        which took 24 minutes of its 44.
+
+        Applied to a fresh allocation AND after every calibration rescale, so scaling the root
+        fact carries the whole tree with it coherently - which is why these tables are derived
+        rather than pinned: pinning them would freeze the tree and make the budget unreachable
+        again.
+        """
+        fixed = getattr(self, "fixed_fanout", None) or {}
+        if not fixed:
+            return n
+        for _ in range(len(fixed) + 1):  # a fan-out of a fan-out settles on the next pass
+            for t, k in fixed.items():
+                par = self._fanout_parent(t)
+                if par and par in n:
+                    n[t] = max(1, int(n[par] * k))
+        return n
+
     def _doc_parent(self, t):
         """The document a detail row belongs to, resolved from declared keys at planning time.
 
@@ -928,6 +967,12 @@ class DDLEngine:
             if r == ROLE_DATE:
                 n[t] = len(self.days)
         n.update({t: v for t, v in pinned.items() if t in self.schema})  # an explicit user value wins over everything
+        self.fixed_fanout = {
+            t: int(k)
+            for t, k in (self.profile.get("per_parent", {}) or {}).items()
+            if t in self.schema and isinstance(k, (int, float)) and int(k) >= 1
+        }
+        self._apply_fanout(n)
         # A key-bearing `joint` group is the row count: ten real airports means ten rows, and
         # asking for more can only be answered with a duplicate key. Recorded so the pre-check can
         # say it happened rather than leaving the caller to wonder why `dim_rows` was ignored.
@@ -1352,6 +1397,39 @@ class DDLEngine:
         #
         # Replays calibration's own update rule rather than modelling it, so this cannot drift
         # from what generate() will actually do.
+        for t, k in (self.profile.get("per_parent", {}) or {}).items():
+            if t not in self.schema:
+                err.append(f"per_parent: table `{t}` is not in the DDL")
+                continue
+            if not isinstance(k, (int, float)) or int(k) < 1:
+                err.append(f"per_parent[{t}]: {k!r} is not a row count; give a whole number >= 1")
+                continue
+            if not self._fanout_parent(t):
+                err.append(
+                    f"per_parent[{t}]: {t} has no parent to count from - it references no other table, "
+                    f"so 'N rows per parent row' has no meaning here"
+                )
+            elif self.roles.get(self._fanout_parent(t)) in (ROLE_DATE, ROLE_DIM, ROLE_METRIC):
+                # A dimension is sized by business density and calibration never scales it, so a
+                # tree rooted in one cannot grow toward `rows=` - and `_gen_detail` needs its
+                # parent in `refs`, which a dimension never enters, so the exact grain is lost too.
+                err.append(
+                    f"per_parent[{t}]: its parent {self._fanout_parent(t)} is planned as a "
+                    f"{self.roles.get(self._fanout_parent(t))}, which calibration never scales and the "
+                    f"detail generator cannot read rows from. A fan-out has to hang off a fact or a "
+                    f"detail - set profile['roles'] = {{{self._fanout_parent(t)!r}: 'fact'}} if that is "
+                    f"what it is"
+                )
+            elif self.roles.get(t) not in (ROLE_DETAIL, ROLE_DOWNSTREAM):
+                # The row COUNT is honoured for every role, because every generator reads nrows.
+                # Exact lines per parent are the detail generator's mechanism, so a table the
+                # engine reads as something else gets the count and not the grain.
+                warn.append(
+                    f"per_parent[{t}]: {t} is planned as a {self.roles.get(t)}, so it gets the row "
+                    f"count ({k} x its parent) but not one row per parent - the exact fan-out is the "
+                    f"detail generator's. Set profile['roles'] = {{{t!r}: 'detail'}} if the grain matters"
+                )
+
         for t, (asked, limit) in (getattr(self, "_joint_clamped", None) or {}).items():
             warn.append(
                 f"{t} is capped at {limit:,} rows, not {asked:,}: a `joint` group on its key supplies "
@@ -1606,6 +1684,13 @@ class DDLEngine:
         # inference on a keyless DDL used to be wrong in three ways - 8 of 12 edges, one ownership
         # reversed, a whole dimension unlinked - and the plan mentioned none of it, so the reader
         # had no way to correct what it could not see.
+        fan = getattr(self, "fixed_fanout", None) or {}
+        if fan:
+            print(
+                "fixed fan-out: "
+                + ", ".join(f"{t} = {k} x {self._fanout_parent(t) or '?'}" for t, k in sorted(fan.items()))
+                + " (derived from the parent, so calibration scales the parent and these follow)"
+            )
         nat = getattr(self, "natural_keys", None) or {}
         ren = getattr(self, "renamed_keys", None) or {}
         if nat or ren:
@@ -1953,16 +2038,41 @@ class DDLEngine:
     }
 
     def _topo(self):
+        """Generation order: by role, and within a role by dependency.
+
+        ⚠️ Dependency COUNT is not a topological order, and the difference is not cosmetic. In a
+        chain A -> B -> C inside one bucket, B and C both have one dependency, so the tie broke on
+        dict order and the child could be generated before its parent. Its parent then had no refs
+        yet, `_parent_of` called it an orphan, and `_gen_detail` fell through to `_gen_fact`, which
+        invents the key: measured on a 12-table foundry DDL, `probe_die_result` came out
+        **100% orphaned against `wafer`** on the stock engine with no profile at all, and with the
+        roles set so the whole chain was one bucket the order came out exactly reversed -
+        probe, then wafer, then wafer_lot.
+
+        Kahn's algorithm, seeded with the old count order so that genuinely independent tables
+        keep the order they had and nothing else moves.
+        """
         order, seen = [], set()
         buckets = [ROLE_DATE, ROLE_DIM, ROLE_FACT, ROLE_DETAIL, ROLE_DOWNSTREAM, ROLE_EVENT, ROLE_SNAPSHOT, ROLE_METRIC]
         for role in buckets:
             group = [t for t, r in self.roles.items() if r == role]
-            # dimensions can reference each other (product -> seller); order by dependency count
             group.sort(key=lambda t: len([f for f in self.fks[t] if self.pk_owner.get(f) in group]))
-            for t in group:
-                if t not in seen:
+            inside = set(group)
+            deps = {
+                t: {self.pk_owner[f] for f in self.fks[t] if self.pk_owner.get(f) in inside and self.pk_owner[f] != t}
+                for t in group
+            }
+            remaining = list(group)
+            while remaining:
+                ready = [t for t in remaining if not (deps[t] - seen)]
+                if not ready:
+                    # A cycle within the bucket. Emit what is left in the old order rather than
+                    # hanging: a key cycle is the DDL's to fix and generation still has to finish.
+                    ready = remaining[:]
+                for t in ready:
                     order.append(t)
                     seen.add(t)
+                remaining = [t for t in remaining if t not in seen]
         return order
 
     # ---------------------------------------------------------------- conditional distributions / column formulas
@@ -3341,8 +3451,11 @@ class DDLEngine:
         reason_cols = [c["name"] for c in cols if re.search(r"reason|cause", c["name"])]
         refund_p = self.profile.get("refund_rate", 0.055)
         rows, agg, no, refs = [], {}, 0, []
+        exact = (getattr(self, "fixed_fanout", None) or {}).get(t)
         for pi, pr in enumerate(prefs):
-            k = self._lines_for(lines_per_doc, rng)
+            # A declared fan-out is a count, not a mean: `_lines_for` spreads around it, which is
+            # right for order lines and wrong for the 16 wafers in a lot.
+            k = exact if exact else self._lines_for(lines_per_doc, rng)
             if pool and eff_cum:
                 picks = self._pick_items(pool, eff_sorted, eff_cum, pr["dt"], k, rng)
             else:
@@ -3804,15 +3917,19 @@ class DDLEngine:
         self._dump_meta(out, sizes)
         total = sum(sizes.values())
         dev = total / self.rows - 1
+        fixed_fanout = getattr(self, "fixed_fanout", None) or {}
         free = [
             t
             for t in self.nrows
-            if self.roles[t] not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC) and t not in getattr(self, "pinned_rows", {})
+            if self.roles[t] not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC)
+            and t not in getattr(self, "pinned_rows", {})
+            and t not in fixed_fanout  # derived from its parent, so it follows rather than scales
         ]
         if abs(dev) > tolerance and _attempt < 3 and free:
             k = self.rows / total
             for t in free:
                 self.nrows[t] = max(50, int(self.nrows[t] * k))
+            self._apply_fanout(self.nrows)  # the tree follows its root
             self.rng = random.Random(self.seed)
             self.pools, self.refs, self._fact_rows, self._pending_dim_rows = {}, {}, {}, {}
             self.__dict__.pop("_pool_key_idx", None)

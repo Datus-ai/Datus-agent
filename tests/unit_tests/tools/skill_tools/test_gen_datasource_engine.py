@@ -3346,3 +3346,143 @@ def test_a_declared_key_is_never_second_guessed(engine_module):
 
     assert eng.natural_keys == {}
     assert eng.pk_owner["airport_pk"] == "airports"
+
+
+# --------------------------------------------------- a fan-out that IS the grain
+
+FANOUT_DDL = """
+CREATE TABLE lots (
+    lot_id VARCHAR PRIMARY KEY,
+    started_at TIMESTAMP,
+    priority VARCHAR,
+    target_yield_pct DECIMAL(5, 2)
+);
+CREATE TABLE units (
+    unit_key VARCHAR PRIMARY KEY,
+    lot_id VARCHAR REFERENCES lots(lot_id),
+    slot_no INTEGER,
+    scrapped BOOLEAN
+);
+CREATE TABLE unit_tests (
+    test_key VARCHAR PRIMARY KEY,
+    unit_key VARCHAR REFERENCES units(unit_key),
+    site_no INTEGER,
+    passed BOOLEAN,
+    reading DOUBLE
+);
+"""
+# `lots` carries one ratio and a timestamp, which reads as a dimension; a fan-out has to hang off
+# something calibration can scale and the detail generator can read rows from, so the root is
+# declared a fact. The pre-check refuses the other arrangement rather than half-working.
+FANOUT_PROFILE = {
+    "roles": {"lots": "fact", "units": "detail", "unit_tests": "detail"},
+    "per_parent": {"units": 16, "unit_tests": 10},
+}
+
+
+@pytest.mark.acceptance
+def test_a_declared_fan_out_is_exact(engine_module, tmp_path):
+    """For a whole class of schema the fan-out IS the grain - a lot has exactly 16 units, a unit
+    exactly 10 measured sites - and there was no way to say so. The engine offers a stochastic 1.8
+    lines per parent, which destroys that grain, and pinning `table_rows` expresses the counts but
+    leaves calibration nothing to scale (measured: pins 24% over budget that three passes could
+    not recover). Faced with those two, a production run abandoned the engine and hand-wrote 886
+    lines of generator - 24 minutes of its 44.
+    """
+    _eng, con = _build(engine_module, FANOUT_DDL, tmp_path, rows=40000, profile=FANOUT_PROFILE)
+
+    per_lot = con.execute("SELECT min(c), max(c) FROM (SELECT count(*) c FROM units GROUP BY lot_id)").fetchone()
+    per_unit = con.execute(
+        "SELECT min(c), max(c) FROM (SELECT count(*) c FROM unit_tests GROUP BY unit_key)"
+    ).fetchone()
+    orphans = con.execute(
+        "SELECT count(*) FROM unit_tests t LEFT JOIN units u USING (unit_key) WHERE u.unit_key IS NULL"
+    ).fetchone()[0]
+
+    assert per_lot == (16, 16), f"exactly 16, not a spread around it: {per_lot}"
+    assert per_unit == (10, 10), per_unit
+    assert orphans == 0
+
+
+@pytest.mark.acceptance
+def test_the_budget_still_lands_with_a_fan_out(engine_module, tmp_path):
+    """The fan-out tables are DERIVED, not pinned: calibration scales the root and the tree
+    follows, so `rows=` still means something. Pinning them instead is what made the budget
+    unreachable."""
+    eng, con = _build(engine_module, FANOUT_DDL, tmp_path, rows=40000, profile=FANOUT_PROFILE)
+
+    total = sum(con.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in ("lots", "units", "unit_tests"))
+
+    assert "units" not in eng.pinned_rows, "derived, not pinned"
+    assert abs(total / 40000 - 1) < 0.10, f"{total:,} against a 40,000 budget"
+
+
+@pytest.mark.acceptance
+def test_a_child_is_never_generated_before_its_parent(engine_module):
+    """Dependency COUNT is not a topological order, and the difference is not cosmetic.
+
+    In a chain A -> B -> C inside one role bucket, B and C both have one dependency, so the tie
+    broke on dict order. The child then found its parent with no refs yet, `_parent_of` called it
+    an orphan and `_gen_detail` fell through to `_gen_fact`, which invents the key: measured on a
+    12-table foundry DDL, the deepest table came out **100% orphaned against its parent** on the
+    stock engine with no profile at all.
+    """
+    eng = engine_module.DDLEngine(FANOUT_DDL, rows=40000, profile=FANOUT_PROFILE)
+    order = eng._topo()
+
+    assert order.index("lots") < order.index("units") < order.index("unit_tests"), order
+
+
+@pytest.mark.acceptance
+def test_a_key_cycle_does_not_hang_the_order(engine_module):
+    """A cycle inside one bucket has no topological order at all. Emit what is left rather than
+    spin: a cycle is the DDL's to fix, and generation still has to finish."""
+    eng = engine_module.DDLEngine(
+        "CREATE TABLE a (a_id VARCHAR PRIMARY KEY, b_id VARCHAR, amt DECIMAL(18, 2), dt TIMESTAMP);"
+        "CREATE TABLE b (b_id VARCHAR PRIMARY KEY, a_id VARCHAR, amt DECIMAL(18, 2), dt TIMESTAMP);",
+        rows=8000,
+        profile={},
+    )
+
+    order = eng._topo()
+
+    assert sorted(order) == ["a", "b"], order
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_on_the_wrong_kind_of_table_says_so(engine_module):
+    """The row count is honoured for every role, because every generator reads `nrows`. One row
+    per parent is the detail generator's mechanism, so a table planned as something else gets the
+    count and not the grain - and is told, rather than half-working in silence."""
+    eng = engine_module.DDLEngine(
+        FANOUT_DDL,
+        rows=40000,
+        profile={"roles": {"lots": "fact", "units": "event"}, "per_parent": {"units": 16}},
+    )
+    err, warn = eng.precheck(strict=False)
+
+    assert err == [], f"the parent is a fact, so the arrangement is legal: {err}"
+    assert any("units" in w and "not one row per parent" in w for w in warn), warn
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_rooted_in_a_dimension_is_refused(engine_module):
+    """Calibration never scales a dimension and the detail generator cannot read rows from one, so
+    a tree rooted there gets neither the budget nor the grain. Measured before the guard: 5,487
+    rows against a 40,000 budget, and 2 to 76 units per lot instead of 16."""
+    eng = engine_module.DDLEngine(
+        FANOUT_DDL, rows=40000, profile={"roles": {"units": "detail"}, "per_parent": {"units": 16}}
+    )
+    err, _warn = eng.precheck(strict=False)
+
+    assert eng.roles["lots"] == "dim", "the premise: this DDL reads as a dimension"
+    assert any("has to hang off a fact or a detail" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_a_fan_out_with_no_parent_is_refused(engine_module):
+    """'N rows per parent row' has no meaning for a table that references nothing."""
+    eng = engine_module.DDLEngine(FANOUT_DDL, rows=40000, profile={"per_parent": {"lots": 4}})
+    err, _warn = eng.precheck(strict=False)
+
+    assert any("has no parent to count from" in e for e in err), err
