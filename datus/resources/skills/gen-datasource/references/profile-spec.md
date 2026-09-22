@@ -19,7 +19,7 @@ data. The profile is what makes it look real.
 | Row allocation | Fact layer 65-75%, dimensions derived from business density, two-pass total calibration (within 6%) |
 | Keys with no `_id` | A table that declares no PRIMARY KEY and has no `_id` / `_key` column is keyed by the column **named after the table** — `airports.airport_code`, `skus.sku`, `countries.country_code`, `articles.article_slug`, `orders.order_uuid`. A column ending in that key name is read as a foreign key to it (`routes.origin_airport_code` -> `airports.airport_code`). `orders.currency_code` is NOT a key — the suffix is not the signal, the match with its own table is. All of it is listed under `INFERRED keys` in `report()`; declare anything it got wrong |
 | Directed edges | Two foreign keys to the SAME parent whose names read as the two ends of one edge (`origin`/`destination`, `from`/`to`, `source`/`target`, `sender`/`receiver`, `depart`/`arrive`) never land on the same row: a route from an airport to itself is not a route. A pair OUTSIDE that vocabulary is left alone, because two keys to one parent are often meant to agree (`orders(billing_address_id, shipping_address_id)`) |
-| Real values for a key | `joint` is the way to give a key column real-world values (`joint: {airports: [{cols: [airport_code, city], values: [[ATL, Atlanta], ...]}]}`) - `enums`, `vocab` and `columns[...]['values']` do not apply to a key. A key-bearing group is drawn WITHOUT replacement and its weights are ignored, so **the number of combinations you supply is the table's row count** and the pre-check says when it caps one. Do not try to fix a key afterwards: `pre_sql` cannot UPDATE a key another table references |
+| Real values for a key | `joint` is the way to give a key column real-world values (`joint: {airports: [{cols: [airport_code, city], values: [[ATL, Atlanta], ...]}]}`) - `enums`, `vocab` and `columns[...]['values']` do not apply to a key. A key-bearing group is drawn WITHOUT replacement and its weights are ignored, so **the number of combinations you supply is the table's row count** and the pre-check says when it caps one. Do not try to fix a key afterwards with `pre_sql`: it runs before the constraints go on, so the UPDATE is legal, but a rewritten key still has to stay unique and every child still has to point at a value that exists, or that child ships without its constraints |
 | Denormalised copies | A column this table declares that its PARENT also carries is copied down from the parent row, not sampled again - so `flights.origin_code` agrees with the route it points at |
 | The 17 invariants | Weighted calendar sampling, derived-from-base quantities, child events anchored to parents, monotonic sequences, complete terminal states, FKs sampled from upstream only, layer backfill, stock baseline, zero header/detail amount drift |
 | Type contract | Tables are created with the declared types (a BIGINT key stays BIGINT; DECIMAL(18,2) does not become DOUBLE) |
@@ -140,7 +140,7 @@ with `naming`; to force a code onto an enum-looking column, set it to `text` in 
 | `refund_rate` | Probability a detail line carries a refund | The default 5.5% is wrong for the industry |
 | `effective_col` | Which column makes an entity usable | Inference picked the wrong date, or there is none to find |
 | `no_date_dim` / `date_dim_name` | Suppress or rename the auto-built date dimension | Only with `extra_tables` including `date_dim` |
-| `pre_sql` / `extra_sql` | Business post-processing SQL. **One SQL string, or a list of statements** (`["UPDATE ...", "UPDATE ..."]`); anything else is refused by `precheck()` before generating. `pre_sql` runs before the summary layer, `extra_sql` after | **Last resort**, when nothing above can express it |
+| `pre_sql` / `extra_sql` | Business post-processing SQL. **One SQL string, or a list of statements** (`["UPDATE ...", "UPDATE ..."]`); anything else is refused by `precheck()` before generating. `pre_sql` runs before the summary layer, `extra_sql` after. Both run **before the declared constraints are applied**, so an UPDATE of a key or foreign-key column is legal; a statement that leaves a child pointing at a missing parent costs that child its constraints, and the build says which | **Last resort**, when nothing above can express it |
 | `weekly_shape` | How a week looks: `weekend_heavy` (default, consumer retail), `weekday_heavy` (B2B, payroll, clinics, booking desks) or `flat` (metering, sensors, always-on). **Set it** - the default is a consumer shop, so a B2B dataset left alone has its busiest days on the weekend. `check_datasource_quality` reads it from the generator metadata and verifies *that* shape, so `flat` passes as flat rather than failing for having no cycle - and declaring a shape the data does not show still fails | an unsupported value is refused by `precheck`, not swapped for the default; `weekend_lift` overrides the number outright |
 | `trend_mom` | Month-over-month growth | Default 0.031 |
 | `table_comments` / `column_comments` | Comments | Recommended wherever a definition is not obvious |
@@ -206,7 +206,10 @@ path** (declared or inferred); without one the pre-check errors out.
 
 ⚠️ **Cross-table grouping resolves on fact and detail tables only.** A downstream, event or metric
 table drops its parent entity before the column is filled, so `upstream_table.column` there falls
-back to `__default__` without saying so. Same-table `__by__` works on every role.
+back to `__default__` without saying so. Same-table `__by__` works on every role. On a detail
+table the upstream may be a dimension it references OR the parent it hangs off - a fact or another
+detail: `delays.delay_minutes by flights.status`, `sensor_readings.value_double by
+flight_sensors.series_name`.
 
 Measured: `item.unit_price` grouped by `prod.category` puts 3C in [500,900] and apparel in [30,90],
 cleanly separated.
@@ -396,6 +399,9 @@ to work out what `refund_rate` did.
 - **A daily metric table (`metric_daily`) uses only the first group**, and the combination count is
   truncated to `rows / days` - to get 16 combinations x 518 days, `table_rows` must be >= 8288 or the
   combinations get cut
+- **Applies to dimension, fact, detail and downstream tables alike.** On a detail or downstream
+  table the group is drawn per row, with replacement, so `flight_sensors(series_name, unit)` keeps
+  its channels and units paired; a key-bearing group has no meaning there
 
 ### lifecycle - multi-stage business timestamps (created -> paid -> shipped -> completed)
 
@@ -423,6 +429,12 @@ to work out what `refund_rate` did.
   Without this you get "an order from a year ago is still pending", which reads as fake instantly
 - Without `lifecycle`, every timestamp is randomised independently: out of order within a day and
   inconsistent with the status
+- **Applies to fact and detail tables alike** - an alert per flight, a claim line per claim. On a
+  detail table the chain starts from the parent row's timestamp
+- **Audit columns are not stages.** `created_at`, `updated_at`, `loaded_at` and their kin are
+  aligned to the first business timestamp and not counted, so `(created_at, resolved_at)` has ONE
+  stage: write `stages: {"OPEN": 0, "RESOLVED": 1}`. A stage number past the business timestamps
+  downgrades every row carrying that status, and the pre-check warns when it sees one
 
 ### columns - per-column parameters (full key list)
 
@@ -557,22 +569,22 @@ completely, and the final month's YoY can collapse from +40% to +3%. The data is
 quality check cannot see it - only a YoY question exposes it. Either pull the window inside the
 cut-off, or move the cut-off past the window.
 
-**5. `pre_sql` cannot UPDATE a foreign-key column.** DuckDB refuses to rewrite a column that
-children reference, so `UPDATE flights SET origin_code = ...` fails once anything points at it -
-and a run that met this spent rounds working out why a statement its pre-check had validated
-still would not execute. The pre-check plans against an empty schema, where no child rows exist
-yet, so it cannot see this coming.
+**5. An UPDATE of a foreign-key column in `pre_sql` is legal, but check that it was needed.**
+DuckDB refuses to rewrite a key or foreign-key column while children reference the row, so
+`UPDATE flights SET origin_code = ...` used to fail after a full generate pass, on a statement the
+pre-check had planned as fine. The SQL now runs before the constraints go on, so it executes; what
+remains is that the values it writes are what the constraints are then applied to.
 
-**The way out is usually not needing the UPDATE at all.** A denormalised column that also exists
+**The UPDATE is usually not needed at all.** A denormalised column that also exists
 on a parent table is copied down from the row it belongs to, so `flights.origin_code` already
 agrees with its route before any SQL runs - measured at 0 disagreements over 7,520 rows.
 
 If the value really is yours to compute, **the result still has to be a key that exists in the
 parent**: the column is a foreign key, and a computed value that no parent row carries is an
-orphan the quality check will find. Do not reach for dropping the `REFERENCES` to make the UPDATE
-legal - the constraint is part of what the dataset ships (it disappears from the built database,
-and the agent reads relationships off the schema), and nothing replaces it: a column with no
-REFERENCES has nothing enforcing its domain at all.
+orphan: the child cannot be re-created with its `REFERENCES`, so it ships without its constraints
+and the build says so. The constraint is part of what the dataset ships (the agent reads
+relationships off the schema), and nothing replaces it: a column with no REFERENCES has nothing
+enforcing its domain at all.
 
 **6. Do not group `conditional` by a tier column - the grouping is circular.** A column matching
 `tier|level|grade|segment` is relabelled from actual contribution AFTER every table is generated

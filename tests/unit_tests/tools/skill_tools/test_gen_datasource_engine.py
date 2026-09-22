@@ -3486,3 +3486,299 @@ def test_a_fan_out_with_no_parent_is_refused(engine_module):
     err, _warn = eng.precheck(strict=False)
 
     assert any("has no parent to count from" in e for e in err), err
+
+
+# --------------------------------------------------------------------------- detail-table profile blocks
+#
+# Four profile blocks that `report()` listed as "in effect" on a detail table and the detail
+# generator never read: a cross-table `conditional` whose upstream is the parent fact, a `joint`
+# group, `columns[...]['range']` on a count, and `lifecycle`. Measured on one run: 7 of its 17
+# assertions failed on the first check, and 10 minutes went into diagnosing the engine.
+
+FLIGHT_DDL = """
+CREATE TABLE carriers (
+    carrier_id VARCHAR PRIMARY KEY,
+    name VARCHAR
+);
+CREATE TABLE aircraft (
+    aircraft_id VARCHAR PRIMARY KEY,
+    carrier_id VARCHAR REFERENCES carriers(carrier_id),
+    model VARCHAR,
+    in_service BOOLEAN
+);
+CREATE TABLE flights (
+    flight_id VARCHAR PRIMARY KEY,
+    carrier_id VARCHAR REFERENCES carriers(carrier_id),
+    aircraft_id VARCHAR REFERENCES aircraft(aircraft_id),
+    scheduled_departure TIMESTAMP,
+    passenger_count INTEGER,
+    status VARCHAR, -- ON_TIME / DELAYED
+    revenue_amt DECIMAL(12, 2)
+);
+CREATE TABLE delays (
+    delay_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    delay_type VARCHAR, -- NONE / WEATHER / AIRLINE
+    delay_minutes INTEGER,
+    pax_qty INTEGER
+);
+CREATE TABLE flight_alerts (
+    alert_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    priority VARCHAR,
+    alert_status VARCHAR, -- OPEN / RESOLVED
+    created_at TIMESTAMP,
+    resolved_at TIMESTAMP
+);
+CREATE TABLE flight_sensors (
+    sensor_id VARCHAR PRIMARY KEY,
+    flight_id VARCHAR REFERENCES flights(flight_id),
+    series_id VARCHAR UNIQUE,
+    series_name VARCHAR,
+    unit VARCHAR
+);
+CREATE TABLE sensor_readings (
+    reading_id VARCHAR PRIMARY KEY,
+    series_id VARCHAR REFERENCES flight_sensors(series_id),
+    ts TIMESTAMP,
+    value_double DOUBLE
+);
+"""
+
+FLIGHT_BASE = {
+    "semantics": {"flight_sensors.series_name": "enum"},
+    "enums": {"series_name": ["ALTITUDE", "AIRSPEED"], "unit": ["ft", "knots"]},
+    "per_parent": {"delays": 1, "flight_alerts": 1, "flight_sensors": 2, "sensor_readings": 2},
+}
+
+
+def _flights(engine_module, tmp_path, **profile):
+    return _build(engine_module, FLIGHT_DDL, tmp_path, rows=6000, profile={**FLIGHT_BASE, **profile})
+
+
+@pytest.mark.acceptance
+def test_a_detail_conditional_may_group_by_its_parent_fact(engine_module, tmp_path):
+    """The parent of a detail table is not in `pools`, so the only way a child row sees it is
+    through `refs` - and those carried the key, the date and the status, never the column a
+    `__by__` named. `delays.delay_minutes by flights.status` resolved to nothing and used
+    `__default__` on every row, while `report()` printed the rule as in effect: the delayed /
+    on-time ratio came out 1.011 against an assertion of 5+."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        conditional={
+            "delays.delay_minutes": {
+                "__by__": "flights.status",
+                "ON_TIME": [0, 8],
+                "DELAYED": [100, 180],
+                "__default__": [40, 60],
+            },
+            "delays.delay_type": {
+                "__by__": "flights.status",
+                "ON_TIME": {"NONE": 1.0},
+                "DELAYED": {"WEATHER": 0.5, "AIRLINE": 0.5},
+                "__default__": {"AIRLINE": 1.0},
+            },
+        },
+    )
+
+    minutes = {
+        s: (lo, hi)
+        for s, lo, hi in con.execute(
+            "SELECT f.status, min(d.delay_minutes), max(d.delay_minutes)"
+            " FROM delays d JOIN flights f USING (flight_id) GROUP BY 1"
+        ).fetchall()
+    }
+    assert set(minutes) == {"ON_TIME", "DELAYED"}, minutes
+    assert minutes["DELAYED"][0] >= 100, minutes
+    assert minutes["ON_TIME"][1] <= 8, minutes
+    types = con.execute(
+        "SELECT f.status, list(DISTINCT d.delay_type) FROM delays d JOIN flights f USING (flight_id) GROUP BY 1"
+    ).fetchall()
+    kinds = {s: set(v) for s, v in types}
+    assert kinds["ON_TIME"] == {"NONE"}, kinds
+    assert "NONE" not in kinds["DELAYED"], kinds
+
+
+@pytest.mark.acceptance
+def test_a_detail_conditional_may_group_by_a_parent_detail(engine_module, tmp_path):
+    """Two levels down: the readings hang off the sensor row, which is itself a detail. The
+    parent's `refs` entry has to carry `series_name` for the band to resolve."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        conditional={
+            "sensor_readings.value_double": {
+                "__by__": "flight_sensors.series_name",
+                "ALTITUDE": [10000, 40000],
+                "AIRSPEED": [100, 600],
+                "__default__": [1, 5],
+            }
+        },
+    )
+
+    bands = {
+        s: (lo, hi)
+        for s, lo, hi in con.execute(
+            "SELECT s.series_name, min(r.value_double), max(r.value_double)"
+            " FROM sensor_readings r JOIN flight_sensors s USING (series_id) GROUP BY 1"
+        ).fetchall()
+    }
+    assert set(bands) == {"ALTITUDE", "AIRSPEED"}, bands
+    assert bands["ALTITUDE"][0] >= 10000, bands
+    assert bands["AIRSPEED"][1] <= 600, bands
+
+
+@pytest.mark.acceptance
+def test_a_joint_group_on_a_detail_table_is_drawn(engine_module, tmp_path):
+    """`_joint_plan` sizes its draw to a row count known up front, which a detail table does not
+    have, so the detail generator never called it - `flight_sensors(series_name, unit)` came out
+    `SERIES5 / UNIT3` under a group `report()` had listed as in effect."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        joint={
+            "flight_sensors": [{"cols": ["series_name", "unit"], "values": [["ALTITUDE", "ft"], ["AIRSPEED", "knots"]]}]
+        },
+    )
+
+    combos = set(con.execute("SELECT series_name, unit FROM flight_sensors GROUP BY 1, 2").fetchall())
+    assert combos == {("ALTITUDE", "ft"), ("AIRSPEED", "knots")}, combos
+
+
+@pytest.mark.acceptance
+def test_a_count_range_is_honoured_on_a_fact_and_on_a_detail(engine_module, tmp_path):
+    """The skeleton offers `columns['t.col']['range']` for every numeric column, and the fact and
+    detail generators drew a count from a fixed 1-5 without looking: `passenger_count` declared
+    (70, 250) averaged 1.85, and the run reclassified it as a measure to get around it."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        columns={"flights.passenger_count": {"range": (70, 250)}, "delays.pax_qty": {"range": (50, 90)}},
+    )
+
+    lo, hi = con.execute("SELECT min(passenger_count), max(passenger_count) FROM flights").fetchone()
+    assert 70 <= lo and hi <= 250, (lo, hi)
+    lo, hi = con.execute("SELECT min(pax_qty), max(pax_qty) FROM delays").fetchone()
+    assert 50 <= lo and hi <= 90, (lo, hi)
+
+
+@pytest.mark.acceptance
+def test_a_lifecycle_on_a_detail_table_truncates_by_stage(engine_module, tmp_path):
+    """`lifecycle` was read by `_gen_fact` alone. An alert per flight is a detail table, so its
+    stages were ignored and every OPEN alert carried a `resolved_at` - the run's own assertion
+    "open alerts are unresolved" failed on 888 rows."""
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        lifecycle={"flight_alerts": {"gap_hours": [0], "stages": {"OPEN": 0, "RESOLVED": 1}}},
+    )
+
+    by_status = dict(
+        con.execute("SELECT alert_status, count(resolved_at) * 1.0 / count(*) FROM flight_alerts GROUP BY 1").fetchall()
+    )
+    assert set(by_status) == {"OPEN", "RESOLVED"}, by_status
+    assert by_status["OPEN"] == 0, by_status
+    assert by_status["RESOLVED"] == 1, by_status
+    assert con.execute("SELECT count(*) FROM flight_alerts WHERE resolved_at < created_at").fetchone()[0] == 0
+    assert (
+        con.execute(
+            "SELECT count(*) FROM flight_alerts a JOIN flights f USING (flight_id)"
+            " WHERE a.created_at < f.scheduled_departure"
+        ).fetchone()[0]
+        == 0
+    ), "a detail chain starts from the parent row's timestamp"
+
+
+@pytest.mark.acceptance
+def test_a_stage_past_the_business_timestamps_is_warned_about(engine_module):
+    """`created_at` is an audit column, aligned to the first business timestamp and not a stage,
+    so `(created_at, resolved_at)` has one stage - and `stages: {OPEN: 1, RESOLVED: 2}`, the
+    natural reading, downgrades every RESOLVED row to OPEN without a word."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={**FLIGHT_BASE, "lifecycle": {"flight_alerts": {"stages": {"OPEN": 1, "RESOLVED": 2}}}},
+    )
+    err, warn = eng.precheck(strict=False)
+
+    assert err == [], err
+    hit = [w for w in warn if w.startswith("lifecycle[flight_alerts]")]
+    assert hit and "created_at" in hit[0] and "audit" in hit[0], warn
+
+
+# --------------------------------------------------------------------------- pre_sql runs before the constraints
+
+
+@pytest.mark.acceptance
+def test_pre_sql_may_update_a_foreign_key_column_that_children_reference(engine_module, tmp_path):
+    """DuckDB rewrites an UPDATE of an indexed column as delete + insert and refuses the delete
+    while a child references the row. With the constraints on before the SQL ran, `UPDATE flights
+    SET carrier_id = ...` died after a full generate pass, on a statement the pre-check had
+    planned as fine - EXPLAIN never fires a constraint. A run spent five minutes finding which of
+    its eight statements it was."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={**FLIGHT_BASE, "pre_sql": ["UPDATE flights SET carrier_id = (SELECT min(carrier_id) FROM carriers)"]},
+    )
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = eng.generate(str(out))
+    con = duckdb.connect(str(out), read_only=True)
+
+    assert result["degraded"] == [], result["degraded"]
+    assert con.execute("SELECT count(DISTINCT carrier_id) FROM flights").fetchone()[0] == 1, "the UPDATE ran"
+    kinds = {(t, k) for t, k in con.execute("SELECT table_name, constraint_type FROM duckdb_constraints()").fetchall()}
+    assert ("flights", "FOREIGN KEY") in kinds and ("delays", "FOREIGN KEY") in kinds, kinds
+    assert not [
+        t for (t,) in con.execute("SELECT table_name FROM duckdb_tables()").fetchall() if t.startswith("_stage")
+    ], "the constraint-free copies are gone"
+
+
+@pytest.mark.acceptance
+def test_pre_sql_that_orphans_a_child_costs_that_child_its_constraints_not_the_build(engine_module, tmp_path):
+    """The other side of running the SQL first: a statement that removes parents no longer fails
+    mid-SQL. The child cannot be re-created with its REFERENCES, so it ships constraint-free and
+    the build names it and why - the same path a generated UNIQUE violation already takes."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={**FLIGHT_BASE, "pre_sql": ["DELETE FROM flights WHERE status = 'DELAYED'"]},
+    )
+    out = tmp_path / "t.duckdb"
+    with contextlib.redirect_stdout(io.StringIO()):
+        result = eng.generate(str(out))
+
+    assert any(d.startswith("delays:") for d in result["degraded"]), result["degraded"]
+    con = duckdb.connect(str(out), read_only=True)
+    assert con.execute("SELECT count(*) FROM flights WHERE status = 'DELAYED'").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM delays").fetchone()[0] > 0, "the child table is still delivered"
+
+
+# --------------------------------------------------------------------------- two inferences a run paid a turn for
+
+
+@pytest.mark.acceptance
+@pytest.mark.parametrize(
+    ("column", "dtype", "sem"),
+    [
+        ("in_service", "BOOLEAN", "flag"),
+        ("active", "BOOLEAN", "flag"),
+        ("priority", "VARCHAR", "enum"),
+        ("severity", "VARCHAR", "enum"),
+    ],
+)
+def test_a_boolean_is_a_flag_and_a_priority_is_an_enum(engine_module, column, dtype, sem):
+    """`aircraft.in_service BOOLEAN` and `flight_alerts.priority` came out as free text, and the
+    plan listed them under "unrecognised". A BOOLEAN can only be a flag whatever its name, and
+    priority / severity are categorical wherever they appear."""
+    assert engine_module._semantic(column, dtype) == sem
+
+
+@pytest.mark.acceptance
+def test_the_two_inferences_reach_the_schema(engine_module):
+    eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile=FLIGHT_BASE)
+
+    assert _sem(eng, "aircraft", "in_service") == "flag"
+    assert _sem(eng, "flight_alerts", "priority") == "enum"
