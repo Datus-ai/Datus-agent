@@ -408,3 +408,27 @@ def test_every_metric_table_contributes_its_funnel():
     derive = namespace["PROFILE"]["derive"]
     assert {"channel_daily.clicks", "channel_daily.sessions"} <= set(derive)
     assert {"campaign_daily.clicks", "campaign_daily.purchasers"} <= set(derive)
+
+
+# --------------------------------------------------------------------------- planning under a profile
+
+
+def test_a_profile_changes_the_plan(capsys):
+    """The profile used to be deliberately not an argument, and two measured runs answered "what
+    will the engine do with my per_parent / dim_rows" in a 60,000-token design turn instead. The
+    plan under a candidate profile is the same 0.3-second call."""
+    bare, _ = plan_from_ddl(DDL, rows=20_000, months=6)
+    under, _ = plan_from_ddl(DDL, rows=20_000, months=6, profile={"trend_mom": 0.0})
+
+    assert bare != under, "the profile has to reach the engine"
+    assert "profile validated" in under or "pre-check" in under, under
+
+
+def test_the_tool_accepts_the_profile_as_json_or_as_the_gen_py_literal():
+    from datus.tools.func_tool.database import _parse_profile_text
+
+    assert _parse_profile_text('{"trend_mom": 0.02}') == {"trend_mom": 0.02}
+    literal = '{"columns": {"t.c": {"range": (9, 320)}}, "per_parent": {"d": 0.25},}'
+    assert _parse_profile_text(literal) == {"columns": {"t.c": {"range": (9, 320)}}, "per_parent": {"d": 0.25}}
+    with pytest.raises((ValueError, SyntaxError)):
+        _parse_profile_text("__import__('os').system('id')")

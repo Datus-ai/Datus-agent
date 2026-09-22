@@ -513,6 +513,45 @@ class DDLEngine:
                     self._partial_enums = getattr(self, "_partial_enums", set()) | {col}
         return out
 
+    def _shared_key_hints(self):
+        """An `_id` column two undeclared tables share, guessed as the key of the wrong one.
+
+        `flight_sensors(sensor_id, flight_id, series_id, series_name, unit)` and
+        `sensor_readings(series_id, ts, value_double)`: the first-id-column guess hands `series_id`
+        to `sensor_readings`, so the readings become a 20-row dimension and the sensors point at
+        it - backwards. The table that also carries `series_name` is the one that owns the series.
+        Measured on two bare-DDL runs, this single misread opened the design turn both times.
+        Reported as a proposal with the two lines to declare, not flipped silently: an inferred
+        foreign key to a non-primary column is a shape the generators do not carry yet.
+        """
+        cache = self.__dict__.get("_shared_key_hint_cache")
+        if cache is not None:
+            return cache
+        out = []
+        for t, cols in self.schema.items():
+            if self.decl_pk.get(t):
+                continue
+            key = self.pk_of(t)
+            if self.pk_owner.get(key) != t or not key.endswith("_id"):
+                continue
+            stem = key[:-3] + "_"
+            for other, ocols in self.schema.items():
+                if other == t or self.decl_pk.get(other):
+                    continue
+                onames = [c["name"] for c in ocols]
+                if key not in onames or self.pk_of(other) == key:
+                    continue
+                siblings = [n for n in onames if n != key and n.startswith(stem)]
+                if not siblings:
+                    continue
+                out.append(
+                    f"{t}.{key} is guessed as the key of {t}, but {other} also carries it next to "
+                    f"{', '.join(siblings[:3])} - so {other} probably owns the {key[:-3]} and {t} references it. "
+                    f"If so, declare `{key} VARCHAR UNIQUE` on {other} and `REFERENCES {other}({key})` on {t}.{key}"
+                )
+        self._shared_key_hint_cache = out
+        return out
+
     def _natural_keys(self):
         """Tables keyed by a name rather than by an `_id`, where the DDL declared nothing.
 
@@ -972,20 +1011,32 @@ class DDLEngine:
             if r == ROLE_DATE:
                 n[t] = len(self.days)
         n.update({t: v for t, v in pinned.items() if t in self.schema})  # an explicit user value wins over everything
+        # An integer is an exact count per parent row; a fraction in (0, 1) is the share of parent
+        # rows that get exactly one row - a sparse child (a delay record on a quarter of flights).
+        # There was no way to say the second, and a measured run spent a third of its design turn
+        # reasoning about row budgets and DELETE statements to fake it.
         self.fixed_fanout = {
-            t: int(k)
+            t: (int(k) if k >= 1 else float(k))
             for t, k in (self.profile.get("per_parent", {}) or {}).items()
-            if t in self.schema and isinstance(k, (int, float)) and int(k) >= 1
+            if t in self.schema and isinstance(k, (int, float)) and not isinstance(k, bool) and k > 0
         }
         self._apply_fanout(n)
         # A key-bearing `joint` group is the row count: ten real airports means ten rows, and
         # asking for more can only be answered with a duplicate key. Recorded so the pre-check can
         # say it happened rather than leaving the caller to wonder why `dim_rows` was ignored.
+        # And the row count, not only a ceiling: 54 real airports supplied against a plan of 13
+        # used 13 of them, and a run spent a fix round pinning `dim_rows` to what it had already
+        # written out. An explicit pin still wins, capped at the combinations that exist.
         self._joint_clamped = {}
         for t in list(n):
             limit = self._joint_key_limit(t)
-            if limit is not None and n[t] > limit:
-                self._joint_clamped[t] = (n[t], limit)
+            if limit is None:
+                continue
+            if t in pinned and t in self.schema:
+                if n[t] > limit:
+                    self._joint_clamped[t] = (n[t], limit)
+                    n[t] = limit
+            else:
                 n[t] = limit
         self.nrows = n
 
@@ -1449,8 +1500,11 @@ class DDLEngine:
             if t not in self.schema:
                 err.append(f"per_parent: table `{t}` is not in the DDL")
                 continue
-            if not isinstance(k, (int, float)) or int(k) < 1:
-                err.append(f"per_parent[{t}]: {k!r} is not a row count; give a whole number >= 1")
+            if not isinstance(k, (int, float)) or isinstance(k, bool) or k <= 0:
+                err.append(
+                    f"per_parent[{t}]: {k!r} is not a fan-out; give a whole number >= 1 (rows per parent row) "
+                    f"or a fraction between 0 and 1 (the share of parent rows that get one row)"
+                )
                 continue
             if not self._fanout_parent(t):
                 err.append(
@@ -1646,6 +1700,11 @@ class DDLEngine:
             out.append('    "conditional": {   # one dimension behaving differently from another')
             out.append(f"        # Grouping columns available on the fact layer: {', '.join(fact_enums[:8])}")
             out.append("    },")
+        out.append('    "per_parent": {   # rows per parent row, for a child whose fan-out IS the grain')
+        out.append("        #   a whole number: exactly N rows per parent (16 wafers per lot)")
+        out.append("        #   a fraction 0-1: a sparse child, one row on that share of parents (0.25 = a delay")
+        out.append("        #   record on a quarter of flights). No DELETE in pre_sql, no row-budget arithmetic.")
+        out.append("    },")
 
         # Every metric table, not just the first: one "derive" block holding all of them. Emitting
         # a second block would be a duplicate key that silently overwrites the first, and stopping
@@ -1736,17 +1795,26 @@ class DDLEngine:
         if fan:
             print(
                 "fixed fan-out: "
-                + ", ".join(f"{t} = {k} x {self._fanout_parent(t) or '?'}" for t, k in sorted(fan.items()))
+                + ", ".join(
+                    (
+                        f"{t} = one row on {k:.0%} of {self._fanout_parent(t) or '?'}"
+                        if isinstance(k, float)
+                        else f"{t} = {k} x {self._fanout_parent(t) or '?'}"
+                    )
+                    for t, k in sorted(fan.items())
+                )
                 + " (derived from the parent, so calibration scales the parent and these follow)"
             )
         nat = getattr(self, "natural_keys", None) or {}
         ren = getattr(self, "renamed_keys", None) or {}
-        if nat or ren:
+        if nat or ren or self._shared_key_hints():
             print("INFERRED keys - nothing declared these, so check them and declare any that are wrong:")
             for col, owner in sorted(nat.items(), key=lambda kv: kv[1]):
                 print(f"  {owner}.{col} reads as the key of {owner} (the column is named after the table)")
             for (t, col), (owner, key) in sorted(ren.items()):
                 print(f"  {t}.{col} -> {owner}.{key} (the key under a longer name)")
+            for line in self._shared_key_hints():
+                print(f"  {line}")
         for t, col in sorted(getattr(self, "_demoted", {}).items()):
             print(
                 f"! {t} carries measures but is planned as a dimension, because "
@@ -3607,7 +3675,12 @@ class DDLEngine:
         for pi, pr in enumerate(prefs):
             # A declared fan-out is a count, not a mean: `_lines_for` spreads around it, which is
             # right for order lines and wrong for the 16 wafers in a lot.
-            k = exact if exact else self._lines_for(lines_per_doc, rng)
+            if isinstance(exact, float):  # a sparse child: this parent has one row, or none
+                k = 1 if rng.random() < exact else 0
+                if k == 0:
+                    continue  # and no `agg` entry: the parent keeps the amounts it already has
+            else:
+                k = exact if exact else self._lines_for(lines_per_doc, rng)
             if pool and eff_cum:
                 picks = self._pick_items(pool, eff_sorted, eff_cum, pr["dt"], k, rng)
             else:

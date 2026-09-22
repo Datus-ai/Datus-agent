@@ -3889,3 +3889,103 @@ def test_a_detail_with_its_own_lifecycle_anchors_its_children_to_itself(engine_m
         "SELECT count(*) FROM claim_notes n JOIN claims c USING (claim_id) WHERE n.note_ts < c.filed_at"
     ).fetchone()[0]
     assert before == 0, f"{before} notes precede the claim they belong to"
+
+
+# --------------------------------------------------------------------------- what the design turn kept working out by hand
+#
+# Two bare-DDL runs spent a third of a 60,000-token design turn on the same three questions:
+# how to make a child sparse (a delay on a quarter of the flights), why the plan sized `airports`
+# at 13 when 54 were supplied, and who owns `series_id`. Each has a mechanical answer now.
+
+
+@pytest.mark.acceptance
+def test_a_fractional_fan_out_is_a_sparse_child(engine_module, tmp_path):
+    """`per_parent` only took whole numbers, so "one delay record on a quarter of the flights" had
+    no expression: the run planned a row budget for 1.8 lines per parent and a DELETE in pre_sql
+    to thin it. A fraction is the share of parents that get exactly one row; the rest get none,
+    and keep the amounts they already had."""
+    eng, con = _flights(engine_module, tmp_path, per_parent={**FLIGHT_BASE["per_parent"], "delays": 0.25})
+
+    flights = con.execute("SELECT count(*) FROM flights").fetchone()[0]
+    per_flight = dict(
+        con.execute(
+            "SELECT n, count(*) FROM (SELECT flight_id, count(*) n FROM delays GROUP BY 1) GROUP BY 1"
+        ).fetchall()
+    )
+    assert set(per_flight) == {1}, f"a sparse child has one row or none, never several: {per_flight}"
+    share = per_flight[1] / flights
+    assert 0.18 <= share <= 0.32, f"about a quarter of the flights carry a delay row, got {share:.2f}"
+    assert (
+        con.execute("SELECT count(*) FROM flights WHERE revenue_amt IS NULL OR revenue_amt = 0").fetchone()[0] == 0
+    ), "a flight without a delay row keeps its own amount"
+    assert eng.fixed_fanout["delays"] == 0.25
+
+
+@pytest.mark.acceptance
+def test_a_fractional_fan_out_is_planned_and_reported(engine_module, capsys):
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL, rows=6000, profile={**FLIGHT_BASE, "per_parent": {**FLIGHT_BASE["per_parent"], "delays": 0.25}}
+    )
+    err, _warn = eng.precheck(strict=False)
+    eng.report()
+    out = capsys.readouterr().out
+
+    assert err == [], err
+    assert eng.nrows["delays"] == max(1, int(eng.nrows["flights"] * 0.25)), (eng.nrows["delays"], eng.nrows["flights"])
+    assert "delays = one row on 25% of flights" in out, out
+
+
+@pytest.mark.parametrize("bad", [0, -1, 0.0, True, "0.25"])
+@pytest.mark.acceptance
+def test_a_fan_out_that_is_not_a_count_or_a_share_is_refused(engine_module, bad):
+    eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile={**FLIGHT_BASE, "per_parent": {"delays": bad}})
+    err, _warn = eng.precheck(strict=False)
+
+    assert any(e.startswith("per_parent[delays]") and "fraction between 0 and 1" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_the_combinations_supplied_for_a_key_are_the_row_count_not_only_a_ceiling(engine_module):
+    """Ten airports supplied against a plan of four used four of them, and the run spent a fix
+    round pinning `dim_rows` to the number it had already written out. The doc said the
+    combinations ARE the row count; the engine only capped."""
+    eng = engine_module.DDLEngine(NATURAL_KEY_DDL, rows=2000, profile=NATURAL_KEY_PROFILE)
+
+    assert eng.nrows["airports"] == len(REAL_CODES), eng.nrows
+    assert not getattr(eng, "_joint_clamped", {}), "nothing was capped, so nothing to warn about"
+
+
+@pytest.mark.acceptance
+def test_a_shared_id_column_guessed_for_the_wrong_owner_is_proposed_the_other_way(engine_module, capsys):
+    """`sensor_readings(series_id, ts, value_double)` gets `series_id` by the first-id-column
+    guess, so it becomes a 20-row dimension and `flight_sensors` points at it - backwards. The
+    table that also carries `series_name` owns the series. Both bare-DDL runs opened their design
+    turn on exactly this misread; the plan now says it, with the two lines to declare."""
+    ddl = (
+        "CREATE TABLE flights (flight_id VARCHAR, dep TIMESTAMP, revenue_amt DECIMAL(12,2));"
+        "CREATE TABLE flight_sensors (sensor_id VARCHAR, flight_id VARCHAR, series_id VARCHAR,"
+        "  series_name VARCHAR, unit VARCHAR);"
+        "CREATE TABLE sensor_readings (series_id VARCHAR, ts TIMESTAMP, value_double DOUBLE);"
+    )
+    eng = engine_module.DDLEngine(ddl, rows=6000)
+    eng.report()
+    out = capsys.readouterr().out
+
+    assert eng.pk_owner["series_id"] == "sensor_readings", "the premise: the guess is backwards"
+    hint = [ln for ln in out.splitlines() if "sensor_readings.series_id is guessed as the key" in ln]
+    assert hint, out
+    assert "series_name" in hint[0] and "REFERENCES flight_sensors(series_id)" in hint[0], hint[0]
+
+
+@pytest.mark.acceptance
+def test_no_proposal_when_the_shared_column_has_no_siblings(engine_module, capsys):
+    """`orders.customer_id` and `payments.customer_id` share a name and nothing else; a proposal
+    there would be noise on every schema with a foreign key."""
+    ddl = (
+        "CREATE TABLE customers (customer_id VARCHAR, name VARCHAR);"
+        "CREATE TABLE orders (order_id VARCHAR, customer_id VARCHAR, order_time TIMESTAMP, amount_usd DECIMAL(12,2));"
+    )
+    eng = engine_module.DDLEngine(ddl, rows=6000)
+    eng.report()
+
+    assert "is guessed as the key of" not in capsys.readouterr().out
