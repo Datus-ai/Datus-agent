@@ -69,6 +69,7 @@ from datus.cli.action_display.tool_content import (
     format_review_line,
     make_base_content,
     parse_output_data,
+    tool_specific_args_summary,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY
@@ -1219,13 +1220,62 @@ class TestBuildSearchSemanticObjects:
 
 @pytest.mark.ci
 class TestBuildListMetricsSemantic:
-    def test_compact(self):
-        a = _make(
+    def _envelope(self, items, **envelope):
+        payload = {"items": items, "total": None, "has_more": False, "extra": None}
+        payload.update(envelope)
+        return _make(
             input_data={"function_name": "list_metrics"},
-            output_data={"result": [{"name": "m1"}, {"name": "m2"}, {"name": "m3"}]},
+            output_data={"raw_output": json.dumps({"success": 1, "result": payload})},
+        )
+
+    def test_compact_counts_the_paginated_envelope(self):
+        """list_metrics answers with a FuncToolListResult, never a bare list.
+
+        Counting it as a list finds no items at all, so every call — however
+        many metrics it returned — reported zero.
+        """
+        a = self._envelope([{"name": f"m{i}"} for i in range(3)])
+        tc = _build_list_metrics_semantic(a, verbose=False)
+        assert tc.compact_result == "3 metrics"
+
+    def test_compact_reports_the_next_page(self):
+        a = self._envelope(
+            [{"name": f"m{i}"} for i in range(20)],
+            total=78,
+            has_more=True,
+            extra={"next_offset": 60},
         )
         tc = _build_list_metrics_semantic(a, verbose=False)
-        assert "3 metrics" in tc.compact_result
+        assert tc.compact_result == "20/78 metrics · more from 60"
+
+    def test_compact_distinguishes_an_empty_page(self):
+        tc = _build_list_metrics_semantic(self._envelope([]), verbose=False)
+        assert tc.compact_result == "no metrics"
+
+    def test_verbose_lists_every_metric_with_its_description(self):
+        """Verbose is the mode opened to see what came back, so it shows all of
+        it — a metric left out sends the reader to the raw JSON instead."""
+        items = [{"name": f"metric_{i}", "kind": "aggregate", "description": f"desc {i}"} for i in range(30)]
+        tc = _build_list_metrics_semantic(self._envelope(items), verbose=True)
+        rendered = "\n".join(tc.output_lines)
+        for i in range(30):
+            assert f"metric_{i}" in rendered
+            assert f"desc {i}" in rendered
+
+    def test_verbose_gives_a_composite_its_whole_formula(self):
+        """The formula is the decomposition — the reason to open verbose on a
+        scorecard — so the cell wraps it rather than clipping it."""
+        formula = "kp_store_fault * 0.15 + kp_store_issue * 0.1 + kp_top_issue * 0.2 + kp_over7d * 0.1"
+        items = [
+            {"name": "area_score", "kind": "expression", "derive_family": "compose", "derive_expr": formula},
+            {"name": "rank_it", "kind": "ratio", "derive_family": "window", "derive_base": "area_score"},
+        ]
+        tc = _build_list_metrics_semantic(self._envelope(items), verbose=True)
+        rendered = " ".join(" ".join(line.split()) for line in tc.output_lines)
+        assert "…" not in rendered
+        for term in formula.split(" + "):
+            assert term in rendered
+        assert "window of area_score" in rendered
 
 
 @pytest.mark.ci
@@ -1244,8 +1294,59 @@ class TestBuildGetMetric:
             },
         )
         tc = _build_get_metric(a, verbose=False)
-        assert "2 dimensions" in tc.compact_result
-        assert "region" in tc.compact_result
+        # The header already carries the metric name, and dimension names do not
+        # fit a one-line result — the counts are what differ between the parallel
+        # get_metric calls an agent fires.
+        assert tc.compact_result == "2 dims"
+
+    def test_compact_counts_the_required_dimensions(self):
+        """The one field that changes a query's meaning without failing it, so
+        it earns room on the compact line even when dimension names do not."""
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": json.dumps(
+                    {
+                        "success": 1,
+                        "result": {
+                            "name": "area_score",
+                            "dimensions": [{"name": f"d{i}"} for i in range(6)],
+                            "required_dimensions": ["cell.brand", "cell.area"],
+                        },
+                    }
+                )
+            },
+        )
+        tc = _build_get_metric(a, verbose=False)
+        assert tc.compact_result == "6 dims · 2 required"
+
+    def test_verbose_marks_a_required_dimension_over_its_recommendation(self):
+        """The two signals disagree on a scorecard: the adapter infers a market
+        code is a poor grouping choice while the metric cannot be computed
+        without it. Showing "not advised" would name the one dimension the
+        query is refused without."""
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": json.dumps(
+                    {
+                        "success": 1,
+                        "result": {
+                            "name": "area_score",
+                            "required_dimensions": ["cell.brand"],
+                            "dimensions": [
+                                {"name": "cell.brand", "recommended": False},
+                                {"name": "cell.month", "recommended": True, "recommendation_source": "inferred:time"},
+                            ],
+                        },
+                    }
+                )
+            },
+        )
+        tc = _build_get_metric(a, verbose=True)
+        rendered = [" ".join(line.split()) for line in tc.output_lines]
+        assert any(line.startswith("cell.brand required") for line in rendered)
+        assert not any("not advised" in line for line in rendered)
 
     def test_compact_reports_unresolved_dimensions(self):
         a = _make(
@@ -1279,13 +1380,66 @@ class TestBuildQueryMetrics:
         tc = _build_query_metrics(a, verbose=False)
         assert "2 rows" in tc.compact_result
 
-    def test_compact_fallback(self):
+    def test_compact_reports_columns_without_a_row_count(self):
         a = _make(
             input_data={"function_name": "query_metrics"},
             output_data={"raw_output": '{"success": 1, "result": {"columns": ["a"], "data": "a\\n1"}}'},
         )
         tc = _build_query_metrics(a, verbose=False)
-        assert "Query completed" in tc.compact_result
+        assert tc.compact_result == "1 col"
+
+    def test_compact_discloses_a_truncated_preview(self):
+        """The row count is what the query produced, not what came back.
+
+        A result trimmed from 32 rows to 21 read as a complete 32, so a caller
+        could total a column and be wrong with nothing having failed.
+        """
+        a = _make(
+            input_data={"function_name": "query_metrics"},
+            output_data={
+                "raw_output": json.dumps(
+                    {
+                        "success": 1,
+                        "result": {
+                            "columns": ["m", "d", "v"],
+                            "data": {
+                                "original_rows": 32,
+                                "is_compressed": True,
+                                "removed_columns": [],
+                                "compressed_data": "\n".join(["m,d,v"] + ["1,2,3"] * 21),
+                            },
+                            "metadata": {"row_count": 32},
+                        },
+                    }
+                )
+            },
+        )
+        tc = _build_query_metrics(a, verbose=False)
+        assert tc.compact_result == "32 rows × 3 cols · preview 21"
+
+    def test_compact_discloses_dropped_columns(self):
+        a = _make(
+            input_data={"function_name": "query_metrics"},
+            output_data={
+                "raw_output": json.dumps(
+                    {
+                        "success": 1,
+                        "result": {
+                            "columns": ["m", "d"],
+                            "data": {
+                                "original_rows": 4,
+                                "is_compressed": True,
+                                "removed_columns": ["x", "y"],
+                                "compressed_data": "\n".join(["m,d"] + ["1,2"] * 4),
+                            },
+                            "metadata": {"row_count": 4},
+                        },
+                    }
+                )
+            },
+        )
+        tc = _build_query_metrics(a, verbose=False)
+        assert tc.compact_result == "4 rows × 2 cols · 2 cols dropped"
 
     def test_verbose_csv_preview(self):
         a = _make(
@@ -1307,18 +1461,49 @@ class TestBuildValidateSemantic:
             output_data={"raw_output": '{"success": 1, "result": {"valid": true, "issues": []}}'},
         )
         tc = _build_validate_semantic(a, verbose=False)
-        assert "Valid" in tc.compact_result
+        assert tc.compact_result == "valid"
 
-    def test_compact_invalid(self):
+    def test_compact_keeps_warnings_on_a_valid_model(self):
+        """A valid model still reports what it warned about.
+
+        A relationship whose target is not unique silently fans a join out, and
+        a bare "valid" drops exactly the finding a caller would have acted on.
+        """
+        a = _make(
+            input_data={"function_name": "validate_semantic"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"valid": true, "issues": '
+                '[{"severity": "warning", "message": "a"}, {"severity": "warning", "message": "b"}]}}'
+            },
+        )
+        tc = _build_validate_semantic(a, verbose=False)
+        assert tc.compact_result == "valid · 2 warnings"
+
+    def test_compact_invalid_counts_errors_not_every_issue(self):
+        """Warnings are not errors. Counting the whole issue list called a
+        model with one error and one warning "2 validation errors"."""
         a = _make(
             input_data={"function_name": "validate_semantic"},
             output_data={
                 "raw_output": '{"success": 1, "result": {"valid": false, "issues": '
-                '[{"severity": "error", "message": "bad"}, {"severity": "warn", "message": "meh"}]}}'
+                '[{"severity": "error", "message": "bad"}, {"severity": "warning", "message": "meh"}]}}'
             },
         )
         tc = _build_validate_semantic(a, verbose=False)
-        assert "2 validation errors" in tc.compact_result
+        assert tc.compact_result == "1 error"
+
+    def test_verbose_shows_each_issue_message(self):
+        a = _make(
+            input_data={"function_name": "validate_semantic"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"valid": true, "issues": '
+                '[{"severity": "warning", "message": "relationship_target_not_unique on kpi_cell"}]}}'
+            },
+        )
+        tc = _build_validate_semantic(a, verbose=True)
+        rendered = " ".join(" ".join(line.split()) for line in tc.output_lines)
+        assert "valid · 1 warning" in rendered
+        assert "relationship_target_not_unique on kpi_cell" in rendered
 
 
 @pytest.mark.ci
@@ -2425,3 +2610,79 @@ class TestBuilderReviewLine:
         assert plain.compact_result_overflow == 7
         assert reviewed.compact_result_lines == plain.compact_result_lines
         assert reviewed.compact_result_overflow == plain.compact_result_overflow
+
+
+@pytest.mark.ci
+class TestSemanticToolHeaders:
+    """The ``tool(...)`` header for the five semantic tools.
+
+    Without a registered formatter these fell to the generic fallback, which
+    takes the first two non-empty args — for ``list_metrics`` that is the paging
+    pair, the least informative thing the call carries — and quotes every value,
+    so a list of metrics rendered as its Python repr.
+    """
+
+    def _header(self, function_name, arguments):
+        a = _make(input_data={"function_name": function_name, "arguments": json.dumps(arguments)})
+        tc = ToolCallContentBuilder().build(a, verbose=False)
+        return tc.args_summary
+
+    def test_list_metrics_hides_the_default_page(self):
+        assert self._header("list_metrics", {"limit": 200, "offset": 0}) == ""
+
+    def test_list_metrics_shows_the_path_and_a_real_offset(self):
+        assert self._header("list_metrics", {"path": ["Finance", "Revenue"]}) == '"Finance/Revenue"'
+        assert self._header("list_metrics", {"limit": 20, "offset": 40}) == "offset: 40"
+
+    def test_get_metric_names_the_metric_positionally(self):
+        assert self._header("get_metric", {"name": "area_score"}) == '"area_score"'
+
+    def test_query_metrics_shows_what_was_measured_and_how_it_was_cut(self):
+        header = self._header(
+            "query_metrics",
+            {
+                "metrics": ["area_score"],
+                "dimensions": ["metric_time", "kpi_cell.merge_area_name", "kpi_cell.merge_brand_name"],
+                "time_granularity": "month",
+                "time_start": "2026-08-01",
+                "time_end": "2026-09-01",
+            },
+        )
+        # ``metric_time`` renders as the grain it was asked at, the dataset
+        # prefixes drop, and a whole calendar month collapses to the month.
+        assert header == '"area_score" by month × merge_area_name, merge_brand_name · 2026-08'
+
+    def test_query_metrics_keeps_a_window_that_is_not_a_whole_month(self):
+        header = self._header(
+            "query_metrics",
+            {"metrics": ["revenue"], "time_start": "2026-08-01", "time_end": "2026-08-15"},
+        )
+        assert header == '"revenue" · 2026-08-01→2026-08-15'
+
+    def test_query_metrics_counts_the_other_metrics(self):
+        header = self._header("query_metrics", {"metrics": ["a", "b", "c"], "dimensions": ["region"]})
+        assert header == '"a" +2 by region'
+
+    def test_validate_semantic_hides_the_default_scope(self):
+        assert self._header("validate_semantic", {"scope": "all"}) == ""
+        assert self._header("validate_semantic", {"scope": "semantic_model"}) == '"semantic_model"'
+
+    def test_a_formatter_showing_nothing_is_not_a_fallback(self):
+        """An empty header is a decision, not a failure to find one.
+
+        Treating "" as "no formatter matched" handed the line straight back to
+        the generic fallback the formatter exists to replace — which is how
+        ``list_metrics(limit: "200", offset: "0")`` survived having a formatter.
+        """
+        assert (
+            tool_specific_args_summary(
+                _make(input_data={"function_name": "list_metrics", "arguments": json.dumps({"limit": 200})})
+            )
+            == ""
+        )
+        assert (
+            tool_specific_args_summary(
+                _make(input_data={"function_name": "no_such_tool", "arguments": json.dumps({"a": 1})})
+            )
+            is None
+        )
