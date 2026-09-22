@@ -539,9 +539,115 @@ class TestQueryMetricsCompression:
             )
 
         assert result.result["columns"] == ["metric_time__day", "revenue", "cost"]
-        assert result.result["metadata"]["sql"] == "SELECT ..."
         assert result.result["metadata"]["row_count"] == 1
         assert result.result["metadata"]["_full_result_cache_key"]
+
+    def test_query_metrics_drops_the_compiled_sql_body(self, semantic_tools):
+        """A non-dry-run result does not carry the compiled SQL.
+
+        The SQL dominates the payload while the rows it produced sit beside it,
+        and nothing outside dry-run publish evidence reads it.
+        """
+        query_result = QueryResult(
+            columns=["revenue"],
+            data=[{"revenue": 500}],
+            metadata={"sql": "SELECT " + "x, " * 5000 + "1", "row_count": 1},
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"])
+
+        metadata = result.result["metadata"]
+        assert "sql" not in metadata
+        assert metadata["row_count"] == 1
+
+    def test_query_metrics_dry_run_keeps_the_compiled_sql_body(self, semantic_tools):
+        """dry_run exists to return the SQL, and publish evidence hashes it."""
+        query_result = QueryResult(columns=["sql"], data=[], metadata={"sql": "SELECT 1", "dry_run": True})
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["revenue"], dry_run=True)
+
+        assert result.result["metadata"]["sql"] == "SELECT 1"
+        assert "sql_sha256" not in result.result["metadata"]
+
+    def test_query_metrics_columns_match_the_rows_after_column_compression(self, semantic_tools):
+        """``columns`` describes what ``data`` holds, never the pre-compression set.
+
+        Reporting a dropped column would send the caller looking for a column
+        that is not in the payload. Driven with a deliberately tiny budget so
+        column compression is guaranteed to fire regardless of the production
+        budget.
+        """
+        from datus.utils.compress_utils import DataCompressor
+
+        semantic_tools.compressor = DataCompressor(model_name="gpt-4o", token_threshold=32)
+        columns = [f"metric_{index}" for index in range(12)]
+        query_result = QueryResult(
+            columns=columns,
+            data=[{name: 987654321 + index for index, name in enumerate(columns)} for _ in range(5)],
+            metadata={},
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=columns)
+
+        compressed = result.result["data"]
+        removed = set(compressed["removed_columns"])
+        assert removed, "expected this payload to exceed the budget and drop columns"
+        assert result.result["columns"] == [name for name in columns if name not in removed]
+        assert not removed & set(result.result["columns"])
+
+    def test_query_metrics_gives_up_the_last_requested_metric_first(self, semantic_tools):
+        """Columns are dropped from the far end of the request, not the middle.
+
+        Result column order follows adapter compilation, so dropping from the
+        middle discards whichever metric happens to land there — in practice the
+        one asked for first. The caller's own ordering is the only statement of
+        importance available.
+        """
+        from datus.utils.compress_utils import DataCompressor
+
+        semantic_tools.compressor = DataCompressor(model_name="gpt-4o", token_threshold=32)
+        requested = [f"metric_{index}" for index in range(8)]
+        # The adapter emits them in an unrelated order.
+        emitted = requested[4:] + requested[:4]
+        query_result = QueryResult(
+            columns=emitted,
+            data=[{name: 987654321 for name in emitted} for _ in range(4)],
+            metadata={},
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=requested)
+
+        removed = result.result["data"]["removed_columns"]
+        assert removed, "expected this payload to exceed the budget and drop columns"
+        # Whatever survives, the first-requested metric outlives the last one.
+        assert requested[0] not in removed
+        assert requested[-1] in removed
+        # Drops proceed from the end of the request backwards.
+        assert removed == requested[: -len(removed) - 1 : -1]
+
+    def test_query_metrics_budget_keeps_a_wide_metric_row_intact(self, semantic_tools):
+        """The production budget must not drop metric columns from a normal query.
+
+        16 metrics across 32 grouped rows is an ordinary decomposition query; the
+        previous 1024-token budget dropped metric columns from it, which is what
+        made a composite metric unverifiable against its inputs.
+        """
+        columns = ["metric_time__month", "area", "brand"] + [f"metric_{index}" for index in range(16)]
+        rows = [
+            {name: (f"v{row}" if index < 3 else row * 100 + index) for index, name in enumerate(columns)}
+            for row in range(32)
+        ]
+        query_result = QueryResult(columns=columns, data=rows, metadata={})
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=columns[3:], dimensions=columns[:3])
+
+        assert result.result["data"]["removed_columns"] == []
+        assert result.result["columns"] == columns
 
     def test_query_metrics_dry_run_records_compiled_sql(self, semantic_tools):
         evidence = GenerationEvidence()
@@ -594,7 +700,7 @@ class TestQueryMetricsCompression:
         meta = result.result["metadata"]
         # Non-serializable entries are dropped; serializable ones pass through.
         assert "dataflow_plan" not in meta
-        assert meta["sql"] == "SELECT 1"
+        assert "sql" not in meta
         assert meta["count"] == 42
 
     def test_query_metrics_compressed_data_contains_original_columns(self, semantic_tools):
@@ -887,7 +993,7 @@ class TestAllToolsName:
 
         names = SemanticTools.all_tools_name()
         assert "list_metrics" in names
-        assert "get_dimensions" in names
+        assert "get_metric" in names
         assert "query_metrics" in names
         assert "validate_semantic" in names
         assert "attribution_analyze" in names
@@ -929,7 +1035,7 @@ class TestAvailableTools:
         names = [tool.name for tool in tools]
         assert names == [
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "validate_semantic",
             "attribution_analyze",
@@ -981,7 +1087,7 @@ class TestAvailableTools:
             names = [tool.name for tool in tools]
             assert names == [
                 "list_metrics",
-                "get_dimensions",
+                "get_metric",
                 "query_metrics",
                 "validate_semantic",
                 "attribution_analyze",
@@ -1374,7 +1480,8 @@ class TestListMetrics:
         mock_metric.format = None
         mock_metric.path = ["Ignored", "Adapter", "Path"]
         mock_metric.metadata = {
-            "inputs": [{"name": "orders", "offset_window": "1 month"}],
+            "base_kind": "aggregate",
+            "time_dimension": "orders.ordered_at",
             "non_serializable": object(),
         }
 
@@ -1383,26 +1490,111 @@ class TestListMetrics:
 
         assert result.success == 1
         envelope = result.result
+        # A summary row: identity and derivation only. ``measures`` (compiled
+        # internal names), the adapter's always-empty ``dimensions``, and unset
+        # unit/format stay out — get_metric carries the per-metric detail.
         assert envelope["items"] == [
             {
                 "name": "orders",
                 "description": "Order count",
-                "type": "count",
-                "dimensions": [],
-                "measures": [],
-                "unit": None,
-                "format": None,
+                "kind": "aggregate",
+                "time_dimension": "orders.ordered_at",
+                # The knowledge-base path wins over the adapter's own ``path``.
                 "path": ["Commerce", "Orders"],
-                "metadata": {"inputs": [{"name": "orders", "offset_window": "1 month"}]},
             }
         ]
         assert envelope["total"] is None
         assert envelope["has_more"] is False
         assert envelope["extra"] is None
-        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
+        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
         # Contract: list_metrics MUST NOT carry compressor artefacts anymore.
         assert "compressed_data" not in envelope
         assert "original_rows" not in envelope
+
+    @pytest.mark.parametrize(
+        "limit, offset, expected_limit, expected_offset",
+        [
+            ("200", "0", 200, 0),  # both stringified, as a model actually sent them
+            ("50", 0, 50, 0),
+            (50, "10", 50, 10),
+            ("abc", 0, 200, 0),  # unusable -> default, not a failed call
+            (None, None, 200, 0),
+            ("null", "none", 200, 0),
+            (0, -5, 1, 0),  # clamped: a zero page or negative offset means nothing
+        ],
+    )
+    def test_paging_bounds_accept_what_a_model_actually_sends(
+        self, semantic_tools_with_adapter, limit, offset, expected_limit, expected_offset
+    ):
+        """A schema declaring ``int`` does not stop a model sending ``"200"``.
+
+        Adapters slice and add with these values, so a string arrives as
+        ``TypeError: slice indices must be integers`` — a failed call whose error
+        tells the caller nothing about what to do differently.
+        """
+        tool, mock_adapter = semantic_tools_with_adapter
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
+            result = tool.list_metrics(limit=limit, offset=offset)
+
+        assert result.success == 1
+        assert mock_adapter.list_metrics.call_args.kwargs["limit"] == expected_limit
+        assert mock_adapter.list_metrics.call_args.kwargs["offset"] == expected_offset
+
+    def test_paging_bounds_reach_the_adapter_as_ints(self, semantic_tools_with_adapter):
+        """Coercion must produce real ints — ``"200"`` slices nothing."""
+        tool, mock_adapter = semantic_tools_with_adapter
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
+            tool.list_metrics(limit="200", offset="0")
+
+        kwargs = mock_adapter.list_metrics.call_args.kwargs
+        assert type(kwargs["limit"]) is int
+        assert type(kwargs["offset"]) is int
+
+    def test_summary_row_carries_the_dependency_edges(self, semantic_tools_with_adapter):
+        """derive_expr / derive_base are what make a composite metric decomposable.
+
+        Without them a caller sees that a metric is derived but not from what, so
+        it cannot walk from a total down to the inputs that moved it.
+        """
+        tool, _ = semantic_tools_with_adapter
+        tool.metric_rag.search_all_metrics.return_value = []
+        composed = Mock()
+        composed.name = "area_score"
+        composed.description = "Weighted total"
+        composed.type = "expression"
+        composed.path = None
+        composed.unit = None
+        composed.format = None
+        composed.metadata = {
+            "base_kind": "expression",
+            "derive_family": "compose",
+            "derive_expr": "kp_tel * 0.1 + sla_score * 0.1",
+        }
+        ranked = Mock()
+        ranked.name = "store_issue_num_rn"
+        ranked.description = "Rank"
+        ranked.type = "ratio"
+        ranked.path = None
+        ranked.unit = None
+        ranked.format = None
+        ranked.metadata = {
+            "base_kind": "ratio",
+            "derive_family": "window",
+            "derive_base": "store_issue_num",
+        }
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[composed, ranked]):
+            result = tool.list_metrics()
+
+        items = {item["name"]: item for item in result.result["items"]}
+        assert items["area_score"]["derive_expr"] == "kp_tel * 0.1 + sla_score * 0.1"
+        assert items["area_score"]["derive_family"] == "compose"
+        assert "derive_base" not in items["area_score"]
+        assert items["store_issue_num_rn"]["derive_base"] == "store_issue_num"
+        assert items["store_issue_num_rn"]["derive_family"] == "window"
+        assert "derive_expr" not in items["store_issue_num_rn"]
 
     def test_filters_path_with_kb_and_does_not_pass_path_to_adapter(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -1553,8 +1745,14 @@ class TestListMetrics:
             result = tool.list_metrics()
 
         assert result.success == 1
-        assert result.result["items"][0]["metadata"] == {}
-        assert result.result["items"][0]["path"] is None
+        item = result.result["items"][0]
+        # Unusable metadata degrades to the adapter's own ``type`` rather than
+        # failing the listing.
+        assert item["kind"] == "count"
+        assert not any(key.startswith("derive_") for key in item)
+        # The KB knows no path for this metric, so the adapter's own path must
+        # not leak in as a substitute.
+        assert item.get("path") is None
 
     def test_no_path_keeps_adapter_available_when_kb_read_fails(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -1566,8 +1764,8 @@ class TestListMetrics:
 
         assert result.success == 1
         assert result.result["items"][0]["name"] == "orders"
-        assert result.result["items"][0]["path"] is None
-        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
+        assert result.result["items"][0].get("path") is None
+        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
 
     def test_path_query_fails_when_kb_read_fails(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -1589,24 +1787,171 @@ class TestListMetrics:
         assert "adapter error" in result.error
 
 
-class TestGetDimensions:
-    def test_with_adapter(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=["date", "region"]):
-            result = tool.get_dimensions("revenue")
+def _detail_metric(name, metadata, measures=("m",)):
+    metric = Mock()
+    metric.name = name
+    metric.description = f"{name} description"
+    metric.type = metadata.get("base_kind")
+    metric.measures = list(measures)
+    metric.unit = None
+    metric.format = None
+    metric.path = None
+    metric.metadata = metadata
+    return metric
+
+
+class TestGetMetric:
+    RANKED = {
+        "base_kind": "ratio",
+        "derive_family": "window",
+        "derive_base": "store_issue_num",
+        "time_dimension": "cell.month_key",
+        "window": {
+            "base": "store_issue_num",
+            "rank": {
+                "function": "rank",
+                "order": {"by": "value", "direction": "asc"},
+                "partition": {"mode": "query_dimensions_except", "exclude": ["cell.brand"]},
+            },
+        },
+        "datasets": ["repair"],
+    }
+
+    @staticmethod
+    def _wire(metrics, dimensions=("cell.brand", "cell.area"), dimension_rows=None):
+        """Route the two adapter coroutines this tool awaits, in call order."""
+        dimension_rows = dimension_rows if dimension_rows is not None else [{"name": name} for name in dimensions]
+
+        def dispatch(coro):
+            # ``list_metrics`` is awaited once for the catalog, then
+            # ``get_dimensions`` once for the resolved metric.
+            dispatch.calls += 1
+            return metrics if dispatch.calls == 1 else dimension_rows
+
+        dispatch.calls = 0
+        return patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch)
+
+    def test_no_adapter_returns_error(self, semantic_tools_ext):
+        result = semantic_tools_ext.get_metric(name="revenue")
+
+        assert result.success == 0
+        assert "semantic adapter" in result.error.lower()
+
+    @pytest.mark.parametrize("name", ["", "   ", None, "null"])
+    def test_rejects_a_missing_name(self, semantic_tools_with_adapter, name):
+        tool, _ = semantic_tools_with_adapter
+
+        result = tool.get_metric(name=name)
+
+        assert result.success == 0
+        assert "requires a metric name" in result.error
+
+    def test_returns_detail_and_queryable_dimensions(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric("store_issue_num_rn", self.RANKED)
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="store_issue_num_rn")
 
         assert result.success == 1
-        envelope = result.result
-        assert envelope["items"] == [{"name": "date"}, {"name": "region"}]
-        assert envelope["total"] == 2
-        assert envelope["has_more"] is False
-        assert envelope["extra"] == {
-            "time_dimension": None,
-            "time_granularities": [],
-        }
+        item = result.result
+        assert item["derive_base"] == "store_issue_num"
+        assert item["window"]["rank"]["order"]["direction"] == "asc"
+        assert item["datasets"] == ["repair"]
+        assert [dimension["name"] for dimension in item["dimensions"]] == ["cell.brand", "cell.area"]
 
-    def test_returns_time_query_capabilities_in_existing_envelope(self, semantic_tools_with_adapter):
+    def test_omits_compiled_measure_names(self, semantic_tools_with_adapter):
+        """Compiled measure names are unusable as tool arguments and dominate
+        the row, so they stay out of the detail exactly as they stay out of the
+        summary."""
         tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric("area_score", {"base_kind": "expression"}, measures=["a_very_long_compiled_name"] * 21)
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="area_score")
+
+        assert "measures" not in result.result
+
+    def test_passes_through_the_dimensions_the_adapter_says_are_required(self, semantic_tools_with_adapter):
+        """The requirement is the adapter's answer, carried verbatim.
+
+        Which dimensions a metric needs before its partitions mean anything can
+        depend on metrics the adapter never published — a composite inherits the
+        requirement from its inputs. Deriving it here from the partition rule
+        would report "no requirement" for exactly those metrics, so the field is
+        passed through and never reconstructed.
+        """
+        tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric(
+            "area_score",
+            {"base_kind": "expression", "derive_family": "compose", "required_dimensions": ["cell.brand", "cell.area"]},
+        )
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="area_score")
+
+        assert result.result["required_dimensions"] == ["cell.brand", "cell.area"]
+
+    def test_keeps_the_field_absent_when_the_adapter_reports_nothing(self, semantic_tools_with_adapter):
+        """A metric whose window excludes a dimension but that publishes no
+        requirement must not grow one here: absence means the adapter did not
+        say, and inventing an answer from the rule is what got it wrong."""
+        tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric("store_issue_num_rn", self.RANKED)
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="store_issue_num_rn")
+
+        assert "required_dimensions" not in result.result
+
+    def test_unknown_name_fails_with_the_name(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="no_such_metric")
+
+        assert result.success == 0
+        assert "no_such_metric" in result.error
+        assert "list_metrics" in result.error
+
+    def test_dimension_failure_keeps_the_rest_of_the_detail(self, semantic_tools_with_adapter):
+        """Detail a caller can use should survive one failing sub-query."""
+        tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})
+
+        def dispatch(coro):
+            dispatch.calls += 1
+            if dispatch.calls == 1:
+                return [metric]
+            raise RuntimeError("planner unavailable")
+
+        dispatch.calls = 0
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch):
+            result = tool.get_metric(name="kpi_issues")
+
+        assert result.success == 1
+        assert result.result["kind"] == "aggregate"
+        assert "planner unavailable" in result.result["dimensions_error"]
+        assert "dimensions" not in result.result
+
+    def test_catalog_failure_is_reported(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("catalog down")):
+            result = tool.get_metric(name="kpi_issues")
+
+        assert result.success == 0
+        assert "catalog down" in result.error
+
+    def test_promotes_the_time_axis_off_the_dimension_rows(self, semantic_tools_with_adapter):
+        """The time contract is one answer per metric, not per dimension.
+
+        The adapter reports it on whichever dimension is the primary time axis;
+        repeating it on every row would restate the same answer N times.
+        """
+        tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric("event_total", {"base_kind": "aggregate"})
         dimensions = [
             {
                 "name": "event_month",
@@ -1624,49 +1969,79 @@ class TestGetDimensions:
             },
         ]
 
-        with patch(
-            "datus.tools.func_tool.semantic_tools._run_async",
-            return_value=dimensions,
-        ):
-            result = tool.get_dimensions("event_total")
+        with self._wire([metric], dimension_rows=dimensions):
+            result = tool.get_metric(name="event_total")
 
         assert result.success == 1
-        assert result.result["extra"] == {
-            "time_dimension": "event_month",
-            "time_granularities": ["month", "quarter", "year"],
-        }
-        assert "is_primary_time" not in result.result["items"][0]
-        assert "time_granularities" not in result.result["items"][0]
-        assert result.result["items"][0]["recommended"] is True
-        assert result.result["items"][0]["recommendation_source"] == "inferred:time"
-        assert result.result["items"][1]["recommended"] is False
-        assert result.result["items"][1]["recommendation_source"] == "inferred:primary_key"
+        assert result.result["time_dimension"] == "event_month"
+        assert result.result["time_granularities"] == ["month", "quarter", "year"]
+        for row in result.result["dimensions"]:
+            assert "is_primary_time" not in row
+            assert "time_granularities" not in row
+        # The grouping recommendation is per dimension, so unlike the time axis
+        # it stays on the row instead of being promoted to the metric.
+        assert result.result["dimensions"][0]["recommended"] is True
+        assert result.result["dimensions"][0]["recommendation_source"] == "inferred:time"
+        assert result.result["dimensions"][1]["recommended"] is False
+        assert result.result["dimensions"][1]["recommendation_source"] == "inferred:primary_key"
 
-    def test_no_adapter_returns_error(self, semantic_tools_ext):
-        result = semantic_tools_ext.get_dimensions("revenue")
+    def test_describes_a_metric_that_only_a_later_catalog_page_holds(self, semantic_tools_with_adapter):
+        """Every name list_metrics can hand out, get_metric has to accept.
 
-        assert result.success == 0
-        assert "semantic adapter" in result.error.lower()
-
-    def test_with_path_passes_to_adapter(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
-
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=["date"]):
-            result = tool.get_dimensions("revenue", path=["Finance"])
-
-        assert result.success == 1
-        envelope = result.result
-        assert envelope["items"] == [{"name": "date"}]
-        mock_adapter.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
-
-    def test_exception_returns_failure(self, semantic_tools_with_adapter):
+        list_metrics pages the catalog, so it will report names past the first
+        page. Resolving those against a single bounded read answers "unknown
+        metric" for a metric the caller was just told exists.
+        """
         tool, _ = semantic_tools_with_adapter
+        wanted = _detail_metric("revenue", {"base_kind": "aggregate"})
+        pages = [
+            [_detail_metric(f"filler_{index}", {"base_kind": "aggregate"}) for index in range(3)],
+            [wanted],
+            [],
+        ]
+        dimension_rows = [{"name": "cell.brand"}]
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("conn error")):
-            result = tool.get_dimensions("revenue")
+        def dispatch(coro):
+            if pages:
+                return pages.pop(0)
+            return dimension_rows
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch):
+            result = tool.get_metric(name="revenue")
+
+        assert result.success == 1
+        assert result.result["name"] == "revenue"
+
+    def test_unknown_name_fails_once_the_catalog_runs_out(self, semantic_tools_with_adapter):
+        """Paging to the end of the catalog is an unknown metric, not a failure
+        to read it: the caller needs to fix the name, not retry."""
+        tool, _ = semantic_tools_with_adapter
+        pages = [[_detail_metric("revenue", {"base_kind": "aggregate"})], []]
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: pages.pop(0)):
+            result = tool.get_metric(name="no_such_metric")
 
         assert result.success == 0
-        assert "conn error" in result.error
+        assert "no_such_metric" in result.error
+        assert "list_metrics" in result.error
+
+    def test_resolves_the_name_against_the_whole_catalog_not_the_path(self, semantic_tools_with_adapter):
+        """Name resolution must scope exactly the way list_metrics scopes it.
+
+        list_metrics filters by knowledge-base subject path and asks the adapter
+        for its unfiltered catalog. Narrowing the adapter read by path here would
+        make get_metric reject names list_metrics had just handed out under that
+        same path.
+        """
+        tool, mock_adapter = semantic_tools_with_adapter
+        metric = _detail_metric("revenue", {"base_kind": "aggregate"})
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="revenue", path=["Finance"])
+
+        assert result.success == 1
+        assert mock_adapter.list_metrics.call_args.kwargs["path"] is None
+        mock_adapter.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
 
 
 class TestValidateSemantic:

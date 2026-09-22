@@ -12,10 +12,11 @@ Use the narrow metric workflow below:
    - When the subject tree gives a direct metric/path match, do not call `search_metrics`; use that metric name and path directly.
 3. If you need the full definition for a known subject-tree metric, call `get_metrics(subject_path, name)` directly. Do not use `search_metrics` just to confirm a known metric.
 4. Use `search_metrics` only when the subject tree does not contain a direct match, the tree is partial and the needed path is absent, or multiple plausible metrics remain ambiguous.
-5. Call `get_dimensions` before grouping, filtering, attribution, or choosing a
-   time grain. Read `extra.time_dimension` and
-   `extra.time_granularities` as discovery hints; grains are ordered finest to
-   coarsest, and the first grain is the default.
+5. Call `get_metric` before grouping, filtering, attribution, or choosing a
+   time grain. Read `time_dimension` and `time_granularities` from the result
+   row as discovery hints; grains are ordered finest to coarsest, and the first
+   grain is the default. Pass every name in `required_dimensions` to
+   `query_metrics` — the metric does not mean what it claims without them.
 6. Call `query_metrics` to retrieve metric values.
 7. For change explanation, root-cause, or contribution questions, follow the Attribution Playbook below.
 8. If no suitable existing metric can answer the question, say so directly and do not fall back to raw SQL.
@@ -28,8 +29,8 @@ Use the narrow metric workflow below:
 - `search_metrics` discovers candidate metrics only when direct subject-tree matching is insufficient.
 - `list_metrics` is for enumerating executable metrics from the semantic adapter.
 - Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":` or `"limit":`; either pass a valid value or omit the argument.
-- Prefer `get_dimensions` and `query_metrics` after a direct subject-tree match; only retrieve metric details when the answer depends on the definition text.
-- Treat `get_dimensions.extra.time_granularities` as advisory defaults, not an exhaustive allowlist. When the user explicitly requests a grain, pass it to `query_metrics` and let the semantic adapter validate it. If no grain is requested, prefer the advertised default and omit unnecessary `time_granularity`. Split metrics only after the adapter reports an incompatibility.
+- Prefer `get_metric` and `query_metrics` after a direct subject-tree match. Call `get_metrics` for the definition text only when the answer depends on it; `get_metric` is required by step 5 regardless, because the query contract it reports is not in the subject tree. `get_metric` describes one metric per call — issue the calls in parallel when you need several.
+- Treat `get_metric.time_granularities` as advisory defaults, not an exhaustive allowlist. When the user explicitly requests a grain, pass it to `query_metrics` and let the semantic adapter validate it. If no grain is requested, prefer the advertised default and omit unnecessary `time_granularity`. Split metrics only after the adapter reports an incompatibility.
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
 - Infer concrete time ranges yourself from the current date. Do not ask for a date parser tool.
 - Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions.
@@ -58,7 +59,7 @@ Use the narrow metric workflow below:
 ## Attribution Playbook
 
 - Treat attribution as descriptive change decomposition; it does not establish causation.
-- Use `get_dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
+- Use `get_metric.dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
 - `attribution_analyze` uses the same OSI half-open `[start, end)` time-range contract as `query_metrics`.
 - Use equal-length baseline and current windows. If the result contains `unequal_windows`, disclose that values were not normalized before comparing them.
 - Read the observed change from `total_change`. If `strategy` is `unsupported`, disclose `unsupported_reason` and do not give a dimension-attribution conclusion.
@@ -97,7 +98,7 @@ Use the narrow metric workflow below:
 ## Window Metric Queries
 
 {% if semantic_adapter_type == "dosi" %}
-- When a selected window metric exposes `requires_time_axis: true`, group by the reserved input dimension `metric_time` and pass the requested grain separately as `time_granularity`. Discover the available/native grains from `get_dimensions`; do not invent a concrete time field. Do not add `metric_time` solely because a metric has window metadata; value-ordered rank, value, or frame metrics may use only the business dimensions requested by the user.
+- When a selected window metric exposes `requires_time_axis: true`, group by the reserved input dimension `metric_time` and pass the requested grain separately as `time_granularity`. Discover the available/native grains from `get_metric.time_granularities`; do not invent a concrete time field. Do not add `metric_time` solely because a metric has window metadata; value-ordered rank, value, or frame metrics may use only the business dimensions requested by the user.
 - A grained time result uses the engine's suffixed output name and that name may be used as an `order_by` key. Never pass the suffixed output name in `dimensions`; Dosi query input remains `metric_time` plus `time_granularity`.
 - For cumulative metrics, use the business query grain requested by the user or documented in metric metadata/AI guidance. A metric `window.reset` value controls the reset boundary; it is not automatically the query grain.
 - For rolling metrics, `periods` counts result buckets. Choose the bucket grain from the user's request or metric guidance and pass that grain separately.

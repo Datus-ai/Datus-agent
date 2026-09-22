@@ -12,9 +12,11 @@ Architecture:
 """
 
 import json
+import re
+import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from datus.schemas.action_history import ActionHistory, ActionStatus
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, search_table_result_counts
@@ -191,6 +193,83 @@ def _format_kw(args: dict, *keys: str, max_len: int = 60) -> str:
     return ", ".join(parts)
 
 
+def _args_list_metrics(args: dict) -> str:
+    """``list_metrics(...)``: the subject path, and the offset when paging.
+
+    ``limit`` never appears. It is the caller's page size, identical on every
+    call, and showing it crowds out the two things that differ between calls.
+    """
+    parts: List[str] = []
+    path = _format_subject_path(args.get("path"))
+    if path:
+        parts.append(f'"{path}"')
+    try:
+        offset = int(args.get("offset") or 0)
+    except (TypeError, ValueError):
+        offset = 0
+    if offset:
+        parts.append(f"offset: {offset}")
+    return ", ".join(parts)
+
+
+def _args_query_metrics(args: dict) -> str:
+    """``query_metrics(...)``: what was measured, cut how, over which window.
+
+    Those three answer "is this the query I meant"; the rest of the signature
+    (``where``, ``order_by``, ``limit``, ``params``) refines a query the reader
+    can already recognize, and belongs in verbose.
+    """
+    metrics = args.get("metrics")
+    if isinstance(metrics, str):
+        metrics = [metrics]
+    names = [str(m).strip() for m in (metrics or []) if str(m or "").strip()]
+    if not names:
+        return ""
+    head = f'"{names[0]}"' if len(names) == 1 else f'"{names[0]}" +{len(names) - 1}'
+
+    dimensions = args.get("dimensions")
+    if isinstance(dimensions, str):
+        dimensions = [dimensions]
+    # ``metric_time`` is the reserved axis name, and the grain beside it is what
+    # the reader actually wants to see — so it renders as the grain, not as a
+    # dimension that looks like one of the business cuts.
+    grain = str(args.get("time_granularity") or "").strip()
+    axis = ""
+    cuts: List[str] = []
+    for dimension in dimensions or []:
+        text = str(dimension or "").strip()
+        if not text:
+            continue
+        if text == "metric_time":
+            axis = grain or "metric_time"
+        else:
+            cuts.append(_short_dimension(text))
+    # The time axis and the business cuts are different kinds of grouping, so
+    # ``×`` separates the two groups and ``,`` separates peers inside one.
+    grouping = " × ".join(part for part in (axis, ", ".join(cuts)) if part)
+    if grouping:
+        head = f"{head} by {grouping}"
+
+    window = _format_time_window(args.get("time_start"), args.get("time_end"))
+    if window:
+        head = f"{head} · {window}"
+    if args.get("dry_run"):
+        head = f"{head} · dry run"
+    return head
+
+
+def _args_validate_semantic(args: dict) -> str:
+    """``validate_semantic(...)``: only a non-default scope, and the model name."""
+    parts: List[str] = []
+    scope = str(args.get("scope") or "").strip()
+    if scope and scope != "all":
+        parts.append(f'"{scope}"')
+    name = str(args.get("semantic_model_name") or "").strip()
+    if name:
+        parts.append(f'"{name}"')
+    return ", ".join(parts)
+
+
 def _fallback_args_summary(args: dict, max_kv: int = 2, max_len: int = 40) -> str:
     """Generic fallback: show the first few non-empty args as ``k: "v"``."""
     parts: List[str] = []
@@ -272,6 +351,139 @@ def _fmt_count_with_preview(
     return f"{header}: {preview}"
 
 
+# ── Semantic tool display helpers ──────────────────────────────────
+#
+# The five semantic tools share a vocabulary — a subject path, a list of
+# dimension names, a half-open time window — so the header and the verbose
+# block read them through these rather than each spelling its own.
+
+# Verbose table column widths, in display columns. Fixed rather than fitted to
+# the widest cell: a column sized by its longest entry lets one outlier — a
+# scorecard's whole formula — squeeze every other column, and the totals here
+# keep a four-column table inside a 100-column terminal.
+_NAME_COL = 26
+_KIND_COL = 10
+_DERIVE_COL = 34
+_DESCRIPTION_COL = 34
+_DIMENSION_HINT_COL = 18
+# ``label  value`` rows sit outside the tables and wrap under their own value
+# column, so they get the rest of the same 100-column budget.
+_LABEL_VALUE_WIDTH = 76
+
+
+def _short_dimension(name: Any) -> str:
+    """A dimension's last segment: ``kpi_cell.merge_area_name`` → ``merge_area_name``.
+
+    The dataset prefix repeats on every dimension of a query, which is exactly
+    the part a reader already knows and the part that pushes the interesting
+    end of the name off the line.
+    """
+    text = str(name or "").strip()
+    return text.rsplit(".", 1)[-1] if text else ""
+
+
+def _format_subject_path(value: Any) -> str:
+    """A subject path as ``Finance/Revenue``, or "" when absent."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple)):
+        parts = [str(part).strip() for part in value if str(part or "").strip()]
+        return "/".join(parts)
+    return ""
+
+
+def _format_time_window(start: Any, end: Any) -> str:
+    """A half-open ``[start, end)`` window, collapsed when it is a whole month.
+
+    ``[2026-08-01, 2026-09-01)`` is how a query names August, so it renders as
+    ``2026-08``. Anything else keeps both bounds; the reader needs to see that
+    the window is not the calendar period they might assume.
+    """
+    start_text = str(start or "").strip()
+    end_text = str(end or "").strip()
+    if not start_text and not end_text:
+        return ""
+    if not (start_text and end_text):
+        return start_text or f"→{end_text}"
+
+    match = re.fullmatch(r"(\d{4})-(\d{2})-01", start_text)
+    if match:
+        year, month = int(match.group(1)), int(match.group(2))
+        next_month = f"{year + 1}-01-01" if month == 12 else f"{year}-{month + 1:02d}-01"
+        if end_text == next_month:
+            return f"{year}-{month:02d}"
+    return f"{start_text}→{end_text}"
+
+
+def _derivation_phrase(row: Mapping[str, Any]) -> str:
+    """How a metric derives from others, as one column of a catalog listing.
+
+    ``derive_family`` alone says a metric is derived without saying from what,
+    which is the question the column exists to answer: a window names its base,
+    a compose gives the authored formula whole.
+
+    Whole, not clipped: the cell wraps, so the column costs the rows a formula
+    actually needs and a reader sees the decomposition here instead of calling
+    ``get_metric`` for each composite to find it. Clipping on top of wrapping
+    also puts the ellipsis mid-wrap, where it reads as a broken line rather
+    than an omission.
+    """
+    family = str(row.get("derive_family") or "").strip()
+    if not family:
+        return ""
+    base = str(row.get("derive_base") or "").strip()
+    expr = _collapse_whitespace(str(row.get("derive_expr") or ""))
+    if family == "window" and base:
+        return f"window of {base}"
+    if expr:
+        return f"{family}: {expr}"
+    if base:
+        return f"{family} of {base}"
+    return family
+
+
+def _wrapped_cell_lines(text: str, width: int) -> List[str]:
+    """Wrap a description onto as many lines as it needs, never truncating.
+
+    CJK descriptions carry the sentence that tells two similarly named metrics
+    apart, so the listing gives them the room rather than cutting them short.
+    """
+    flat = _collapse_whitespace(text)
+    if not flat:
+        return []
+    return textwrap.wrap(flat, width=width) or [flat]
+
+
+def _wrapping_table_lines(
+    rows: List[List[str]],
+    headers: List[str],
+    widths: List[int],
+    indent: str = "  ",
+) -> List[str]:
+    """A fixed-width table whose cells wrap rather than truncate.
+
+    ``tabulate``'s ``maxcolwidths`` measures display columns, not characters,
+    so a CJK description wraps where it actually reaches the column edge — the
+    difference between a table that lines up and one that does not, since every
+    metric description in a Chinese model is twice as wide as its length.
+
+    Wrapping beats a truncating column here because the cells carry the content
+    a reader opened verbose for: the sentence distinguishing two similarly
+    named metrics, and the formula a composite decomposes into.
+    """
+    if not rows:
+        return []
+    from tabulate import tabulate
+
+    table = tabulate(
+        [[_collapse_whitespace(cell) for cell in row] for row in rows],
+        headers=headers,
+        tablefmt="simple",
+        maxcolwidths=widths,
+    )
+    return [f"{indent}{_escape_markup(line)}" for line in table.splitlines()]
+
+
 def _strip_legacy_preview(preview: str) -> str:
     """Convert the legacy ``\u2713 xxx`` / ``\u2717 yyy`` preview into a bare result.
 
@@ -343,6 +555,13 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "get_reference_template": lambda a: _format_positional(a, "template_id", "name"),
     "render_reference_template": lambda a: _format_positional(a, "template_id", "name"),
     "execute_reference_template": lambda a: _format_positional(a, "template_id", "name"),
+    # Semantic tools. The generic fallback takes the first two non-empty args,
+    # which for these is the paging pair — the least informative thing a call
+    # carries — and quotes every value, so a list renders as its repr.
+    "list_metrics": lambda a: _args_list_metrics(a),
+    "get_metric": lambda a: _format_positional(a, "name"),
+    "query_metrics": lambda a: _args_query_metrics(a),
+    "validate_semantic": lambda a: _args_validate_semantic(a),
     # Semantic discovery tools
     "profile_semantic_model_evidence": lambda a: _format_kw(a, "query_text", "tables", "profile_mode"),
     # Platform document tools
@@ -359,8 +578,12 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
 }
 
 
-def tool_specific_args_summary(action: ActionHistory) -> str:
-    """Return the per-tool concise args summary, or "" when no formatter applies.
+def tool_specific_args_summary(action: ActionHistory) -> Optional[str]:
+    """Return the per-tool concise args summary, or ``None`` when none applies.
+
+    ``None`` and ``""`` differ: no formatter is registered for this tool, versus
+    a formatter that decided this call's header carries nothing worth showing.
+    Only the first should reach the generic fallback.
 
     Shared by the completed-tool header (via ``set_tool_specific_args_summary``)
     and the running (PROCESSING) frame so both render args the same way — e.g.
@@ -369,20 +592,29 @@ def tool_specific_args_summary(action: ActionHistory) -> str:
     function_name = action.input.get("function_name", "") if action.input else ""
     formatter = _TOOL_ARGS_FORMATTERS.get(function_name)
     if formatter is None:
-        return ""
+        return None
     try:
         return formatter(_parse_args_dict(action)) or ""
     except Exception:  # pragma: no cover - defensive
-        return ""
+        return None
 
 
-def set_tool_specific_args_summary(tc: ToolCallContent, action: ActionHistory) -> None:
-    """Populate ``tc.args_summary`` using a per-tool formatter when available."""
+def set_tool_specific_args_summary(tc: ToolCallContent, action: ActionHistory) -> bool:
+    """Populate ``tc.args_summary`` using a per-tool formatter when available.
+
+    Returns whether a formatter claimed the header, so the caller knows not to
+    fall back. A registered formatter returning "" is deciding the header shows
+    nothing — ``list_metrics()`` on its default page, ``validate_semantic()``
+    on its default scope — and treating that as "found nothing" would hand the
+    line straight back to the generic fallback the formatter exists to replace.
+    """
     if tc.args_summary:
-        return
+        return True
     summary = tool_specific_args_summary(action)
-    if summary:
-        tc.args_summary = summary
+    if summary is None:
+        return False
+    tc.args_summary = summary
+    return True
 
 
 def extract_args(action: ActionHistory) -> List[str]:
@@ -722,6 +954,163 @@ def _format_dict_markup(d: dict, indent: str = "") -> List[str]:
             lines.append(f"{indent}  {v_esc}")
         else:
             lines.append(f"{indent}[bold]{k}[/bold]: {v_esc}")
+    return lines
+
+
+def _metric_page_header(envelope: Mapping[str, Any]) -> str:
+    """``78 metrics`` / ``20/1043 metrics · more from 60`` — this page, and what is left."""
+    count = len(envelope.get("items") or [])
+    total = envelope.get("total")
+    noun = "metric" if count == 1 else "metrics"
+    header = f"{count}/{total} {noun}" if isinstance(total, int) and total != count else f"{count} {noun}"
+    if envelope.get("has_more"):
+        extra = envelope.get("extra")
+        next_offset = extra.get("next_offset") if isinstance(extra, Mapping) else None
+        if isinstance(next_offset, int):
+            header = f"{header} · more from {next_offset}"
+    return header
+
+
+def _format_list_metrics_markup(envelope: Mapping[str, Any]) -> List[str]:
+    """The whole catalog page as a table: name, kind, derivation, description.
+
+    Every row, not a preview — verbose is the mode a reader opens to see what
+    came back, and a metric left out sends them to the raw JSON that mode
+    exists to replace.
+    """
+    lines = [f"[bold]{_escape_markup(_metric_page_header(envelope))}[/bold]"]
+    items = [row for row in envelope.get("items") or [] if isinstance(row, Mapping)]
+    if not items:
+        return lines
+    lines.append("")
+    lines.extend(
+        _wrapping_table_lines(
+            [
+                [
+                    str(row.get("name") or "?"),
+                    str(row.get("kind") or ""),
+                    _derivation_phrase(row),
+                    str(row.get("description") or ""),
+                ]
+                for row in items
+            ],
+            headers=["metric", "kind", "derives from", "description"],
+            widths=[_NAME_COL, _KIND_COL, _DERIVE_COL, _DESCRIPTION_COL],
+        )
+    )
+    return lines
+
+
+def _format_get_metric_markup(result: Mapping[str, Any], description_width: int = 46) -> List[str]:
+    """One metric's query contract: what it is, what a query owes it, its dimensions.
+
+    ``required_dimensions`` sits above the dimension table because the two are
+    read for different reasons — the requirement is something the next query
+    has to carry, the table is the menu it chooses from.
+    """
+    lines: List[str] = []
+    kind = str(result.get("kind") or "").strip()
+    family = str(result.get("derive_family") or "").strip()
+    headline = " · ".join(part for part in (kind, family) if part)
+    if headline:
+        lines.append(f"[bold]{_escape_markup(headline)}[/bold]")
+    for wrapped in _wrapped_cell_lines(str(result.get("description") or ""), 72):
+        lines.append(f"  {_escape_markup(wrapped)}")
+    expr = _collapse_whitespace(str(result.get("derive_expr") or ""))
+    if expr:
+        for index, wrapped in enumerate(textwrap.wrap(expr, width=70) or [expr]):
+            lines.append(f"  [dim]{'=' if index == 0 else ' '} {_escape_markup(wrapped)}[/dim]")
+
+    def _row(label: str, value: str) -> None:
+        """One ``label  value`` row, wrapped under the value column.
+
+        A metric reading eleven datasets writes a value far past the terminal,
+        and a line the terminal folds on its own breaks the alignment of every
+        row after it.
+        """
+        if not value:
+            return
+        wrapped = _wrapped_cell_lines(value, _LABEL_VALUE_WIDTH) or [value]
+        lines.append(f"  [bold]{label.ljust(10)}[/bold]{_escape_markup(wrapped[0])}")
+        for continuation in wrapped[1:]:
+            lines.append(f"  {' ' * 10}{_escape_markup(continuation)}")
+
+    if lines:
+        lines.append("")
+    required = result.get("required_dimensions")
+    if isinstance(required, list) and required:
+        _row("required", ", ".join(str(item) for item in required))
+    _row("time", str(result.get("time_dimension") or ""))
+    granularities = result.get("time_granularities")
+    if isinstance(granularities, list) and granularities:
+        _row("grains", ", ".join(str(item) for item in granularities))
+    datasets = result.get("datasets")
+    if isinstance(datasets, list) and datasets:
+        _row("datasets", ", ".join(str(item) for item in datasets))
+    error = result.get("dimensions_error")
+    if error:
+        lines.append(f"  [bold]{'dims'.ljust(10)}[/bold][red]unavailable: {_escape_markup(str(error))}[/red]")
+
+    dimensions = [row for row in result.get("dimensions") or [] if isinstance(row, Mapping)]
+    if not dimensions:
+        return lines
+
+    required_names = {str(name) for name in required} if isinstance(required, list) else set()
+
+    def _grouping_hint(row: Mapping[str, Any]) -> str:
+        """What the metric says about grouping by this dimension.
+
+        ``required`` outranks the recommendation, and on a scorecard the two
+        disagree outright: the adapter infers that a market code is a poor
+        grouping choice while the metric cannot be computed without it. Showing
+        ``not advised`` there would tell a reader to drop the one dimension the
+        query is refused without.
+        """
+        if str(row.get("name") or "") in required_names:
+            return "required"
+        # Otherwise it is a hint, not a gate: a dimension advised against is
+        # still queryable when a caller names it explicitly.
+        return str(row.get("recommendation_source") or "") if row.get("recommended") else "not advised"
+
+    lines.append("")
+    lines.append(f"[bold]dimensions ({len(dimensions)})[/bold]")
+    lines.extend(
+        _wrapping_table_lines(
+            [
+                [
+                    str(row.get("name") or "?"),
+                    str(row.get("type") or ""),
+                    _grouping_hint(row),
+                    str(row.get("description") or ""),
+                ]
+                for row in dimensions
+            ],
+            headers=["dimension", "type", "grouping", "description"],
+            widths=[_NAME_COL, _KIND_COL, _DIMENSION_HINT_COL, _DESCRIPTION_COL],
+        )
+    )
+    return lines
+
+
+def _format_validate_semantic_markup(result: Mapping[str, Any]) -> List[str]:
+    """The verdict, then one wrapped entry per issue with its severity."""
+    counts = _issue_counts(result.get("issues"))
+    noted = [f"{n} {severity if n == 1 else severity + 's'}" for severity, n in sorted(counts.items())]
+    verdict = "valid" if result.get("valid") else "invalid"
+    lines = [f"[bold]{' · '.join([verdict, *noted])}[/bold]"]
+    issues = [issue for issue in result.get("issues") or [] if isinstance(issue, Mapping)]
+    if not issues:
+        return lines
+
+    lines.append("")
+    width = min(max((len(str(issue.get("severity") or "error")) for issue in issues), default=5), 9)
+    for issue in issues:
+        severity = str(issue.get("severity") or "error").strip().lower()
+        colour = "red" if severity == "error" else "yellow"
+        wrapped = _wrapped_cell_lines(str(issue.get("message") or ""), 72) or ["(no message)"]
+        lines.append(f"  [{colour}]{_escape_markup(severity.ljust(width))}[/{colour}]  {_escape_markup(wrapped[0])}")
+        for continuation in wrapped[1:]:
+            lines.append(f"  {' ' * width}  [dim]{_escape_markup(continuation)}[/dim]")
     return lines
 
 
@@ -1552,69 +1941,201 @@ def _build_search_semantic_objects(action: ActionHistory, verbose: bool) -> Tool
     return _build_search_generic(action, verbose, "semantic object", "semantic objects")
 
 
+def _metric_envelope(action: ActionHistory) -> Optional[dict]:
+    """The ``FuncToolListResult`` payload ``list_metrics`` returns, if present."""
+    data = parse_output_data(action.output)
+    result = data.get("result") if data else None
+    if isinstance(result, dict) and isinstance(result.get("items"), list):
+        return result
+    return None
+
+
 def _build_list_metrics_semantic(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """list_metrics (SemanticTools): show metric count."""
-    return _build_search_generic(action, verbose, "metric", "metrics")
+    """list_metrics (SemanticTools): the catalog page, and how much is left.
+
+    Unlike every other tool sharing the search builder, this one answers with a
+    paginated envelope rather than a bare list — reading it as a list counts no
+    items at all and reports every call, however many metrics it found, as
+    zero.
+    """
+    tc = make_base_content(action)
+    envelope = _metric_envelope(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = (
+                _format_list_metrics_markup(envelope) if envelope else _format_result_only_markup(action.output)
+            )
+        return tc
+
+    if envelope is None:
+        return tc
+    items = envelope["items"]
+    count = len(items)
+    if not count:
+        tc.compact_result = "no metrics"
+        return tc
+
+    total = envelope.get("total")
+    noun = "metric" if count == 1 else "metrics"
+    summary = f"{count}/{total} {noun}" if isinstance(total, int) and total != count else f"{count} {noun}"
+    extra = envelope.get("extra")
+    next_offset = extra.get("next_offset") if isinstance(extra, dict) else None
+    if envelope.get("has_more") and isinstance(next_offset, int):
+        summary = f"{summary} · more from {next_offset}"
+    tc.compact_result = summary
+    return tc
 
 
-def _build_get_dimensions(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """get_dimensions: show dimension count."""
-    return _build_simple_list(action, verbose, "dimensions")
+def _build_get_metric(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """get_metric: how many dimensions the metric has, and how many it requires.
+
+    The metric's name stays out — the header already carries it, and an agent
+    describing several metrics in parallel needs the rows to differ by what
+    they found, not to repeat what it asked.
+    """
+    tc = make_base_content(action)
+    # ``get_metric`` describes one metric, so its result is the metric's detail
+    # dict — the dimensions are one field of it, not the result itself.
+    data = parse_output_data(action.output)
+    result = data.get("result") if data else None
+
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = (
+                _format_get_metric_markup(result)
+                if isinstance(result, dict)
+                else _format_result_only_markup(action.output)
+            )
+        return tc
+
+    if not isinstance(result, dict):
+        return tc
+    dimensions = result.get("dimensions")
+    if not isinstance(dimensions, list):
+        if result.get("dimensions_error"):
+            tc.compact_result = "no dims"
+        return tc
+
+    parts = [f"{len(dimensions)} {'dim' if len(dimensions) == 1 else 'dims'}"]
+    required = result.get("required_dimensions")
+    if isinstance(required, list) and required:
+        # The one field that changes a query's meaning without failing it, so
+        # it earns room on the compact line even when dimensions do not.
+        parts.append(f"{len(required)} required")
+    tc.compact_result = " · ".join(parts)
+    return tc
+
+
+def _query_metrics_shape(result: Mapping[str, Any]) -> str:
+    """``N rows × M cols``, and what the compressor gave up to fit the budget.
+
+    The old summary reported the row count alone, which is the count the query
+    produced — not the count that came back. A result trimmed from 32 rows to
+    21 read as a complete 32, so a caller could total a column and be wrong
+    without anything having failed.
+    """
+    metadata = result.get("metadata")
+    columns = result.get("columns")
+    data = result.get("data")
+
+    rows = metadata.get("row_count") if isinstance(metadata, Mapping) else None
+    if rows is None and isinstance(data, Mapping):
+        rows = data.get("original_rows")
+    parts: List[str] = []
+    if isinstance(rows, int):
+        parts.append(f"{rows} {'row' if rows == 1 else 'rows'}")
+    if isinstance(columns, list):
+        parts.append(f"{len(columns)} {'col' if len(columns) == 1 else 'cols'}")
+    shape = " × ".join(parts)
+
+    if not isinstance(data, Mapping) or not data.get("is_compressed"):
+        return shape or "query completed"
+
+    notes: List[str] = []
+    preview = data.get("compressed_data")
+    if isinstance(preview, str) and preview.strip():
+        shown = len(preview.strip().splitlines()) - 1
+        if isinstance(rows, int) and 0 <= shown < rows:
+            notes.append(f"preview {shown}")
+    dropped = data.get("removed_columns")
+    if isinstance(dropped, list) and dropped:
+        notes.append(f"{len(dropped)} {'col' if len(dropped) == 1 else 'cols'} dropped")
+    if not notes:
+        return shape or "query completed"
+    return f"{shape} · {', '.join(notes)}" if shape else ", ".join(notes)
 
 
 def _build_query_metrics(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """query_metrics: show query result as CSV table."""
     tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    result = data.get("result") if data else None
+
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:
-            data = parse_output_data(action.output)
-            if data:
-                result = data.get("result")
-                if isinstance(result, dict):
-                    compressed_data = result.get("data") or result.get("compressed_data")
-                    if isinstance(compressed_data, str) and compressed_data:
-                        tc.output_lines = _format_csv_preview_markup(compressed_data)
-                    else:
-                        tc.output_lines = _format_result_only_markup(action.output)
-                else:
-                    tc.output_lines = _format_result_only_markup(action.output)
+            preview = result.get("data") or result.get("compressed_data") if isinstance(result, dict) else None
+            if isinstance(preview, Mapping):
+                preview = preview.get("compressed_data")
+            if isinstance(preview, str) and preview:
+                header = _query_metrics_shape(result)
+                dialect = (result.get("metadata") or {}).get("dialect") if isinstance(result, dict) else None
+                if dialect:
+                    header = f"{header} · {dialect}"
+                tc.output_lines = [f"[bold]{_escape_markup(header)}[/bold]", ""]
+                tc.output_lines.extend(_format_csv_preview_markup(preview))
             else:
                 tc.output_lines = _format_result_only_markup(action.output)
-    else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                metadata = result.get("metadata", {})
-                row_count = metadata.get("row_count") if isinstance(metadata, dict) else None
-                if row_count is not None:
-                    tc.compact_result = f"{row_count} rows"
-                else:
-                    tc.compact_result = "Query completed"
-            else:
-                tc.compact_result = "Query completed"
+        return tc
+
+    if isinstance(result, dict):
+        tc.compact_result = _query_metrics_shape(result)
+    elif data:
+        tc.compact_result = "query completed"
     return tc
 
 
+def _issue_counts(issues: Any) -> Dict[str, int]:
+    """Issues tallied by severity, lowercased; unlabelled ones count as errors."""
+    counts: Dict[str, int] = {}
+    for issue in issues if isinstance(issues, list) else []:
+        severity = str((issue or {}).get("severity") if isinstance(issue, Mapping) else "").strip().lower()
+        counts[severity or "error"] = counts.get(severity or "error", 0) + 1
+    return counts
+
+
 def _build_validate_semantic(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """validate_semantic: show validation result."""
+    """validate_semantic: whether the model is valid, and what it warned about.
+
+    A valid model can still carry warnings — a relationship whose target is not
+    unique, say, which silently fans out a join. Reporting a bare "valid" drops
+    exactly the finding the caller would have acted on.
+    """
     tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    result = data.get("result") if data else None
+
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:
-            tc.output_lines = _format_result_only_markup(action.output)
-    else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                if result.get("valid"):
-                    tc.compact_result = "Valid"
-                else:
-                    issues = result.get("issues", [])
-                    count = len(issues) if isinstance(issues, list) else 0
-                    tc.compact_result = f"{count} validation errors"
+            tc.output_lines = (
+                _format_validate_semantic_markup(result)
+                if isinstance(result, dict)
+                else _format_result_only_markup(action.output)
+            )
+        return tc
+
+    if not isinstance(result, dict):
+        return tc
+    counts = _issue_counts(result.get("issues"))
+    if result.get("valid"):
+        noted = [f"{n} {severity if n == 1 else severity + 's'}" for severity, n in sorted(counts.items())]
+        tc.compact_result = " · ".join(["valid", *noted])
+        return tc
+    errors = counts.get("error", 0)
+    tc.compact_result = f"{errors} {'error' if errors == 1 else 'errors'}" if errors else "invalid"
     return tc
 
 
@@ -2173,7 +2694,7 @@ class ToolCallContentBuilder:
 
         # Semantic tools
         self._registry["list_metrics"] = _build_list_metrics_semantic
-        self._registry["get_dimensions"] = _build_get_dimensions
+        self._registry["get_metric"] = _build_get_metric
         self._registry["query_metrics"] = _build_query_metrics
         self._registry["validate_semantic"] = _build_validate_semantic
         self._registry["attribution_analyze"] = _build_attribution_analyze
@@ -2248,8 +2769,8 @@ class ToolCallContentBuilder:
 
         if not verbose:
             # Populate compact-layout fields if the per-tool builder skipped them.
-            set_tool_specific_args_summary(tc, action)
-            set_default_args_summary(tc, action)
+            if not set_tool_specific_args_summary(tc, action):
+                set_default_args_summary(tc, action)
             if not tc.compact_result:
                 tc.compact_result = _summary_from_registry(action, function_name)
             if not tc.compact_result:

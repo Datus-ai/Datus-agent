@@ -261,11 +261,47 @@ class DataCompressor:
             # Fallback: rough estimation (1 token ≈ 4 characters for English text)
             return len(text) // 4
 
+    def _drop_order(self, compressible_columns: List[str], column_priority: Optional[List[str]]) -> List[str]:
+        """Order in which compressible columns are given up.
+
+        With ``column_priority`` the caller has told us what the columns mean, so
+        the least important one goes first and a column the caller named first
+        goes last. Columns absent from the priority list are unranked and go
+        before any ranked one.
+
+        Without it, fall back to expanding outward from the middle: for an
+        arbitrary ``SELECT *`` result the column order carries no meaning, and
+        keeping the two ends preserves a usable sample.
+        """
+        if column_priority:
+            # First mention wins. A caller may name the same column twice — a
+            # dimension it also asked for as a metric, say — and taking the last
+            # index would rank it by its least important mention and give it up
+            # ahead of columns the caller named after it.
+            rank: Dict[str, int] = {}
+            for index, column in enumerate(column_priority):
+                rank.setdefault(column, index)
+            unranked = [column for column in compressible_columns if column not in rank]
+            ranked = [column for column in compressible_columns if column in rank]
+            ranked.sort(key=lambda column: rank[column], reverse=True)
+            return unranked + ranked
+
+        order = []
+        mid_index = len(compressible_columns) // 2
+        for step in range(len(compressible_columns)):
+            index = mid_index + step // 2 if step % 2 == 0 else mid_index - (step + 1) // 2
+            if 0 <= index < len(compressible_columns):
+                order.append(compressible_columns[index])
+        return order
+
     def _compress_columns(
-        self, df: pd.DataFrame, compressed_indices: Optional[Tuple[List[int], List[int]]] = None
+        self,
+        df: pd.DataFrame,
+        compressed_indices: Optional[Tuple[List[int], List[int]]] = None,
+        column_priority: Optional[List[str]] = None,
     ) -> Tuple[pd.DataFrame, List[str]]:
         """
-        Compress columns, keep ID and time columns, compress middle columns of others
+        Compress columns, keep ID and time columns, drop the rest in _drop_order
 
         Returns:
             Tuple[pd.DataFrame, List[str]]: (compressed_df, removed_columns)
@@ -282,51 +318,41 @@ class DataCompressor:
         if not compressible_columns:
             return df, []  # If no compressible columns, return original data
 
-        # Start compressing columns from the middle
-        mid_index = len(compressible_columns) // 2
+        drop_order = self._drop_order(compressible_columns, column_priority)
 
-        # Gradually remove middle columns until token count meets requirements
+        # Gradually remove columns until token count meets requirements
         compressed_df = df.copy()
         removed_columns = []
-        removed_count = 0
 
-        while True:
+        for col_to_remove in drop_order:
             # Try current compression result
             if self.output_format == "csv":
                 current_text = _format_as_csv(compressed_df, compressed_indices)
             else:
                 current_text = _format_as_table(compressed_df, compressed_indices)
 
-            current_tokens = self.count_tokens(current_text)
-
-            if current_tokens <= self.max_tolerable_tokens or removed_count >= len(compressible_columns):
+            if self.count_tokens(current_text) <= self.max_tolerable_tokens:
                 break
 
-            # Determine which column index to remove (expand from middle to both sides)
-            if removed_count % 2 == 0:
-                # Even times, remove to the right
-                remove_index = mid_index + removed_count // 2
-            else:
-                # Odd times, remove to the left
-                remove_index = mid_index - (removed_count + 1) // 2
-
-            # Ensure valid index
-            if 0 <= remove_index < len(compressible_columns):
-                col_to_remove = compressible_columns[remove_index]
-                if col_to_remove in compressed_df.columns:
-                    compressed_df = compressed_df.drop(columns=[col_to_remove])
-                    removed_columns.append(col_to_remove)
-
-            removed_count += 1
+            if col_to_remove in compressed_df.columns:
+                compressed_df = compressed_df.drop(columns=[col_to_remove])
+                removed_columns.append(col_to_remove)
 
         return compressed_df, removed_columns
 
-    def compress(self, data: Union[List[Dict], pd.DataFrame, pa.Table]) -> Dict:
+    def compress(
+        self,
+        data: Union[List[Dict], pd.DataFrame, pa.Table],
+        column_priority: Optional[List[str]] = None,
+    ) -> Dict:
         """
         Compress data and return result with metadata
 
         Args:
             data: Input data, supports List[Dict], pandas.DataFrame, pyarrow.Table
+            column_priority: Optional column names most-important-first. When the
+                caller knows what the columns mean, columns are given up from the
+                least important end instead of outward from the middle.
 
         Returns:
             Dict: Contains original_rows, original_columns (list of column names), is_compressed,
@@ -366,7 +392,7 @@ class DataCompressor:
                 compressed_data = text
             else:
                 # Small data but many tokens, compress columns only
-                compressed_df, removed_columns = self._compress_columns(df)
+                compressed_df, removed_columns = self._compress_columns(df, column_priority=column_priority)
 
                 if self.output_format == "csv":
                     compressed_data = _format_as_csv(compressed_df)
@@ -437,7 +463,7 @@ class DataCompressor:
 
             # If still exceeding threshold too much, compress columns
             if tokens > self.max_tolerable_tokens:
-                df, removed_columns = self._compress_columns(df, compressed_indices)
+                df, removed_columns = self._compress_columns(df, compressed_indices, column_priority)
 
                 if self.output_format == "csv":
                     text = _format_as_csv(df, compressed_indices)

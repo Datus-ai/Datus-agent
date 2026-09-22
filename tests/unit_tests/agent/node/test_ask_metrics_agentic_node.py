@@ -22,12 +22,18 @@ def _semantic_tools(adapter=True):
     tools.adapter = Mock() if adapter else None
     tools._adapter_unavailable_message.return_value = "semantic adapter missing"
     tools._configured_adapter_type.return_value = "metricflow" if adapter else None
-    for name in ("list_metrics", "get_dimensions", "query_metrics", "validate_semantic", "attribution_analyze"):
+    for name in (
+        "list_metrics",
+        "get_metric",
+        "query_metrics",
+        "validate_semantic",
+        "attribution_analyze",
+    ):
         setattr(tools, name, Mock(name=name))
     tools.available_tools.return_value = (
         [
             _fake_function_tool(tools.list_metrics),
-            _fake_function_tool(tools.get_dimensions),
+            _fake_function_tool(tools.get_metric),
             _fake_function_tool(tools.query_metrics),
             _fake_function_tool(tools.validate_semantic),
             _fake_function_tool(tools.attribution_analyze),
@@ -81,7 +87,13 @@ class TestAskMetricsAgenticNode:
             ),
             (
                 "semantic_tools.*",
-                {"list_metrics", "get_dimensions", "query_metrics", "validate_semantic", "attribution_analyze"},
+                {
+                    "list_metrics",
+                    "get_metric",
+                    "query_metrics",
+                    "validate_semantic",
+                    "attribution_analyze",
+                },
             ),
         ],
     )
@@ -146,7 +158,7 @@ class TestAskMetricsAgenticNode:
             "search_metrics",
             "get_metrics",
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -189,8 +201,12 @@ class TestAskMetricsAgenticNode:
         assert "request those metrics in one `query_metrics(metrics=[...])` call" in prompt
         assert "query all requested catalog metrics together" in prompt
         assert "do not add sibling display/name/label dimensions" in prompt
-        assert "`extra.time_dimension`" in prompt
-        assert "`extra.time_granularities`" in prompt
+        # The field paths must match what get_metric actually returns: both sit
+        # on the result row, and there is no ``extra`` object to read them from.
+        assert "Read `time_dimension` and `time_granularities` from the result" in prompt
+        assert "extra.time_dimension" not in prompt
+        assert "extra.time_granularities" not in prompt
+        assert "Pass every name in `required_dimensions` to" in prompt
         assert "advisory defaults, not an exhaustive allowlist" in prompt
         assert "let the semantic adapter validate it" in prompt
         assert node.subject_tree_prompt_limit == 100
@@ -391,7 +407,7 @@ class TestAskMetricsAgenticNode:
             "search_metrics",
             "get_metrics",
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -654,7 +670,7 @@ class TestAskMetricsAgenticNode:
         assert node.subject_tree_mode == "none"
         assert [tool.name for tool in node.tools] == [
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
         ]
@@ -756,7 +772,7 @@ class TestAskMetricsAgenticNode:
 
         node, _, _ = _make_node(real_agent_config, tree={})
         action_history_manager = ActionHistoryManager()
-        for action_type in ("query_metrics", "get_dimensions", "query_metrics"):
+        for action_type in ("query_metrics", "get_metric", "query_metrics"):
             action_history_manager.add_action(
                 ActionHistory.create_action(
                     role=ActionRole.TOOL,
@@ -776,7 +792,7 @@ class TestAskMetricsAgenticNode:
             )
         )
 
-        assert result.execution_stats["tools_used"] == ["get_dimensions", "query_metrics"]
+        assert result.execution_stats["tools_used"] == ["get_metric", "query_metrics"]
 
     def test_success_result_uses_last_output_fallback_and_stringifies(self, real_agent_config, mock_llm_create):
         from datus.schemas.action_history import ActionHistoryManager
@@ -806,7 +822,7 @@ class TestAskMetricsAgenticNode:
 
         assert {tool.name for tool in node.tools} == {
             "list_metrics",
-            "get_dimensions",
+            "get_metric",
             "query_metrics",
             "attribution_analyze",
             "search_metrics",

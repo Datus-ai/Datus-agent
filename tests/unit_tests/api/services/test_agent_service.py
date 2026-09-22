@@ -334,7 +334,7 @@ class TestConstants:
             "context_search_tools.search_metrics",
             "context_search_tools.get_metrics",
             "semantic_tools.list_metrics",
-            "semantic_tools.get_dimensions",
+            "semantic_tools.get_metric",
             "semantic_tools.query_metrics",
             "semantic_tools.attribution_analyze",
             "context_search_tools.list_subject_tree",
@@ -342,6 +342,18 @@ class TestConstants:
         assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
         for category, payload in entry["tool_types"].items():
             assert payload["tools"] == sorted(VALID_TOOL_METHODS[category])
+
+    def test_tool_reference_ask_metrics_matches_the_node_defaults(self):
+        """A client persisting these defaults must get a working AskMetrics.
+
+        Saving them as explicit node tools takes ``AskMetricsAgenticNode``'s own
+        fallback out of play, so anything missing here is simply absent at
+        runtime — and the prompt requires ``get_metric`` before grouping,
+        filtering, attribution, or grain selection.
+        """
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        assert SUBAGENT_TOOL_REFERENCE["ask_metrics"]["default_tools"] == list(AskMetricsAgenticNode.DEFAULT_TOOLS)
 
     def test_tool_reference_chat_has_full_default_set(self):
         """chat default_tools enumerates every non-semantic category as wildcard."""
@@ -384,7 +396,7 @@ class TestConstants:
         """semantic_tools category is registered with its core methods."""
         assert "semantic_tools" in VALID_TOOL_METHODS
         assert "list_metrics" in VALID_TOOL_METHODS["semantic_tools"]
-        assert "get_dimensions" in VALID_TOOL_METHODS["semantic_tools"]
+        assert "get_metric" in VALID_TOOL_METHODS["semantic_tools"]
 
 
 class TestAgentServiceInit:

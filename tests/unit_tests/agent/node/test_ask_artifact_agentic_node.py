@@ -1907,7 +1907,7 @@ def _fs_tool_names(node) -> set:
 _NO_DB_WHITELIST = (
     "context_search_tools.get_metrics,context_search_tools.list_subject_tree,"
     "context_search_tools.search_metrics,date_parsing_tools.*,"
-    "semantic_tools.attribution_analyze,semantic_tools.get_dimensions,"
+    "semantic_tools.attribution_analyze,semantic_tools.get_metric,"
     "semantic_tools.list_metrics,semantic_tools.query_metrics"
 )
 
@@ -1940,7 +1940,7 @@ class TestToolsWhitelist:
         """
         node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST)
         names = _tool_names(node)
-        expected = {"query_metrics", "get_dimensions", "list_metrics", "parse_temporal_expressions"}
+        expected = {"query_metrics", "get_metric", "list_metrics", "parse_temporal_expressions"}
         missing = expected - names
         assert not missing, f"whitelisted tools missing from node surface: {sorted(missing)}"
 

@@ -53,7 +53,7 @@ READ_METHODS: Dict[str, Set[str]] = {
     },
     "semantic_layer": {
         "list_metrics",
-        "get_dimensions",
+        "get_metric",
         "query_metrics",
         "validate_semantic",
         "attribution_analyze",

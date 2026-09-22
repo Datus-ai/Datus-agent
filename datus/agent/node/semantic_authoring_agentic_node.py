@@ -234,7 +234,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             semantic_tools = [
                 tool
                 for tool in self.semantic_tools.available_tools()
-                if tool.name in {"get_dimensions", "query_metrics", "validate_semantic"}
+                if tool.name in {"get_metric", "query_metrics", "validate_semantic"}
             ]
             self.tools.extend(semantic_tools)
 
