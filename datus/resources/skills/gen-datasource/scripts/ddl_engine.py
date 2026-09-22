@@ -45,7 +45,8 @@ BARE_ENUM = (
     r"^(status|state|channel|source|medium|platform|device|os|category|subcategory|"
     r"class|kind|type|level|tier|grade|segment|gender|sex|country|nation|region|"
     r"province|state_cd|city|district|currency|payment|method|brand|supplier|vendor|"
-    r"store|shop|warehouse|carrier|courier|department|industry|size|color|unit)$"
+    r"store|shop|warehouse|carrier|courier|department|industry|size|color|unit|"
+    r"priority|severity|urgency)$"
 )
 BARE_COUNT = (
     r"^(qty|quantity|units|pieces|headcount)$|(_qty|_quantity|_units|_pieces)$|"
@@ -200,6 +201,10 @@ def _semantic(col: str, dtype: str) -> str:
     for pat, types, sem in SEMANTIC:
         if re.search(pat, col) and any(dtype.startswith(t) for t in types):
             return sem
+    # A BOOLEAN is a flag whatever it is called: `in_service BOOLEAN` fell through to free text
+    # and a run paid a turn to say so in profile["semantics"].
+    if dtype.startswith("BOOL"):
+        return "flag"
     if dtype.startswith("DATE"):
         return "date"
     if dtype.startswith("TIMESTAMP"):
@@ -1188,8 +1193,35 @@ class DDLEngine:
             + list(self.profile.get("naming", {}))
             + list(self.profile.get("roles", {}))
             + list(self.profile.get("event_seq", {}))
+            + list(self.profile.get("lifecycle", {}) or {})
         ):
             chk_ref("table-level config", k, need_col=False)
+
+        # lifecycle: stages count BUSINESS timestamps. `created_at` and its kin are audit columns,
+        # aligned to the first business timestamp and not counted, so (created_at, resolved_at)
+        # is one stage, not two - and a status mapped to stage 2 was downgraded on every row
+        # without a word. A run declared exactly that and read the result as "lifecycle ignored".
+        for t, lc in (self.profile.get("lifecycle") or {}).items():
+            if t not in self.schema:
+                if t in tabs:  # a summary or pre_sql table: the reference check let it through
+                    err.append(f"lifecycle[{t}]: `{t}` is not a DDL table; lifecycle applies to generated tables only")
+                continue
+            if not isinstance(lc, dict):
+                continue
+            ts_cols = [c["name"] for c in self.schema[t] if c["sem"] == "ts"]
+            biz = [c for c in ts_cols if not AUDIT_TS.match(c)]
+            audit = [c for c in ts_cols if AUDIT_TS.match(c)]
+            over = {k: v for k, v in (lc.get("stages") or {}).items() if isinstance(v, int) and v > len(biz)}
+            if over:
+                warn.append(
+                    f"lifecycle[{t}]: stages {over} reach past the {len(biz)} business timestamp(s) {biz}"
+                    + (
+                        f" - {', '.join(audit)} are audit columns, aligned to the first one and not counted"
+                        if audit
+                        else ""
+                    )
+                    + "; every row with such a status is downgraded to the last stage that exists"
+                )
 
         # conditional: target and grouping columns must exist, and the grouping column must be generated first
         for key, spec in self.profile.get("conditional", {}).items():
@@ -1233,6 +1265,22 @@ class DDLEngine:
                     )
             if "__default__" not in spec:
                 warn.append(f"conditional[{key}]: no __default__; unlisted values fall back to the engine default")
+
+        # joint: on a fan-out table the group is drawn per row WITH replacement (the row count is
+        # not known up front), so a key column in it would repeat and the table would lose its
+        # constraints at build time. Real values for a key belong on the parent or the dimension.
+        for t, groups in (self.profile.get("joint") or {}).items():
+            if t not in self.schema or self.roles.get(t) not in (ROLE_DETAIL, ROLE_DOWNSTREAM):
+                continue
+            for g in groups if isinstance(groups, list) else []:
+                keys = sorted(set(g.get("cols", ())) & self._key_cols(t))
+                if keys:
+                    err.append(
+                        f"joint[{t}]: group ({', '.join(g.get('cols', ()))}) includes key column(s) "
+                        f"{', '.join(keys)}; a {self.roles[t]} table is drawn per row with replacement, so the "
+                        f"key would repeat and the table would ship without its constraints - put the real "
+                        f"values on the table that owns the key"
+                    )
 
         # formulas: referenced columns exist, no self-reference, no cycles
         fml = self.profile.get("formulas", {})
@@ -2139,6 +2187,29 @@ class DDLEngine:
         vals, ws = self._enum_values(t, col)
         return rng.choices(vals, ws)[0]
 
+    def _ref_cols_needed(self, t):
+        """Columns of ``t`` that a child's cross-table ``conditional`` groups by.
+
+        A parent fact is not in ``pools``, so a child row can only see it through ``refs`` - and
+        those carried the key, the date and the status, never the column a ``__by__`` named.
+        ``delays.delay_minutes by flights.status`` therefore resolved to nothing and fell back to
+        ``__default__`` on every row, while ``report()`` listed the rule as in effect. The columns
+        travel with the ref only when something asks for them, so an unconfigured run pays nothing.
+        """
+        cache = self.__dict__.setdefault("_need_cols_cache", {})
+        if t not in cache:
+            need = set()
+            for spec in (self.profile.get("conditional") or {}).values():
+                by = spec.get("__by__") if isinstance(spec, dict) else None
+                if isinstance(by, str) and "." in by and by.split(".", 1)[0] == t:
+                    need.add(by.split(".", 1)[1])
+            cache[t] = need
+        return cache[t]
+
+    def _ref_extra(self, t, row):
+        need = self._ref_cols_needed(t)
+        return {"cols": {c: row.get(c) for c in need}} if need else {}
+
     def _cond_spec(self, t, col):
         """profile["conditional"]["table.column"] = {"__by__": grouping column, value: params, "__default__": params}
 
@@ -2339,6 +2410,79 @@ class DDLEngine:
         if lo > 0:
             return round(lognorm_between(rng, lo, hi), 3)
         return round(bounded_gauss(rng, (lo + hi) / 2, (hi - lo) / 4, lo, hi), 3)
+
+    def _count_val(self, t, name, rng, row=None, ents=None):
+        """A count under a declared ``columns[...]['range']`` or a ``conditional`` band, else None.
+
+        The fact and generic fillers drew a count from a fixed 1-5 / 1-20 with no look at the
+        profile, so ``passenger_count: {"range": (70, 250)}`` - the slot the skeleton itself
+        offers - averaged 1.85 and a run reclassified the column as a measure to get around it.
+        Same shape as the dimension path; None means "nothing declared, keep your default".
+        """
+        rg = self._col_profile(t, name).get("range")
+        cr = self._cond_pick(self._cond_spec(t, name) or {}, row or {}, ents, t)
+        if isinstance(cr, (list, tuple)) and len(cr) == 2:
+            rg = cr
+        if not rg:
+            return None
+        lo, hi = rg
+        return max(int(lo), int(lognorm_between(rng, max(1, lo), hi)))
+
+    def _lifecycle_prep(self, t):
+        """Everything the lifecycle chain of ``t`` needs, computed once per table.
+
+        Shared by the fact and detail generators: `lifecycle` was read by `_gen_fact` alone, so a
+        detail table (an alert per flight) declaring stages kept every timestamp filled - OPEN
+        alerts with a `resolved_at` - and nothing said the block had been ignored.
+        """
+        cols = self.schema[t]
+        ts_cols = [c["name"] for c in cols if c["sem"] == "ts"]
+        biz = [c for c in ts_cols if not AUDIT_TS.match(c)]
+        lc = (self.profile.get("lifecycle", {}) or {}).get(t, {})
+        gaps = lc.get("gap_hours") or [0] + [1.5 * 4**j for j in range(len(biz))]
+        return {
+            "declared": bool(lc),
+            "biz": biz,
+            "audit": [c for c in ts_cols if AUDIT_TS.match(c)],
+            "gaps": gaps,
+            "stages": lc.get("stages", {}),
+            "inflight": set(lc.get("in_flight", [])),
+            "span_h": sum(gaps[: max(1, len(biz))]),
+            "cap": datetime.combine(self.end, datetime.min.time()) + timedelta(hours=23, minutes=59, seconds=59),
+        }
+
+    def _lifecycle_settle_status(self, lp, row, t0, status_col, st_vals, st_w, rng):
+        """An in-flight status on a row old enough to have finished is rewritten to a terminal one."""
+        if lp["inflight"] and status_col and row.get(status_col) in lp["inflight"]:
+            if t0 + timedelta(hours=lp["span_h"]) <= lp["cap"]:
+                pool_v = [(v, w) for v, w in zip(st_vals, st_w) if v not in lp["inflight"]]
+                if pool_v:
+                    row[status_col] = rng.choices([v for v, _ in pool_v], [w for _, w in pool_v])[0]
+
+    def _lifecycle_chain(self, lp, row, t0, status_col, rng):
+        """Business timestamps increase from ``t0`` by the declared gaps, truncated by the stage the
+        status reaches and by the cut-off; a status the cut-off truncated is downgraded to the stage
+        actually reached; audit columns align to ``t0``."""
+        biz, gaps, stages, cap = lp["biz"], lp["gaps"], lp["stages"], lp["cap"]
+        cur, kmax = t0, stages.get(str(row.get(status_col, "")), len(biz))
+        reached = 0
+        for j, c in enumerate(biz):
+            if j >= kmax:
+                row[c] = ""
+                continue
+            if j:
+                cur = cur + timedelta(hours=max(0.05, gaps[min(j, len(gaps) - 1)] * rng.uniform(0.35, 1.9)))
+            if cur <= cap:
+                row[c] = cur.strftime("%Y-%m-%d %H:%M:%S")
+                reached = j + 1
+            else:
+                row[c] = ""
+        if stages and status_col and reached < kmax:
+            back = next((k for k, v in stages.items() if v == reached), None)
+            if back is not None:
+                row[status_col] = back
+        for c in lp["audit"]:
+            row[c] = t0.strftime("%Y-%m-%d %H:%M:%S")
 
     def _is_int_col(self, t, col):
         d = next((c["type"].upper() for c in self.schema[t] if c["name"] == col), "")
@@ -2541,7 +2685,8 @@ class DDLEngine:
         at build time. That cascades - every foreign key pointing at the table is refused for want
         of a unique constraint, so one natural-key dimension took the constraints off three tables.
         A measured run spent ten minutes discovering there was no legal way to do this: `joint`
-        breaks the key, and `pre_sql` cannot UPDATE a key that is referenced.
+        broke the key, and at the time `pre_sql` ran after the constraints were on, so it could
+        not UPDATE a key that was referenced either.
         """
         limit = None
         for g in (self.profile.get("joint", {}) or {}).get(t, []):
@@ -2549,6 +2694,31 @@ class DDLEngine:
                 n = len(self._joint_key_rows(t, g))
                 limit = n if limit is None else min(limit, n)
         return limit
+
+    def _joint_groups(self, t):
+        """The ``joint`` groups of ``t`` as (cols, value tuples, weights), parsed once."""
+        cache = self.__dict__.setdefault("_joint_groups_cache", {})
+        if t not in cache:
+            out = []
+            for g in (self.profile.get("joint", {}) or {}).get(t, []):
+                vals = [tuple(v[: len(g["cols"])]) for v in g["values"]]
+                w = [float(v[len(g["cols"])]) if len(v) > len(g["cols"]) else 1.0 for v in g["values"]]
+                out.append((list(g["cols"]), vals, w))
+            cache[t] = out
+        return cache[t]
+
+    def _joint_draw(self, t, rng):
+        """One row's worth of ``joint`` values, drawn with replacement.
+
+        ``_joint_plan`` sizes its draw to a row count known up front, which a detail or downstream
+        table does not have - its rows fan out from the parent. Those generators never called it,
+        so a group declared on `flight_sensors(series_name, unit)` was reported as in effect and
+        the table came out `SERIES5 / UNIT3`. A per-row draw needs no count.
+        """
+        out = {}
+        for cols, vals, w in self._joint_groups(t):
+            out.update(dict(zip(cols, rng.choices(vals, w)[0])))
+        return out
 
     def _joint_plan(self, t, n, rng):
         """Joint sampling: related enum columns in one row must be picked as a group (channel/source/campaign, province/city/tier).
@@ -3198,17 +3368,10 @@ class DDLEngine:
         names = [c["name"] for c in cols]
         pk = self.pk_of(t)  # declared PK wins; never assume it is the first column
         date_cols = [c["name"] for c in cols if c["sem"] == "date"]
-        ts_cols = [c["name"] for c in cols if c["sem"] == "ts"]
-        biz_ts = [c for c in ts_cols if not AUDIT_TS.match(c)]
-        audit_ts = [c for c in ts_cols if AUDIT_TS.match(c)]
-        lc = (self.profile.get("lifecycle", {}) or {}).get(t, {})
-        gaps = lc.get("gap_hours") or [0] + [1.5 * 4**j for j in range(len(biz_ts))]
-        stages = lc.get("stages", {})
         # In-flight statuses (mid-lifecycle) can only occur near the cut-off date -
         # an order from a year ago cannot still be pending/shipped
-        inflight = set(lc.get("in_flight", []))
-        span_h = sum(gaps[: max(1, len(biz_ts))])
-        hard_cap = datetime.combine(self.end, datetime.min.time()) + timedelta(hours=23, minutes=59, seconds=59)
+        life = self._lifecycle_prep(t)
+        hard_cap = life["cap"]
         amt_cols = [c["name"] for c in cols if c["sem"] == "amount"]
         # Measures (downtime_minutes, weight_kg) and names on a fact table have no dedicated branch
         # below; without this they fall through to setdefault(c, "") and the whole column lands NULL.
@@ -3276,32 +3439,11 @@ class DDLEngine:
             # monotonically and be truncated by status; audit columns such as created_at stay out of
             # the chain and align to the first business timestamp.
             t0 = day_ts(rng, d)
-            if inflight and status_col and row.get(status_col) in inflight and t0 + timedelta(hours=span_h) <= hard_cap:
-                pool_v = [(v, w) for v, w in zip(st_vals, st_w) if v not in inflight]
-                if pool_v:
-                    row[status_col] = rng.choices([v for v, _ in pool_v], [w for _, w in pool_v])[0]
+            self._lifecycle_settle_status(life, row, t0, status_col, st_vals, st_w, rng)
             ets = max((e["__eff_ts__"] for e in ent.values() if e.get("__eff_ts__")), default=None)
             if ets is not None and t0 < ets:  # even same-day, it cannot precede the exact registration/listing moment
                 t0 = min(ets + timedelta(minutes=rng.randint(2, 720)), hard_cap)
-            cur, kmax = t0, stages.get(str(row.get(status_col, "")), len(biz_ts))
-            reached = 0
-            for j, c in enumerate(biz_ts):
-                if j >= kmax:
-                    row[c] = ""
-                    continue
-                if j:
-                    cur = cur + timedelta(hours=max(0.05, gaps[min(j, len(gaps) - 1)] * rng.uniform(0.35, 1.9)))
-                if cur <= hard_cap:
-                    row[c] = cur.strftime("%Y-%m-%d %H:%M:%S")
-                    reached = j + 1
-                else:
-                    row[c] = ""
-            if stages and status_col and reached < kmax:
-                back = next((k for k, v in stages.items() if v == reached), None)
-                if back is not None:
-                    row[status_col] = back
-            for c in audit_ts:
-                row[c] = t0.strftime("%Y-%m-%d %H:%M:%S")
+            self._lifecycle_chain(life, row, t0, status_col, rng)
             # Disruption filter: inside the window with factor<1, drop the row probabilistically
             # (suppressing anomaly). This must run after enum/joint assignment, otherwise scope can
             # only match FK dimension attributes and never the fact's own channel/source/site columns.
@@ -3325,7 +3467,11 @@ class DDLEngine:
                 base = round(lognorm_between(rng, lo, hi), 2)
                 row.update(self._settle_amounts(amt_cols, base, rng))
             for c in cnt_cols:
-                row[c] = self._derive(t, c, row, rng) or rng.choices([1, 2, 3, 4, 5], [0.52, 0.26, 0.12, 0.06, 0.04])[0]
+                row[c] = (
+                    self._derive(t, c, row, rng)
+                    or self._count_val(t, c, rng, row, ent)
+                    or rng.choices([1, 2, 3, 4, 5], [0.52, 0.26, 0.12, 0.06, 0.04])[0]
+                )
             for c in ratio_cols:
                 row[c] = round(bounded_gauss(rng, 0.04, 0.013, 0.008, 0.092), 4)
             for c in flag_cols:
@@ -3349,6 +3495,7 @@ class DDLEngine:
                     "amt": base,
                     "fks": {f: row[f] for f in self.fks[t]},
                     "subj": ent.get(subj_col, {}).get("__w__", 1.0) if subj_col else 1.0,
+                    **self._ref_extra(t, row),
                 }
             )
         o.write(t, names, rows)
@@ -3450,6 +3597,11 @@ class DDLEngine:
         rfq_col = next((c for c in cnt_cols if re.search(r"refund|return", c)), None)
         reason_cols = [c["name"] for c in cols if re.search(r"reason|cause", c["name"])]
         refund_p = self.profile.get("refund_rate", 0.055)
+        # A declared `lifecycle` takes over the row's timestamps and status, exactly as on a fact;
+        # without one the timestamps stay anchored to the parent by `_fill_generic` as before.
+        life = self._lifecycle_prep(t)
+        status_col = next((c["name"] for c in cols if c["sem"] == "enum" and "status" in c["name"]), None)
+        st_vals, st_w = self._enum_values(t, status_col) if (life["declared"] and status_col) else ([], [])
         rows, agg, no, refs = [], {}, 0, []
         exact = (getattr(self, "fixed_fanout", None) or {}).get(t)
         for pi, pr in enumerate(prefs):
@@ -3475,10 +3627,29 @@ class DDLEngine:
             for j, e in enumerate(picks):
                 no += 1
                 row = {pk: self._pk_val(t, no - 1), fk: self._parent_key_val(t, fk, par, pr)}
-                ents = {item_col: e} if (item_col and e) else None
+                ents = {item_col: e} if (item_col and e) else {}
+                if pr.get("cols"):
+                    ents[fk] = pr["cols"]  # the parent row, for a `__by__` that crosses to it
+                ents = ents or None
                 if item_col and e:
                     row[item_col] = e[pool_pk]
-                qty = rng.choices([1, 2, 3, 4], [0.71, 0.19, 0.07, 0.03])[0]
+                for k, v in self._joint_draw(t, rng).items():
+                    row.setdefault(k, v)
+                own_t0 = None  # set when this row runs its own lifecycle; its children anchor to it
+                if life["declared"]:
+                    if status_col and status_col not in row:  # a joint group may have supplied it
+                        row[status_col] = self._pick_enum(t, status_col, row, ents, rng)
+                    anchor = pr.get("ts")
+                    own_t0 = (
+                        min(anchor + timedelta(seconds=rng.randint(30, 5400)), life["cap"])
+                        if anchor is not None
+                        else day_ts(rng, pr["dt"])
+                    )
+                    self._lifecycle_settle_status(life, row, own_t0, status_col, st_vals, st_w, rng)
+                    self._lifecycle_chain(life, row, own_t0, status_col, rng)
+                qty = (self._count_val(t, qty_col, rng, row, ents) if qty_col else None) or rng.choices(
+                    [1, 2, 3, 4], [0.71, 0.19, 0.07, 0.03]
+                )[0]
                 lp = float(e[p_list]) if (e and p_list) else round(lognorm_between(rng, 9, 320), 2)
                 drate = rng.uniform(0.05, 0.42) if rng.random() < 0.58 else 0.0
                 up = round(lp * (1 - drate), 2)
@@ -3540,12 +3711,15 @@ class DDLEngine:
                     {
                         "pk": row[pk],
                         "alt": self._ref_alt(t, row),
-                        "dt": pr["dt"],
-                        "ts": pr.get("ts"),
-                        "status": pr.get("status", ""),
+                        # A row that ran its own lifecycle is the anchor for ITS children: a note
+                        # on a claim follows the claim's timestamps and status, not the order's.
+                        "dt": own_t0.date() if own_t0 else pr["dt"],
+                        "ts": own_t0 if own_t0 else pr.get("ts"),
+                        "status": row.get(status_col, "") if (own_t0 and status_col) else pr.get("status", ""),
                         "amt": sales,
                         "fks": {f: row.get(f, "") for f in self.fks[t]},
                         "subj": 1.0,
+                        **self._ref_extra(t, row),
                     }
                 )
             agg[pr["pk"]] = {k2: round(v, 2) for k2, v in tot.items()}
@@ -3606,7 +3780,8 @@ class DDLEngine:
             vals, ws = self._enum_values(t, name)
             return rng.choices(vals, ws)[0]
         if sem == "count":
-            return rng.randint(1, 20)
+            v = self._count_val(t, name, rng, row, ents)
+            return v if v is not None else rng.randint(1, 20)
         if sem == "ratio":
             return round(bounded_gauss(rng, 0.04, 0.013, 0.008, 0.092), 4)
         if sem == "flag":
@@ -3701,6 +3876,8 @@ class DDLEngine:
                 row[ontime_col] = (
                     (1 if (done and promise_c and e_dt <= s_dt + timedelta(days=sla)) else 0) if done else ""
                 )
+            for k, v in self._joint_draw(t, rng).items():
+                row.setdefault(k, v)
             for c in cols:
                 if c["name"] in row:
                     continue
@@ -3719,6 +3896,7 @@ class DDLEngine:
                     "fks": {},
                     "done": done,
                     "span": transit,
+                    **self._ref_extra(t, row),
                 }
             )
         o.write(t, names, rows)

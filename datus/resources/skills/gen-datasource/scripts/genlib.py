@@ -373,6 +373,16 @@ def build_db(db_path, csv_dir, tables, dws_sql="", comments=(), drop_existing=Tr
     what the engine's topological order already gives. If a statement or an insert is rejected (a
     generated value violating UNIQUE, or a parent that had to fall back), that one table falls back
     to the constraint-free CREATE TABLE AS SELECT rather than failing the whole build.
+
+    The post-processing SQL runs BEFORE the constraints go on. DuckDB executes an UPDATE of an
+    indexed column - a key, or a foreign key - as delete + insert, and refuses the delete while a
+    child row still references the old row. With constraints in place, `UPDATE flights SET
+    carrier_id = ...` therefore failed after a full generate pass, on a statement the pre-check
+    had planned as fine (EXPLAIN never fires a constraint), and a run spent five minutes finding
+    out which of its eight statements was the one. Every table is loaded constraint-free first,
+    the SQL runs against plain tables, and the declared tables are then re-created with their
+    constraints from that copy. A statement that leaves a child pointing at nothing now shows up
+    as that child's constraints being dropped, with the reason, rather than as an error mid-SQL.
     """
     import duckdb
 
@@ -389,33 +399,41 @@ def build_db(db_path, csv_dir, tables, dws_sql="", comments=(), drop_existing=Tr
             if spec
             else f"read_csv_auto('{csv_dir}/{t}.csv', header=true, nullstr='', sample_size=-1)"
         )
-        stmt = (create_sql or {}).get(t)
-        if stmt:
-            try:
-                con.execute(f"DROP TABLE IF EXISTS {t}")
-                con.execute(stmt)
-                cols = ", ".join(f'"{c}"' for c, _ in spec) if spec else "*"
-                con.execute(
-                    f"INSERT INTO {t} ({cols}) SELECT {sel} FROM {read}"
-                    if spec
-                    else f"INSERT INTO {t} SELECT * FROM {read}"
-                )
-                continue
-            except Exception as e:  # noqa: BLE001 - fall back, never fail the build
-                degraded.append(f"{t}: {str(e).splitlines()[0][:110]}")
-                con.execute(f"DROP TABLE IF EXISTS {t}")
         con.execute(f"CREATE OR REPLACE TABLE {t} AS SELECT {sel} FROM {read}")
+
+    if dws_sql:
+        con.execute(dws_sql)
+
+    for t in tables:
+        stmt = (create_sql or {}).get(t)
+        if not stmt:
+            continue
+        spec = (types or {}).get(t)
+        cols = ", ".join(f'"{c}"' for c, _ in spec) if spec else "*"
+        stage = f"_stage_{t}"  # a leading underscore: never counted as a deliverable below
+        try:
+            con.execute(f"DROP TABLE IF EXISTS {stage}")
+            con.execute(f"ALTER TABLE {t} RENAME TO {stage}")
+            con.execute(stmt)
+            con.execute(
+                f"INSERT INTO {t} ({cols}) SELECT {cols} FROM {stage}"
+                if spec
+                else f"INSERT INTO {t} SELECT * FROM {stage}"
+            )
+            con.execute(f"DROP TABLE {stage}")
+        except Exception as e:  # noqa: BLE001 - fall back, never fail the build
+            degraded.append(f"{t}: {str(e).splitlines()[0][:110]}")
+            con.execute(f"DROP TABLE IF EXISTS {t}")
+            con.execute(f"ALTER TABLE {stage} RENAME TO {t}")
     if degraded:
         print(
             "  ! constraints dropped on "
             + str(len(degraded))
-            + " table(s) because the generated data or a parent table did not satisfy them:"
+            + " table(s) because the generated data, a parent table or the post-processing SQL did not satisfy them:"
         )
         for d in degraded:
             print("    - " + d)
 
-    if dws_sql:
-        con.execute(dws_sql)
     for obj, txt in comments:
         con.execute(f"COMMENT ON {obj} IS '{txt.replace(chr(39), chr(39) * 2)}'")
     con.close()
