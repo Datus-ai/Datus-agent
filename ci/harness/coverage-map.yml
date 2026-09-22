@@ -334,6 +334,27 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/configuration/datasources.md
+          - docs/configuration/datasources/bigquery.md
+          - docs/configuration/datasources/clickhouse.md
+          - docs/configuration/datasources/clickzetta.md
+          - docs/configuration/datasources/doris.md
+          - docs/configuration/datasources/duckdb.md
+          - docs/configuration/datasources/dws.md
+          - docs/configuration/datasources/gaussdb.md
+          - docs/configuration/datasources/greenplum.md
+          - docs/configuration/datasources/hive.md
+          - docs/configuration/datasources/hologres.md
+          - docs/configuration/datasources/maxcompute.md
+          - docs/configuration/datasources/mysql.md
+          - docs/configuration/datasources/oracle.md
+          - docs/configuration/datasources/postgresql.md
+          - docs/configuration/datasources/redshift.md
+          - docs/configuration/datasources/snowflake.md
+          - docs/configuration/datasources/spark.md
+          - docs/configuration/datasources/sqlite.md
+          - docs/configuration/datasources/starrocks.md
+          - docs/configuration/datasources/tidb.md
+          - docs/configuration/datasources/trino.md
           - docs/cli/sql_execution.md
           - docs/cli/execution_command.md
         entrypoints:
