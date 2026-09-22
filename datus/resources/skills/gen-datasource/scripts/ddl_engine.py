@@ -1202,7 +1202,11 @@ class DDLEngine:
         # is one stage, not two - and a status mapped to stage 2 was downgraded on every row
         # without a word. A run declared exactly that and read the result as "lifecycle ignored".
         for t, lc in (self.profile.get("lifecycle") or {}).items():
-            if t not in tabs or not isinstance(lc, dict):
+            if t not in self.schema:
+                if t in tabs:  # a summary or pre_sql table: the reference check let it through
+                    err.append(f"lifecycle[{t}]: `{t}` is not a DDL table; lifecycle applies to generated tables only")
+                continue
+            if not isinstance(lc, dict):
                 continue
             ts_cols = [c["name"] for c in self.schema[t] if c["sem"] == "ts"]
             biz = [c for c in ts_cols if not AUDIT_TS.match(c)]
@@ -1261,6 +1265,22 @@ class DDLEngine:
                     )
             if "__default__" not in spec:
                 warn.append(f"conditional[{key}]: no __default__; unlisted values fall back to the engine default")
+
+        # joint: on a fan-out table the group is drawn per row WITH replacement (the row count is
+        # not known up front), so a key column in it would repeat and the table would lose its
+        # constraints at build time. Real values for a key belong on the parent or the dimension.
+        for t, groups in (self.profile.get("joint") or {}).items():
+            if t not in self.schema or self.roles.get(t) not in (ROLE_DETAIL, ROLE_DOWNSTREAM):
+                continue
+            for g in groups if isinstance(groups, list) else []:
+                keys = sorted(set(g.get("cols", ())) & self._key_cols(t))
+                if keys:
+                    err.append(
+                        f"joint[{t}]: group ({', '.join(g.get('cols', ()))}) includes key column(s) "
+                        f"{', '.join(keys)}; a {self.roles[t]} table is drawn per row with replacement, so the "
+                        f"key would repeat and the table would ship without its constraints - put the real "
+                        f"values on the table that owns the key"
+                    )
 
         # formulas: referenced columns exist, no self-reference, no cycles
         fml = self.profile.get("formulas", {})
@@ -3615,17 +3635,18 @@ class DDLEngine:
                     row[item_col] = e[pool_pk]
                 for k, v in self._joint_draw(t, rng).items():
                     row.setdefault(k, v)
+                own_t0 = None  # set when this row runs its own lifecycle; its children anchor to it
                 if life["declared"]:
-                    if status_col:
+                    if status_col and status_col not in row:  # a joint group may have supplied it
                         row[status_col] = self._pick_enum(t, status_col, row, ents, rng)
                     anchor = pr.get("ts")
-                    t0 = (
+                    own_t0 = (
                         min(anchor + timedelta(seconds=rng.randint(30, 5400)), life["cap"])
                         if anchor is not None
                         else day_ts(rng, pr["dt"])
                     )
-                    self._lifecycle_settle_status(life, row, t0, status_col, st_vals, st_w, rng)
-                    self._lifecycle_chain(life, row, t0, status_col, rng)
+                    self._lifecycle_settle_status(life, row, own_t0, status_col, st_vals, st_w, rng)
+                    self._lifecycle_chain(life, row, own_t0, status_col, rng)
                 qty = (self._count_val(t, qty_col, rng, row, ents) if qty_col else None) or rng.choices(
                     [1, 2, 3, 4], [0.71, 0.19, 0.07, 0.03]
                 )[0]
@@ -3690,9 +3711,11 @@ class DDLEngine:
                     {
                         "pk": row[pk],
                         "alt": self._ref_alt(t, row),
-                        "dt": pr["dt"],
-                        "ts": pr.get("ts"),
-                        "status": pr.get("status", ""),
+                        # A row that ran its own lifecycle is the anchor for ITS children: a note
+                        # on a claim follows the claim's timestamps and status, not the order's.
+                        "dt": own_t0.date() if own_t0 else pr["dt"],
+                        "ts": own_t0 if own_t0 else pr.get("ts"),
+                        "status": row.get(status_col, "") if (own_t0 and status_col) else pr.get("status", ""),
                         "amt": sales,
                         "fks": {f: row.get(f, "") for f in self.fks[t]},
                         "subj": 1.0,

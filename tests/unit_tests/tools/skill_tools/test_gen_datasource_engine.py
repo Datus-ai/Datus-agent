@@ -3782,3 +3782,110 @@ def test_the_two_inferences_reach_the_schema(engine_module):
 
     assert _sem(eng, "aircraft", "in_service") == "flag"
     assert _sem(eng, "flight_alerts", "priority") == "enum"
+
+
+# --------------------------------------------------------------------------- the edges of the detail-table blocks
+
+
+@pytest.mark.acceptance
+def test_a_lifecycle_on_a_table_the_profile_creates_itself_is_refused_not_a_crash(engine_module):
+    """`pre_sql` may CREATE a table, and the table-level reference check accepts that name - but
+    the lifecycle check reads `self.schema`, where it does not exist. That was a KeyError where a
+    configuration error belongs."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={
+            **FLIGHT_BASE,
+            "pre_sql": ["CREATE TABLE alert_digest AS SELECT alert_id FROM flight_alerts"],
+            "lifecycle": {"alert_digest": {"stages": {"OPEN": 0}}},
+        },
+    )
+    err, _warn = eng.precheck(strict=False)
+
+    assert any(e.startswith("lifecycle[alert_digest]") and "not a DDL table" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_a_key_bearing_joint_group_on_a_detail_table_is_refused(engine_module):
+    """A detail row count is not known up front, so its `joint` groups are drawn with replacement;
+    a UNIQUE column in one would repeat, and the table would ship without its constraints."""
+    eng = engine_module.DDLEngine(
+        FLIGHT_DDL,
+        rows=6000,
+        profile={
+            **FLIGHT_BASE,
+            "joint": {"flight_sensors": [{"cols": ["series_id", "series_name"], "values": [["S1", "ALTITUDE"]]}]},
+        },
+    )
+    err, _warn = eng.precheck(strict=False)
+
+    assert eng.roles["flight_sensors"] == "detail", "the premise"
+    assert any(e.startswith("joint[flight_sensors]") and "series_id" in e for e in err), err
+
+
+@pytest.mark.acceptance
+def test_a_joint_supplied_status_survives_the_detail_lifecycle(engine_module, tmp_path):
+    """The lifecycle sampled the status column unconditionally, so a `joint` group pairing status
+    with priority was overwritten on one of its two columns and the pair came apart."""
+    pairs = {("OPEN", "HIGH"), ("RESOLVED", "LOW")}
+    _eng, con = _flights(
+        engine_module,
+        tmp_path,
+        joint={"flight_alerts": [{"cols": ["alert_status", "priority"], "values": [list(p) for p in pairs]}]},
+        lifecycle={"flight_alerts": {"gap_hours": [0], "stages": {"OPEN": 0, "RESOLVED": 1}}},
+    )
+
+    seen = set(con.execute("SELECT alert_status, priority FROM flight_alerts GROUP BY 1, 2").fetchall())
+    assert seen == pairs, seen
+
+
+CLAIMS_DDL = """
+CREATE TABLE customers (
+    customer_id VARCHAR PRIMARY KEY,
+    name VARCHAR
+);
+CREATE TABLE orders (
+    order_id VARCHAR PRIMARY KEY,
+    customer_id VARCHAR REFERENCES customers(customer_id),
+    order_time TIMESTAMP,
+    amount_usd DECIMAL(12, 2),
+    order_status VARCHAR, -- PAID / SHIPPED
+);
+CREATE TABLE claims (
+    claim_id VARCHAR PRIMARY KEY,
+    order_id VARCHAR REFERENCES orders(order_id),
+    claim_status VARCHAR, -- OPEN / CLOSED
+    filed_at TIMESTAMP,
+    closed_at TIMESTAMP
+);
+CREATE TABLE claim_notes (
+    note_id VARCHAR PRIMARY KEY,
+    claim_id VARCHAR REFERENCES claims(claim_id),
+    note_ts TIMESTAMP,
+    body VARCHAR
+);
+"""
+
+
+@pytest.mark.acceptance
+def test_a_detail_with_its_own_lifecycle_anchors_its_children_to_itself(engine_module, tmp_path):
+    """A claim filed days after its order carries its own `filed_at`; the notes on that claim
+    have to follow the claim, not the order. The detail's reference record kept the parent's
+    timestamp and status, so grandchildren were anchored one level too high."""
+    _eng, con = _build(
+        engine_module,
+        CLAIMS_DDL,
+        tmp_path,
+        rows=6000,
+        profile={
+            "per_parent": {"claims": 1, "claim_notes": 2},
+            "lifecycle": {"claims": {"gap_hours": [0, 200], "stages": {"OPEN": 1, "CLOSED": 2}}},
+        },
+    )
+
+    assert con.execute("SELECT count(*) FROM claim_notes").fetchone()[0] > 0
+    before = con.execute(
+        "SELECT count(*) FROM claim_notes n JOIN claims c USING (claim_id) WHERE n.note_ts < c.filed_at"
+    ).fetchone()[0]
+    assert before == 0, f"{before} notes precede the claim they belong to"
