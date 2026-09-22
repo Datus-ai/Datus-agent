@@ -1230,13 +1230,40 @@ class TestBuildListMetricsSemantic:
 
 @pytest.mark.ci
 class TestBuildGetMetric:
-    def test_compact(self):
+    def test_compact_reads_the_metric_detail_shape(self):
+        """get_metric returns one metric's detail dict, never a bare list.
+
+        Reading ``result`` as the list of dimensions leaves the compact line
+        empty for every real response, which is what a caller actually sees.
+        """
         a = _make(
             input_data={"function_name": "get_metric"},
-            output_data={"raw_output": '{"success": 1, "result": ["dim1", "dim2"]}'},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"name": "revenue", "kind": "aggregate", '
+                '"dimensions": [{"name": "region"}, {"name": "channel"}]}}'
+            },
         )
         tc = _build_get_metric(a, verbose=False)
         assert "2 dimensions" in tc.compact_result
+        assert "region" in tc.compact_result
+
+    def test_compact_reports_unresolved_dimensions(self):
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"name": "revenue", "dimensions_error": "planner down"}}'
+            },
+        )
+        tc = _build_get_metric(a, verbose=False)
+        assert tc.compact_result == "no dims"
+
+    def test_compact_stays_empty_without_a_result(self):
+        a = _make(
+            input_data={"function_name": "get_metric"},
+            output_data={"raw_output": '{"success": 0, "error": "Unknown metric"}'},
+        )
+        tc = _build_get_metric(a, verbose=False)
+        assert not tc.compact_result
 
 
 @pytest.mark.ci

@@ -103,9 +103,19 @@ def _normalize_metric_metadata(raw) -> dict:
 _METRIC_DERIVATION_KEYS = ("derive_family", "derive_base", "derive_expr")
 
 # Metadata keys promoted onto the detail row alongside the derivation edges.
-# ``window`` carries the partition rule (which dimensions a windowed metric
-# excludes, and the rank direction), which a caller needs to query it correctly.
-_METRIC_DETAIL_KEYS = ("window", "window_family", "window_function", "subset_of", "requires_time_axis")
+# Passed through verbatim: what a partition rule means, and which dimensions a
+# metric needs before its partitions do, is the adapter's to decide and publish.
+# This layer must not reconstruct either from the rule's internals — an adapter
+# that resolves a requirement through metrics it never published would leave us
+# reporting "no requirement" for exactly the metrics that have one.
+_METRIC_DETAIL_KEYS = (
+    "window",
+    "window_family",
+    "window_function",
+    "subset_of",
+    "requires_time_axis",
+    "required_dimensions",
+)
 
 
 def _metric_summary_row(metric: Any, subject_path: Optional[List[str]] = None) -> dict:
@@ -142,36 +152,6 @@ def _metric_summary_row(metric: Any, subject_path: Optional[List[str]] = None) -
     if subject_path:
         row["path"] = subject_path
     return row
-
-
-def _required_partition_dimensions(row: Mapping[str, Any]) -> List[str]:
-    """Dimensions a windowed metric needs in the query to partition correctly.
-
-    A ``query_dimensions_except`` partition sums or ranks over every query
-    dimension *except* the listed ones. Leave an excluded dimension out of the
-    query and there is nothing to exclude: the partition collapses to a single
-    row and the metric returns a different number without failing. Surfacing the
-    list lets a caller include them up front.
-
-    Only covers the metric's own window. A composite metric inherits the
-    requirement from its inputs, which needs the dependency edges an adapter does
-    not publish for compose metrics yet.
-    """
-    window = row.get("window")
-    if not isinstance(window, dict):
-        return []
-
-    required: List[str] = []
-    for value in window.values():
-        if not isinstance(value, dict):
-            continue
-        partition = value.get("partition")
-        if not isinstance(partition, dict) or partition.get("mode") != "query_dimensions_except":
-            continue
-        for dimension in _normalize_name_list(partition.get("exclude")):
-            if dimension not in required:
-                required.append(dimension)
-    return required
 
 
 def _metric_detail_row(metric: Any, subject_path: Optional[List[str]] = None) -> dict:
@@ -317,11 +297,6 @@ _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
 # applies above this budget, where result size is driven by dimension cardinality
 # rather than by the caller's column choice.
 METRIC_RESULT_TOKEN_BUDGET = 8000
-
-# ``get_metric`` resolves names against one catalog read. The bound is a safety
-# net for an adapter that never stops paging, not a page size: callers name the
-# metrics they want, so the catalog is scanned once and filtered.
-_METRIC_DETAIL_CATALOG_LIMIT = 1000
 
 # Default page for ``list_metrics``. The slimmed summary rows make a whole
 # catalog cheap — 78 metrics is ~4.2k tokens — so the default page covers most
@@ -1095,8 +1070,7 @@ class SemanticTools:
 
             async_result = _run_async(adapter.list_metrics(path=None, limit=limit, offset=offset))
             adapter_metrics = [
-                _metric_summary_row(metric, kb_paths.get(normalize_metric_name(metric.name)))
-                for metric in async_result
+                _metric_summary_row(metric, kb_paths.get(normalize_metric_name(metric.name))) for metric in async_result
             ]
             # Adapter path has no guaranteed upstream total — leave it None so consumers
             # know to use has_more / len(items) < limit as the pagination hint.
@@ -1156,6 +1130,36 @@ class SemanticTools:
             ),
         )
 
+    def _adapter_metric_by_name(self, adapter: BaseSemanticAdapter, name: str) -> Optional[Any]:
+        """The catalog entry for one metric, over the whole catalog.
+
+        Paged the same way ``list_metrics`` pages it rather than read once with a
+        bound, so a name ``list_metrics`` handed out from a later page is still
+        describable. Running out of pages means the name is not in the catalog —
+        the caller reports an unknown metric, which is a different answer from
+        the integrity failure ``_adapter_metrics_for_names`` raises when a name
+        the knowledge base knows cannot be located.
+        """
+        page_size, max_pages = self._metric_catalog_paging()
+        wanted = normalize_metric_name(name)
+        offset = 0
+
+        for _ in range(max_pages):
+            page = list(_run_async(adapter.list_metrics(path=None, limit=page_size, offset=offset)))
+            if not page:
+                return None
+            for metric in page:
+                if normalize_metric_name(getattr(metric, "name", None)) == wanted:
+                    return metric
+            offset += len(page)
+
+        logger.warning(
+            "Metric catalog still returning rows after %d pages; stopped looking for %s.",
+            max_pages,
+            name,
+        )
+        return None
+
     def get_metric(
         self,
         name: str,
@@ -1182,10 +1186,9 @@ class SemanticTools:
                 flag: a dimension with ``recommended=false`` can still be
                 grouped explicitly. ``recommendation_source`` explains whether
                 the adapter declared or inferred that classification.
-              - required_dimensions (List[str]): dimensions this metric
-                partitions by excluding. Leave one out and the partition
-                collapses, changing the result without raising — pass them to
-                query_metrics.
+              - required_dimensions (List[str]): dimensions the adapter needs in
+                the query before this metric means anything. Pass every one of
+                them to query_metrics; the adapter rejects the query otherwise.
               - window: the partition and rank rule behind those requirements.
               - time_dimension, time_granularities: the metric's time axis and
                 the grains the adapter compiles for it.
@@ -1207,16 +1210,7 @@ class SemanticTools:
             )
 
         try:
-            metric = next(
-                (
-                    candidate
-                    for candidate in _run_async(
-                        adapter.list_metrics(path=path, limit=_METRIC_DETAIL_CATALOG_LIMIT, offset=0)
-                    )
-                    if str(getattr(candidate, "name", "") or "") == name
-                ),
-                None,
-            )
+            metric = self._adapter_metric_by_name(adapter, name)
         except Exception as e:
             logger.error(f"Error reading the metric catalog: {e}")
             return FuncToolResult(success=0, error=f"Failed to get metric detail: {str(e)}")
@@ -1255,9 +1249,6 @@ class SemanticTools:
                 row["time_dimension"] = capabilities["time_dimension"]
             if capabilities.get("time_granularities"):
                 row["time_granularities"] = capabilities["time_granularities"]
-        required = _required_partition_dimensions(row)
-        if required:
-            row["required_dimensions"] = required
 
         return FuncToolResult(success=1, result=row)
 

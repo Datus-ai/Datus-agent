@@ -1872,24 +1872,35 @@ class TestGetMetric:
 
         assert "measures" not in result.result
 
-    def test_exposes_the_partition_dimensions_a_window_metric_needs(self, semantic_tools_with_adapter):
-        """A query_dimensions_except partition collapses when its excluded
-        dimension is absent, changing the number without raising. The caller can
-        only avoid that if the requirement is stated."""
+    def test_passes_through_the_dimensions_the_adapter_says_are_required(self, semantic_tools_with_adapter):
+        """The requirement is the adapter's answer, carried verbatim.
+
+        Which dimensions a metric needs before its partitions mean anything can
+        depend on metrics the adapter never published — a composite inherits the
+        requirement from its inputs. Deriving it here from the partition rule
+        would report "no requirement" for exactly those metrics, so the field is
+        passed through and never reconstructed.
+        """
+        tool, _ = semantic_tools_with_adapter
+        metric = _detail_metric(
+            "area_score",
+            {"base_kind": "expression", "derive_family": "compose", "required_dimensions": ["cell.brand", "cell.area"]},
+        )
+
+        with self._wire([metric]):
+            result = tool.get_metric(name="area_score")
+
+        assert result.result["required_dimensions"] == ["cell.brand", "cell.area"]
+
+    def test_keeps_the_field_absent_when_the_adapter_reports_nothing(self, semantic_tools_with_adapter):
+        """A metric whose window excludes a dimension but that publishes no
+        requirement must not grow one here: absence means the adapter did not
+        say, and inventing an answer from the rule is what got it wrong."""
         tool, _ = semantic_tools_with_adapter
         metric = _detail_metric("store_issue_num_rn", self.RANKED)
 
         with self._wire([metric]):
             result = tool.get_metric(name="store_issue_num_rn")
-
-        assert result.result["required_dimensions"] == ["cell.brand"]
-
-    def test_metric_without_a_window_states_no_requirement(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-        metric = _detail_metric("kpi_issues", {"base_kind": "aggregate", "time_dimension": "repair.month_key"})
-
-        with self._wire([metric]):
-            result = tool.get_metric(name="kpi_issues")
 
         assert "required_dimensions" not in result.result
 
@@ -1974,8 +1985,54 @@ class TestGetMetric:
         assert result.result["dimensions"][1]["recommended"] is False
         assert result.result["dimensions"][1]["recommendation_source"] == "inferred:primary_key"
 
-    def test_path_is_passed_to_both_adapter_calls(self, semantic_tools_with_adapter):
-        """A path-scoped metric must be resolved and described in the same scope."""
+    def test_describes_a_metric_that_only_a_later_catalog_page_holds(self, semantic_tools_with_adapter):
+        """Every name list_metrics can hand out, get_metric has to accept.
+
+        list_metrics pages the catalog, so it will report names past the first
+        page. Resolving those against a single bounded read answers "unknown
+        metric" for a metric the caller was just told exists.
+        """
+        tool, _ = semantic_tools_with_adapter
+        wanted = _detail_metric("revenue", {"base_kind": "aggregate"})
+        pages = [
+            [_detail_metric(f"filler_{index}", {"base_kind": "aggregate"}) for index in range(3)],
+            [wanted],
+            [],
+        ]
+        dimension_rows = [{"name": "cell.brand"}]
+
+        def dispatch(coro):
+            if pages:
+                return pages.pop(0)
+            return dimension_rows
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch):
+            result = tool.get_metric(name="revenue")
+
+        assert result.success == 1
+        assert result.result["name"] == "revenue"
+
+    def test_unknown_name_fails_once_the_catalog_runs_out(self, semantic_tools_with_adapter):
+        """Paging to the end of the catalog is an unknown metric, not a failure
+        to read it: the caller needs to fix the name, not retry."""
+        tool, _ = semantic_tools_with_adapter
+        pages = [[_detail_metric("revenue", {"base_kind": "aggregate"})], []]
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: pages.pop(0)):
+            result = tool.get_metric(name="no_such_metric")
+
+        assert result.success == 0
+        assert "no_such_metric" in result.error
+        assert "list_metrics" in result.error
+
+    def test_resolves_the_name_against_the_whole_catalog_not_the_path(self, semantic_tools_with_adapter):
+        """Name resolution must scope exactly the way list_metrics scopes it.
+
+        list_metrics filters by knowledge-base subject path and asks the adapter
+        for its unfiltered catalog. Narrowing the adapter read by path here would
+        make get_metric reject names list_metrics had just handed out under that
+        same path.
+        """
         tool, mock_adapter = semantic_tools_with_adapter
         metric = _detail_metric("revenue", {"base_kind": "aggregate"})
 
@@ -1983,7 +2040,7 @@ class TestGetMetric:
             result = tool.get_metric(name="revenue", path=["Finance"])
 
         assert result.success == 1
-        assert mock_adapter.list_metrics.call_args.kwargs["path"] == ["Finance"]
+        assert mock_adapter.list_metrics.call_args.kwargs["path"] is None
         mock_adapter.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
 
 

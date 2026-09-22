@@ -114,7 +114,7 @@ search_metrics(
 )
 
 # 获取可查询维度和指标的主要时间轴。
-get_dimensions(metric_name="bank_failure_count")
+get_metric(name="bank_failure_count")
 
 # 按年执行两个指标。
 query_metrics(
@@ -130,7 +130,7 @@ query_metrics(
 | 参数 | 含义 |
 | --- | --- |
 | `metrics` | 一个或多个准确的指标名。 |
-| `dimensions` | `get_dimensions` 返回的字段；在 Dosi 中，`metric_time` 表示指标的主要时间轴。自动选择分组字段时优先使用 `recommended=true`；`recommended=false` 仍可显式查询。 |
+| `dimensions` | `get_metric` 返回的字段；在 Dosi 中，`metric_time` 表示指标的主要时间轴。自动选择分组字段时优先使用 `recommended=true`；`recommended=false` 仍可显式查询。 |
 | `path` | 可选 subject-tree 路径，用于消除指标歧义。 |
 | `time_start`、`time_end` | 可选的左闭右开时间范围：start 包含，end 不包含。Adapter 支持 ISO 日期以及 `-7d`、`now` 等相对值。 |
 | `time_granularity` | `day`、`week`、`month`、`quarter` 或 `year`。 |

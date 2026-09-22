@@ -274,7 +274,13 @@ class DataCompressor:
         keeping the two ends preserves a usable sample.
         """
         if column_priority:
-            rank = {column: index for index, column in enumerate(column_priority)}
+            # First mention wins. A caller may name the same column twice — a
+            # dimension it also asked for as a metric, say — and taking the last
+            # index would rank it by its least important mention and give it up
+            # ahead of columns the caller named after it.
+            rank: Dict[str, int] = {}
+            for index, column in enumerate(column_priority):
+                rank.setdefault(column, index)
             unranked = [column for column in compressible_columns if column not in rank]
             ranked = [column for column in compressible_columns if column in rank]
             ranked.sort(key=lambda column: rank[column], reverse=True)

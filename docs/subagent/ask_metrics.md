@@ -82,7 +82,7 @@ Key behavior:
 
 - Direct subject-tree matches are preferred over search.
 - `search_metrics` is used only when the subject tree is missing, partial, or ambiguous.
-- `get_dimensions` is called before grouping, filtering, or attribution.
+- `get_metric` is called before grouping, filtering, or attribution.
 - `query_metrics` is the primary tool for metric values.
 - `attribution_analyze` is used for change explanation and contribution questions.
 - Raw SQL tools are not part of the default AskMetrics surface.
@@ -95,7 +95,7 @@ Key behavior:
 | `context_search_tools.get_metrics` | Retrieve details for a known metric and subject path |
 | `context_search_tools.list_subject_tree` | List metric subject paths when the startup subject tree is too large to inline |
 | `semantic_tools.list_metrics` | Enumerate executable metrics from the semantic adapter |
-| `semantic_tools.get_dimensions` | Discover valid dimensions for grouping, filtering, and attribution |
+| `semantic_tools.get_metric` | Describe one metric: its queryable dimensions, time axis, and grains |
 | `semantic_tools.query_metrics` | Query metric values |
 | `semantic_tools.attribution_analyze` | Explain metric movement across candidate dimensions |
 
@@ -138,7 +138,7 @@ agent:
       model: claude
       max_turns: 12
       prompt_version: "1.0"
-      tools: "context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_dimensions,semantic_tools.query_metrics"
+      tools: "context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"
       subject_tree_prompt_limit: 50
       agent_description: "Answer sales metric questions using the sales semantic layer."
 ```

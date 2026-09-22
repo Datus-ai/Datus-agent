@@ -1559,7 +1559,24 @@ def _build_list_metrics_semantic(action: ActionHistory, verbose: bool) -> ToolCa
 
 def _build_get_metric(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """get_metric: show the metric's dimension count."""
-    return _build_simple_list(action, verbose, "dimensions")
+    tc = make_base_content(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
+        return tc
+
+    # ``get_metric`` describes one metric, so its result is the metric's detail
+    # dict — the dimensions are one field of it, not the result itself.
+    data = parse_output_data(action.output)
+    result = data.get("result") if data else None
+    if isinstance(result, dict):
+        dimensions = result.get("dimensions")
+        if isinstance(dimensions, list):
+            tc.compact_result = _fmt_count_with_preview(len(dimensions), "dimension", "dimensions", dimensions)
+        elif result.get("dimensions_error"):
+            tc.compact_result = "no dims"
+    return tc
 
 
 def _build_query_metrics(action: ActionHistory, verbose: bool) -> ToolCallContent:

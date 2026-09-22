@@ -201,8 +201,12 @@ class TestAskMetricsAgenticNode:
         assert "request those metrics in one `query_metrics(metrics=[...])` call" in prompt
         assert "query all requested catalog metrics together" in prompt
         assert "do not add sibling display/name/label dimensions" in prompt
-        assert "`extra.time_dimension`" in prompt
-        assert "`extra.time_granularities`" in prompt
+        # The field paths must match what get_metric actually returns: both sit
+        # on the result row, and there is no ``extra`` object to read them from.
+        assert "Read `time_dimension` and `time_granularities` from the result" in prompt
+        assert "extra.time_dimension" not in prompt
+        assert "extra.time_granularities" not in prompt
+        assert "Pass every name in `required_dimensions` to" in prompt
         assert "advisory defaults, not an exhaustive allowlist" in prompt
         assert "let the semantic adapter validate it" in prompt
         assert node.subject_tree_prompt_limit == 100

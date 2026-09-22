@@ -82,7 +82,7 @@ graph LR
 
 - 优先使用主题树中的直接指标匹配，而不是搜索。
 - 只有在主题树缺失、不完整或存在歧义时才使用 `search_metrics`。
-- 分组、过滤或归因前会先调用 `get_dimensions`。
+- 分组、过滤或归因前会先调用 `get_metric`。
 - `query_metrics` 是查询指标值的主要工具。
 - 变化解释和贡献分析问题使用 `attribution_analyze`。
 - 默认工具面不包含原始 SQL 工具。
@@ -95,7 +95,7 @@ graph LR
 | `context_search_tools.get_metrics` | 获取已知主题路径和指标名的指标详情 |
 | `context_search_tools.list_subject_tree` | 当启动时主题树过大、只能内联部分内容时列出指标主题路径 |
 | `semantic_tools.list_metrics` | 从语义适配器列出可执行指标 |
-| `semantic_tools.get_dimensions` | 发现可用于分组、过滤和归因的维度 |
+| `semantic_tools.get_metric` | 描述单个指标：可查询维度、时间轴和粒度 |
 | `semantic_tools.query_metrics` | 查询指标值 |
 | `semantic_tools.attribution_analyze` | 按候选维度解释指标变化 |
 
@@ -138,7 +138,7 @@ agent:
       model: claude
       max_turns: 12
       prompt_version: "1.0"
-      tools: "context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_dimensions,semantic_tools.query_metrics"
+      tools: "context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_metric,semantic_tools.query_metrics"
       subject_tree_prompt_limit: 50
       agent_description: "Answer sales metric questions using the sales semantic layer."
 ```
