@@ -2194,7 +2194,6 @@ class DBFuncTool:
         _, meta, display = max(found, key=lambda item: item[0])
         return meta, display
 
-    @mcp_tool()
     def _assertion_drift(self, config_file, config):
         """Which assertions disappeared since the last check on this config file.
 
@@ -2234,6 +2233,7 @@ class DBFuncTool:
             return None
         return {"removed": removed, "added": added, "kept": len(names) - len(added)}
 
+    @mcp_tool()
     def check_datasource_quality(
         self,
         config_path: Optional[str] = "",
