@@ -988,6 +988,9 @@ class DDLEngine:
                     continue
                 progressed = True
         rest = [t for t in facts + details if t not in settled]
+        # What a pin fixed, directly or through lines-per-parent, stays fixed: calibration and the
+        # pre-scale below may only move the rest, or a pinned parent's lines drift off the band.
+        self._settled_rows = set(settled)
         left = max(0.0, budget * block / tot - sum(settled.values()))
         unit = left / (sum(weights[t] for t in rest) or 1)
         n.update(settled)
@@ -1059,7 +1062,7 @@ class DDLEngine:
         - and the fan-out tree follows its root each time. Two rounds, like the calibration.
         """
         fixed = getattr(self, "fixed_fanout", None) or {}
-        pinned = getattr(self, "pinned_rows", None) or {}
+        pinned = set(getattr(self, "pinned_rows", None) or {}) | set(getattr(self, "_settled_rows", None) or ())
         free = [
             t
             for t in n

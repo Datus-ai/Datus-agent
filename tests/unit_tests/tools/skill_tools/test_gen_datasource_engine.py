@@ -4063,8 +4063,11 @@ def test_the_first_pass_of_a_fan_out_tree_is_the_right_size(engine_module, tmp_p
 
 @pytest.mark.acceptance
 def test_prescaling_leaves_a_plan_that_already_fits_alone(engine_module):
-    """No fan-out, no pin: the ordinary allocation is already within tolerance and must not move."""
+    """A plan within tolerance is not touched: the rule is idempotent, so a second application
+    to the plan it produced changes nothing."""
     eng = engine_module.DDLEngine(FLIGHT_DDL, rows=6000, profile=FLIGHT_BASE)
     planned = sum(eng.nrows[t] for t in eng.schema)
-
     assert abs(planned / 6000 - 1) <= 0.06, planned
+
+    again = eng._prescale_to_budget(dict(eng.nrows))
+    assert again == eng.nrows
