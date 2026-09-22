@@ -59,6 +59,21 @@ from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
 
+
+def _parse_profile_text(text: str):
+    """A PROFILE as the model writes it: JSON, or the Python dict literal ``gen.py`` would hold.
+
+    ``gen.py`` profiles carry tuples (``"range": (9, 320)``) and trailing commas, which are not
+    JSON; ``ast.literal_eval`` accepts exactly the literal subset and nothing executable.
+    """
+    import ast
+
+    try:
+        return json.loads(text)
+    except ValueError:
+        return ast.literal_eval(text.strip())
+
+
 # One warning per project is enough: DBFuncTool is rebuilt per session and per
 # sub-agent, and repeating this on every construction would bury it.
 _STALE_PROJECTION_WARNED: Set[str] = set()
@@ -1987,6 +2002,7 @@ class DBFuncTool:
         rows: int = 80_000,
         months: int = 17,
         end_date: Optional[str] = "",
+        profile: Optional[str] = "",
     ) -> FuncToolResult:
         """
         Show what the ``gen-datasource`` engine will build from a DDL, generating nothing.
@@ -2001,9 +2017,13 @@ class DBFuncTool:
         it: the engine allocates from ``rows`` on its own and this is where it says how. Then
         write ``gen.py`` with a profile that corrects what the plan got wrong.
 
-        The profile is deliberately not an argument. This is the inference from the DDL alone,
-        which is what the skill's order of work asks you to inspect first; a profile then
-        overrides only what is wrong.
+        Call it first WITHOUT ``profile``: that is the inference from the DDL alone, which the
+        skill's order of work asks you to inspect first. Then, before writing ``data/gen.py``,
+        call it again WITH the profile you are considering - roles, per_parent, dim_rows, joint,
+        conditional - and read what the engine will do with it: the row allocation, which rules
+        resolve, and the pre-check's errors and warnings. This is how to answer "how many rows
+        will each table get" and "does per_parent 0.25 do what I mean": in 0.3 seconds, not by
+        working the allocation out in reasoning.
 
         Args:
             ddl: The CREATE TABLE statements, in DuckDB syntax.
@@ -2012,6 +2032,9 @@ class DBFuncTool:
             months: Length of the data window, counted back in whole months from the month
                 containing ``end_date``.
             end_date: Last day of data as ``YYYY-MM-DD``. Defaults to yesterday.
+            profile: Optional. The PROFILE dict you intend to put in ``gen.py``, as JSON or as
+                a Python dict literal (the same text ``gen.py`` would hold, tuples included).
+                The plan is then computed under it.
 
         Returns:
             dict: A dictionary with the execution result, containing these keys:
@@ -2025,10 +2048,19 @@ class DBFuncTool:
                     with.
         """
         try:
-            plan, skeleton = plan_from_ddl(ddl, rows=rows, months=months, end_date=end_date or None)
+            prof = None
+            if profile and str(profile).strip():
+                prof = _parse_profile_text(str(profile))
+                if not isinstance(prof, dict):
+                    return FuncToolResult(
+                        success=0, error="profile must be a dict (JSON object or Python dict literal)"
+                    )
+            plan, skeleton = plan_from_ddl(ddl, rows=rows, months=months, end_date=end_date or None, profile=prof)
+            with_profile = prof is not None
             return FuncToolResult(
                 result={
                     "plan": plan,
+                    "profile_applied": with_profile,
                     # Everything the engine already knows, as a PROFILE to fill in rather than a
                     # structure to design. A measured production run spent 40% of one turn
                     # enumerating enum domains and conditional dictionaries in its reasoning before
@@ -2040,14 +2072,26 @@ class DBFuncTool:
                     # The model follows tool output far more reliably than skill prose, so the
                     # next step belongs here rather than only in SKILL.md.
                     "next": (
-                        "Copy profile_skeleton into data/gen.py, fill its TODO slots from the "
-                        "business description, then run `python3 data/gen.py report`. Do not "
-                        "design the profile in reasoning first - the skeleton is the design."
+                        (
+                            "This is the plan under your profile. If it reads right, write data/gen.py "
+                            "with exactly this profile and run `python3 data/gen.py data/_build/datasource.duckdb`; "
+                            "if not, change the profile and call plan_datasource again - it is 0.3 seconds."
+                        )
+                        if with_profile
+                        else (
+                            "Copy profile_skeleton into data/gen.py, fill its TODO slots from the "
+                            "business description, then run `python3 data/gen.py report`. Do not "
+                            "design the profile in reasoning first - the skeleton is the design. "
+                            "Unsure what the engine does with a per_parent, dim_rows, roles or joint you "
+                            "have in mind? Call plan_datasource again with profile=<that dict>."
+                        )
                     ),
                 }
             )
         except DatasourcePlanError as e:
             return FuncToolResult(success=0, error=str(e))
+        except (ValueError, SyntaxError) as e:
+            return FuncToolResult(success=0, error=f"profile could not be parsed as JSON or a Python dict literal: {e}")
         except Exception as e:
             logger.error(f"plan_datasource failed: {e}", exc_info=True)
             return FuncToolResult(success=0, error=f"Failed to plan the datasource: {e}")

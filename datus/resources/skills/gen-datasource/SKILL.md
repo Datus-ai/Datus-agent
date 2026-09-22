@@ -202,6 +202,12 @@ IOException: Could not set lock on file "...": Conflicting lock is held in pytho
    is one call.** It also returns `profile_skeleton`: a PROFILE with every default already filled
    in, which runs as it stands. **Paste it into `gen.py`, fill in `calendar`, and run.** Correcting
    a default is what the quality check is for; designing one up front is not.
+   **It also takes `profile=`.** Before writing `gen.py`, call it again with the PROFILE you have
+   in mind (as JSON or the Python dict literal itself) and read the allocation, the resolved rules
+   and the pre-check under it. "How many rows does each table get with `per_parent`
+   `{delays: 0.25, sensor_readings: 4}` and these `dim_rows`?" is a 0.3-second call; two measured
+   runs spent a third of a 60,000-token design turn answering it by hand. A sparse child - a delay
+   on a quarter of the flights - is `per_parent: 0.25`, not a row budget plus a DELETE.
 1. Generate to a build path inside the workspace: `python3 data/gen.py data/_build/datasource.duckdb`
    (`gen.py` takes the output path as its first argument and creates the parent itself, so the
    command stays a single invocation with no shell chaining)

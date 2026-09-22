@@ -123,15 +123,19 @@ def plan_from_ddl(
     months: int = 17,
     end_date: Optional[str] = None,
     seed: int = 42,
+    profile: Optional[dict] = None,
 ) -> tuple[str, str]:
     """Return ``(plan, profile skeleton)`` for this DDL, generating nothing.
 
     The skeleton is the second half of the answer: the plan says what the engine inferred, and
     the skeleton hands that back as a PROFILE to fill in rather than a structure to design.
 
-    The profile is deliberately empty. The plan is what the engine infers from the DDL alone, which
-    is the thing worth seeing before writing a profile - the skill's order of work is "run report,
-    then override only what is wrong".
+    Without ``profile`` the plan is what the engine infers from the DDL alone, which is the thing
+    worth seeing first - the skill's order of work is "run report, then override only what is
+    wrong". With one, it is what the engine will do under that profile: roles, fan-out, dimension
+    sizes, which declarative rules resolve, and the pre-check's verdict. The profile used to be
+    deliberately not an argument, and two measured runs answered the question in reasoning instead
+    - a third of a 60,000-token design turn on row budgets the engine settles in 0.3 seconds.
     """
     if not ddl or not ddl.strip():
         raise DatasourcePlanError("ddl is empty; pass the CREATE TABLE statements to plan.")
@@ -154,7 +158,7 @@ def plan_from_ddl(
             engine = engine_module.DDLEngine(
                 ddl,
                 rows=rows,
-                profile={},
+                profile=dict(profile or {}),
                 months=months,
                 end_date=resolved_end,
                 seed=seed,

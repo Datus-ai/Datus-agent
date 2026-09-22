@@ -2026,6 +2026,34 @@ class TestPlanDatasource:
         assert result.success == 1
         assert result.result["end_date"] is None
 
+    def test_a_profile_is_planned_under_and_the_next_step_changes(self, db_func_tool):
+        """The profile was deliberately not an argument, and two measured runs reconstructed the
+        allocation under their candidate profile in reasoning instead. The literal is the text
+        `gen.py` would hold - tuples and a trailing comma included - not only JSON."""
+        literal = '{"trend_mom": 0.0, "columns": {"orders.paid_amount": {"range": (10, 20)}},}'
+        bare = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9)
+        under = db_func_tool.plan_datasource(self.PLAN_DDL, rows=30_000, months=9, profile=literal)
+
+        assert under.success == 1, under.error
+        assert under.result["profile_applied"] is True and bare.result["profile_applied"] is False
+        assert under.result["plan"] != bare.result["plan"], "the profile has to reach the engine"
+        assert "write data/gen.py with exactly this profile" in under.result["next"]
+        assert "profile=" in bare.result["next"], "the bare plan points at the profile call"
+
+    @pytest.mark.parametrize(
+        ("profile", "fragment"),
+        [
+            ("[1, 2]", "must be a dict"),
+            ('{"trend_mom": 0.0', "could not be parsed"),
+            ("__import__('os').system('id')", "could not be parsed"),
+        ],
+    )
+    def test_a_profile_that_is_not_a_dict_literal_is_a_refusal(self, db_func_tool, profile, fragment):
+        result = db_func_tool.plan_datasource(self.PLAN_DDL, rows=5000, profile=profile)
+
+        assert result.success == 0
+        assert fragment in result.error, result.error
+
     def test_the_tool_returns_the_skeleton_and_the_next_step(self, db_func_tool):
         """The model follows tool output far more reliably than skill prose.
 
