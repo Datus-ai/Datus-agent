@@ -88,11 +88,29 @@ nav:
       - SQL Policy: configuration/sql_policy.md
       - Web Tools: configuration/web_tool.md
       - Image Reading: configuration/image_tool.md
-      - Services:
-        - Datasources: configuration/datasources.md
-        - Semantic Layer: configuration/semantic_layer.md
-        - BI Platforms: configuration/bi_platforms.md
-        - Schedulers: configuration/schedulers.md
+      - Datasources:
+        - Overview: configuration/datasources.md
+        - SQLite: configuration/datasources/sqlite.md
+        - DuckDB: configuration/datasources/duckdb.md
+        - MySQL: configuration/datasources/mysql.md
+        - PostgreSQL: configuration/datasources/postgresql.md
+        - Greenplum: configuration/datasources/greenplum.md
+        - Amazon Redshift: configuration/datasources/redshift.md
+        - Snowflake: configuration/datasources/snowflake.md
+        - Google BigQuery: configuration/datasources/bigquery.md
+        - StarRocks: configuration/datasources/starrocks.md
+        - Apache Doris: configuration/datasources/doris.md
+        - TiDB: configuration/datasources/tidb.md
+        - ClickHouse: configuration/datasources/clickhouse.md
+        - Trino: configuration/datasources/trino.md
+        - Hive: configuration/datasources/hive.md
+        - Spark SQL: configuration/datasources/spark.md
+        - ClickZetta: configuration/datasources/clickzetta.md
+        - Hologres: configuration/datasources/hologres.md
+        - MaxCompute: configuration/datasources/maxcompute.md
+        - Oracle: configuration/datasources/oracle.md
+        - GaussDB / openGauss: configuration/datasources/gaussdb.md
+        - GaussDB(DWS): configuration/datasources/dws.md
       - Storage: configuration/storage.md
       - Nodes: configuration/nodes.md
     - Adapters:
@@ -186,11 +204,14 @@ plugins:
             Configuration: 配置
             Context Compaction: 上下文压缩
             Image Reading: 读图
-            Services: 服务
+            Datasources: 数据源
             Databases: 数据库
-            Semantic Layer: 语义层
-            BI Platforms: BI 平台
-            Schedulers: 调度器
+            Amazon Redshift: Amazon Redshift
+            Google BigQuery: Google BigQuery
+            Apache Doris: Apache Doris
+            Spark SQL: Spark SQL
+            GaussDB / openGauss: GaussDB / openGauss
+            GaussDB(DWS): GaussDB(DWS)
             Adapters: 适配器
             Database Adapters: 数据库适配器
             Semantic Adapters: 语义层适配器
