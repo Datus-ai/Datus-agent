@@ -354,6 +354,10 @@ class ChatTask:
         self.stats_context: Dict[str, Any] = {}
 
 
+# Agents the system runs on the user's behalf (a reaction triggers ``feedback``);
+# their turns are not a user choosing to chat with that subagent.
+_SYSTEM_TRIGGERED_AGENTS = frozenset({"feedback"})
+
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
 
 # Web clients run a FULL server-side bash (all commands allowed), confined by
@@ -655,7 +659,13 @@ class ChatTaskManager:
         set_current_path_manager(agent_config.path_manager)
 
         turn_started_at = datetime.now()
-        turn_stats = TurnStatsCollector(lambda name: resolve_subagent(agent_config, name))
+        turn_id = uuid.uuid4().hex
+        # Chatting with a subagent directly makes it the depth-0 node, so its
+        # own tool calls are the subagent's, not the main agent's.
+        top_level_caller = "subagent" if sub_agent_id and sub_agent_id != "chat" else "main"
+        turn_stats = TurnStatsCollector(
+            lambda name: resolve_subagent(agent_config, name), top_level_caller=top_level_caller
+        )
         # Only tally when a host listens; a collector bug stops the tally, never the turn.
         collect_turn_stats = get_turn_stats_hook() is not None
 
@@ -1052,6 +1062,7 @@ class ChatTaskManager:
                 sub_agent_id=sub_agent_id,
                 user_id=user_id,
                 started_at=turn_started_at,
+                turn_id=turn_id,
             )
             async with task.condition:
                 task.condition.notify_all()
@@ -1070,6 +1081,7 @@ class ChatTaskManager:
         sub_agent_id: Optional[str],
         user_id: Optional[str],
         started_at: datetime,
+        turn_id: str,
     ) -> None:
         """Hand the finished turn's call statistics to the host, if one listens.
 
@@ -1085,7 +1097,7 @@ class ChatTaskManager:
             status = task.status if task.status in ("completed", "error", "cancelled") else "error"
             duration_ms = max(0, int((datetime.now() - started_at).total_seconds() * 1000))
             direct = None
-            if sub_agent_id and sub_agent_id != "chat":
+            if sub_agent_id and sub_agent_id != "chat" and sub_agent_id not in _SYSTEM_TRIGGERED_AGENTS:
                 direct = resolve_subagent(agent_config, sub_agent_id)
             subagents, tools = collector.finalize(status, duration_ms, direct)
             event = TurnStatsEvent(
@@ -1099,6 +1111,7 @@ class ChatTaskManager:
                 origin=getattr(request, "origin", None),
                 error=task.error,
                 context=dict(task.stats_context),
+                turn_id=turn_id,
             )
         except Exception:
             logger.warning("Failed to build turn stats for session %s", task.session_id, exc_info=True)

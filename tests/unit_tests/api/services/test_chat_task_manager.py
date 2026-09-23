@@ -2900,6 +2900,7 @@ class TestRunLoopTurnStats:
 
         (event,) = events
         assert event.agent_name == "gen_report"
+        assert [(t.name, t.caller) for t in event.tools] == [("query_metrics", "subagent")]
         (sub,) = event.subagents
         assert (sub.name, sub.kind, sub.entry, sub.calls, sub.success, sub.tool_calls) == (
             "gen_report",
@@ -2909,6 +2910,26 @@ class TestRunLoopTurnStats:
             1,
             1,
         )
+
+    @pytest.mark.asyncio
+    async def test_feedback_turn_is_not_a_direct_subagent_chat(self, real_agent_config):
+        start, done = self._tool_actions("c1", "write_file")
+
+        _, events = await self._run(real_agent_config, self._fake_node([start, done]), sub_agent_id="feedback")
+
+        (event,) = events
+        assert event.agent_name == "feedback"
+        assert event.subagents == []
+        assert event.tools[0].caller == "subagent"
+
+    @pytest.mark.asyncio
+    async def test_every_turn_gets_its_own_turn_id(self, real_agent_config):
+        ids = []
+        for _ in range(2):
+            _, events = await self._run(real_agent_config, self._fake_node([]), stats_context={"trace_id": "same"})
+            ids.append(events[0].turn_id)
+
+        assert all(ids) and ids[0] != ids[1]
 
     @pytest.mark.asyncio
     async def test_collector_failure_never_fails_the_turn(self, real_agent_config, monkeypatch):

@@ -74,8 +74,11 @@ class TurnStatsEvent:
 
     ``agent_name`` is ``"chat"`` for the main agent, otherwise the subagent the
     user is talking to directly (whose invocation also appears in
-    ``subagents`` with ``entry="direct"``). ``context`` is whatever the host
-    returned from :meth:`TurnStatsHook.capture_context` when the turn started.
+    ``subagents`` with ``entry="direct"``). System-triggered runs such as the
+    reaction ``feedback`` agent keep their name here but are not counted as a
+    direct invocation. ``turn_id`` is generated per turn by the task manager —
+    unique even when a client reuses a trace id. ``context`` is whatever the
+    host returned from :meth:`TurnStatsHook.capture_context` at turn start.
     """
 
     session_id: str
@@ -88,6 +91,7 @@ class TurnStatsEvent:
     origin: Optional[str] = None
     error: Optional[str] = None
     context: Dict[str, Any] = field(default_factory=dict)
+    turn_id: str = ""
 
 
 @runtime_checkable

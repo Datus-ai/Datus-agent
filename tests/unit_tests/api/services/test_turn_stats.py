@@ -218,3 +218,17 @@ class TestToolGroup:
 
         groups = {t.name: t.group for t in tools}
         assert groups == {"validate_semantic_turn_stats_probe": "semantic_tools", "mcp__probe__unregistered": ""}
+
+
+class TestTopLevelCaller:
+    def test_direct_subagent_turn_attributes_its_tools_to_the_subagent(self):
+        collector = TurnStatsCollector(_resolver, top_level_caller="subagent")
+        collector.observe(_start("c1", "query_metrics"))
+        collector.observe(_complete("c1", "query_metrics"))
+        collector.observe(_start("c2", "write_file"))  # never finishes
+
+        subagents, tools = collector.finalize("cancelled", 900, direct=("ask_metrics", "custom"))
+
+        assert {(t.name, t.caller) for t in tools} == {("query_metrics", "subagent"), ("write_file", "subagent")}
+        # The direct invocation still counts every tool its own node started.
+        assert subagents[0].tool_calls == 2

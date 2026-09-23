@@ -97,8 +97,12 @@ def _task_subagent_name(action: ActionHistory) -> Optional[str]:
 class TurnStatsCollector:
     """Accumulates one turn's calls from the parent node's action stream."""
 
-    def __init__(self, resolve: SubagentResolver):
+    def __init__(self, resolve: SubagentResolver, top_level_caller: ToolCaller = "main"):
+        """``top_level_caller`` is who the depth-0 node is: ``"subagent"`` when the
+        user is chatting with a subagent directly, since that node is then the
+        subagent itself rather than the main agent."""
         self._resolve = resolve
+        self._top_level_caller: ToolCaller = top_level_caller
         self._tools: Dict[Tuple[str, ToolCaller], ToolCallStat] = {}
         self._subagents: Dict[Tuple[str, SubagentKind, SubagentEntry], SubagentCallStat] = {}
         # call_id -> (tool name, caller, start time)
@@ -107,7 +111,8 @@ class TurnStatsCollector:
         self._pending_tasks: Dict[str, Tuple[str, SubagentKind, datetime]] = {}
         # task() call_id -> tools its subagent started
         self._task_tool_calls: Dict[str, int] = {}
-        self._main_tool_calls = 0
+        # Tools the depth-0 node started (the direct subagent's own calls).
+        self._top_level_tool_calls = 0
 
     def observe(self, action: ActionHistory) -> None:
         if action.role != ActionRole.TOOL or not action.action_id:
@@ -123,14 +128,15 @@ class TurnStatsCollector:
         if call_id in self._pending_tools:
             return
 
-        caller: ToolCaller = "subagent" if action.depth else "main"
+        top_level = not action.depth
+        caller: ToolCaller = self._top_level_caller if top_level else "subagent"
         self._pending_tools[call_id] = (action.action_type, caller, action.start_time)
-        if caller == "main":
-            self._main_tool_calls += 1
+        if top_level:
+            self._top_level_tool_calls += 1
         elif action.parent_action_id in self._task_tool_calls:
             self._task_tool_calls[action.parent_action_id] += 1
 
-        if caller == "main" and action.action_type == TASK_TOOL_NAME:
+        if top_level and action.action_type == TASK_TOOL_NAME:
             name = _task_subagent_name(action)
             if name:
                 root, kind = self._resolve(name)
@@ -139,7 +145,7 @@ class TurnStatsCollector:
 
     def _on_complete(self, action: ActionHistory, call_id: str) -> None:
         pending = self._pending_tools.pop(call_id, None)
-        caller: ToolCaller = pending[1] if pending else ("subagent" if action.depth else "main")
+        caller: ToolCaller = pending[1] if pending else ("subagent" if action.depth else self._top_level_caller)
         start = pending[2] if pending else action.start_time
         failed = action.status == ActionStatus.FAILED
         duration = _elapsed_ms(start, action.end_time)
@@ -196,7 +202,7 @@ class TurnStatsCollector:
             sub = self._subagent(root, kind, "direct")
             sub.calls += 1
             sub.duration_ms += duration_ms
-            sub.tool_calls += self._main_tool_calls
+            sub.tool_calls += self._top_level_tool_calls
             if status == "completed":
                 sub.success += 1
             elif status == "error":
