@@ -143,39 +143,29 @@ class TestStreamChatPreHookDenial:
 
 
 class TestStreamChatPostHookSchedule:
-    """When pre_chat allows, the upstream stream is forwarded and post_chat is scheduled."""
+    """The route hands the chat task an ``on_turn_end`` that runs post_chat."""
 
-    @pytest.mark.asyncio
-    async def test_post_hook_scheduled_after_stream(self):
-        # Build a fake upstream that yields exactly one "end" event.
-        from datus.api.models.cli_models import SSEEndData, SSEEvent
+    @staticmethod
+    async def _stream_with_hooks(pre, post):
+        captured = {}
 
-        end_event = SSEEvent(
-            id=1,
-            event="end",
-            data=SSEEndData(
-                session_id="sess-1",
-                llm_session_id=None,
-                total_events=1,
-                action_count=0,
-                duration=0.1,
-                input_tokens=10,
-                output_tokens=20,
-                total_tokens=30,
-                cached_tokens=0,
-                requests=1,
-            ),
-            timestamp="2026-01-01T00:00:00Z",
-        )
-
-        async def _upstream(*_args, **_kwargs):
-            yield end_event
+        async def _upstream(*_args, **kwargs):
+            captured.update(kwargs)
+            if False:  # pragma: no cover — make this an async generator
+                yield None
 
         svc = _mock_svc_with_nodes()
         svc.chat.stream_chat = _upstream
-        ctx = MagicMock(user_id="u1")
-        request = StreamChatInput(message="hi")
+        set_chat_hooks(make_chat_hooks(pre_chat=pre, post_chat=post))
+        response = await chat_routes.stream_chat(
+            StreamChatInput(message="hi"), svc, MagicMock(user_id="u1"), MagicMock()
+        )
+        async for _ in response.body_iterator:
+            pass
+        return captured
 
+    @pytest.mark.asyncio
+    async def test_on_turn_end_runs_post_chat_with_usage_and_status(self):
         post_seen: list[ChatPostUsageContext] = []
         post_done = asyncio.Event()
 
@@ -186,25 +176,41 @@ class TestStreamChatPostHookSchedule:
             post_seen.append(post_ctx)
             post_done.set()
 
-        set_chat_hooks(make_chat_hooks(pre_chat=_pre, post_chat=_post))
+        captured = await self._stream_with_hooks(_pre, _post)
 
-        response = await chat_routes.stream_chat(request, svc, ctx, MagicMock())
-
-        body_chunks = []
-        async for chunk in response.body_iterator:
-            body_chunks.append(chunk)
-
-        # Wait for the fire-and-forget post hook to run.
+        # The stream ending does not bill; the task settling does.
+        assert post_seen == []
+        captured["on_turn_end"]({"session_id": "sess-1", "total_tokens": 30}, None, "cancelled", "turn-1")
         await asyncio.wait_for(post_done.wait(), timeout=1.0)
 
-        assert len(body_chunks) == 1
-        assert "event: end" in body_chunks[0]
-        assert len(post_seen) == 1
-        ctx_seen = post_seen[0]
+        (ctx_seen,) = post_seen
         assert ctx_seen.user_id == "u1"
+        assert ctx_seen.session_id == "sess-1"
         assert ctx_seen.usage.get("total_tokens") == 30
+        assert ctx_seen.status == "cancelled"
+        assert ctx_seen.turn_id == "turn-1"
         assert ctx_seen.pre_check_extra == {"trace_id": "abc"}
         assert ctx_seen.error is None
+
+    @pytest.mark.asyncio
+    async def test_no_hooks_means_no_settlement_callback(self):
+        set_chat_hooks(None)
+        captured = {}
+
+        async def _upstream(*_args, **kwargs):
+            captured.update(kwargs)
+            if False:  # pragma: no cover
+                yield None
+
+        svc = _mock_svc_with_nodes()
+        svc.chat.stream_chat = _upstream
+        response = await chat_routes.stream_chat(
+            StreamChatInput(message="hi"), svc, MagicMock(user_id="u1"), MagicMock()
+        )
+        async for _ in response.body_iterator:
+            pass
+
+        assert captured["on_turn_end"] is None
 
 
 class TestStreamChatGeneratorError:
