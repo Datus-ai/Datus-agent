@@ -513,14 +513,17 @@ class TestResolveNodeType:
         # builder must not stuff the datasource name ("test_db") into it; it stays unset.
         assert node_input.database is None
 
-    def test_gen_visual_report_rejects_session_id(self, task_tool):
-        """gen_visual_report has the same no-resume contract as
-        gen_visual_dashboard — both inherit from
-        ``BaseVisualArtifactAgenticNode`` which doesn't accept
-        ``session_id``. Pin ValueError + the load-bearing substring
-        so a regression to silent-drop trips here."""
-        with pytest.raises(ValueError, match="gen_visual_report.*session resume"):
-            task_tool._create_builtin_node("gen_visual_report", session_id="some-prior-session")
+    def test_gen_visual_report_resumes_session_id(self, task_tool):
+        """gen_visual_report resumes like every other subagent type.
+
+        ``BaseVisualArtifactAgenticNode.__init__`` gained ``session_id``
+        in #869; asserting the id survives construction catches both a
+        regression to the old hard rejection and a silent drop (which
+        would mint a fresh id here).
+        """
+        session_id = "gen_visual_report_session_778a0c01"
+        node = task_tool._create_builtin_node("gen_visual_report", session_id=session_id)
+        assert node.session_id == session_id
 
     def test_gen_visual_dashboard_resolves(self, task_tool):
         """gen_visual_dashboard must be registered alongside the other visual subagent.
@@ -582,20 +585,18 @@ class TestResolveNodeType:
         # unset rather than stuffing in ``current_datasource`` ("test_db").
         assert node_input.database is None
 
-    def test_gen_visual_dashboard_rejects_session_id(self, task_tool):
-        """``_create_builtin_node`` for gen_visual_dashboard MUST fail
-        loud when a session_id is passed — the underlying
-        ``BaseVisualArtifactAgenticNode`` constructor has no
-        ``session_id`` parameter so silently dropping it (the prior
-        behaviour) would let resume loops spawn a fresh session per
-        turn while the LLM thinks it picked up an existing one. Pin
-        on ValueError + a substring that names both the subagent type
-        and the load-bearing reason ("does not support session
-        resume") so a regression to silent-drop or to a different
-        error class trips here.
+    def test_gen_visual_dashboard_resumes_session_id(self, task_tool):
+        """``task()`` must resume gen_visual_dashboard, not reject it.
+
+        The branch used to raise because the constructor had no
+        ``session_id``; #869 added it, so the rejection only broke the
+        documented resume contract — ``task()`` hands the caller a
+        ``session_id`` and the schema tells it to pass that back.
+        Equality (not just non-None) also catches a silent drop.
         """
-        with pytest.raises(ValueError, match="gen_visual_dashboard.*session resume"):
-            task_tool._create_builtin_node("gen_visual_dashboard", session_id="some-prior-session")
+        session_id = "gen_visual_dashboard_session_75ab230a"
+        node = task_tool._create_builtin_node("gen_visual_dashboard", session_id=session_id)
+        assert node.session_id == session_id
 
     def test_resolve_effective_inherits_parent_when_child_empty(self, task_tool):
         parent = MagicMock()
