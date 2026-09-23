@@ -2305,6 +2305,11 @@ class DBFuncTool:
                 when the metadata sits somewhere unusual. Without metadata the primary-key and
                 foreign-key checks have nothing to verify and the time checks observe a
                 different table, so the two modes do not give the same verdict.
+                Versioned gen-datasource-v2 metadata selects independent explicit semantic
+                checks instead of legacy role/metric inference: original schema, comments,
+                logical keys/relationships, actual dates, event order, declared temporal and
+                entity distributions, and scoped anomaly effects. Its checks cannot be disabled
+                with config.skip. Unsupported versions and invalid declarations fail closed.
             datasource: Check this datasource instead of the current one. It must be DuckDB.
 
         Returns:

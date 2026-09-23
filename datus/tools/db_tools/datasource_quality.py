@@ -772,6 +772,15 @@ class QualityChecker:
     # ------------------------------------------------------------------ entry point
 
     def run(self) -> List[Dict[str, str]]:
+        if self.meta is not None and "quality_contract_version" in self.meta:
+            from datus.tools.db_tools.datasource_semantics import check_semantic_metadata
+
+            # Typed v2 semantics replace heuristic metric/role inference. Agent assertions
+            # remain supplemental; config['skip'] cannot suppress the independent gate.
+            independent = check_semantic_metadata(self.con, self.meta)
+            self.check_config()
+            self.check_query_health()
+            return independent + [{"check": n, "status": s, "detail": d} for n, s, d in self.results]
         ts = self.check_structure()
         self.check_fk(ts)
         self.check_time()

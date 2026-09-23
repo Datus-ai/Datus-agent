@@ -27,12 +27,18 @@ are appropriate when a requested structure is awkward in SQL.
    python3 <skill_location>/scripts/datasource.py init --ddl data/schema.sql --directory data --rows 80000 --min-rows 50000 --max-rows 100000 --months 17 --seed 42
    ```
 
-   Adjust row bounds to the request. This saves `gen.py`, `schema.json`, and
-   `settings.json` and prints dependency order. Boilerplate and DDL already exist;
+   Adjust row bounds to the request. This saves `gen.py`, `schema.json`,
+   `settings.json`, and an incomplete `semantics.json` and prints dependency order. Boilerplate and DDL already exist;
    do not copy them into another generator. The date window is fixed in settings.
-3. Write `data/generate.sql` and `data/checks.json`; run `python3 data/gen.py`.
-   It writes `data/_build/datasource.duckdb` and `data/quality.json`. On SQL failure
-   it reports the statement number and error. Read `schema.json` only if needed.
+3. Read [the semantic contract and generation patterns](references/quality-contract.md).
+   Complete `data/semantics.json` before writing business SQL: table grains, logical
+   keys/relationships, date roles, headline measures, time shapes, entity distributions,
+   event sequences and scoped anomalies. This is a short executable contract, not a
+   question-discovery phase. Preserve `schema.json` as the original schema snapshot.
+4. Write `data/generate.sql` and `data/checks.json`; run `python3 data/gen.py`.
+   It writes `data/quality.json` and `data/semantic-quality.json`. Only a passing build
+   replaces `data/_build/datasource.duckdb` and its `.datasource.meta.json` sidecar.
+   On SQL failure it reports the statement number and error. Read `schema.json` only if needed.
 
 ## First executable version
 
@@ -45,6 +51,8 @@ writing; avoid drafting a separate long design. Aim to run within 6–8 minutes.
   persistent tables must exactly match the supplied DDL.
 - Allocate the **whole database** budget: choose root counts and child fan-outs
   together, summing dimensions and facts. Scale detail explicitly for demo size.
+  Reserve enough root facts for analysis across dates and major entities before
+  allocating leaf telemetry. Record per-table analytical minimum counts in semantics.
 - Sample each FK from an existing parent, selecting composite key tuples together.
   Pick a parent once and inherit all related values. Reuse upstream business codes
   for undeclared relationships. Composite-grain rows need unique combinations.
@@ -66,8 +74,27 @@ writing; avoid drafting a separate long design. Aim to run within 6–8 minutes.
   deadlines can be future-dated. An ID or sequence number is not an event time.
 - Where attribution matters, a shared scoped cause influences related measurements
   and outcomes across tables, with independent noise. Keep helper variables TEMP.
-- Apply seasonality, long tails and lifecycle rules only when appropriate to the
-  business. Physical measurements need not have revenue-like trends or promotions.
+- For business activity, generate a weighted calendar with the declared growth or
+  seasonal curve and weekday pattern; uniform dates are only appropriate for an
+  explicitly justified stable/always-on series. See the executable thresholds and
+  deterministic CDF sampling pattern in the reference.
+- Assign persistent entity weights for activity/demand long tails; use balanced
+  weights for intentionally comparable equipment or small categorical dimensions.
+  Weight allocation once, without accidentally multiplying several Zipf weights.
+- Include a named, bounded business anomaly with a shared cause and measurable
+  effects on related tables. Generate causes first, then measurements and outcomes.
+  Document the cause and scope in SQL comments and the data dictionary. Verify its
+  direction against the preceding window; a random isolated flag is insufficient.
+- Declare and justify stable, balanced or not-applicable behavior before generation.
+  Physical measurements need not have revenue-like trends or promotions. Exceptions
+  remain visible as unassessed warnings, never as passed business checks.
+- Write `COMMENT ON TABLE` and `COMMENT ON COLUMN` for every supplied table/column
+  in `generate.sql`: business meaning, units, grain, relationships and planned/actual
+  date semantics. Preserve supplied comments and expand only where needed. SQL source
+  comments and README alone do not populate DuckDB metadata.
+- DDL without keys still needs logical-key and relationship declarations in semantics.
+  Validate tuple uniqueness, non-NULL keys, parent uniqueness and orphan absence;
+  infer business relationships without adding physical constraints to the user's DDL.
 
 The runner provides deterministic macros:
 
@@ -100,11 +127,18 @@ attributable effects. This is executable validation, not question planning.
 ```
 
 The runner checks exact schema, all declared constraints, populated tables, total
-row bounds and business assertions. NULL/NaN, missing assertions and invalid SQL
-fail. Inspect `quality.json` for all failures; batch local repairs and rerun.
+row bounds and business assertions. A separate deterministic semantic checker also
+checks comments, logical relationships, date roles, ordered event chains, temporal
+signals, entity distributions and declared anomaly effects. Model-written assertions
+cannot replace or skip these checks. NULL/NaN, missing declarations and invalid SQL
+fail. Inspect both quality reports; batch local repairs and rerun.
 Keep acceptance criteria stable; do not delete or widen assertions just to pass.
 Normally two repair rounds suffice. Report persistent limitations honestly rather
 than dropping constraints. Use at most three extra inspection queries.
+The first executable semantic contract is locked. To correct an actual declaration
+mistake, use the runner's `run --contract-change-reason "<specific correction>"`
+option; previous/new contracts and the reason are saved in `semantic-changes.json`.
+Never change a promised shape to stable/flat or add an exception merely to pass.
 
 ## Import and deliver
 
@@ -117,7 +151,13 @@ import_database_file(path="data/_build/datasource.duckdb", mode="replace", keep_
 Inspect the import result: constraint degradation is a failure. The active datasource
 is held open by Datus; never generate into, overwrite or delete its
 `data/datasource.duckdb`. Keep the validated build and report for inspection.
+After import, **always** call `check_datasource_quality` with
+`config_path="data/checks.json"` and
+`meta_path="data/_build/.datasource.meta.json"`. Require a successful tool result,
+the named metadata file, and `result.summary.ok == true` before delivering. This
+rechecks the actual queried datasource, including schema and COMMENT survival.
+Repair any failures in the generator and reimport; report every unassessed warning.
 Write `data/README.md` in roughly 40–80 lines: actual counts, dates, business
 relationships, anomalies, assumptions, quality and limitations. Deliver once done.
-The runner is this skill's quality gate; v1's inferred roles and heuristic checks
-are not requirements for this independent path.
+The versioned semantic metadata selects explicit business checks in the shared
+quality tool; legacy producers keep their existing heuristic checker behavior.

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import duckdb
 
+from datus.tools.db_tools.datasource_semantics import Semantics, catalog, check_semantic_metadata
+
 
 def quote(name):
     return '"' + name.replace('"', '""') + '"'
@@ -24,40 +26,9 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False, default=str) + "\n")
 
 
-def catalog(con):
-    """Use DuckDB's parser/catalog, including complete composite constraint tuples."""
-    tables = {}
-    for schema, name in con.execute(
-        "SELECT schema_name, table_name FROM duckdb_tables() WHERE NOT temporary ORDER BY 1,2"
-    ).fetchall():
-        if schema != "main":
-            raise ValueError("This runner currently requires unqualified/main-schema DDL; normalize explicitly.")
-        cols = con.execute(
-            "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns "
-            "WHERE table_schema=? AND table_name=? ORDER BY ordinal_position",
-            [schema, name],
-        ).fetchall()
-        constraints = con.execute(
-            "SELECT constraint_type, constraint_column_names, referenced_table, referenced_column_names, "
-            "expression FROM duckdb_constraints() WHERE schema_name=? AND table_name=? ORDER BY constraint_index",
-            [schema, name],
-        ).fetchall()
-        tables[name] = {
-            "columns": [
-                {"name": n, "type": t, "nullable": nullable == "YES", "default": default}
-                for n, t, nullable, default in cols
-            ],
-            "constraints": [
-                {"type": t, "columns": cs, "parent": p, "parent_columns": pcs, "expression": expr}
-                for t, cs, p, pcs, expr in constraints
-            ],
-        }
-    return tables
-
-
 def apply_ddl(con, ddl):
     statements = con.extract_statements(ddl)
-    if not statements or any(s.type.name not in {"CREATE", "ALTER"} for s in statements):
+    if not statements or any(s.type.name not in {"CREATE", "ALTER", "COMMENT"} for s in statements):
         raise ValueError("schema.sql must contain schema DDL, not data mutations or queries")
     remaining = [s.query for s in statements]
     while remaining:
@@ -181,7 +152,7 @@ def validate(con, expected, assertions, min_rows, max_rows, require_assertions=T
     return {"ok": all(c["ok"] for c in checks), "rows": total, "tables": counts, "checks": checks}
 
 
-def run(directory):
+def run(directory, contract_change_reason=None):
     directory = Path(directory).resolve()
     build = directory / "_build"
     build.mkdir(exist_ok=True)
@@ -190,9 +161,37 @@ def run(directory):
     report, started = {"ok": False}, time.perf_counter()
     # Invalidate the previous success before reading anything that might be missing/malformed.
     write_json(directory / "quality.json", {"ok": False, "status": "running"})
+    write_json(directory / "semantic-quality.json", {"ok": False, "status": "running"})
     try:
         settings = json.loads((directory / "settings.json").read_text())
-        expected = read_schema((directory / "schema.sql").read_text())
+        expected = json.loads((directory / "schema.json").read_text())["tables"]
+        semantics = Semantics.model_validate_json((directory / "semantics.json").read_text()).model_dump(mode="json")
+        lock_path = directory / ".semantics.lock.json"
+        if lock_path.exists() and json.loads(lock_path.read_text()) != semantics:
+            if not contract_change_reason or not contract_change_reason.strip():
+                raise ValueError(
+                    "semantics.json changed after the first run; repair data or explicitly record "
+                    "a justified correction using --contract-change-reason"
+                )
+            history_path = directory / "semantic-changes.json"
+            history = json.loads(history_path.read_text()) if history_path.exists() else []
+            history.append(
+                {"reason": contract_change_reason, "before": json.loads(lock_path.read_text()), "after": semantics}
+            )
+            write_json(history_path, history)
+        write_json(lock_path, semantics)
+        metadata = {
+            "quality_contract_version": 1,
+            "schema": expected,
+            "semantics": semantics,
+            "start_date": settings["start_date"],
+            "end_date": settings["end_date"],
+            "min_rows": settings["min_rows"],
+            "max_rows": settings["max_rows"],
+        }
+        history_path = directory / "semantic-changes.json"
+        if history_path.exists():
+            metadata["contract_changes"] = [{"reason": h["reason"]} for h in json.loads(history_path.read_text())]
         assertions = json.loads((directory / "checks.json").read_text()).get("assertions", [])
         with duckdb.connect(str(next_path)) as con:
             con.execute("SET threads=1")
@@ -210,17 +209,30 @@ def run(directory):
                 except duckdb.Error as exc:
                     raise ValueError(f"generate.sql statement {number}: {exc}") from exc
             report = validate(con, expected, assertions, settings["min_rows"], settings["max_rows"])
-        os.replace(next_path, build / "datasource.duckdb")
+            independent = check_semantic_metadata(con, metadata)
+            semantic_report = {"ok": all(c["status"] != "FAIL" for c in independent), "checks": independent}
+            write_json(directory / "semantic-quality.json", semantic_report)
+            report["semantic_ok"] = semantic_report["ok"]
+            report["semantic_checks"] = independent
+            report["ok"] = report["ok"] and semantic_report["ok"]
+        if report["ok"]:
+            os.replace(next_path, build / "datasource.duckdb")
+            write_json(build / ".datasource.meta.json", metadata)
     except (OSError, duckdb.Error, ValueError, KeyError, TypeError) as exc:
+        report["ok"] = False
         report["error"] = str(exc)
+        write_json(directory / "semantic-quality.json", {"ok": False, "error": str(exc)})
     finally:
         report["elapsed_seconds"] = round(time.perf_counter() - started, 3)
         report["duckdb_version"] = duckdb.__version__
         write_json(directory / "quality.json", report)
     failures = [c for c in report.get("checks", []) if not c["ok"]]
-    print(json.dumps({k: v for k, v in report.items() if k != "checks"}, default=str))
+    print(json.dumps({k: v for k, v in report.items() if k not in {"checks", "semantic_checks"}}, default=str))
     if failures:
         print(json.dumps({"failures": failures}, default=str))
+    semantic_failures = [c for c in report.get("semantic_checks", []) if c["status"] != "PASS"]
+    if semantic_failures:
+        print(json.dumps({"semantic_findings": semantic_failures}, default=str))
     return 0 if report["ok"] else 1
 
 
@@ -257,6 +269,41 @@ def initialize(args):
     if Path(args.ddl).resolve() != directory / "schema.sql":
         shutil.copyfile(args.ddl, directory / "schema.sql")
     write_json(directory / "schema.json", {"tables": schema, "dependency_order": order})
+    # Deliberately incomplete: the model must choose business roles and date semantics.
+    write_json(
+        directory / "semantics.json",
+        {
+            "quality_contract_version": 1,
+            "tables": {
+                t: {
+                    "role": "CHOOSE",
+                    "grain": "",
+                    "logical_key": next((c["columns"] for c in spec["constraints"] if c["type"] == "PRIMARY KEY"), []),
+                    "dates": {
+                        c["name"]: "CHOOSE" for c in spec["columns"] if c["type"].startswith(("DATE", "TIMESTAMP"))
+                    },
+                }
+                for t, spec in schema.items()
+            },
+            "relationships": [
+                {
+                    "table": t,
+                    "columns": c["columns"],
+                    "parent": c["parent"],
+                    "parent_columns": c["parent_columns"],
+                    "nullable": any(col["nullable"] for col in spec["columns"] if col["name"] in c["columns"]),
+                }
+                for t, spec in schema.items()
+                for c in spec["constraints"]
+                if c["type"] == "FOREIGN KEY"
+            ],
+            "series": [],
+            "distributions": [],
+            "sequences": [],
+            "anomalies": [],
+            "not_applicable": {},
+        },
+    )
     write_json(
         settings_path,
         {
@@ -297,12 +344,13 @@ def main():
     init.add_argument("--end-date", default="")
     execute = sub.add_parser("run")
     execute.add_argument("--directory", default="data")
+    execute.add_argument("--contract-change-reason", help="Record why an incorrect semantic contract needs correction")
     args = parser.parse_args()
     try:
         if args.command == "init":
             initialize(args)
             return 0
-        return run(args.directory)
+        return run(args.directory, args.contract_change_reason)
     except (OSError, ValueError, duckdb.Error) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
