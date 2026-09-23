@@ -69,7 +69,10 @@ class ChatPostUsageContext:
     error: Optional[str] = None
     pre_check_extra: Dict[str, Any] = field(default_factory=dict)
     status: str = "completed"
-    """``completed`` | ``error`` | ``cancelled`` (stopped via ``/chat/stop``)."""
+    """``completed`` | ``error`` | ``cancelled`` (``/chat/stop``, or a shutdown)."""
+    turn_id: Optional[str] = None
+    """The chat task's own per-turn id. Unlike a trace id, which a client can
+    reuse across turns, it is unique — the key to use for idempotent billing."""
 
 
 @runtime_checkable

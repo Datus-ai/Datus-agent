@@ -353,10 +353,17 @@ class ChatTask:
         # and handed back with the turn's call statistics once it ends.
         self.stats_context: Dict[str, Any] = {}
         # Settles the turn with the host (billing) once it is over — completed,
-        # failed or cancelled. Set by the route; receives (usage, error, status).
-        self.on_turn_end: Optional[Callable[[Dict[str, Any], Optional[str], str], None]] = None
+        # failed or cancelled. Set by the route; see TurnEndCallback.
+        self.on_turn_end: Optional[TurnEndCallback] = None
+        self.turn_id: Optional[str] = None
         # ``SSEEndData`` of a completed turn; the usage the host is billed for.
         self.end_usage: Optional[Dict[str, Any]] = None
+
+
+#: ``(usage, error, status, turn_id)``: the turn's SSEEndData-shaped usage, the
+#: error text of a failed turn, ``completed`` | ``error`` | ``cancelled``, and the
+#: task's own per-turn id.
+TurnEndCallback = Callable[[Dict[str, Any], Optional[str], str, str], None]
 
 
 def _usage_kwargs(turn_usage: Any) -> Dict[str, Any]:
@@ -447,13 +454,13 @@ class ChatTaskManager:
         user_id: Optional[str] = None,
         policy_context: Optional[Dict[str, Any]] = None,
         stats_context: Optional[Dict[str, Any]] = None,
-        on_turn_end: Optional[Callable[[Dict[str, Any], Optional[str], str], None]] = None,
+        on_turn_end: Optional["TurnEndCallback"] = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
             :param stats_context: host data returned with the turn's call statistics
             :param on_turn_end: called once the turn is over, however it ended,
-                with ``(usage, error, status)`` — see :meth:`_settle_turn`
+                with ``(usage, error, status, turn_id)`` — see :meth:`_settle_turn`
         Raises ``ValueError`` if a task is already running for the session.
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
@@ -685,6 +692,7 @@ class ChatTaskManager:
 
         turn_started_at = datetime.now()
         turn_id = uuid.uuid4().hex
+        task.turn_id = turn_id
         # Chatting with a subagent directly makes it the depth-0 node, so its
         # own tool calls are the subagent's, not the main agent's.
         top_level_caller = "subagent" if sub_agent_id and sub_agent_id != "chat" else "main"
@@ -1111,7 +1119,7 @@ class ChatTaskManager:
                 usage = {"session_id": task.session_id, **_usage_kwargs(last_usage)}
                 if task.node is not None:
                     usage["llm_session_id"] = getattr(task.node, "session_id", None)
-            callback(dict(usage), task.error if status == "error" else None, status)
+            callback(dict(usage), task.error if status == "error" else None, status, task.turn_id or "")
         except Exception:
             logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
 

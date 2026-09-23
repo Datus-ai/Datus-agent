@@ -3027,7 +3027,7 @@ class TestRunLoopSettlesTurn:
         manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id="s-bill", asyncio_task=MagicMock())
         if on_turn_end:
-            task.on_turn_end = lambda usage, error, status: calls.append((usage, error, status))
+            task.on_turn_end = lambda usage, error, status, turn_id: calls.append((usage, error, status, turn_id))
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-bill"))
         return task, calls
 
@@ -3036,7 +3036,8 @@ class TestRunLoopSettlesTurn:
         task, calls = await self._run(real_agent_config, self._node())
 
         assert task.status == "completed"
-        ((usage, error, status),) = calls
+        ((usage, error, status, turn_id),) = calls
+        assert turn_id and turn_id == task.turn_id
         assert (status, error) == ("completed", None)
         # get_last_turn_usage() came back empty; the mid-turn snapshot fills in.
         assert usage["total_tokens"] == 120
@@ -3047,7 +3048,8 @@ class TestRunLoopSettlesTurn:
         task, calls = await self._run(real_agent_config, self._node(raise_after=asyncio.CancelledError()))
 
         assert task.status == "cancelled"
-        ((usage, error, status),) = calls
+        ((usage, error, status, turn_id),) = calls
+        assert turn_id and turn_id == task.turn_id
         assert (status, error) == ("cancelled", None)
         assert (usage["session_id"], usage["llm_session_id"]) == ("s-bill", "llm-sess")
         assert (usage["requests"], usage["input_tokens"], usage["output_tokens"], usage["total_tokens"]) == (
@@ -3062,7 +3064,8 @@ class TestRunLoopSettlesTurn:
         task, calls = await self._run(real_agent_config, self._node(raise_after=RuntimeError("model blew up")))
 
         assert task.status == "error"
-        ((usage, error, status),) = calls
+        ((usage, error, status, turn_id),) = calls
+        assert turn_id and turn_id == task.turn_id
         assert (status, error) == ("error", "model blew up")
         assert usage["total_tokens"] == 120
 

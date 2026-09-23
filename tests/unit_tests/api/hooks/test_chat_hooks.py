@@ -180,7 +180,7 @@ class TestStreamChatPostHookSchedule:
 
         # The stream ending does not bill; the task settling does.
         assert post_seen == []
-        captured["on_turn_end"]({"session_id": "sess-1", "total_tokens": 30}, None, "cancelled")
+        captured["on_turn_end"]({"session_id": "sess-1", "total_tokens": 30}, None, "cancelled", "turn-1")
         await asyncio.wait_for(post_done.wait(), timeout=1.0)
 
         (ctx_seen,) = post_seen
@@ -188,6 +188,7 @@ class TestStreamChatPostHookSchedule:
         assert ctx_seen.session_id == "sess-1"
         assert ctx_seen.usage.get("total_tokens") == 30
         assert ctx_seen.status == "cancelled"
+        assert ctx_seen.turn_id == "turn-1"
         assert ctx_seen.pre_check_extra == {"trace_id": "abc"}
         assert ctx_seen.error is None
 

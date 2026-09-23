@@ -470,6 +470,10 @@ async def lifespan(app: FastAPI):
             await drain_background_tasks()
         finally:
             await service_cache.shutdown()
+            # Shutting the cache down cancels in-flight turns, and each one
+            # settles (post_chat / turn stats) as a new background task — drain
+            # those too, or a restart drops the billing of every turn it stops.
+            await drain_background_tasks()
 
 
 def create_app(agent_args: argparse.Namespace) -> FastAPI:

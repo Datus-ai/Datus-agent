@@ -653,7 +653,7 @@ def _post_chat_settler(
     if hooks is None:
         return None
 
-    def _settle(usage: dict, error: Optional[str], status: str) -> None:
+    def _settle(usage: dict, error: Optional[str], status: str, turn_id: str) -> None:
         ctx = ChatPostUsageContext(
             user_id=user_id,
             session_id=usage.get("session_id") or request.session_id,
@@ -662,6 +662,7 @@ def _post_chat_settler(
             error=error,
             pre_check_extra=dict(pre_extra),
             status=status,
+            turn_id=turn_id or None,
         )
         try:
             _task = asyncio.create_task(
