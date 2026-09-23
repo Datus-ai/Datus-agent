@@ -18,9 +18,21 @@ logger = get_logger(__name__)
 
 # Safety net: a proxied tool (e.g. write_file/edit_file executed on the client)
 # blocks the agent loop until the client POSTs its result. If the client never
-# reports — tab closed, crash, or a frontend bug that swallows the report — the
-# loop would otherwise hang forever. ``wait_for`` defaults to this bound so the
-# turn fails cleanly instead.
+# reports — tab closed, crash, a frontend bug that swallows the report, or a
+# confirm-gated write whose Accept button nobody pressed — the loop would
+# otherwise hang forever. ``wait_for`` defaults to this bound so the turn fails
+# cleanly instead.
+#
+# Deliberately generous, because the cost is asymmetric. Expiring early kills a
+# turn the user was coming back to finish and throws away everything the agent
+# did in it; waiting too long only holds a sandbox. Someone who starts a task
+# and switches browser tabs is using the product as intended, and the click
+# arrives over its own POST, so a dropped output stream does not stop it
+# landing.
+#
+# The 20-minute stalls seen in prod were not caused by this number. They were
+# caused by nobody being told a card was waiting — fixed in the client, where
+# a pending confirmation is now counted and can be scrolled back to.
 DEFAULT_RESULT_TIMEOUT: float = 600.0
 
 

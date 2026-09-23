@@ -67,8 +67,14 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
             return {
                 "success": 0,
                 "error": (
-                    f"Timed out after {int(DEFAULT_RESULT_TIMEOUT)}s waiting for the client "
-                    f"to report the result of '{original.name}'."
+                    f"'{original.name}' expired: no result came back from the client within "
+                    f"{int(DEFAULT_RESULT_TIMEOUT)}s, and this call can no longer be completed — "
+                    "a confirmation pressed on that card now is dropped. Whether the client "
+                    "actually performed it is UNKNOWN: it may have run and reported too late, or "
+                    "the user may accept the card after this and it runs without reaching us. "
+                    "Check the real state (read the file, list the directory) before concluding "
+                    "anything or repeating the work. If it is still needed, issue a fresh call, "
+                    "and tell the user what they have to confirm."
                 ),
                 "result": None,
             }
