@@ -67,13 +67,14 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
             return {
                 "success": 0,
                 "error": (
-                    f"'{original.name}' was sent to the client and no result came back within "
-                    f"{int(DEFAULT_RESULT_TIMEOUT)}s, so it did NOT run. In the web client this "
-                    "tool is confirm-gated: the user has to press Accept on the tool card, and "
-                    "the usual cause is that they never saw it. Do not silently retry the same "
-                    "call — the identical card will be waiting in the same place. Tell the user "
-                    "what needs confirming and ask them to accept it, or reach the same result "
-                    "another way."
+                    f"'{original.name}' expired: no result came back from the client within "
+                    f"{int(DEFAULT_RESULT_TIMEOUT)}s, and this call can no longer be completed — "
+                    "a confirmation pressed on that card now is dropped. Whether the client "
+                    "actually performed it is UNKNOWN: it may have run and reported too late, or "
+                    "the user may accept the card after this and it runs without reaching us. "
+                    "Check the real state (read the file, list the directory) before concluding "
+                    "anything or repeating the work. If it is still needed, issue a fresh call, "
+                    "and tell the user what they have to confirm."
                 ),
                 "result": None,
             }

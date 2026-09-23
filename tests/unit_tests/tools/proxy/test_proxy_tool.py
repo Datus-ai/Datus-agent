@@ -145,13 +145,18 @@ class TestCreateProxyTool:
         assert result["success"] == 0
         error = result["error"]
         # The model is the first reader of this string and the only actor that
-        # can recover. It has to learn three things: the write did not happen,
-        # a human has to press Accept, and retrying the same call just queues an
-        # identical card nobody is looking at (the prod loop this replaced).
+        # can recover, so it has to be accurate about what is and is not known.
+        # The client executes and only then reports: the work may have happened
+        # and the report arrived after the waiter settled, or the user may press
+        # Accept later and it runs without ever reaching us. Claiming it did not
+        # run would send the model off to redo a write that already landed.
         assert "write_file" in error
-        assert "did NOT run" in error
-        assert "Accept" in error
-        assert "retry" in error
+        assert "UNKNOWN" in error
+        assert "expired" in error
+        # ``publish`` drops a result whose waiter already settled, so pointing
+        # the user at the stale card would promise a recovery that cannot work.
+        assert "dropped" in error
+        assert "fresh call" in error
         assert result["result"] is None
         # Telemetry distinguishes this from an ordinary tool failure.
         assert ctx._datus_tool_status == "proxy_timeout"
