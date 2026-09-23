@@ -411,6 +411,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 result={"code": "semantic_model_required"},
             )
         with semantic_artifact_lock(target_path):
+            guard_error = self._mutation_guard_error(target_path)
+            if guard_error is not None:
+                return guard_error
             if self.osi_target_state is not None:
                 try:
                     self._require_metric_revision(target_path)
@@ -544,6 +547,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             )
 
         with semantic_artifact_lock(target_path):
+            guard_error = self._mutation_guard_error(target_path)
+            if guard_error is not None:
+                return guard_error
             try:
                 self._require_metric_revision(target_path)
             except ValueError as exc:

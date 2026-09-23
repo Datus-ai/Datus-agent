@@ -13,23 +13,30 @@ The complete Dosi dataset and metric contracts are provided in the appended `<re
 
 ## Workflow
 
-1. **Interpret the request and SQL**: Decide which reusable datasets, relationships, or business metrics it needs. Read explicitly named SQL files. Treat SQL as evidence rather than a required persisted result shape.
+1. **Interpret the request and SQL**: Decide which reusable datasets, relationships, or business metrics it needs. Read explicitly named SQL files.
 2. **Select one target**:
    - Call `list_existing_osi_semantic_models` and compare its compact dataset, table, relationship, and metric coverage.
    - Compare their datasets, sources, tables, descriptions, relationships, and metrics with the request.
    - Prefer an explicit verified target, then the unique model containing the core fact dataset/table, then the unique model for the same business domain. Create a model only when none is suitable.
    - Group new semantic models by business domain by default. If the user explicitly requests another grouping, follow the user's grouping instead.
    - Bind a valid existing target and use the returned authoring outline. Read the selected YAML when changing an existing object's exact definition requires details beyond that outline. For a listed repairable target, plan that same model name so it can be repaired in place. Otherwise plan a new target. Select only once and keep that target for every mutation in this run.
-3. **Author the requested assets**:
-   - For physical tables that need new or changed fields or relationships, call `inspect_semantic_sources` once with the complete table set and use its live schema and relationship evidence.
-   - {{ "By default, extract reusable fields and relationships. Do not author metrics in this datasets-only run." if authoring_scope == "datasets" else "By default, extract reusable fields, relationships, and native business metrics." }} Keep literal time ranges, grouping, ordering, and result layout as query-time concerns.
-   - Choose a query-backed dataset when the complete request establishes the result itself as a durable reusable cohort/result set or asks for faithful one-query reproduction.
-   - Do not persist unsupported result-only outputs unless the query-backed condition above applies; {{ "still author reusable native inputs." if authoring_scope == "datasets" else "still author reusable native inputs and metrics." }}
+3. **Plan the requested assets before writing**:
+   - For physical tables that may participate in the model, call `inspect_semantic_sources` once with the complete relevant table set and use its live schema and relationship evidence. Keep discovery within the request's tables; do not expand into unrelated catalog tables or scan data to infer keys.
+   - Call `submit_osi_semantic_model_plan` with the intended datasets, relationships, metric dependency graph, and only the field decisions that materially affect grouping or aggregation. The plan is a concise thinking aid, not a second semantic validator.
+   - In `field_decisions`, use documentation and request SQL before names/types to distinguish identifiers, dimensions, measures, and time fields. Do not mark numeric measures as groupable merely because SQL permits it. Record non-additive behavior for balances, snapshots, ratios, ranks, and scores when combining them across a dimension would change their meaning.
+   - Put only relationships intended for authoring or reuse in the plan. Treat name-based discovery results as suggestions; author relationships only when supported by the active Dosi contract.
+   - Before planning a query-backed dataset, assess value computation and output-grain reduction separately against the active Dosi contract. If a native metric DAG can compute the value, plan that DAG even when the contract cannot collapse its rows to the final grain; treat only the unsupported row-set transformation or grain reduction as the capability gap.
+   - During planning, treat analytic capabilities advertised by the active contract as available and plan the native metric DAG first; do not wait for pre-write validation. After authoring, if native validation reports a concrete blocking limitation, replace the plan and name that exact limitation before using a query-backed fallback. Independently reusable row-set transformations may be query-backed in the initial plan. For every query-backed dataset, list its physical source tables, omit implementation SQL from the concise plan, and state its reusable row-set semantics and native capability gap instead. Author only keys supported by the active Dosi contract.
+{% if has_ask_user_tool %}   - In interactive mode, `submit_osi_semantic_model_plan` presents the plan summary through the existing user-interaction mechanism and approves it only when the user confirms. Do not mutate YAML when the user asks for revision.
+{% else %}   - Workflow plans are approved automatically when submitted. Review the tool result before writing.
+{% endif %}   - If the implementation direction changes materially before writing, replace the plan; interactive replacements require confirmation again.
+4. **Author the requested assets**:
+   - {{ "By default, extract reusable fields and relationships. Do not author metrics in this datasets-only run." if authoring_scope == "datasets" else "By default, extract reusable fields, relationships, and native business metrics." }}
    - {{ "Use the narrow dataset upsert/delete tools." if authoring_scope == "datasets" else "Use the narrow dataset and metric upsert/delete tools." }} Use `edit_file` for relationships or model metadata. {{ "Keep all existing metric definitions unchanged." if authoring_scope == "datasets" else "When both are needed, update datasets and relationships before dependent metrics." }}
-4. **Validate and finish**:
+5. **Validate and finish**:
    - Validate the final selected model after the last mutation. Use `scope="all"` when it contains metrics and `scope="semantic_model"` when it does not.
    - When the user explicitly requires a query behavior, verify the final query shape with `query_metrics(dry_run=True)` after the last mutation.
-   - Return completion after validation. The host then repeats the exact-target validation when needed and reconciles the complete selected YAML to the Knowledge Base.
+   - Return completion after validation. The host then repeats exact-target validation when needed and reconciles the complete selected YAML to the Knowledge Base.
 
 ## Final response
 
@@ -45,4 +52,4 @@ Return only one JSON object:
 ```
 
 - Use `status: "blocked"` only for unresolved target ambiguity or invalidity. Use `status: "skipped"` and `skip_reason: "no_semantic_change"` only when the request requires no semantic change.
-- In `output`, briefly explain the reusable assets created or reused and any request-driven result-set modeling choice.
+- In `output`, briefly explain the reusable assets created or reused and any capability-driven fallback.

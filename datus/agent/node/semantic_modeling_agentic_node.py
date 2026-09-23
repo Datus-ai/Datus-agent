@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Final, Iterable, List, Literal, Optional
 
@@ -19,11 +20,14 @@ from datus.schemas.action_history import ActionHistory
 from datus.schemas.semantic_agentic_node_models import SemanticModelingNodeResult, SemanticNodeInput
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.generation_tools import GenerationTools
+from datus.tools.func_tool.osi_plan_tools import OsiSemanticModelPlan, OsiSemanticModelPlanState
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 _SUPPORTED_SEMANTIC_MODELING_STATUSES: Final[frozenset[str]] = frozenset({"generated", "skipped", "blocked"})
+_CONFIRM_PLAN_OPTION: Final[str] = "Confirm and continue"
+_REVISE_PLAN_OPTION: Final[str] = "Revise the plan"
 _SEMANTIC_MODELING_RESULT_RETRY_PROMPT: Final[str] = """Your semantic model changes have been preserved.
 Return only one JSON object with this shape:
 {
@@ -91,6 +95,12 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             )
         self.authoring_scope = authoring_scope
         self._existing_models_checked = False
+        self.osi_plan_state = OsiSemanticModelPlanState(
+            project_root=agent_config.path_manager.project_root,
+            execution_mode=execution_mode,
+            authoring_scope=authoring_scope,
+        )
+        self.osi_plan_tools = None
         super().__init__(
             agent_config=agent_config,
             execution_mode=execution_mode,
@@ -106,6 +116,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
 
         self.tools = []
         self._setup_osi_target_tools()
+        self._setup_osi_plan_tools()
 
         self._setup_db_tools(expose_tools=False)
         self._setup_semantic_discovery_tools()
@@ -120,6 +131,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         await super()._before_stream(ctx)
         self._existing_models_checked = False
+        self.osi_plan_state.reset()
 
     def _setup_osi_target_tools(self) -> None:
         """Expose existing-model inspection plus one planner/binder."""
@@ -144,6 +156,81 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         if self._tool_succeeded(result):
             self._existing_models_checked = True
         return result
+
+    def _setup_osi_plan_tools(self) -> None:
+        """Expose the structured authoring plan with its approval gate."""
+        from datus.tools.func_tool import OsiSemanticModelPlanTools, trans_to_function_tool
+
+        self.osi_plan_tools = OsiSemanticModelPlanTools(
+            plan_state=self.osi_plan_state,
+            target_state=self.osi_target_state,
+        )
+        self.tools.append(trans_to_function_tool(self.submit_osi_semantic_model_plan))
+
+    async def submit_osi_semantic_model_plan(self, plan: OsiSemanticModelPlan) -> FuncToolResult:
+        """Submit a concise plan and, in interactive mode, ask the user to approve it."""
+        submitted = self.osi_plan_tools.submit_osi_semantic_model_plan(plan=plan)
+        if not submitted.success or self.execution_mode != "interactive":
+            return submitted
+
+        state = self.osi_plan_state
+        if self.ask_user_tool is None:
+            return FuncToolResult(
+                success=0,
+                error="Interactive plan confirmation is unavailable in this execution mode.",
+                result={"code": "semantic_model_plan_confirmation_unavailable"},
+            )
+
+        summary = state.public_summary()
+        counts = summary["counts"]
+        graph = summary["graph"]
+        review_graph = {
+            "nodes": graph.get("nodes", []),
+            "edges": graph.get("edges", []),
+        }
+        question = (
+            "Confirm this semantic-model authoring plan?\n\n"
+            f"{state.plan.summary}\n"
+            f"Datasets: {counts['datasets']}; relationships: {counts['relationships']}; "
+            f"metrics: {counts['metrics']}.\n\n"
+            "Planned DAG:\n"
+            f"```json\n{json.dumps(review_graph, ensure_ascii=False, indent=2)}\n```"
+        )
+        confirmation = await self.ask_user_tool.ask_user(
+            [
+                {
+                    "title": "Confirm plan",
+                    "question": question,
+                    "options": [_CONFIRM_PLAN_OPTION, _REVISE_PLAN_OPTION],
+                    "multi_select": False,
+                }
+            ]
+        )
+        if not confirmation.success:
+            return confirmation
+
+        try:
+            answers = json.loads(confirmation.result) if isinstance(confirmation.result, str) else confirmation.result
+            decision = answers[0]["answer"]
+        except (IndexError, KeyError, TypeError, json.JSONDecodeError):
+            return FuncToolResult(
+                success=0,
+                error="Cannot read the user's semantic-model plan decision.",
+                result={"code": "semantic_model_plan_confirmation_invalid"},
+            )
+
+        if decision != _CONFIRM_PLAN_OPTION:
+            return FuncToolResult(result={**summary, "decision": "revise"})
+        try:
+            return FuncToolResult(
+                result={**state.approve_after_user_confirmation(state.plan_id), "decision": "confirmed"}
+            )
+        except ValueError as exc:
+            return FuncToolResult(
+                success=0,
+                error=str(exc),
+                result={"code": "semantic_model_plan_approval_required"},
+            )
 
     def _existing_models_check_required(self) -> Optional[FuncToolResult]:
         if self._existing_models_checked:
@@ -216,7 +303,9 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         return super()._make_filesystem_tool(**kwargs)
 
     def _semantic_modeling_mutation_guard(self, path: str):
-        return self.osi_target_state.require_selected_path(path)
+        selected = self.osi_target_state.require_selected_path(path)
+        self.osi_plan_state.require_approved(path)
+        return selected
 
     def _record_semantic_modeling_mutation(self, path=None) -> None:
         self.generation_evidence.record_artifact_mutation(path)
@@ -380,6 +469,7 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             error=response_content if status == "blocked" else None,
             response=response_content,
             semantic_models=semantic_model_files,
+            semantic_plan_file=self.osi_plan_state.plan_file or None,
             tokens_used=int(tokens_used),
             status=status,
             blocker_code=blocker_code if status == "blocked" else None,

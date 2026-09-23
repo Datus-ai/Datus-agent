@@ -390,8 +390,9 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import authoring_prompt_snapshot_meta
 
         meta = super()._system_prompt_snapshot_meta(prompt_version)
-        # Earlier snapshots still instruct the model to validate keys against table data.
-        meta["semantic_target_scope"] = "agent_bound_v4"
+        # Earlier snapshots either validate keys against table data or use an obsolete,
+        # contract-heavy semantic planning flow.
+        meta["semantic_target_scope"] = "agent_bound_v7"
         meta.update(authoring_prompt_snapshot_meta(self.agent_config, self.NODE_NAME))
         return meta
 

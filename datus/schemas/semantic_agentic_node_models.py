@@ -207,6 +207,11 @@ class GenMetricsNodeResult(SemanticNodeResult):
 class SemanticModelingNodeResult(SemanticNodeResult):
     """Outcome of unified semantic dataset and metric authoring."""
 
+    semantic_plan_file: Optional[str] = Field(
+        default=None,
+        description="Project-local structured semantic authoring plan artifact.",
+    )
+
     status: Optional[Literal["generated", "skipped", "blocked"]] = Field(
         default=None,
         description="Unified semantic-modeling outcome; None is reserved for execution errors.",

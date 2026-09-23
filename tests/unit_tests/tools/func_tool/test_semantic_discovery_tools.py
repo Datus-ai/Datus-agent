@@ -118,6 +118,9 @@ class TestInspectSemanticSources:
         assert orders["ddl"] == {"definition": definitions["orders"]}
         assert customers["ddl"] == {"definition": definitions["customers"]}
         assert "sql_usage" not in orders
+        assert customers["request_sql_field_semantics"]["group_by_expressions"] == [
+            {"expression": "c.region", "count": 1}
+        ]
         assert db_tool.get_table_ddl.call_count == 2
         assert db_tool.describe_table.call_count == 2
 
@@ -178,6 +181,40 @@ class TestInspectSemanticSources:
 
         assert result.success == 0
         assert "at least one" in result.error
+
+    def test_keeps_bounded_name_candidates_alongside_declared_relationships(self):
+        db_tool = _make_db_tool()
+        definitions = {
+            "orders": "CREATE TABLE orders (customer_id INT, warehouse_code VARCHAR, "
+            "FOREIGN KEY (customer_id) REFERENCES dim_customers(id))",
+            "dim_customers": "CREATE TABLE dim_customers (id INT PRIMARY KEY)",
+            "dim_warehouses": "CREATE TABLE dim_warehouses (warehouse_code VARCHAR PRIMARY KEY)",
+        }
+        schemas = {
+            "orders": [
+                {"name": "customer_id", "type": "INT"},
+                {"name": "warehouse_code", "type": "VARCHAR"},
+            ],
+            "dim_customers": [{"name": "id", "type": "INT"}],
+            "dim_warehouses": [{"name": "warehouse_code", "type": "VARCHAR"}],
+        }
+        db_tool.get_table_ddl.side_effect = lambda table, *_args: FuncToolResult(
+            result={"definition": definitions[table]}
+        )
+        db_tool.describe_table.side_effect = lambda table, *_args: FuncToolResult(result={"columns": schemas[table]})
+
+        result = _make_tools(db_tool, compact_source_inspection=True).inspect_semantic_sources(
+            list(definitions),
+            max_relationship_candidates=2,
+            max_candidates_per_table=2,
+        )
+
+        assert result.success == 1
+        assert [(item["evidence"], item["target_table"]) for item in result.result["relationships"]] == [
+            ("foreign_key", "dim_customers"),
+            ("column_name", "dim_warehouses"),
+        ]
+        assert result.result["relationship_candidate_budget"] == {"max_total": 2, "max_per_source_table": 2}
 
     def test_detailed_mode_retains_sql_usage_for_existing_authoring_nodes(self):
         db_tool = _make_db_tool()

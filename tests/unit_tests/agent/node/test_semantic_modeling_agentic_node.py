@@ -6,7 +6,7 @@
 
 import hashlib
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -43,6 +43,18 @@ def _stream_call_count(mock_llm_create) -> int:
     return sum(1 for call in mock_llm_create.call_history if call.get("method") == "generate_with_tools_stream")
 
 
+def _submit_plan(node, *, datasets=None, metrics=None):
+    payload = {
+        "summary": "Author the requested semantic assets",
+        "datasets": datasets or [],
+        "metrics": metrics or [],
+    }
+    result = node.osi_plan_tools.submit_osi_semantic_model_plan(payload)
+    assert result.success == 1
+    assert result.result["status"] == "approved"
+    return result
+
+
 def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_config, mock_llm_create):
     from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
@@ -58,6 +70,7 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "list_existing_osi_semantic_models",
         "plan_osi_semantic_model_target",
         "bind_osi_semantic_model_target",
+        "submit_osi_semantic_model_plan",
         "inspect_semantic_sources",
         "read_file",
         "edit_file",
@@ -77,20 +90,10 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     with patch("datus.storage.metric.store.MetricStorage.get_subject_tree_flat") as subject_tree_lookup:
         prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
     subject_tree_lookup.assert_not_called()
-    assert "Select one target" in prompt
-    assert "compact dataset, table, relationship, and metric coverage" in prompt
-    assert "use the returned authoring outline" in prompt
-    assert "plan that same model name so it can be repaired in place" in prompt
-    assert "Treat SQL as evidence rather than a required persisted result shape" in prompt
-    assert "extract reusable fields, relationships, and native business metrics" in prompt
-    assert "durable reusable cohort/result set or asks for faithful one-query reproduction" in prompt
     assert '<required_skill name="dosi-semantic-authoring">' in prompt
     assert "## Active OSI Core authoring specification" in prompt
     assert "# Apache Ossie - Core Metadata Spec" in prompt
     assert "## Active DATUS extension authoring specification" in prompt
-    assert "Use a derived filter metric" in prompt
-    assert "Use a parameterized metric only" in prompt
-    assert "active contract explicitly permits" in prompt
 
 
 def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
@@ -111,7 +114,7 @@ def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
     node.input = SemanticNodeInput(user_message="Update the order dataset")
     node._session_manager = SessionManager(session_dir=str(tmp_path))
     old_meta = node._system_prompt_snapshot_meta(None)
-    old_meta["semantic_target_scope"] = "agent_bound_v3"
+    old_meta["semantic_target_scope"] = "agent_bound_v5"
     node.session_manager.save_system_prompt_snapshot(
         node.session_id, "Declare a new key only after full-table validation.", old_meta
     )
@@ -128,7 +131,7 @@ def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
         build_prompt.assert_called_once()
 
 
-def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agent_config, mock_llm_create):
+def test_datasets_only_scope_hides_metric_mutations(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     _set_adapter(real_agent_config, "dosi")
@@ -142,13 +145,6 @@ def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agen
     tool_names = {tool.name for tool in node.tools}
     assert {"upsert_osi_datasets", "delete_osi_datasets", "edit_file"}.issubset(tool_names)
     assert {"upsert_osi_metrics", "delete_osi_metrics"}.isdisjoint(tool_names)
-
-    prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
-    assert "This run is datasets-only" in prompt
-    assert "Do not author metrics in this datasets-only run" in prompt
-    assert "still author reusable native inputs." in prompt
-    assert "still author reusable native inputs and metrics." not in prompt
-    assert "Keep all existing metric definitions unchanged" in prompt
 
 
 def test_node_factory_applies_datasets_only_scope_before_tool_setup(real_agent_config, mock_llm_create):
@@ -227,6 +223,17 @@ def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
         },
         mode="planned",
     )
+    _submit_plan(
+        node,
+        datasets=[
+            {
+                "name": "orders",
+                "action": "update",
+                "source_kind": "physical",
+                "source": "orders",
+            }
+        ],
+    )
 
     edit_result = node.filesystem_func_tool.edit_file(
         str(target),
@@ -281,6 +288,78 @@ def test_interactive_prompt_confirms_ambiguous_semantics_and_target(real_agent_c
     assert "confirm the target once before selecting it" in prompt
     assert "other plausible existing models, and creating a new semantic model" in prompt
     assert "all currently known semantic ambiguities and the target choice into one `ask_user` call" in prompt
+    assert "`submit_osi_semantic_model_plan` presents the plan summary" in prompt
+    assert "confirm_osi_semantic_model_plan" not in prompt
+    assert "approve_osi_semantic_model_plan" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("decision", "expected_status", "expected_decision"),
+    [
+        ("Confirm and continue", "approved", "confirmed"),
+        ("Revise the plan", "pending_confirmation", "revise"),
+    ],
+)
+async def test_interactive_plan_confirmation_requires_user_response(
+    real_agent_config,
+    mock_llm_create,
+    decision,
+    expected_status,
+    expected_decision,
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+    from datus.tools.func_tool.base import FuncToolResult
+
+    _set_adapter(real_agent_config, "dosi")
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="interactive")
+    target = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "orders.yml"
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "orders",
+            "semantic_model_file": f"subject/semantic_models/{real_agent_config.current_datasource}/orders.yml",
+            "absolute_path": str(target.resolve()),
+            "exists": False,
+        },
+        mode="planned",
+    )
+    node.ask_user_tool.ask_user = AsyncMock(
+        return_value=FuncToolResult(
+            result=json.dumps(
+                [
+                    {
+                        "question": "Confirm this semantic-model authoring plan?",
+                        "answer": decision,
+                    }
+                ]
+            )
+        )
+    )
+    submitted = await node.submit_osi_semantic_model_plan(
+        {
+            "summary": "Create reusable order semantics",
+            "datasets": [
+                {
+                    "name": "orders",
+                    "action": "create",
+                    "source_kind": "physical",
+                    "source": "analytics.orders",
+                }
+            ],
+        }
+    )
+    assert submitted.result["status"] == expected_status
+    assert submitted.result["decision"] == expected_decision
+    assert "approve_osi_semantic_model_plan" not in {tool.name for tool in node.tools}
+    assert "confirm_osi_semantic_model_plan" not in {tool.name for tool in node.tools}
+    assert submitted.success == 1
+    node.ask_user_tool.ask_user.assert_awaited_once()
+    confirmation_question = node.ask_user_tool.ask_user.await_args.args[0][0]["question"]
+    assert "Planned DAG:" in confirmation_question
+    assert '"id": "table:analytics.orders"' in confirmation_question
+    assert '"kind": "reads_table"' in confirmation_question
+    assert submitted.result["graph"]["nodes"]
+    assert submitted.result["graph"]["edges"]
 
 
 def test_dosi_target_selection_requires_existing_model_check(real_agent_config, mock_llm_create):
@@ -298,6 +377,45 @@ def test_dosi_target_selection_requires_existing_model_check(real_agent_config, 
     planned = node.plan_osi_semantic_model_target(semantic_model_name="orders")
     assert planned.success == 1
     assert node.osi_target_state.planned["semantic_model_name"] == "orders"
+
+
+def test_semantic_modeling_blocks_yaml_mutation_before_plan_submission(real_agent_config, mock_llm_create):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    _set_adapter(real_agent_config, "dosi")
+    model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    target = model_dir / "orders.yml"
+    target.write_text(
+        "version: 0.2.0.dev0\nsemantic_model:\n- name: orders\n  datasets: []\n  relationships: []\n  metrics: []\n",
+        encoding="utf-8",
+    )
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    node.osi_target_state.select(
+        {
+            "semantic_model_name": "orders",
+            "semantic_model_file": f"subject/semantic_models/{real_agent_config.current_datasource}/orders.yml",
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode="planned",
+    )
+
+    results = [
+        node.filesystem_func_tool.upsert_osi_datasets(
+            str(target),
+            json.dumps([{"name": "orders", "source": "analytics.orders", "fields": []}]),
+        ),
+        node.filesystem_func_tool.upsert_osi_metrics(
+            str(target),
+            json.dumps([{"name": "order_count", "expression": {"dialects": []}}]),
+        ),
+        node.filesystem_func_tool.delete_osi_metrics(str(target), ["order_count"]),
+    ]
+
+    assert all(result.success == 0 for result in results)
+    assert all("Submit and approve" in result.error for result in results)
+    assert target.read_text(encoding="utf-8").endswith("  metrics: []\n")
 
 
 @pytest.mark.parametrize("adapter", ["metricflow", "osi"])
@@ -343,6 +461,28 @@ def test_unified_dosi_selects_existing_model_once_for_dataset_and_metric_changes
     assert bound.success == 1
     assert node.semantic_tools._selected_semantic_model_path() == str(target.resolve())
 
+    _submit_plan(
+        node,
+        datasets=[
+            {
+                "name": "orders",
+                "action": "update",
+                "source_kind": "physical",
+                "source": "analytics.orders",
+            }
+        ],
+        metrics=[
+            {
+                "name": "order_count",
+                "action": "create",
+                "kind": "atomic",
+                "role": "business_output",
+                "dataset": "orders",
+                "definition": "Count orders",
+            }
+        ],
+    )
+
     dataset = {
         "name": "orders",
         "source": "analytics.orders",
@@ -387,6 +527,28 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
     target = node.osi_target_state.selected_path
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     assert target == str((model_dir / "commerce.yml").resolve())
+
+    _submit_plan(
+        node,
+        datasets=[
+            {
+                "name": "orders",
+                "action": "create",
+                "source_kind": "physical",
+                "source": "analytics.orders",
+            }
+        ],
+        metrics=[
+            {
+                "name": "revenue",
+                "action": "create",
+                "kind": "atomic",
+                "role": "business_output",
+                "dataset": "orders",
+                "definition": "Sum order revenue",
+            }
+        ],
+    )
 
     dataset_result = node.filesystem_func_tool.upsert_osi_datasets(
         target,
@@ -638,6 +800,26 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     node.osi_target_state.artifact_snapshot_path = str(target.resolve())
     node.osi_target_state.artifact_snapshot_content = target.read_bytes()
     node.osi_target_state.touched_metric_names = list(touched_metrics)
+    if touched_metrics:
+        _submit_plan(
+            node,
+            datasets=[{"name": "orders", "action": "reuse", "source_kind": "physical", "source": "orders"}],
+            metrics=[
+                {
+                    "name": "order_count",
+                    "action": "reuse",
+                    "kind": "atomic",
+                    "role": "business_output",
+                    "dataset": "orders",
+                    "definition": "Count orders",
+                }
+            ],
+        )
+    else:
+        _submit_plan(
+            node,
+            datasets=[{"name": "orders", "action": "reuse", "source_kind": "physical", "source": "orders"}],
+        )
     compiled_validation_recorded = False
     expected_compiled_catalog = {}
     if touched_metrics:

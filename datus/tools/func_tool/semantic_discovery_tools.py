@@ -215,6 +215,8 @@ class SemanticDiscoveryTools:
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
+        max_relationship_candidates: int = 20,
+        max_candidates_per_table: int = 3,
     ) -> FuncToolResult:
         """Inspect all semantic-model source tables in one read-only call.
 
@@ -223,6 +225,8 @@ class SemanticDiscoveryTools:
             catalog: Optional catalog override.
             database: Optional database override.
             schema_name: Optional schema override.
+            max_relationship_candidates: Maximum name-derived relationship suggestions returned.
+            max_candidates_per_table: Maximum name-derived suggestions for one source table.
 
         This tool batches schema and relationship discovery. It reads each
         table's DDL and enriched schema once per request, uses DDL for declared
@@ -233,6 +237,8 @@ class SemanticDiscoveryTools:
         reference SQL; historical profiling remains a separate opt-in workflow.
         """
         try:
+            max_relationship_candidates = max(1, min(int(max_relationship_candidates), 100))
+            max_candidates_per_table = max(1, min(int(max_candidates_per_table), 10))
             normalized_tables = self._normalize_semantic_source_tables(tables)
             inspected_tables = []
             for table in normalized_tables:
@@ -260,14 +266,14 @@ class SemanticDiscoveryTools:
                 inspected_tables.append(inspected)
 
             source_entries = self._current_source_sql_entries()
-            sql_evidence = {}
-            if not self.compact_source_inspection:
+            if source_entries:
                 sql_evidence, parse_errors = self._semantic_profile_sql_evidence(
                     source_entries,
                     normalized_tables,
                     max(len(normalized_tables), 1),
                 )
             else:
+                sql_evidence = {}
                 parse_errors = []
             relationships = self._extract_foreign_keys_from_inspected_tables(inspected_tables)
             tables_lower_map = {self._normalize_identifier(table.split(".")[-1]): table for table in normalized_tables}
@@ -287,9 +293,12 @@ class SemanticDiscoveryTools:
                         parsed_expressions=parsed_expressions,
                     )
                 )
-            relationships = self._deduplicate_relationships(relationships)
-            if not relationships:
-                relationships = self._infer_relationships_from_inspected_tables(inspected_tables)
+            inferred_relationships = self._infer_relationships_from_inspected_tables(
+                inspected_tables,
+                max_total=max_relationship_candidates,
+                max_per_source=max_candidates_per_table,
+            )
+            relationships = self._deduplicate_relationships([*relationships, *inferred_relationships])
 
             public_tables = []
             for inspected in inspected_tables:
@@ -314,6 +323,17 @@ class SemanticDiscoveryTools:
                         "group_by_expressions": table_profile.get("group_by_expressions", []),
                         "common_filter_conditions": table_profile.get("common_filter_conditions", []),
                     }
+                else:
+                    table_profile = self._semantic_profile_table_evidence_for(
+                        sql_evidence,
+                        inspected["table_name"],
+                    )
+                    field_semantic_evidence = {
+                        "group_by_expressions": table_profile.get("group_by_expressions", [])[:20],
+                        "aggregate_expressions": table_profile.get("aggregate_expressions", [])[:20],
+                    }
+                    if any(field_semantic_evidence.values()):
+                        public_table["request_sql_field_semantics"] = field_semantic_evidence
                 public_tables.append(public_table)
 
             return FuncToolResult(
@@ -322,6 +342,10 @@ class SemanticDiscoveryTools:
                     "relationships": relationships,
                     "source_sql_count": len(source_entries),
                     "parse_errors": parse_errors[:5],
+                    "relationship_candidate_budget": {
+                        "max_total": max_relationship_candidates,
+                        "max_per_source_table": max_candidates_per_table,
+                    },
                     "summary": (
                         f"Inspected {len(inspected_tables)} table(s) and found "
                         f"{len(relationships)} relationship candidate(s) from the current request"
@@ -399,44 +423,101 @@ class SemanticDiscoveryTools:
     def _infer_relationships_from_inspected_tables(
         self,
         inspected_tables: List[Dict[str, Any]],
+        *,
+        max_total: int = 20,
+        max_per_source: int = 3,
     ) -> List[Dict[str, Any]]:
-        """Infer low-confidence relationships from cached schema column names."""
+        """Suggest bounded low-confidence relationships from cached names only."""
         table_columns = {}
-        tables_lower_map = {}
+        table_identities = {}
         for inspected in inspected_tables:
             table_name = inspected["table_name"]
-            tables_lower_map[self._normalize_identifier(table_name.split(".")[-1])] = table_name
+            table_identities[table_name] = self._semantic_table_identity(table_name)
             schema = inspected.get("schema")
             columns = schema.get("columns", []) if isinstance(schema, dict) else []
             table_columns[table_name] = [column for column in columns if isinstance(column, dict)]
 
         relationships = []
-        for source_table, columns in table_columns.items():
+        source_counts: Counter[str] = Counter()
+        for source_table, columns in sorted(table_columns.items()):
             for column in columns:
                 source_column = str(column.get("name") or "")
                 normalized_column = self._normalize_identifier(source_column)
-                if not normalized_column.endswith("_id"):
+                match = re.match(r"^(.+?)_(id|code|key)$", normalized_column)
+                if not match:
                     continue
-                target_table = tables_lower_map.get(normalized_column[:-3])
-                if not target_table:
-                    continue
-                if not any(
-                    self._normalize_identifier(target.get("name")) == "id"
-                    for target in table_columns.get(target_table, [])
-                ):
-                    continue
-                relationships.append(
-                    self._relationship_evidence(
-                        source_table=source_table,
-                        source_columns=[source_column],
-                        target_table=target_table,
-                        target_columns=["id"],
-                        confidence="low",
-                        evidence="column_name",
-                        target_key_status="candidate_unverified",
+                entity, suffix = match.groups()
+                for target_table, target_identity in sorted(table_identities.items()):
+                    if target_table == source_table or target_identity != self._singular_identifier(entity):
+                        continue
+                    target_column = self._matching_relationship_column(
+                        source_column,
+                        suffix,
+                        column,
+                        table_columns.get(target_table, []),
                     )
-                )
+                    if not target_column:
+                        continue
+                    if source_counts[source_table] >= max_per_source or len(relationships) >= max_total:
+                        break
+                    relationships.append(
+                        self._relationship_evidence(
+                            source_table=source_table,
+                            source_columns=[source_column],
+                            target_table=target_table,
+                            target_columns=[target_column],
+                            confidence="low",
+                            evidence="column_name",
+                            target_key_status="candidate_unverified",
+                        )
+                    )
+                    source_counts[source_table] += 1
+                if len(relationships) >= max_total:
+                    break
+            if len(relationships) >= max_total:
+                break
         return self._deduplicate_relationships(relationships)
+
+    def _semantic_table_identity(self, table_name: str) -> str:
+        """Normalize common warehouse prefixes and simple plural forms."""
+        name = self._normalize_identifier(table_name.split(".")[-1])
+        for prefix in ("dim_", "fact_", "fct_", "dwd_", "dws_", "ods_", "stg_"):
+            if name.startswith(prefix):
+                name = name[len(prefix) :]
+                break
+        return self._singular_identifier(name)
+
+    @staticmethod
+    def _singular_identifier(value: str) -> str:
+        if value.endswith("ies") and len(value) > 3:
+            return value[:-3] + "y"
+        if value.endswith("s") and not value.endswith("ss") and len(value) > 1:
+            return value[:-1]
+        return value
+
+    def _matching_relationship_column(
+        self,
+        source_name: str,
+        suffix: str,
+        source_column: Dict[str, Any],
+        target_columns: List[Dict[str, Any]],
+    ) -> str:
+        candidates = [self._normalize_identifier(source_name), suffix]
+        source_type = self._normalize_identifier(str(source_column.get("type") or source_column.get("data_type") or ""))
+        by_name = {
+            self._normalize_identifier(column.get("name")): column
+            for column in target_columns
+            if self._normalize_identifier(column.get("name"))
+        }
+        for candidate in candidates:
+            target = by_name.get(candidate)
+            if target is None:
+                continue
+            target_type = self._normalize_identifier(str(target.get("type") or target.get("data_type") or ""))
+            if source_type and target_type and source_type != target_type:
+                continue
+            return str(target.get("name") or "")
+        return ""
 
     def profile_semantic_model_evidence(
         self,
