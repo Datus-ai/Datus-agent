@@ -223,6 +223,8 @@ class DDLEngine:
             "all"      both
         Extra tables give the agent two competing definitions and carry no user DDL constraints, hence off by default."""
         assert extra_tables in ("none", "date_dim", "summary", "all"), extra_tables
+        if not isinstance(rows, (int, float)) or isinstance(rows, bool) or rows < 1:
+            raise ValueError(f"rows must be a positive number of rows to generate, got {rows!r}")
         self.extra_tables = extra_tables
         self.ddl = ddl
         self.rows = rows
@@ -988,6 +990,11 @@ class DDLEngine:
                     continue
                 progressed = True
         rest = [t for t in facts + details if t not in settled]
+        # What a pin fixed, directly or through lines-per-parent, the pre-scale below leaves alone,
+        # or a pinned parent's lines drift off the band before a row exists. Calibration between
+        # passes may still move those details: with everything else pinned they are how the budget
+        # is reached at all (`test_calibration_reaches_the_budget_through_the_detail_table`).
+        self._settled_rows = set(settled)
         left = max(0.0, budget * block / tot - sum(settled.values()))
         unit = left / (sum(weights[t] for t in rest) or 1)
         n.update(settled)
@@ -1024,6 +1031,14 @@ class DDLEngine:
             and (0 < k < 1 or (k >= 1 and float(k) == int(k)))
         }
         self._apply_fanout(n)
+        # Land the plan on the budget BEFORE the first pass, not only between passes. The fact
+        # layer is allocated for 1.8 lines per parent, so a declared fan-out tree (a lot has 8
+        # wafers, a wafer 18 probed die, a run 5 FDC summaries) multiplied it to 1,341,886 planned
+        # rows against 80,000 - and generate() calibrates only after a full pass. That first pass
+        # peaked at 1.6 GB and 40 seconds on a 12-table DDL; inside a 2 GiB sandbox it was the
+        # process being killed, twice, with the trace ending at the bash call. Calibration's own
+        # rule, applied here to the same tables it may move, so pass 1 is already the right size.
+        self._prescale_to_budget(n)
         # A key-bearing `joint` group is the row count: ten real airports means ten rows, and
         # asking for more can only be answered with a duplicate key. Recorded so the pre-check can
         # say it happened rather than leaving the caller to wonder why `dim_rows` was ignored.
@@ -1042,6 +1057,35 @@ class DDLEngine:
             else:
                 n[t] = limit
         self.nrows = n
+
+    def _prescale_to_budget(self, n):
+        """Scale the free tables so the planned total lands within tolerance of ``rows``.
+
+        The same update ``generate()`` applies between passes - ``k = rows / total`` over the
+        tables that are neither pinned, nor role-fixed, nor derived from a parent by ``per_parent``
+        - and the fan-out tree follows its root each time. Two rounds, like the calibration.
+        """
+        fixed = getattr(self, "fixed_fanout", None) or {}
+        pinned = set(getattr(self, "pinned_rows", None) or {}) | set(getattr(self, "_settled_rows", None) or ())
+        free = [
+            t
+            for t in n
+            if t in self.schema
+            and self.roles.get(t) not in (ROLE_DATE, ROLE_DIM, ROLE_METRIC)
+            and t not in pinned
+            and t not in fixed
+        ]
+        if not free:
+            return n
+        for _ in range(2):
+            total = sum(v for t, v in n.items() if t in self.schema)
+            if not total or abs(total / self.rows - 1) <= 0.06:
+                break
+            k = self.rows / total
+            for t in free:
+                n[t] = max(50, int(n[t] * k))
+            self._apply_fanout(n)
+        return n
 
     def _guess_kind(self, t):
         s = t.lower()
