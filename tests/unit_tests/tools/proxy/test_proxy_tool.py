@@ -156,16 +156,6 @@ class TestCreateProxyTool:
         # Telemetry distinguishes this from an ordinary tool failure.
         assert ctx._datus_tool_status == "proxy_timeout"
 
-    def test_default_timeout_is_a_human_scale_wait(self):
-        """The bound is user-visible dead air, not just a deadlock guard.
-
-        Pinned because the value drifting back up is silent: nothing fails,
-        turns just hang longer. 600s produced 20-minute stalls in prod.
-        """
-        from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT as configured
-
-        assert configured == 60.0
-
     @pytest.mark.asyncio
     async def test_proxy_tool_returns_error_on_channel_cancel(self):
         """Verify that RuntimeError from channel.cancel_all is caught and returns error dict."""

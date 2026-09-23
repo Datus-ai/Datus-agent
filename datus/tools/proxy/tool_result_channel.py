@@ -23,13 +23,17 @@ logger = get_logger(__name__)
 # otherwise hang forever. ``wait_for`` defaults to this bound so the turn fails
 # cleanly instead.
 #
-# 60s, not the 600s this used to be. The old bound was chosen as "surely long
-# enough", but the wait is user-visible dead air: the chat just sits there with
-# no output and no error, and prod traces showed single turns burning 20
-# minutes across two consecutive timeouts before the agent gave up and routed
-# around the tool. Ten minutes of silence is never the kinder outcome — a turn
-# that fails in one minute can be retried, and the client is told why.
-DEFAULT_RESULT_TIMEOUT: float = 60.0
+# Deliberately generous, because the cost is asymmetric. Expiring early kills a
+# turn the user was coming back to finish and throws away everything the agent
+# did in it; waiting too long only holds a sandbox. Someone who starts a task
+# and switches browser tabs is using the product as intended, and the click
+# arrives over its own POST, so a dropped output stream does not stop it
+# landing.
+#
+# The 20-minute stalls seen in prod were not caused by this number. They were
+# caused by nobody being told a card was waiting — fixed in the client, where
+# a pending confirmation is now counted and can be scrolled back to.
+DEFAULT_RESULT_TIMEOUT: float = 600.0
 
 
 class ToolResultChannel:
