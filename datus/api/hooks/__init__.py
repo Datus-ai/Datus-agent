@@ -23,6 +23,14 @@ from datus.api.hooks.metric_hooks import (
     make_metric_retrieval_hook,
     set_metric_retrieval_hook,
 )
+from datus.api.hooks.turn_stats_hooks import (
+    SubagentCallStat,
+    ToolCallStat,
+    TurnStatsEvent,
+    TurnStatsHook,
+    get_turn_stats_hook,
+    set_turn_stats_hook,
+)
 
 __all__ = [
     "ChatHooks",
@@ -39,4 +47,10 @@ __all__ = [
     "get_metric_retrieval_hook",
     "make_metric_retrieval_hook",
     "set_metric_retrieval_hook",
+    "SubagentCallStat",
+    "ToolCallStat",
+    "TurnStatsEvent",
+    "TurnStatsHook",
+    "get_turn_stats_hook",
+    "set_turn_stats_hook",
 ]

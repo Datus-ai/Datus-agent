@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Set, Tuple
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.api.hooks.turn_stats_hooks import TurnStatsEvent, get_turn_stats_hook
 from datus.api.models.cli_models import (
     IMessageContent,
     SSEDataType,
@@ -30,6 +31,8 @@ from datus.api.models.cli_models import (
     StreamChatInput,
 )
 from datus.api.services.action_sse_converter import action_to_sse_event
+from datus.api.services.background_drain import track_background_task
+from datus.api.services.turn_stats import TurnStatsCollector, resolve_subagent
 from datus.cli.autocomplete import AtReferenceCompleter
 from datus.cli.execution_state import PendingInputQueue
 from datus.configuration.agent_config import AgentConfig
@@ -346,6 +349,9 @@ class ChatTask:
         # SESSION_NOT_RUNNING and the client falls back to a fresh turn, rather
         # than enqueueing with nothing left to drain them.
         self.accepting_inserts: bool = True
+        # Host data captured at turn start (``TurnStatsHook.capture_context``)
+        # and handed back with the turn's call statistics once it ends.
+        self.stats_context: Dict[str, Any] = {}
 
 
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
@@ -415,9 +421,11 @@ class ChatTaskManager:
         sub_agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
         policy_context: Optional[Dict[str, Any]] = None,
+        stats_context: Optional[Dict[str, Any]] = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
+            :param stats_context: host data returned with the turn's call statistics
         Raises ``ValueError`` if a task is already running for the session.
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
@@ -520,6 +528,7 @@ class ChatTaskManager:
 
         # Placeholder — asyncio_task set immediately after
         task = ChatTask(session_id=session_id, asyncio_task=None)  # type: ignore[arg-type]
+        task.stats_context = dict(stats_context or {})
         self._tasks[session_id] = task
 
         asyncio_task = asyncio.create_task(
@@ -644,6 +653,9 @@ class ChatTaskManager:
         # ``asyncio.run_coroutine_threadsafe``); otherwise downstream stores fall
         # back to ``get_path_manager()`` and get an empty project_name.
         set_current_path_manager(agent_config.path_manager)
+
+        turn_started_at = datetime.now()
+        turn_stats = TurnStatsCollector(lambda name: resolve_subagent(agent_config, name))
 
         try:
             start_time = datetime.now()
@@ -826,6 +838,7 @@ class ChatTaskManager:
                 seen_assistant_message_fingerprints: dict[str, str] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
+                    turn_stats.observe(action)
 
                     # Convert action to SSE
                     # Per-request stream_response overrides the server-level --stream flag
@@ -1020,12 +1033,76 @@ class ChatTaskManager:
 
         finally:
             trace_stack.close()
+            self._emit_turn_stats(
+                task,
+                turn_stats,
+                agent_config=agent_config,
+                request=request,
+                sub_agent_id=sub_agent_id,
+                user_id=user_id,
+                started_at=turn_started_at,
+            )
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)
             # Keep completed task for resume within TTL
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
+
+    @staticmethod
+    def _emit_turn_stats(
+        task: ChatTask,
+        collector: TurnStatsCollector,
+        *,
+        agent_config: AgentConfig,
+        request: StreamChatInput,
+        sub_agent_id: Optional[str],
+        user_id: Optional[str],
+        started_at: datetime,
+    ) -> None:
+        """Hand the finished turn's call statistics to the host, if one listens.
+
+        Runs from ``_run_loop``'s ``finally`` so completed, failed and cancelled
+        turns are all reported — including ones whose SSE client disconnected.
+        Scheduled as a background task; statistics must never fail a turn.
+        """
+        hook = get_turn_stats_hook()
+        if hook is None:
+            return
+
+        try:
+            status = task.status if task.status in ("completed", "error", "cancelled") else "error"
+            duration_ms = max(0, int((datetime.now() - started_at).total_seconds() * 1000))
+            direct = None
+            if sub_agent_id and sub_agent_id != "chat":
+                direct = resolve_subagent(agent_config, sub_agent_id)
+            subagents, tools = collector.finalize(status, duration_ms, direct)
+            event = TurnStatsEvent(
+                session_id=task.session_id,
+                user_id=user_id,
+                agent_name=sub_agent_id or "chat",
+                status=status,
+                duration_ms=duration_ms,
+                subagents=subagents,
+                tools=tools,
+                origin=getattr(request, "origin", None),
+                error=task.error,
+                context=dict(task.stats_context),
+            )
+        except Exception:
+            logger.warning("Failed to build turn stats for session %s", task.session_id, exc_info=True)
+            return
+
+        async def _deliver() -> None:
+            try:
+                await hook.on_turn_finished(event)
+            except Exception:
+                logger.warning("Turn stats hook failed for session %s", event.session_id, exc_info=True)
+
+        try:
+            track_background_task(asyncio.create_task(_deliver(), name=f"turn-stats:{task.session_id}"))
+        except Exception:  # pragma: no cover — defensive
+            logger.warning("Failed to schedule turn stats hook", exc_info=True)
 
     @staticmethod
     def _drain_pending_for_continuation(node) -> Optional[List[str]]:
