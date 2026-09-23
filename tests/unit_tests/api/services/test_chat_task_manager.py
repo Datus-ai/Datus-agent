@@ -2758,3 +2758,221 @@ class TestReleaseStamp:
 
         monkeypatch.delenv("DATUS_RELEASE", raising=False)
         assert _release_stamp() == str(__version__)
+
+
+class TestRunLoopTurnStats:
+    """``_run_loop`` hands every finished turn to the turn-stats hook."""
+
+    @staticmethod
+    def _tool_actions(call_id, tool, ok=True):
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        start = ActionHistory(
+            action_id=call_id,
+            role=ActionRole.TOOL,
+            action_type=tool,
+            messages="",
+            input={"function_name": tool, "arguments": {}},
+            output={},
+            status=ActionStatus.PROCESSING,
+        )
+        done = ActionHistory(
+            action_id="complete_" + call_id,
+            role=ActionRole.TOOL,
+            action_type=tool,
+            messages="",
+            input={},
+            output={"success": ok},
+            status=ActionStatus.SUCCESS if ok else ActionStatus.FAILED,
+        )
+        return start, done
+
+    @staticmethod
+    def _fake_node(actions, raise_after=None):
+        class FakeNode:
+            session_id = "s-stats"
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                for action in actions:
+                    yield action
+                if raise_after is not None:
+                    raise raise_after
+
+            async def get_last_turn_usage(self):
+                return None
+
+        return FakeNode()
+
+    @staticmethod
+    def _recording_hook():
+        events = []
+
+        class Hook:
+            def capture_context(self, http_request, stream_request, user_id):
+                return {}
+
+            async def on_turn_finished(self, event):
+                events.append(event)
+
+        return Hook(), events
+
+    async def _run(self, real_agent_config, node, *, sub_agent_id=None, stats_context=None):
+        from datus.api.hooks import set_turn_stats_hook
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.api.services.background_drain import drain_background_tasks
+
+        hook, events = self._recording_hook()
+        set_turn_stats_hook(hook)
+        try:
+            manager = ChatTaskManager()
+            manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
+            task = ChatTask(session_id="s-stats", asyncio_task=MagicMock())
+            task.stats_context = dict(stats_context or {})
+            await manager._run_loop(
+                task,
+                real_agent_config,
+                StreamChatInput(message="go", session_id="s-stats", origin="orchestrator"),
+                sub_agent_id=sub_agent_id,
+                user_id="u-1",
+            )
+            await drain_background_tasks()
+        finally:
+            set_turn_stats_hook(None)
+        return task, events
+
+    @pytest.mark.asyncio
+    async def test_completed_turn_reports_tools_and_context(self, real_agent_config):
+        ok_start, ok_done = self._tool_actions("c1", "execute_sql")
+        bad_start, bad_done = self._tool_actions("c2", "execute_sql", ok=False)
+        node = self._fake_node([ok_start, ok_done, bad_start, bad_done])
+
+        task, events = await self._run(real_agent_config, node, stats_context={"trace_id": "tr-1"})
+
+        assert task.status == "completed"
+        assert len(events) == 1
+        event = events[0]
+        assert (event.status, event.agent_name, event.user_id, event.origin) == (
+            "completed",
+            "chat",
+            "u-1",
+            "orchestrator",
+        )
+        assert event.context == {"trace_id": "tr-1"}
+        assert event.subagents == []
+        (sql,) = event.tools
+        assert (sql.name, sql.caller, sql.calls, sql.success, sql.failed) == ("execute_sql", "main", 2, 1, 1)
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_still_reports_with_pending_call_interrupted(self, real_agent_config):
+        start, _ = self._tool_actions("c1", "write_file")
+        node = self._fake_node([start], raise_after=RuntimeError("model blew up"))
+
+        task, events = await self._run(real_agent_config, node)
+
+        assert task.status == "error"
+        (event,) = events
+        assert event.status == "error"
+        assert event.error == "model blew up"
+        (tool,) = event.tools
+        assert (tool.calls, tool.interrupted) == (1, 1)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_turn_still_reports(self, real_agent_config):
+        start, _ = self._tool_actions("c1", "execute_sql")
+        node = self._fake_node([start], raise_after=asyncio.CancelledError())
+
+        task, events = await self._run(real_agent_config, node)
+
+        assert task.status == "cancelled"
+        (event,) = events
+        assert event.status == "cancelled"
+        assert event.tools[0].interrupted == 1
+
+    @pytest.mark.asyncio
+    async def test_direct_subagent_turn_counts_as_one_direct_invocation(self, real_agent_config):
+        start, done = self._tool_actions("c1", "query_metrics")
+        node = self._fake_node([start, done])
+
+        _, events = await self._run(real_agent_config, node, sub_agent_id="gen_report")
+
+        (event,) = events
+        assert event.agent_name == "gen_report"
+        assert [(t.name, t.caller) for t in event.tools] == [("query_metrics", "subagent")]
+        (sub,) = event.subagents
+        assert (sub.name, sub.kind, sub.entry, sub.calls, sub.success, sub.tool_calls) == (
+            "gen_report",
+            "builtin",
+            "direct",
+            1,
+            1,
+            1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_feedback_turn_is_not_a_direct_subagent_chat(self, real_agent_config):
+        start, done = self._tool_actions("c1", "write_file")
+
+        _, events = await self._run(real_agent_config, self._fake_node([start, done]), sub_agent_id="feedback")
+
+        (event,) = events
+        assert event.agent_name == "feedback"
+        assert event.subagents == []
+        assert event.tools[0].caller == "subagent"
+
+    @pytest.mark.asyncio
+    async def test_every_turn_gets_its_own_turn_id(self, real_agent_config):
+        ids = []
+        for _ in range(2):
+            _, events = await self._run(real_agent_config, self._fake_node([]), stats_context={"trace_id": "same"})
+            ids.append(events[0].turn_id)
+
+        assert all(ids) and ids[0] != ids[1]
+
+    @pytest.mark.asyncio
+    async def test_collector_failure_never_fails_the_turn(self, real_agent_config, monkeypatch):
+        from datus.api.services.turn_stats import TurnStatsCollector
+
+        def _boom(self, action):
+            raise RuntimeError("collector bug")
+
+        monkeypatch.setattr(TurnStatsCollector, "observe", _boom)
+        start, done = self._tool_actions("c1", "execute_sql")
+
+        task, events = await self._run(real_agent_config, self._fake_node([start, done]))
+
+        assert task.status == "completed"
+        assert any(e.event == "end" for e in task.events)
+        (event,) = events
+        assert event.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_no_hook_skips_observation(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.api.services.turn_stats import TurnStatsCollector
+
+        observed = []
+        monkeypatch.setattr(TurnStatsCollector, "observe", lambda self, action: observed.append(action))
+        start, done = self._tool_actions("c1", "execute_sql")
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: self._fake_node([start, done])  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-stats", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-stats"))
+
+        assert task.status == "completed"
+        assert observed == []
+
+    @pytest.mark.asyncio
+    async def test_no_hook_registered_is_a_noop(self, real_agent_config):
+        from datus.api.models.cli_models import StreamChatInput
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: self._fake_node([])  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-stats", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-stats"))
+
+        assert task.status == "completed"

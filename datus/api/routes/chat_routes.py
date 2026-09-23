@@ -23,6 +23,7 @@ from datus.api.hooks import (
     ChatPostUsageContext,
     ChatPreCheckOutcome,
     get_chat_hooks,
+    get_turn_stats_hook,
 )
 from datus.api.models.base_models import Result
 from datus.api.models.chat_models import (
@@ -182,6 +183,7 @@ async def stream_chat(
         )
 
     pre_extra = pre_outcome.extra if pre_outcome else {}
+    stats_context = _capture_turn_stats_context(http_request, request, ctx.user_id)
 
     async def generate_sse():
         async for chunk in _stream_with_post_hook(
@@ -190,6 +192,7 @@ async def stream_chat(
                 sub_agent_id=sub_agent_id,
                 user_id=ctx.user_id,
                 policy_context=ctx.policy_context,
+                stats_context=stats_context,
             ),
             http_request=http_request,
             request=request,
@@ -218,6 +221,7 @@ async def stream_chat_feedback(
     request: FeedbackChatInput,
     svc: ServiceDep,
     ctx: AppContextDep,
+    http_request: Request,
 ):
     rendered_message = build_reaction_feedback_prompt(
         reaction_emoji=request.reaction_emoji,
@@ -239,12 +243,15 @@ async def stream_chat_feedback(
             headers=_sse_headers(),
         )
 
+    stats_context = _capture_turn_stats_context(http_request, stream_input, ctx.user_id)
+
     async def generate_sse():
         async for event in svc.chat.stream_chat(
             stream_input,
             sub_agent_id="feedback",
             user_id=ctx.user_id,
             policy_context=ctx.policy_context,
+            stats_context=stats_context,
         ):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
@@ -597,6 +604,22 @@ async def _run_pre_chat_hook(
     if outcome is None:
         return ChatPreCheckOutcome(allow=True)
     return outcome
+
+
+def _capture_turn_stats_context(
+    http_request: Request,
+    request: StreamChatInput,
+    user_id: Optional[str],
+) -> dict:
+    """Let the turn-stats hook snapshot request data it needs once the turn ends."""
+    hook = get_turn_stats_hook()
+    if hook is None:
+        return {}
+    try:
+        return dict(hook.capture_context(http_request, request, user_id) or {})
+    except Exception:
+        logger.warning("Turn stats hook failed to capture context", exc_info=True)
+        return {}
 
 
 async def _emit_pre_check_denial(

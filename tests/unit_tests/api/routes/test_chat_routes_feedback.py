@@ -48,7 +48,7 @@ async def test_feedback_endpoint_renders_prompt_and_routes_to_feedback_subagent(
         database="sales_db",
     )
 
-    response = await stream_chat_feedback(request, svc, _build_ctx())
+    response = await stream_chat_feedback(request, svc, _build_ctx(), MagicMock())
     await _drain(response)
 
     svc.chat.stream_chat.assert_called_once()
@@ -102,7 +102,7 @@ async def test_feedback_endpoint_appends_optional_reaction_msg():
         reaction_msg="Please recheck the metric definition",
     )
 
-    response = await stream_chat_feedback(request, svc, _build_ctx())
+    response = await stream_chat_feedback(request, svc, _build_ctx(), MagicMock())
     await _drain(response)
 
     stream_input: StreamChatInput = svc.chat.stream_chat.call_args.args[0]
@@ -124,7 +124,7 @@ async def test_feedback_endpoint_denies_when_policy_context_is_rejected():
     runtime = MagicMock()
     runtime.validate_context.return_value = MagicMock(allowed=False, reason="Policy context denies all data reads")
     with patch("datus.api.routes.chat_routes.PolicyRuntime", return_value=runtime):
-        response = await stream_chat_feedback(request, svc, ctx)
+        response = await stream_chat_feedback(request, svc, ctx, MagicMock())
     chunks = []
     async for chunk in response.body_iterator:
         chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
@@ -135,3 +135,32 @@ async def test_feedback_endpoint_denies_when_policy_context_is_rejected():
     assert payload["error_type"] == "POLICY_CONTEXT_REJECTED"
     assert "denies all data reads" in payload["error"]
     svc.chat.stream_chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_feedback_endpoint_forwards_turn_stats_context():
+    """Reaction-triggered turns carry the same host context as /chat/stream."""
+    from datus.api.hooks import set_turn_stats_hook
+
+    captured = {}
+
+    class Hook:
+        def capture_context(self, http_request, stream_request, user_id):
+            captured["args"] = (http_request, stream_request.subagent_id, user_id)
+            return {"trace_id": "tr-feedback"}
+
+        async def on_turn_finished(self, event):
+            return None
+
+    http_request = MagicMock()
+    set_turn_stats_hook(Hook())
+    try:
+        svc = _build_svc()
+        request = FeedbackChatInput(source_session_id="s", reaction_emoji="thumbsup", reference_msg="hi")
+        response = await stream_chat_feedback(request, svc, _build_ctx(), http_request)
+        await _drain(response)
+    finally:
+        set_turn_stats_hook(None)
+
+    assert captured["args"] == (http_request, "feedback", "tester")
+    assert svc.chat.stream_chat.call_args.kwargs["stats_context"] == {"trace_id": "tr-feedback"}
