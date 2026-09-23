@@ -356,6 +356,8 @@ class ChatTask:
         # failed or cancelled. Set by the route; see TurnEndCallback.
         self.on_turn_end: Optional[TurnEndCallback] = None
         self.turn_id: Optional[str] = None
+        # Guards on_turn_end to exactly once per turn (see _settle_turn).
+        self.settled: bool = False
         # ``SSEEndData`` of a completed turn; the usage the host is billed for.
         self.end_usage: Optional[Dict[str, Any]] = None
 
@@ -565,6 +567,7 @@ class ChatTaskManager:
         task = ChatTask(session_id=session_id, asyncio_task=None)  # type: ignore[arg-type]
         task.stats_context = dict(stats_context or {})
         task.on_turn_end = on_turn_end
+        task.turn_id = uuid.uuid4().hex
         self._tasks[session_id] = task
 
         asyncio_task = asyncio.create_task(
@@ -577,7 +580,20 @@ class ChatTaskManager:
             )
         )
         task.asyncio_task = asyncio_task
+        # A task cancelled before its first step never enters _run_loop, so its
+        # ``finally`` never settles it or releases the session. Cover that here.
+        asyncio_task.add_done_callback(lambda _done: self._finish_unstarted(task))
         return task
+
+    def _finish_unstarted(self, task: ChatTask) -> None:
+        """Settle and release a task whose ``_run_loop`` never ran; else a no-op."""
+        if task.settled:
+            return
+        if task.status == "running":
+            task.status = "cancelled"
+        if self._tasks.get(task.session_id) is task:
+            self._tasks.pop(task.session_id, None)
+        self._settle_turn(task, None)
 
     async def stop_task(self, session_id: str) -> bool:
         """Stop a running task by interrupting its node."""
@@ -691,7 +707,7 @@ class ChatTaskManager:
         set_current_path_manager(agent_config.path_manager)
 
         turn_started_at = datetime.now()
-        turn_id = uuid.uuid4().hex
+        turn_id = task.turn_id or uuid.uuid4().hex
         task.turn_id = turn_id
         # Chatting with a subagent directly makes it the depth-0 node, so its
         # own tool calls are the subagent's, not the main agent's.
@@ -1108,6 +1124,9 @@ class ChatTaskManager:
         before it stopped. A client that disconnects no longer matters: the task
         keeps running and settles when it is done.
         """
+        if task.settled:
+            return
+        task.settled = True
         callback = task.on_turn_end
         if callback is None:
             return

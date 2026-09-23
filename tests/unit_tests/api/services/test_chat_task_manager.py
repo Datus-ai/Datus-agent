@@ -3091,3 +3091,51 @@ class TestRunLoopSettlesTurn:
 
         assert task.status == "completed"
         assert calls == []
+
+
+class TestStartChatSettlesExactlyOnce:
+    """``start_chat`` tasks settle once, even when cancelled before they ever run."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_before_first_step_still_settles_and_releases(self, real_agent_config):
+        from datus.api.models.cli_models import StreamChatInput
+
+        calls = []
+        manager = ChatTaskManager()
+        manager._create_node = MagicMock(side_effect=AssertionError("must not run"))  # type: ignore[method-assign]
+
+        task = await manager.start_chat(
+            real_agent_config,
+            StreamChatInput(message="go", session_id="s-early"),
+            on_turn_end=lambda *args: calls.append(args),
+        )
+        task.asyncio_task.cancel()  # before yielding to the loop: _run_loop never starts
+        with pytest.raises(asyncio.CancelledError):
+            await task.asyncio_task
+        await asyncio.sleep(0)  # let the done callback run
+
+        ((usage, error, status, turn_id),) = calls
+        assert (status, error) == ("cancelled", None)
+        assert usage == {"session_id": "s-early"}
+        assert turn_id == task.turn_id and turn_id
+        assert task.status == "cancelled"
+        assert "s-early" not in manager._tasks
+
+    @pytest.mark.asyncio
+    async def test_normal_turn_settles_exactly_once(self, real_agent_config):
+        from datus.api.models.cli_models import StreamChatInput
+
+        calls = []
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: TestRunLoopSettlesTurn._node()  # type: ignore[method-assign]
+
+        task = await manager.start_chat(
+            real_agent_config,
+            StreamChatInput(message="go", session_id="s-once"),
+            on_turn_end=lambda *args: calls.append(args),
+        )
+        await task.asyncio_task
+        await asyncio.sleep(0)
+
+        assert [c[2] for c in calls] == ["completed"]
+        assert calls[0][3] == task.turn_id
