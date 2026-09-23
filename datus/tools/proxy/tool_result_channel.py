@@ -18,10 +18,18 @@ logger = get_logger(__name__)
 
 # Safety net: a proxied tool (e.g. write_file/edit_file executed on the client)
 # blocks the agent loop until the client POSTs its result. If the client never
-# reports — tab closed, crash, or a frontend bug that swallows the report — the
-# loop would otherwise hang forever. ``wait_for`` defaults to this bound so the
-# turn fails cleanly instead.
-DEFAULT_RESULT_TIMEOUT: float = 600.0
+# reports — tab closed, crash, a frontend bug that swallows the report, or a
+# confirm-gated write whose Accept button nobody pressed — the loop would
+# otherwise hang forever. ``wait_for`` defaults to this bound so the turn fails
+# cleanly instead.
+#
+# 60s, not the 600s this used to be. The old bound was chosen as "surely long
+# enough", but the wait is user-visible dead air: the chat just sits there with
+# no output and no error, and prod traces showed single turns burning 20
+# minutes across two consecutive timeouts before the agent gave up and routed
+# around the tool. Ten minutes of silence is never the kinder outcome — a turn
+# that fails in one minute can be retried, and the client is told why.
+DEFAULT_RESULT_TIMEOUT: float = 60.0
 
 
 class ToolResultChannel:
