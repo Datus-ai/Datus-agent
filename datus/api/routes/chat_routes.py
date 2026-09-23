@@ -221,6 +221,7 @@ async def stream_chat_feedback(
     request: FeedbackChatInput,
     svc: ServiceDep,
     ctx: AppContextDep,
+    http_request: Request,
 ):
     rendered_message = build_reaction_feedback_prompt(
         reaction_emoji=request.reaction_emoji,
@@ -242,12 +243,15 @@ async def stream_chat_feedback(
             headers=_sse_headers(),
         )
 
+    stats_context = _capture_turn_stats_context(http_request, stream_input, ctx.user_id)
+
     async def generate_sse():
         async for event in svc.chat.stream_chat(
             stream_input,
             sub_agent_id="feedback",
             user_id=ctx.user_id,
             policy_context=ctx.policy_context,
+            stats_context=stats_context,
         ):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 

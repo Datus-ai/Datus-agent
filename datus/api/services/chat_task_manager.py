@@ -656,6 +656,8 @@ class ChatTaskManager:
 
         turn_started_at = datetime.now()
         turn_stats = TurnStatsCollector(lambda name: resolve_subagent(agent_config, name))
+        # Only tally when a host listens; a collector bug stops the tally, never the turn.
+        collect_turn_stats = get_turn_stats_hook() is not None
 
         try:
             start_time = datetime.now()
@@ -828,7 +830,7 @@ class ChatTaskManager:
             seen_delta_action_ids: set[str] = set()
 
             async def _run_pass() -> None:
-                nonlocal event_id, action_count
+                nonlocal event_id, action_count, collect_turn_stats
                 # Per-run render state — reset each pass. A continuation pass is a
                 # fresh turn, so its reply must not be dropped as a duplicate of an
                 # earlier pass ("re-run it" is a common steering ask) nor suppressed
@@ -838,7 +840,16 @@ class ChatTaskManager:
                 seen_assistant_message_fingerprints: dict[str, str] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
-                    turn_stats.observe(action)
+                    if collect_turn_stats:
+                        try:
+                            turn_stats.observe(action)
+                        except Exception:
+                            collect_turn_stats = False
+                            logger.warning(
+                                "Turn stats collection failed for session %s; skipping the rest of this turn",
+                                session_id,
+                                exc_info=True,
+                            )
 
                     # Convert action to SSE
                     # Per-request stream_response overrides the server-level --stream flag
