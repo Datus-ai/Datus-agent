@@ -54,10 +54,13 @@ class ToolCallStat:
 
     ``interrupted`` counts calls that started but never produced a result —
     the turn was stopped, a permission was denied, or the run crashed.
+    ``group`` is the tool's permission category (``db_tools``,
+    ``semantic_tools`` …), empty when no node registered it (e.g. MCP tools).
     """
 
     name: str
     caller: ToolCaller
+    group: str = ""
     calls: int = 0
     success: int = 0
     failed: int = 0

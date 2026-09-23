@@ -26,6 +26,7 @@ from datus.api.hooks.turn_stats_hooks import (
     TurnStatus,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.tools.registry.tool_registry import known_tool_category
 from datus.utils.constants import RETIRED_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 
 TASK_TOOL_NAME = "task"
@@ -203,6 +204,9 @@ class TurnStatsCollector:
             else:
                 sub.interrupted += 1
 
+        # Looked up at the end: subagent nodes register their tools as they run.
+        for stat in self._tools.values():
+            stat.group = known_tool_category(stat.name) or ""
         return list(self._subagents.values()), list(self._tools.values())
 
     def _tool(self, name: str, caller: ToolCaller) -> ToolCallStat:

@@ -17,12 +17,24 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+# Process-wide view of every name -> category any node has registered. A tool
+# name maps to the same category on every node, so this is safe to share; it
+# lets code that only sees the parent node (e.g. per-turn call statistics)
+# classify tools that ran inside a subagent's own registry.
+_known_categories: Dict[str, str] = {}
+
+
+def known_tool_category(tool_name: str) -> Optional[str]:
+    """Category of *tool_name* as registered by any node in this process."""
+    return _known_categories.get(tool_name)
+
 
 class ToolRegistry:
     """Maps tool_name -> category for all tools registered on a node."""
 
     def __init__(self, initial: Optional[Dict[str, str]] = None):
         self._registry: Dict[str, str] = dict(initial) if initial else {}
+        _known_categories.update(self._registry)
 
     # ── mutation ──────────────────────────────────────────────────────
 
@@ -34,6 +46,7 @@ class ToolRegistry:
         for tool in tools:
             tool_name = getattr(tool, "name", str(tool))
             self._registry[tool_name] = category
+            _known_categories[tool_name] = category
             logger.debug(f"Registered tool '{tool_name}' with category '{category}'")
 
     # ── read access ───────────────────────────────────────────────────

@@ -202,3 +202,19 @@ class TestResolveSubagent:
         assert resolve_subagent(config, "bare_bot") == ("gen_sql", "custom")
         assert resolve_subagent(config, "ghost") == ("gen_sql", "custom")
         assert resolve_subagent(SimpleNamespace(agentic_nodes=None), "ghost") == ("gen_sql", "custom")
+
+
+class TestToolGroup:
+    def test_group_comes_from_any_node_registry(self):
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        # A subagent's own registry, which the parent never sees directly.
+        ToolRegistry().register_tools("semantic_tools", ["validate_semantic_turn_stats_probe"])
+        collector = TurnStatsCollector(_resolver)
+        collector.observe(_start("n1", "validate_semantic_turn_stats_probe", depth=1, parent="t1"))
+        collector.observe(_start("c1", "mcp__probe__unregistered"))
+
+        _, tools = collector.finalize("completed", 10)
+
+        groups = {t.name: t.group for t in tools}
+        assert groups == {"validate_semantic_turn_stats_probe": "semantic_tools", "mcp__probe__unregistered": ""}
