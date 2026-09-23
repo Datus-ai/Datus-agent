@@ -13,7 +13,7 @@ import os
 import uuid
 from contextlib import ExitStack
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.api.hooks.turn_stats_hooks import TurnStatsEvent, get_turn_stats_hook
@@ -352,6 +352,27 @@ class ChatTask:
         # Host data captured at turn start (``TurnStatsHook.capture_context``)
         # and handed back with the turn's call statistics once it ends.
         self.stats_context: Dict[str, Any] = {}
+        # Settles the turn with the host (billing) once it is over — completed,
+        # failed or cancelled. Set by the route; receives (usage, error, status).
+        self.on_turn_end: Optional[Callable[[Dict[str, Any], Optional[str], str], None]] = None
+        # ``SSEEndData`` of a completed turn; the usage the host is billed for.
+        self.end_usage: Optional[Dict[str, Any]] = None
+
+
+def _usage_kwargs(turn_usage: Any) -> Dict[str, Any]:
+    """``SSEEndData`` token fields from a node ``TokenUsage``; empty for ``None``."""
+    if not turn_usage:
+        return {}
+    return {
+        "requests": turn_usage.requests,
+        "input_tokens": turn_usage.input_tokens,
+        "output_tokens": turn_usage.output_tokens,
+        "total_tokens": turn_usage.total_tokens,
+        "cached_tokens": turn_usage.cached_tokens,
+        "cache_write_tokens": turn_usage.cache_write_tokens,
+        "session_total_tokens": turn_usage.session_total_tokens,
+        "context_length": turn_usage.context_length,
+    }
 
 
 # Agents the system runs on the user's behalf (a reaction triggers ``feedback``);
@@ -426,10 +447,13 @@ class ChatTaskManager:
         user_id: Optional[str] = None,
         policy_context: Optional[Dict[str, Any]] = None,
         stats_context: Optional[Dict[str, Any]] = None,
+        on_turn_end: Optional[Callable[[Dict[str, Any], Optional[str], str], None]] = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
             :param stats_context: host data returned with the turn's call statistics
+            :param on_turn_end: called once the turn is over, however it ended,
+                with ``(usage, error, status)`` — see :meth:`_settle_turn`
         Raises ``ValueError`` if a task is already running for the session.
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
@@ -533,6 +557,7 @@ class ChatTaskManager:
         # Placeholder — asyncio_task set immediately after
         task = ChatTask(session_id=session_id, asyncio_task=None)  # type: ignore[arg-type]
         task.stats_context = dict(stats_context or {})
+        task.on_turn_end = on_turn_end
         self._tasks[session_id] = task
 
         asyncio_task = asyncio.create_task(
@@ -668,6 +693,10 @@ class ChatTaskManager:
         )
         # Only tally when a host listens; a collector bug stops the tally, never the turn.
         collect_turn_stats = get_turn_stats_hook() is not None
+        # Latest cumulative usage the node reported mid-turn. The node drops its
+        # own snapshot when its stream closes, which on a cancel or a crash is
+        # before this method's ``finally`` runs — so keep a copy to bill from.
+        last_usage = None
 
         try:
             start_time = datetime.now()
@@ -840,7 +869,7 @@ class ChatTaskManager:
             seen_delta_action_ids: set[str] = set()
 
             async def _run_pass() -> None:
-                nonlocal event_id, action_count, collect_turn_stats
+                nonlocal event_id, action_count, collect_turn_stats, last_usage
                 # Per-run render state — reset each pass. A continuation pass is a
                 # fresh turn, so its reply must not be dropped as a duplicate of an
                 # earlier pass ("re-run it" is a common steering ask) nor suppressed
@@ -850,6 +879,9 @@ class ChatTaskManager:
                 seen_assistant_message_fingerprints: dict[str, str] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
+                    running = getattr(node, "running_turn_usage", None)
+                    if running is not None:
+                        last_usage = running
                     if collect_turn_stats:
                         try:
                             turn_stats.observe(action)
@@ -994,36 +1026,22 @@ class ChatTaskManager:
             # 7. End event
             token_kwargs: dict = {}
             try:
-                turn_usage = await node.get_last_turn_usage()
-                if turn_usage:
-                    token_kwargs = {
-                        "requests": turn_usage.requests,
-                        "input_tokens": turn_usage.input_tokens,
-                        "output_tokens": turn_usage.output_tokens,
-                        "total_tokens": turn_usage.total_tokens,
-                        "cached_tokens": turn_usage.cached_tokens,
-                        "cache_write_tokens": turn_usage.cache_write_tokens,
-                        "session_total_tokens": turn_usage.session_total_tokens,
-                        "context_length": turn_usage.context_length,
-                    }
+                token_kwargs = _usage_kwargs(await node.get_last_turn_usage() or last_usage)
             except Exception:
                 logger.debug("Failed to extract turn token usage for end event", exc_info=True)
 
+            end_data = SSEEndData(
+                session_id=session_id,
+                llm_session_id=node.session_id,
+                total_events=event_id,
+                action_count=action_count,
+                duration=(datetime.now() - start_time).total_seconds(),
+                **token_kwargs,
+            )
+            task.end_usage = end_data.model_dump()
             await self._push_event(
                 task,
-                SSEEvent(
-                    id=event_id,
-                    event="end",
-                    data=SSEEndData(
-                        session_id=session_id,
-                        llm_session_id=node.session_id,
-                        total_events=event_id,
-                        action_count=action_count,
-                        duration=(datetime.now() - start_time).total_seconds(),
-                        **token_kwargs,
-                    ),
-                    timestamp=now_utc_iso(),
-                ),
+                SSEEvent(id=event_id, event="end", data=end_data, timestamp=now_utc_iso()),
             )
             event_id += 1
 
@@ -1064,12 +1082,38 @@ class ChatTaskManager:
                 started_at=turn_started_at,
                 turn_id=turn_id,
             )
+            self._settle_turn(task, last_usage)
             async with task.condition:
                 task.condition.notify_all()
             self._tasks.pop(session_id, None)
             # Keep completed task for resume within TTL
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
+
+    @staticmethod
+    def _settle_turn(task: ChatTask, last_usage: Any) -> None:
+        """Hand the finished turn's usage to the host so it can be billed.
+
+        Runs from ``_run_loop``'s ``finally``, so a turn is settled however it
+        ended: completed (the ``end`` event's usage), failed, or cancelled by
+        ``/chat/stop`` — the last two with the usage the node had reported
+        before it stopped. A client that disconnects no longer matters: the task
+        keeps running and settles when it is done.
+        """
+        callback = task.on_turn_end
+        if callback is None:
+            return
+
+        status = task.status if task.status in ("completed", "error", "cancelled") else "error"
+        try:
+            usage = task.end_usage
+            if usage is None:
+                usage = {"session_id": task.session_id, **_usage_kwargs(last_usage)}
+                if task.node is not None:
+                    usage["llm_session_id"] = getattr(task.node, "session_id", None)
+            callback(dict(usage), task.error if status == "error" else None, status)
+        except Exception:
+            logger.warning("Turn settlement hook failed for session %s", task.session_id, exc_info=True)
 
     @staticmethod
     def _emit_turn_stats(

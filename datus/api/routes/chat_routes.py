@@ -185,20 +185,20 @@ async def stream_chat(
     pre_extra = pre_outcome.extra if pre_outcome else {}
     stats_context = _capture_turn_stats_context(http_request, request, ctx.user_id)
 
+    on_turn_end = _post_chat_settler(hooks, http_request, request, ctx.user_id, pre_extra)
+
     async def generate_sse():
-        async for chunk in _stream_with_post_hook(
+        async for chunk in _stream_with_error_event(
             svc.chat.stream_chat(
                 request,
                 sub_agent_id=sub_agent_id,
                 user_id=ctx.user_id,
                 policy_context=ctx.policy_context,
                 stats_context=stats_context,
+                on_turn_end=on_turn_end,
             ),
-            http_request=http_request,
             request=request,
             user_id=ctx.user_id,
-            hooks=hooks,
-            pre_extra=pre_extra,
         ):
             yield chunk
 
@@ -636,49 +636,74 @@ async def _emit_pre_check_denial(
     yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
 
-async def _stream_with_post_hook(
-    upstream: AsyncGenerator[SSEEvent, None],
-    *,
+def _post_chat_settler(
+    hooks: Optional[ChatHooks],
     http_request: Request,
     request: StreamChatInput,
     user_id: Optional[str],
-    hooks: Optional[ChatHooks],
     pre_extra: dict,
-) -> AsyncGenerator[str, None]:
-    """Forward SSE events while capturing usage for the post-chat hook.
+):
+    """Build the task's ``on_turn_end`` callback that runs ``post_chat``.
 
-    The post hook is dispatched as a background task in ``finally`` so the
-    response stream is never blocked waiting for billing to acknowledge.
+    The chat task calls it from its own ``finally`` once the turn is over —
+    completed, failed, or stopped — so a turn is billed even when the SSE
+    client has already disconnected. The hook itself runs as a background task
+    and never blocks the turn.
+    """
+    if hooks is None:
+        return None
+
+    def _settle(usage: dict, error: Optional[str], status: str) -> None:
+        ctx = ChatPostUsageContext(
+            user_id=user_id,
+            session_id=usage.get("session_id") or request.session_id,
+            model=request.model,
+            usage=usage,
+            error=error,
+            pre_check_extra=dict(pre_extra),
+            status=status,
+        )
+        try:
+            _task = asyncio.create_task(
+                _safe_post_chat(hooks, http_request, request, ctx),
+                name=f"chat-post-hook:{ctx.session_id or '-'}",
+            )
+            track_background_task(_task)
+        except Exception:  # pragma: no cover — defensive
+            logger.error("Failed to schedule post_chat hook", exc_info=True)
+
+    return _settle
+
+
+async def _stream_with_error_event(
+    upstream: AsyncGenerator[SSEEvent, None],
+    *,
+    request: StreamChatInput,
+    user_id: Optional[str],
+) -> AsyncGenerator[str, None]:
+    """Forward SSE events, turning an upstream failure into a terminal error event.
 
     If the upstream generator raises before the stream completes, we log
     the error and emit a synthetic ``event: error`` to the client so the
     UI can surface a real reason instead of an opaque "network error".
     ``asyncio.CancelledError`` (client disconnect / shutdown) is treated
     as expected and skips the error event.
+
+    Billing is not settled here: the chat task does that itself, so it still
+    happens when this stream is cut short (see ``_post_chat_settler``).
     """
-    last_end_event: Optional[SSEEvent] = None
-    captured_error: Optional[BaseException] = None
-    was_cancelled: bool = False
     last_event_id: int = 0
 
     try:
         async for event in upstream:
-            if event.event == "end":
-                last_end_event = event
             if isinstance(event.id, int):
                 last_event_id = event.id
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
     except asyncio.CancelledError:
         # Client disconnected or the server is shutting down. The HTTP
-        # response is already gone — nothing to yield, nothing to log
-        # as error. We also do NOT schedule the post-chat hook below,
-        # because the usage payload is incomplete (no ``end`` event) and
-        # would otherwise look like a free successful turn to callers
-        # such as billing.
-        was_cancelled = True
+        # response is already gone — nothing to yield, nothing to log.
         raise
     except BaseException as exc:
-        captured_error = exc
         logger.error(
             "stream_chat generator failed for session=%s user=%s subagent=%s: %s",
             request.session_id,
@@ -712,41 +737,6 @@ async def _stream_with_post_hook(
                 exc_info=True,
             )
         raise
-    finally:
-        # Only schedule the post-chat hook when we have a meaningful
-        # outcome to report: either the stream finished normally (an
-        # ``end`` event was observed) or it failed with a real error
-        # we can describe. Pure cancellation is skipped — the usage
-        # payload would be empty and billing/audit callers would treat
-        # the turn as a free success.
-        should_schedule_post_hook = (
-            hooks is not None and not was_cancelled and (last_end_event is not None or captured_error is not None)
-        )
-        if should_schedule_post_hook:
-            usage_dict: dict = {}
-            session_id_value: Optional[str] = request.session_id
-            if last_end_event is not None:
-                # SSEEndData fields cover requests / *_tokens / duration.
-                usage_dict = last_end_event.data.model_dump()
-                session_id_value = usage_dict.get("session_id") or session_id_value
-
-            ctx = ChatPostUsageContext(
-                user_id=user_id,
-                session_id=session_id_value,
-                model=request.model,
-                usage=usage_dict,
-                error=str(captured_error) if captured_error else None,
-                pre_check_extra=dict(pre_extra),
-            )
-
-            try:
-                _task = asyncio.create_task(
-                    _safe_post_chat(hooks, http_request, request, ctx),
-                    name=f"chat-post-hook:{session_id_value or '-'}",
-                )
-                track_background_task(_task)
-            except Exception:  # pragma: no cover — defensive
-                logger.error("Failed to schedule post_chat hook", exc_info=True)
 
 
 async def _safe_post_chat(

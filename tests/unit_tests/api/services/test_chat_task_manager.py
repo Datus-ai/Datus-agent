@@ -2976,3 +2976,115 @@ class TestRunLoopTurnStats:
         await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-stats"))
 
         assert task.status == "completed"
+
+
+class TestRunLoopSettlesTurn:
+    """``_run_loop`` settles every turn with ``on_turn_end`` — the billing path."""
+
+    @staticmethod
+    def _node(raise_after=None, usage_total=120):
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        from datus.schemas.token_usage import TokenUsage
+
+        class FakeNode:
+            session_id = "llm-sess"
+            running_turn_usage = None
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                # What TokenUsageHook does after an LLM call ...
+                self.running_turn_usage = TokenUsage(
+                    requests=2, input_tokens=100, output_tokens=20, total_tokens=usage_total
+                )
+                try:
+                    yield ActionHistory(
+                        action_id="a1",
+                        role=ActionRole.ASSISTANT,
+                        action_type="response",
+                        messages="",
+                        input={},
+                        output={},
+                        status=ActionStatus.PROCESSING,
+                    )
+                    if raise_after is not None:
+                        raise raise_after
+                finally:
+                    # ... and what the node does when its stream closes.
+                    self.running_turn_usage = None
+
+            async def get_last_turn_usage(self):
+                return None
+
+        return FakeNode()
+
+    async def _run(self, real_agent_config, node, *, on_turn_end=True):
+        from datus.api.models.cli_models import StreamChatInput
+
+        calls = []
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-bill", asyncio_task=MagicMock())
+        if on_turn_end:
+            task.on_turn_end = lambda usage, error, status: calls.append((usage, error, status))
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-bill"))
+        return task, calls
+
+    @pytest.mark.asyncio
+    async def test_completed_turn_settles_with_end_event_usage(self, real_agent_config):
+        task, calls = await self._run(real_agent_config, self._node())
+
+        assert task.status == "completed"
+        ((usage, error, status),) = calls
+        assert (status, error) == ("completed", None)
+        # get_last_turn_usage() came back empty; the mid-turn snapshot fills in.
+        assert usage["total_tokens"] == 120
+        assert usage == task.end_usage
+
+    @pytest.mark.asyncio
+    async def test_cancelled_turn_is_billed_what_it_consumed(self, real_agent_config):
+        task, calls = await self._run(real_agent_config, self._node(raise_after=asyncio.CancelledError()))
+
+        assert task.status == "cancelled"
+        ((usage, error, status),) = calls
+        assert (status, error) == ("cancelled", None)
+        assert (usage["session_id"], usage["llm_session_id"]) == ("s-bill", "llm-sess")
+        assert (usage["requests"], usage["input_tokens"], usage["output_tokens"], usage["total_tokens"]) == (
+            2,
+            100,
+            20,
+            120,
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_is_billed_what_it_consumed(self, real_agent_config):
+        task, calls = await self._run(real_agent_config, self._node(raise_after=RuntimeError("model blew up")))
+
+        assert task.status == "error"
+        ((usage, error, status),) = calls
+        assert (status, error) == ("error", "model blew up")
+        assert usage["total_tokens"] == 120
+
+    @pytest.mark.asyncio
+    async def test_settlement_failure_never_fails_the_turn(self, real_agent_config):
+        from datus.api.models.cli_models import StreamChatInput
+
+        def _boom(*_args):
+            raise RuntimeError("host bug")
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: self._node()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-bill", asyncio_task=MagicMock())
+        task.on_turn_end = _boom
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-bill"))
+
+        assert task.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_no_callback_is_a_noop(self, real_agent_config):
+        task, calls = await self._run(real_agent_config, self._node(), on_turn_end=False)
+
+        assert task.status == "completed"
+        assert calls == []
