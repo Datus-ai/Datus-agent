@@ -11,10 +11,10 @@
         <link rel="canonical" href="https://docs.datus.ai/0.4/0.4/configuration/datasources/">
       
       
-        <link rel="prev" href="../web_tool/">
+        <link rel="prev" href="../image_tool/">
       
       
-        <link rel="next" href="../semantic_layer/">
+        <link rel="next" href="sqlite/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Datasources - Datus Docs</title>
+        <title>Overview - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#datasource-configuration" class="md-skip">
+        <a href="#datasources" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Datasources
+              Overview
             
           </span>
         </div>
@@ -3043,6 +3043,8 @@
       
         
       
+        
+      
     
     
     
@@ -3286,12 +3288,76 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../image_tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Image Reading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
       
         
       
@@ -3312,17 +3378,17 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" checked>
         
           
-          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
             
   
   
   <span class="md-ellipsis">
     
   
-    Services
+    Datasources
   
 
     
@@ -3333,12 +3399,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_1_12_8">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_1_12_9">
             <span class="md-nav__icon md-icon"></span>
             
   
-    Services
+    Datasources
   
 
           </label>
@@ -3367,7 +3433,7 @@
   <span class="md-ellipsis">
     
   
-    Datasources
+    Overview
   
 
     
@@ -3385,7 +3451,7 @@
   <span class="md-ellipsis">
     
   
-    Datasources
+    Overview
   
 
     
@@ -3411,10 +3477,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
+  <a href="#choose-a-datasource" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Overview
+        Choose a datasource
       
     </span>
   </a>
@@ -3422,10 +3488,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configuration-structure" class="md-nav__link">
+  <a href="#common-profile-keys" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration Structure
+        Common profile keys
       
     </span>
   </a>
@@ -3433,10 +3499,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#service-sections" class="md-nav__link">
+  <a href="#file-datasource-patterns" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Service Sections
+        File datasource patterns
       
     </span>
   </a>
@@ -3444,270 +3510,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#supported-database-types" class="md-nav__link">
+  <a href="#add-test-and-select-a-datasource" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Supported Database Types
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Supported Database Types">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#snowflake" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Snowflake
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#google-bigquery" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Google BigQuery
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#maxcompute" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MaxCompute
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#starrocks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        StarRocks
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sqlite" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        SQLite
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#duckdb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DuckDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mysql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MySQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#postgresql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        PostgreSQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#apache-doris" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Apache Doris
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tidb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TiDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hologres" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hologres
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gaussdb-opengauss" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GaussDB / openGauss
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#huawei-cloud-gaussdbdws" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Huawei Cloud GaussDB(DWS)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#path-pattern-multiple-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Path Pattern (Multiple Files)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration-parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration Parameters
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Configuration Parameters">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#common-parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Common Parameters
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#database-specific-parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Database-Specific Parameters
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#managing-databases" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Managing Databases
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Managing Databases">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#interactive-configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Configuration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cli-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CLI Commands
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#specify-a-custom-config" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Specify a Custom Config
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#default-database-selection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default Database Selection
+        Add, test, and select a datasource
       
     </span>
   </a>
@@ -3715,38 +3521,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#security-considerations" class="md-nav__link">
+  <a href="#troubleshooting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Security Considerations
+        Troubleshooting
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Security Considerations">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#credential-management" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Credential Management
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#related-documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        See Also
+        Related documentation
       
     </span>
   </a>
@@ -3769,14 +3558,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../semantic_layer/" class="md-nav__link">
+      <a href="sqlite/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Semantic Layer
+    SQLite
   
 
     
@@ -3797,14 +3586,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../bi_platforms/" class="md-nav__link">
+      <a href="duckdb/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    BI Platforms
+    DuckDB
   
 
     
@@ -3825,14 +3614,518 @@
   
   
     <li class="md-nav__item">
-      <a href="../schedulers/" class="md-nav__link">
+      <a href="mysql/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Schedulers
+    MySQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="postgresql/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PostgreSQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="greenplum/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greenplum
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="redshift/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="snowflake/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Snowflake
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="bigquery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Google BigQuery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="starrocks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    StarRocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="doris/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Doris
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tidb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TiDB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="clickhouse/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClickHouse
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="trino/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trino
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="hive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="spark/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spark SQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="clickzetta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClickZetta
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="hologres/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hologres
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="maxcompute/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MaxCompute
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="oracle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="gaussdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GaussDB / openGauss
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="dws/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GaussDB(DWS)
   
 
     
@@ -4772,10 +5065,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
+  <a href="#choose-a-datasource" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Overview
+        Choose a datasource
       
     </span>
   </a>
@@ -4783,10 +5076,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configuration-structure" class="md-nav__link">
+  <a href="#common-profile-keys" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration Structure
+        Common profile keys
       
     </span>
   </a>
@@ -4794,10 +5087,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#service-sections" class="md-nav__link">
+  <a href="#file-datasource-patterns" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Service Sections
+        File datasource patterns
       
     </span>
   </a>
@@ -4805,270 +5098,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#supported-database-types" class="md-nav__link">
+  <a href="#add-test-and-select-a-datasource" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Supported Database Types
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Supported Database Types">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#snowflake" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Snowflake
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#google-bigquery" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Google BigQuery
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#maxcompute" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MaxCompute
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#starrocks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        StarRocks
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sqlite" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        SQLite
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#duckdb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DuckDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mysql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MySQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#postgresql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        PostgreSQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#apache-doris" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Apache Doris
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tidb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TiDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hologres" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hologres
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gaussdb-opengauss" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GaussDB / openGauss
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#huawei-cloud-gaussdbdws" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Huawei Cloud GaussDB(DWS)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#path-pattern-multiple-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Path Pattern (Multiple Files)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuration-parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuration Parameters
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Configuration Parameters">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#common-parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Common Parameters
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#database-specific-parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Database-Specific Parameters
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#managing-databases" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Managing Databases
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Managing Databases">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#interactive-configuration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Configuration
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cli-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CLI Commands
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#specify-a-custom-config" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Specify a Custom Config
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#default-database-selection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default Database Selection
+        Add, test, and select a datasource
       
     </span>
   </a>
@@ -5076,38 +5109,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#security-considerations" class="md-nav__link">
+  <a href="#troubleshooting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Security Considerations
+        Troubleshooting
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Security Considerations">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#credential-management" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Credential Management
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#related-documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        See Also
+        Related documentation
       
     </span>
   </a>
@@ -5131,7 +5147,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.1/docs/configuration/datasources.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.2/docs/configuration/datasources.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5139,396 +5155,259 @@
   
 
 
-<h1 id="datasource-configuration">Datasource Configuration<a class="headerlink" href="#datasource-configuration" title="Permanent link">&para;</a></h1>
-<p>Configure database connections under <code>agent.services.datasources</code>.</p>
-<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>The runtime services in Datus Agent live under <code>agent.services</code> in <code>agent.yml</code>. This page focuses on database connections in <code>services.datasources</code>. Semantic adapters, BI platforms, and schedulers are documented on their sibling pages.</p>
-<p>Key features:</p>
-<ul>
-<li><strong>Universal Connectivity</strong>: Support for cloud data warehouses (Snowflake, StarRocks), local databases (SQLite, DuckDB), and more</li>
-<li><strong>Credential Security</strong>: Environment variable-based credential management (<code>${ENV_VAR}</code> syntax)</li>
-<li><strong>Default Database</strong>: Mark one database as <code>default: true</code> for auto-selection</li>
-<li><strong>Plugin Adapters</strong>: Install additional database adapters via <code>datus-agent configure</code></li>
-<li><strong>Dynamic Discovery</strong>: Glob pattern-based database discovery for multiple database files</li>
-</ul>
-<blockquote>
-<p><strong>Note</strong>: The earlier <code>services.databases</code> key has been renamed to <code>services.datasources</code>. Rename the key manually in your <code>agent.yml</code> — the runtime rejects the old name.</p>
-</blockquote>
-<h2 id="configuration-structure">Configuration Structure<a class="headerlink" href="#configuration-structure" title="Permanent link">&para;</a></h2>
-<p>Datasources are configured under <code>agent.services.datasources</code>. Each entry is an independent database connection:</p>
+<h1 id="datasources">Datasources<a class="headerlink" href="#datasources" title="Permanent link">&para;</a></h1>
+<p>A datasource is a named database connection used by Datus for SQL execution, metadata discovery, and knowledge-base indexing. Configure datasources under <code>agent.services.datasources</code> in <code>agent.yml</code>.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">my_snowflake</span><span class="p">:</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">snowflake</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">account</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ACCOUNT}</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_USER}</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_PASSWORD}</span><span class="w">  </span><span class="c1"># Use private_key, or exactly one of password/private_key_file</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="c1"># private_key: ${SNOWFLAKE_PRIVATE_KEY}</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="c1"># private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_DATABASE}</span><span class="w">  </span><span class="c1"># Optional</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_SCHEMA}</span><span class="w">      </span><span class="c1"># Optional</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="nt">warehouse</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_WAREHOUSE}</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ROLE}</span><span class="w">          </span><span class="c1"># Optional</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">      </span><span class="nt">my_duckdb</span><span class="p">:</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./data/analytics.duckdb</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">    </span><span class="nt">bi_platforms</span><span class="p">:</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8088</span>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_USER}</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_PASSWORD}</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">    </span><span class="nt">schedulers</span><span class="p">:</span>
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">      </span><span class="nt">airflow_prod</span><span class="p">:</span>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">airflow</span>
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_URL}</span>
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_USER}</span>
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_PASSWORD}</span>
-</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="w">        </span><span class="nt">dags_folder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_DAGS_DIR}</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">analytics</span><span class="p">:</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_HOST}</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_USER}</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_PASSWORD}</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span></code></pre></div>
-<h2 id="service-sections">Service Sections<a class="headerlink" href="#service-sections" title="Permanent link">&para;</a></h2>
+<p>Each key under <code>datasources</code> is the datasource name. Names may contain letters, numbers, underscores, and hyphens. Set <code>default: true</code> on at most one entry; when only one datasource exists, Datus selects it automatically.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The configuration path remains <code>agent.services.datasources</code>. Configure semantic adapters under <a href="../../adapters/semantic_adapters/">Adapters</a>, and prefer <a href="../../plugin/introduction/">plugins</a> for integrations such as Airflow.</p>
+</div>
+<h2 id="choose-a-datasource">Choose a datasource<a class="headerlink" href="#choose-a-datasource" title="Permanent link">&para;</a></h2>
+<p>SQLite and DuckDB are built into Datus. Every other datasource is provided by an independently installable <code>datus-&lt;type&gt;</code> adapter. Datus can install a missing adapter when you add the datasource with <code>/datasource</code>; you can also install the package explicitly.</p>
 <table>
 <thead>
 <tr>
-<th>Section</th>
-<th>Purpose</th>
-<th>Selector</th>
+<th>Datasource</th>
+<th><code>type</code></th>
+<th>Package</th>
+<th>Namespace</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>services.datasources</code></td>
-<td>Database connections used by SQL and KB operations</td>
-<td><code>--datasource</code> / current database / default database</td>
+<td><a href="sqlite/">SQLite</a></td>
+<td><code>sqlite</code></td>
+<td>built in</td>
+<td>database file → table</td>
 </tr>
 <tr>
-<td><code>services.semantic_layer</code></td>
-<td>Semantic adapter configuration such as MetricFlow or OSI</td>
-<td>active/default semantic layer</td>
+<td><a href="duckdb/">DuckDB</a></td>
+<td><code>duckdb</code></td>
+<td>built in</td>
+<td>database → schema → table</td>
 </tr>
 <tr>
-<td><code>services.bi_platforms</code></td>
-<td>BI platform credentials and dataset materialization config</td>
-<td><code>bi_platform</code></td>
+<td><a href="mysql/">MySQL</a></td>
+<td><code>mysql</code></td>
+<td><code>datus-mysql</code></td>
+<td>database → table</td>
 </tr>
 <tr>
-<td><code>services.schedulers</code></td>
-<td>Scheduler service instances such as Airflow</td>
-<td><code>scheduler_service</code></td>
+<td><a href="postgresql/">PostgreSQL</a></td>
+<td><code>postgresql</code></td>
+<td><code>datus-postgresql</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="greenplum/">Greenplum</a></td>
+<td><code>greenplum</code></td>
+<td><code>datus-greenplum</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="redshift/">Amazon Redshift</a></td>
+<td><code>redshift</code></td>
+<td><code>datus-redshift</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="snowflake/">Snowflake</a></td>
+<td><code>snowflake</code></td>
+<td><code>datus-snowflake</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="bigquery/">Google BigQuery</a></td>
+<td><code>bigquery</code></td>
+<td><code>datus-bigquery</code></td>
+<td>project → dataset → table</td>
+</tr>
+<tr>
+<td><a href="starrocks/">StarRocks</a></td>
+<td><code>starrocks</code></td>
+<td><code>datus-starrocks</code></td>
+<td>catalog → database → table</td>
+</tr>
+<tr>
+<td><a href="doris/">Apache Doris</a></td>
+<td><code>doris</code></td>
+<td><code>datus-doris</code></td>
+<td>catalog → database → table</td>
+</tr>
+<tr>
+<td><a href="tidb/">TiDB</a></td>
+<td><code>tidb</code></td>
+<td><code>datus-tidb</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="clickhouse/">ClickHouse</a></td>
+<td><code>clickhouse</code></td>
+<td><code>datus-clickhouse</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="trino/">Trino</a></td>
+<td><code>trino</code></td>
+<td><code>datus-trino</code></td>
+<td>catalog → schema → table</td>
+</tr>
+<tr>
+<td><a href="hive/">Hive</a></td>
+<td><code>hive</code></td>
+<td><code>datus-hive</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="spark/">Spark SQL</a></td>
+<td><code>spark</code></td>
+<td><code>datus-spark</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="clickzetta/">ClickZetta</a></td>
+<td><code>clickzetta</code></td>
+<td><code>datus-clickzetta</code></td>
+<td>instance/workspace → schema → table</td>
+</tr>
+<tr>
+<td><a href="hologres/">Hologres</a></td>
+<td><code>hologres</code></td>
+<td><code>datus-hologres</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="maxcompute/">MaxCompute</a></td>
+<td><code>maxcompute</code></td>
+<td><code>datus-maxcompute</code></td>
+<td>project → optional schema → table</td>
+</tr>
+<tr>
+<td><a href="oracle/">Oracle</a></td>
+<td><code>oracle</code></td>
+<td><code>datus-oracle</code></td>
+<td>schema → table</td>
+</tr>
+<tr>
+<td><a href="gaussdb/">GaussDB / openGauss</a></td>
+<td><code>gaussdb</code></td>
+<td><code>datus-gaussdb</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="dws/">GaussDB(DWS)</a></td>
+<td><code>dws</code></td>
+<td><code>datus-dws</code></td>
+<td>database → schema → table</td>
 </tr>
 </tbody>
 </table>
-<h2 id="supported-database-types">Supported Database Types<a class="headerlink" href="#supported-database-types" title="Permanent link">&para;</a></h2>
-<h3 id="snowflake">Snowflake<a class="headerlink" href="#snowflake" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">my_snowflake</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">snowflake</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">account</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ACCOUNT}</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_USER}</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_PASSWORD}</span><span class="w">      </span><span class="c1"># Use private_key, or exactly one of password/private_key_file</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="c1"># private_key: ${SNOWFLAKE_PRIVATE_KEY}</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="c1"># private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="c1"># private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # Optional</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_DATABASE}</span><span class="w">    </span><span class="c1"># Optional</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_SCHEMA}</span><span class="w">        </span><span class="c1"># Optional</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span><span class="nt">warehouse</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_WAREHOUSE}</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ROLE}</span><span class="w">            </span><span class="c1"># Optional</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                      </span><span class="c1"># Optional: mark as default</span>
-</span></code></pre></div>
-<p>Snowflake supports password authentication and key-pair authentication. For hosted/SaaS deployments, prefer
-<code>private_key</code> to store the PEM private key as a secret; for local or CI setups with an existing key file, use
-<code>private_key_file</code>. When <code>private_key</code> is provided, it takes precedence over <code>private_key_file</code> and <code>password</code>;
-without <code>private_key</code>, configure exactly one of <code>password</code> or <code>private_key_file</code>. Set <code>private_key_file_pwd</code>
-when the private key is encrypted. The adapter uses Snowflake JWT authentication internally.</p>
-<p>Snowflake uses a <code>database</code> + <code>schema</code> namespace. Leave <code>catalog</code> unset for Snowflake; catalog filters are for
-catalog-aware engines such as StarRocks.</p>
-<h3 id="google-bigquery">Google BigQuery<a class="headerlink" href="#google-bigquery" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">my_bigquery</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bigquery</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">catalog</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${BIGQUERY_PROJECT}</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${BIGQUERY_DATASET}</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">location</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${BIGQUERY_LOCATION:-US}</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">credentials_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GOOGLE_APPLICATION_CREDENTIALS}</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="c1"># credentials_base64: ${BIGQUERY_CREDENTIALS_BASE64}</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="c1"># billing_project_id: ${BIGQUERY_BILLING_PROJECT}</span>
-</span></code></pre></div>
-<p><code>catalog</code> maps to the Google Cloud project and <code>database</code> maps to the BigQuery dataset. Leave <code>schema</code> unset. Configure
-only one of <code>credentials_path</code>, <code>credentials_info</code>, or <code>credentials_base64</code>; omit all three to use Application Default
-Credentials. In YAML, <code>credentials_info</code> must be a mapping, not a quoted JSON string. See
-<a href="../../adapters/db_adapters/#google-bigquery">Database Adapters</a> for correct and incorrect examples, the GitHub Secret
-flow, and detailed credential and namespace guidance.</p>
-<h3 id="maxcompute">MaxCompute<a class="headerlink" href="#maxcompute" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">my_maxcompute</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">maxcompute</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_PROJECT}</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_ENDPOINT}</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">access_key_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_ACCESS_KEY_ID}</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">access_key_secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_ACCESS_KEY_SECRET}</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="c1"># schema: default               # Optional; schema-enabled projects only</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">namespace_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">            </span><span class="c1"># auto, two_level, or three_level</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="c1"># quota_name: ${MAXCOMPUTE_QUOTA_NAME}</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span><span class="c1"># tunnel_endpoint: ${MAXCOMPUTE_TUNNEL_ENDPOINT}</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="c1"># query_timeout_seconds: 600</span>
-</span></code></pre></div>
-<p><code>database</code> names the MaxCompute project. Leave <code>schema</code> unset for two-level projects; schema-enabled projects default
-to the <code>default</code> schema. A datasource has no catalog and stays within its configured project. See
-<a href="../../adapters/db_adapters/#maxcompute">Database Adapters</a> for namespace and endpoint details.</p>
-<h3 id="starrocks">StarRocks<a class="headerlink" href="#starrocks" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">my_starrocks</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">starrocks</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_HOST}</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PORT}</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_USER}</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PASSWORD}</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_DATABASE}</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">catalog</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_CATALOG}</span><span class="w">      </span><span class="c1"># Optional</span>
-</span></code></pre></div>
-<h3 id="sqlite">SQLite<a class="headerlink" href="#sqlite" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">my_sqlite</span><span class="p">:</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite:////Users/xxx/data/orders.db</span>
-</span></code></pre></div>
-<h3 id="duckdb">DuckDB<a class="headerlink" href="#duckdb" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">my_duckdb</span><span class="p">:</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb:////Users/xxx/data/analytics.duckdb</span>
-</span></code></pre></div>
-<h3 id="mysql">MySQL<a class="headerlink" href="#mysql" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">my_mysql</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mysql</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3306</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MYSQL_USER}</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MYSQL_PASSWORD}</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
-</span></code></pre></div>
-<h3 id="postgresql">PostgreSQL<a class="headerlink" href="#postgresql" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">my_postgresql</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_USER}</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_PASSWORD}</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
-</span></code></pre></div>
-<h3 id="apache-doris">Apache Doris<a class="headerlink" href="#apache-doris" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">my_doris</span><span class="p">:</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">doris</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_HOST}</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9030</span><span class="w">                    </span><span class="c1"># FE query port (MySQL protocol)</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_USER}</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_PASSWORD}</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_DATABASE}</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">  </span><span class="nt">catalog</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal</span><span class="w">             </span><span class="c1"># Optional, default is internal</span>
-</span></code></pre></div>
-<h3 id="tidb">TiDB<a class="headerlink" href="#tidb" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">my_tidb</span><span class="p">:</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tidb</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_HOST}</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4000</span><span class="w">                    </span><span class="c1"># TiDB's own default, not MySQL's 3306</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_USER}</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_PASSWORD}</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_DATABASE}</span>
-</span></code></pre></div>
-<h3 id="hologres">Hologres<a class="headerlink" href="#hologres" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">my_hologres</span><span class="p">:</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hologres</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ENDPOINT}</span><span class="w">    </span><span class="c1"># Console endpoint, hostname or hostname:port</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_ID}</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_SECRET}</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_DATABASE}</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span><span class="w">                </span><span class="c1"># Optional</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prefer</span><span class="w">               </span><span class="c1"># Optional</span>
-</span></code></pre></div>
-<h3 id="gaussdb-opengauss">GaussDB / openGauss<a class="headerlink" href="#gaussdb-opengauss" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">my_gaussdb</span><span class="p">:</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gaussdb</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_HOST}</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_USER}</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_PASSWORD}</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">  </span><span class="c1"># driver: pg8000              # Optional; omit to use the platform default</span>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-ca</span><span class="w">             </span><span class="c1"># Recommended production baseline</span>
-</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/datus/certs/gaussdb-ca.pem</span>
-</span></code></pre></div>
-<p>Supported drivers are <code>gaussdb</code> (Linux; sha256/md5/sm3 authentication), <code>pg8000</code>
-(Linux/macOS; sha256/md5), and the md5-only <code>psycopg2</code> escape hatch. Supported TLS modes are
-<code>disable</code>, <code>allow</code>, <code>prefer</code> (default), <code>require</code>, <code>verify-ca</code>, and <code>verify-full</code>. Use
-<code>verify-ca</code> with the server CA in <code>sslrootcert</code> as the production baseline. When the configured
-hostname is guaranteed to match the certificate, use <code>verify-full</code> for stricter hostname
-validation; otherwise keep <code>verify-ca</code>. The adapter supports one-way TLS, not client certificates
-for mutual TLS. See <a href="../../adapters/db_adapters/#gaussdb">Database Adapters</a> for mode, platform,
-authentication, and A/B/PG compatibility details.</p>
-<h3 id="huawei-cloud-gaussdbdws">Huawei Cloud GaussDB(DWS)<a class="headerlink" href="#huawei-cloud-gaussdbdws" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">my_dws</span><span class="p">:</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dws</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DWS_HOST}</span><span class="w">              </span><span class="c1"># console endpoint, may embed ":8000"</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8000</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DWS_USER}</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DWS_PASSWORD}</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gaussdb</span><span class="w">              </span><span class="c1"># the cluster default</span>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-ca</span><span class="w">             </span><span class="c1"># recommended production baseline</span>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">  </span><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/datus/certs/dws-cacert.pem</span>
-</span></code></pre></div>
-<p>DWS answers standard MD5 authentication over the PostgreSQL wire protocol, so no driver
-selection is needed. Use <code>verify-ca</code> with the server CA in <code>sslrootcert</code> as the production
-baseline — take that CA from <code>v2/sslcert/cacert.pem</code> in the console's <code>dws_ssl_cert</code> bundle,
-since the v1 CA does not match the server certificate issuer. <code>verify-full</code> is not supported —
-Huawei states "verify-full: DWS does not support this mode"
-(<a href="https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html">SSL connection settings</a>) —
-because the default server certificate has <code>CN=server</code> with no <code>subjectAltName</code>.
-<code>sslrootcert</code> accepts a file path or inline PEM content.</p>
-<p>Note what <code>verify-ca</code> does not cover: it proves the certificate chains to the configured CA,
-not that you reached the intended cluster. The DWS default certificate is not issued per
-cluster, so any endpoint presenting one from the same CA passes — and with <code>verify-full</code>
-unavailable, no <code>sslmode</code> closes that gap. Reach the cluster over a VPC or a verified fixed
-EIP; a substituted endpoint would still receive the configured password.</p>
-<p>New clusters default to ORA compatibility mode, which stores empty strings as NULL and
-evaluates <code>7/2</code> as <code>3.5</code> rather than integer <code>3</code>. See
-<a href="../../adapters/db_adapters/#gaussdbdws">Database Adapters</a> for compatibility modes, TLS
-details, and DDL portability.</p>
-<h3 id="path-pattern-multiple-files">Path Pattern (Multiple Files)<a class="headerlink" href="#path-pattern-multiple-files" title="Permanent link">&para;</a></h3>
-<p>Use glob patterns to auto-discover database files:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">bird_benchmark</span><span class="p">:</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">path_pattern</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">benchmark/bird/dev_20240627/dev_databases/**/*.sqlite</span>
-</span></code></pre></div>
-<p>Supported patterns: <code>*.sqlite</code>, <code>**/*.sqlite</code>, <code>data/2024/*.db</code></p>
-<h2 id="configuration-parameters">Configuration Parameters<a class="headerlink" href="#configuration-parameters" title="Permanent link">&para;</a></h2>
-<h3 id="common-parameters">Common Parameters<a class="headerlink" href="#common-parameters" title="Permanent link">&para;</a></h3>
+<h2 id="common-profile-keys">Common profile keys<a class="headerlink" href="#common-profile-keys" title="Permanent link">&para;</a></h2>
+<p>Each datasource page documents only its type-specific connection keys. The following profile keys are handled by Datus and apply to every datasource:</p>
 <table>
 <thead>
 <tr>
-<th>Parameter</th>
-<th>Required</th>
-<th>Description</th>
+<th>Key</th>
+<th>Type</th>
+<th style="text-align: right;">Required</th>
+<th>Default</th>
+<th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>type</code></td>
-<td>Yes</td>
-<td>Database type: <code>sqlite</code>, <code>duckdb</code>, <code>snowflake</code>, <code>starrocks</code>, <code>mysql</code>, <code>postgresql</code>, <code>doris</code>, <code>hologres</code>, ...</td>
+<td>string</td>
+<td style="text-align: right;">yes</td>
+<td>—</td>
+<td>Adapter type from the table above.</td>
 </tr>
 <tr>
 <td><code>default</code></td>
-<td>No</td>
-<td>Set to <code>true</code> to mark as default database</td>
-</tr>
-<tr>
-<td><code>uri</code></td>
-<td>For file DBs</td>
-<td>Connection URI for SQLite/DuckDB</td>
-</tr>
-<tr>
-<td><code>host</code></td>
-<td>For server DBs</td>
-<td>Database server hostname</td>
-</tr>
-<tr>
-<td><code>port</code></td>
-<td>For server DBs</td>
-<td>Database server port</td>
-</tr>
-<tr>
-<td><code>username</code></td>
-<td>For server DBs</td>
-<td>Database username</td>
-</tr>
-<tr>
-<td><code>password</code></td>
-<td>For server DBs</td>
-<td>Database password</td>
-</tr>
-<tr>
-<td><code>database</code></td>
-<td>No</td>
-<td>Database/schema name</td>
+<td>boolean</td>
+<td style="text-align: right;">no</td>
+<td><code>false</code></td>
+<td>Marks this entry as the default datasource.</td>
 </tr>
 </tbody>
 </table>
-<h3 id="database-specific-parameters">Database-Specific Parameters<a class="headerlink" href="#database-specific-parameters" title="Permanent link">&para;</a></h3>
+<p>Adapter models reject unknown keys, so copy the field names exactly. Use environment variables for credentials:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_USERNAME}</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_PASSWORD}</span>
+</span></code></pre></div>
+<p><code>${NAME:-fallback}</code> supplies a fallback. A missing <code>${NAME}</code> expands to a visible missing-value marker and the connection will fail rather than silently using an empty credential.</p>
+<h2 id="file-datasource-patterns">File datasource patterns<a class="headerlink" href="#file-datasource-patterns" title="Permanent link">&para;</a></h2>
+<p>SQLite and DuckDB can bind one datasource to several files with <code>path_pattern</code> instead of <code>uri</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">benchmark</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">path_pattern</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">benchmark/databases/**/*.sqlite</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools</span><span class="w">  </span><span class="c1"># optional initial file stem</span>
+</span></code></pre></div>
+<p>The matched files become databases within one datasource. Datus skips the entry at startup when the pattern matches no files.</p>
+<h2 id="add-test-and-select-a-datasource">Add, test, and select a datasource<a class="headerlink" href="#add-test-and-select-a-datasource" title="Permanent link">&para;</a></h2>
+<p>The recommended path is the interactive datasource manager:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus
+</span></code></pre></div>
+<p>Run <code>/datasource</code> in the CLI. Adding or editing an entry validates its fields, installs a missing adapter, tests connectivity, and writes the result to the active <code>agent.yml</code> selected by <code>--config</code> or the normal configuration search order. Use <code>/datasource &lt;name&gt;</code> to switch the current session.</p>
+<p>For a manually edited file, start Datus with the target entry. Connector construction and the initial metadata load surface configuration, network, and authentication failures:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>analytics
+</span></code></pre></div>
+<p>Project-specific selection belongs in <code>.datus/config.yml</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">default_datasource</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span></code></pre></div>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause and fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Unsupported value ... for field datasource</code></td>
+<td>The selected name is not a key under <code>agent.services.datasources</code>. Check spelling and the active config file.</td>
+</tr>
+<tr>
+<td>Adapter import or installation error</td>
+<td>Install the package shown in the datasource's page into the same Python environment as <code>datus</code>.</td>
+</tr>
+<tr>
+<td>Unknown or extra field</td>
+<td>The installed adapter validates its own schema. Remove the field or use the exact key documented on that datasource page.</td>
+</tr>
+<tr>
+<td>Connection succeeds but objects are missing</td>
+<td>Check the adapter's namespace fields (<code>catalog</code>, <code>database</code>, <code>schema</code>, or <code>schema_name</code>) and the database user's grants.</td>
+</tr>
+<tr>
+<td>Credential appears literally as <code>&lt;MISSING:...&gt;</code></td>
+<td>Export the referenced environment variable before starting Datus.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="related-documentation">Related documentation<a class="headerlink" href="#related-documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Snowflake</strong>: <code>account</code>, <code>warehouse</code>, <code>role</code>, <code>schema</code></li>
-<li><strong>StarRocks</strong>: <code>catalog</code></li>
-<li><strong>SQLite/DuckDB</strong>: <code>path_pattern</code> for glob-based discovery</li>
-<li><strong>MySQL/PostgreSQL</strong>: <code>host</code>, <code>port</code>, <code>username</code>, <code>password</code>, <code>database</code></li>
-<li><strong>Apache Doris</strong>: <code>catalog</code> (default <code>internal</code>)</li>
-<li><strong>Hologres</strong>: <code>schema</code>, <code>sslmode</code>; <code>access_key_id</code>/<code>access_key_secret</code> are accepted as aliases for <code>username</code>/<code>password</code></li>
-<li><strong>GaussDB/openGauss</strong>: <code>schema</code>, <code>driver</code>, <code>sslmode</code>, <code>sslrootcert</code></li>
-</ul>
-<h2 id="managing-databases">Managing Databases<a class="headerlink" href="#managing-databases" title="Permanent link">&para;</a></h2>
-<h3 id="interactive-configuration">Interactive Configuration<a class="headerlink" href="#interactive-configuration" title="Permanent link">&para;</a></h3>
-<p>Use <code>datus-agent configure</code> to add, delete, or manage databases interactively:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>datus-agent<span class="w"> </span>configure
-</span></code></pre></div>
-<p>This shows your current models and databases, then offers a menu:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>Current Databases:
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>┃ Name         ┃ Type      ┃ Connection              ┃ Default ┃
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>┡━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>│ demo         │ duckdb    │ ./demo.duckdb           │ *       │
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>│ prod_sf      │ snowflake │ account=my_account      │         │
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>└──────────────┴───────────┴─────────────────────────┴─────────┘
-</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>What would you like to do?
-</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>  → [add_database] Add a database
-</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>    [delete_database] Delete a database
-</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>    [done] Done
-</span></code></pre></div>
-<p>Database adapter plugins are auto-installed when you select an uninstalled type (e.g., snowflake, mysql).</p>
-<h3 id="cli-commands">CLI Commands<a class="headerlink" href="#cli-commands" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># List all databases</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>list
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># Add a database interactively</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>add
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
-</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1"># Delete a database interactively</span>
-</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>delete
-</span></code></pre></div>
-<h3 id="specify-a-custom-config">Specify a Custom Config<a class="headerlink" href="#specify-a-custom-config" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>list<span class="w"> </span>--config<span class="w"> </span>/path/to/agent.yml
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>datus-agent<span class="w"> </span>configure<span class="w"> </span>--config<span class="w"> </span>/path/to/agent.yml
-</span></code></pre></div>
-<h2 id="default-database-selection">Default Database Selection<a class="headerlink" href="#default-database-selection" title="Permanent link">&para;</a></h2>
-<p>When running CLI commands, specify which database to use:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>my_duckdb
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>my_snowflake<span class="w"> </span>--task<span class="w"> </span><span class="s2">"..."</span><span class="w"> </span>--task_db_name<span class="w"> </span>ANALYTICS
-</span></code></pre></div>
-<p>If <code>--datasource</code> is not specified:
-1. If a database has <code>default: true</code> → auto-selected
-2. If only one database configured → auto-selected
-3. If multiple without default → shows available list</p>
-<h2 id="security-considerations">Security Considerations<a class="headerlink" href="#security-considerations" title="Permanent link">&para;</a></h2>
-<h3 id="credential-management">Credential Management<a class="headerlink" href="#credential-management" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># Recommended: Using environment variables</span>
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_USERNAME}</span>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_PASSWORD}</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="c1"># Avoid: Hardcoded credentials</span>
-</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="s">"actual_username"</span>
-</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="s">"actual_password"</span>
-</span></code></pre></div>
-<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="../../adapters/db_adapters/">Database Adapters</a> - Install plugin adapters for MySQL, Snowflake, StarRocks, and more</li>
-<li><a href="../semantic_layer/">Semantic Layer Configuration</a> - Configure semantic adapters</li>
-<li><a href="../bi_platforms/">BI Platforms Configuration</a> - Configure Superset or Grafana</li>
-<li><a href="../schedulers/">Scheduler Configuration</a> - Configure Airflow services</li>
-<li><a href="../../cli/other_commands/">CLI Commands</a> - Full CLI reference including configure, init, and service commands</li>
+<li><a href="../../adapters/db_adapters/">Database adapter architecture</a></li>
+<li><a href="../sql_policy/">SQL policy and deployment-wide read-only mode</a></li>
+<li><a href="../../plugin/introduction/">Plugin system</a></li>
+<li><a href="../../cli/reference/">CLI reference</a></li>
 </ul>
 
 
@@ -5559,7 +5438,7 @@ details, and DDL portability.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../web_tool/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Web Tools">
+          <a href="../image_tool/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Image Reading">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -5569,20 +5448,20 @@ details, and DDL portability.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Web Tools
+                Image Reading
               </div>
             </div>
           </a>
         
         
           
-          <a href="../semantic_layer/" class="md-footer__link md-footer__link--next" aria-label="Next: Semantic Layer">
+          <a href="sqlite/" class="md-footer__link md-footer__link--next" aria-label="Next: SQLite">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Semantic Layer
+                SQLite
               </div>
             </div>
             <div class="md-footer__button md-icon">
