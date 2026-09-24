@@ -174,6 +174,11 @@ async def list_datasources_endpoint(
             name=name,
             type=(db_config.type.value if hasattr(db_config.type, "value") else str(db_config.type)),
             is_current=(name == current),
+            # Namespaces, not credentials: a client needs them to open a session on
+            # the datasource's configured schema instead of the first one it lists.
+            catalog=getattr(db_config, "catalog", None) or None,
+            database=getattr(db_config, "database", None) or None,
+            db_schema=getattr(db_config, "schema", None) or None,
         )
         for name, db_config in config.datasource_configs.items()
         if db_config is not None

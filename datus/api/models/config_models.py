@@ -85,6 +85,9 @@ class DatasourceSummary(BaseModel):
     name: str = Field(..., description="Datasource (namespace) name")
     type: str = Field(..., description="Datasource type (postgresql, starrocks, ...)")
     is_current: bool = Field(False, description="Whether this is the project's current datasource")
+    catalog: Optional[str] = Field(None, description="Configured default catalog, if any")
+    database: Optional[str] = Field(None, description="Configured default database, if any")
+    db_schema: Optional[str] = Field(None, description="Configured default schema, if any")
 
 
 class DatasourceListData(BaseModel):
