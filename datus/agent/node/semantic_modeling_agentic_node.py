@@ -24,6 +24,9 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 _SUPPORTED_SEMANTIC_MODELING_STATUSES: Final[frozenset[str]] = frozenset({"generated", "skipped", "blocked"})
+_SEMANTIC_READ_ONLY_DB_TOOLS: Final[frozenset[str]] = frozenset(
+    {"list_databases", "list_schemas", "list_tables", "search_table", "describe_table", "execute_sql"}
+)
 _SEMANTIC_MODELING_RESULT_RETRY_PROMPT: Final[str] = """Your semantic model changes have been preserved.
 Return only one JSON object with this shape:
 {
@@ -108,9 +111,14 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         self._setup_osi_target_tools()
 
         self._setup_db_tools(expose_tools=False)
+        if self.db_func_tool is not None:
+            self.tools.extend(
+                tool for tool in self.db_func_tool.available_tools() if tool.name in _SEMANTIC_READ_ONLY_DB_TOOLS
+            )
         self._setup_semantic_discovery_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
+        self._setup_semantic_plan_file_tool()
         self._setup_semantic_tools()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
@@ -239,6 +247,13 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
             self.tools.extend(filesystem_tools)
         except Exception as exc:
             logger.error("Failed to setup semantic-modeling filesystem tools: %s", exc)
+
+    def _setup_semantic_plan_file_tool(self) -> None:
+        """Allow the optional planning skill to persist a plan outside the model file."""
+        from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
+
+        self.semantic_plan_file_tool = SemanticPlanFileTools(self._resolve_workspace_root())
+        self.tools.extend(self.semantic_plan_file_tool.available_tools())
 
     def _setup_generation_tools(self):
         """Prepare deterministic host-side validation and KB reconciliation."""

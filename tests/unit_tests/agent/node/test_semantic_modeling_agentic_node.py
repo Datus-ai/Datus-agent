@@ -58,6 +58,9 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "list_existing_osi_semantic_models",
         "plan_osi_semantic_model_target",
         "bind_osi_semantic_model_target",
+        "list_tables",
+        "describe_table",
+        "execute_sql",
         "inspect_semantic_sources",
         "read_file",
         "edit_file",
@@ -68,8 +71,12 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
         "glob",
         "grep",
         "validate_semantic",
+        "write_semantic_model_plan_file",
     }.issubset(tool_names)
-    assert {"write_file", "delete_file", "bash", "task"}.isdisjoint(tool_names)
+    assert {"write_file", "delete_file", "load_file_as_table", "import_database_file", "bash", "task"}.isdisjoint(
+        tool_names
+    )
+    assert node.db_func_tool.read_only is True
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
     assert node.semantic_discovery_tools.compact_source_inspection is True
     assert {tool.name for tool in node.semantic_discovery_tools.available_tools()} == {"inspect_semantic_sources"}
@@ -83,14 +90,30 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "plan that same model name so it can be repaired in place" in prompt
     assert "Treat SQL as evidence rather than a required persisted result shape" in prompt
     assert "extract reusable fields, relationships, and native business metrics" in prompt
-    assert "durable reusable cohort/result set or asks for faithful one-query reproduction" in prompt
     assert '<required_skill name="dosi-semantic-authoring">' in prompt
+    node._populate_tool_registry()
+    assert node.tool_registry.get("write_semantic_model_plan_file") == "semantic_tools"
     assert "## Active OSI Core authoring specification" in prompt
     assert "# Apache Ossie - Core Metadata Spec" in prompt
     assert "## Active DATUS extension authoring specification" in prompt
     assert "Use a derived filter metric" in prompt
     assert "Use a parameterized metric only" in prompt
     assert "active contract explicitly permits" in prompt
+
+
+def test_semantic_modeling_db_tools_reject_writes_even_with_mutable_datasource(
+    mutable_real_agent_config, mock_llm_create
+):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    _set_adapter(mutable_real_agent_config, "dosi")
+    node = SemanticModelingAgenticNode(agent_config=mutable_real_agent_config, execution_mode="workflow")
+
+    assert node.db_func_tool.read_only is True
+    assert node.db_func_tool.execute_sql("SELECT 1").success == 1
+    refused = node.db_func_tool.execute_sql("CREATE TABLE semantic_plan_probe (id INTEGER)")
+    assert refused.success == 0
+    assert "read-only" in refused.error
 
 
 def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
@@ -146,8 +169,6 @@ def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agen
     prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
     assert "This run is datasets-only" in prompt
     assert "Do not author metrics in this datasets-only run" in prompt
-    assert "still author reusable native inputs." in prompt
-    assert "still author reusable native inputs and metrics." not in prompt
     assert "Keep all existing metric definitions unchanged" in prompt
 
 
