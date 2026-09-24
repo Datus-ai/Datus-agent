@@ -21,6 +21,7 @@ import pytest
 from datus_db_core.base import BaseSqlConnector
 from datus_db_core.config import ConnectionConfig
 
+from datus.agent.node import agentic_node as agentic_node_module
 from datus.agent.node.agentic_node import AgenticNode
 from datus.schemas.action_bus import ActionBus
 from tests.unit_tests.agent.node.test_agentic_node_template import FakeAgenticNode, FakeInput, _ok_action, _StreamModel
@@ -130,16 +131,19 @@ def test_skips_connectors_with_a_persistent_connection():
     assert connector.switch_calls == []
 
 
-def test_tolerates_a_node_without_a_db_tool():
-    AgenticNode._apply_turn_db_context(SimpleNamespace(input=SimpleNamespace(db_schema="public")))
-
-
-def test_a_failed_switch_does_not_fail_the_turn():
+def test_a_failed_switch_keeps_the_configured_defaults_and_warns(monkeypatch):
     class _Broken(_PooledConnector):
         def switch_context(self, **kwargs):
             raise RuntimeError("boom")
 
-    AgenticNode._apply_turn_db_context(_node(_Broken(), db_schema="public"))
+    warnings = []
+    monkeypatch.setattr(agentic_node_module.logger, "warning", lambda msg, *args: warnings.append(msg % args))
+    connector = _Broken()
+
+    AgenticNode._apply_turn_db_context(_node(connector, db_schema="public"))
+
+    assert connector.schema_name == "aviation"
+    assert warnings == ["Unable to apply turn db context: boom"]
 
 
 class _DbInput(FakeInput):
