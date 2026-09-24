@@ -11,10 +11,10 @@
         <link rel="canonical" href="https://docs.datus.ai/zh/0.4/0.4/configuration/datasources/">
       
       
-        <link rel="prev" href="../web_tool/">
+        <link rel="prev" href="../image_tool/">
       
       
-        <link rel="next" href="../semantic_layer/">
+        <link rel="next" href="sqlite/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Datasources - Datus Docs</title>
+        <title>概览 - Datus Docs</title>
       
     
     
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Datasources
+              概览
             
           </span>
         </div>
@@ -3043,6 +3043,8 @@
       
         
       
+        
+      
     
     
     
@@ -3286,12 +3288,76 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../image_tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    读图
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
       
         
       
@@ -3312,17 +3378,17 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_8" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_12_9" checked>
         
           
-          <label class="md-nav__link" for="__nav_1_12_8" id="__nav_1_12_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_12_9" id="__nav_1_12_9_label" tabindex="0">
             
   
   
   <span class="md-ellipsis">
     
   
-    服务
+    数据源
   
 
     
@@ -3333,12 +3399,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_8_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_1_12_8">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_12_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_1_12_9">
             <span class="md-nav__icon md-icon"></span>
             
   
-    服务
+    数据源
   
 
           </label>
@@ -3367,7 +3433,7 @@
   <span class="md-ellipsis">
     
   
-    Datasources
+    概览
   
 
     
@@ -3385,7 +3451,7 @@
   <span class="md-ellipsis">
     
   
-    Datasources
+    概览
   
 
     
@@ -3414,7 +3480,18 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        概览
+        选择数据源
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        通用 profile 字段
       
     </span>
   </a>
@@ -3425,7 +3502,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置结构
+        文件数据源批量匹配
       
     </span>
   </a>
@@ -3436,7 +3513,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        服务分组
+        添加、测试与选择数据源
       
     </span>
   </a>
@@ -3447,303 +3524,15 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        支持的数据库类型
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="支持的数据库类型">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#snowflake" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Snowflake
+        故障排查
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#google-bigquery" class="md-nav__link">
-    <span class="md-ellipsis">
       
-        Google BigQuery
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#maxcompute" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MaxCompute
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#starrocks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        StarRocks
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sqlite" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        SQLite
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#duckdb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DuckDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mysql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MySQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#postgresql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        PostgreSQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#apache-doris" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Apache Doris
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tidb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TiDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hologres" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hologres
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gaussdb-opengauss" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GaussDB / openGauss
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gaussdbdws" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        华为云 GaussDB(DWS)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
+        <li class="md-nav__item">
   <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        路径模式（批量发现多个文件）
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        配置参数
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="配置参数">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        通用参数
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        数据库特定参数
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        管理数据库
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="管理数据库">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        交互式配置
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cli" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CLI 命令
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        指定自定义配置文件
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_12" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        默认数据库选择
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_13" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        安全建议
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="安全建议">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_14" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        凭证管理
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_15" class="md-nav__link">
     <span class="md-ellipsis">
       
         相关文档
@@ -3769,14 +3558,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../semantic_layer/" class="md-nav__link">
+      <a href="sqlite/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    语义层
+    SQLite
   
 
     
@@ -3797,14 +3586,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../bi_platforms/" class="md-nav__link">
+      <a href="duckdb/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    BI 平台
+    DuckDB
   
 
     
@@ -3825,14 +3614,518 @@
   
   
     <li class="md-nav__item">
-      <a href="../schedulers/" class="md-nav__link">
+      <a href="mysql/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    调度器
+    MySQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="postgresql/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PostgreSQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="greenplum/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greenplum
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="redshift/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amazon Redshift
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="snowflake/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Snowflake
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="bigquery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Google BigQuery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="starrocks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    StarRocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="doris/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Doris
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tidb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TiDB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="clickhouse/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClickHouse
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="trino/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trino
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="hive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="spark/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spark SQL
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="clickzetta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClickZetta
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="hologres/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hologres
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="maxcompute/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MaxCompute
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="oracle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Oracle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="gaussdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GaussDB / openGauss
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="dws/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GaussDB(DWS)
   
 
     
@@ -4775,7 +5068,18 @@
   <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        概览
+        选择数据源
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        通用 profile 字段
       
     </span>
   </a>
@@ -4786,7 +5090,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置结构
+        文件数据源批量匹配
       
     </span>
   </a>
@@ -4797,7 +5101,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        服务分组
+        添加、测试与选择数据源
       
     </span>
   </a>
@@ -4808,303 +5112,15 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        支持的数据库类型
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="支持的数据库类型">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#snowflake" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Snowflake
+        故障排查
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#google-bigquery" class="md-nav__link">
-    <span class="md-ellipsis">
       
-        Google BigQuery
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#maxcompute" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MaxCompute
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#starrocks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        StarRocks
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sqlite" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        SQLite
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#duckdb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        DuckDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mysql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MySQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#postgresql" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        PostgreSQL
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#apache-doris" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Apache Doris
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tidb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TiDB
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hologres" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Hologres
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gaussdb-opengauss" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        GaussDB / openGauss
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#gaussdbdws" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        华为云 GaussDB(DWS)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
+        <li class="md-nav__item">
   <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        路径模式（批量发现多个文件）
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        配置参数
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="配置参数">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        通用参数
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        数据库特定参数
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        管理数据库
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="管理数据库">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        交互式配置
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cli" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CLI 命令
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        指定自定义配置文件
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_12" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        默认数据库选择
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_13" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        安全建议
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="安全建议">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_14" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        凭证管理
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_15" class="md-nav__link">
     <span class="md-ellipsis">
       
         相关文档
@@ -5131,7 +5147,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.1/docs/configuration/datasources.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.4.2/docs/configuration/datasources.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -5139,390 +5155,259 @@
   
 
 
-<h1 id="datasources">数据源配置（Datasources）<a class="headerlink" href="#datasources" title="Permanent link">&para;</a></h1>
-<p>配置 <code>agent.services.datasources</code> 下的数据库连接。</p>
-<h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>Datus Agent 在 <code>agent.yml</code> 中通过 <code>agent.services</code> 统一管理运行时集成。本页聚焦 <code>services.datasources</code> 下的数据库连接；语义层、BI 平台和调度器分别在同级页面单独说明。</p>
-<p>主要特性：</p>
-<ul>
-<li><strong>统一连接入口</strong>：支持 Snowflake、StarRocks、SQLite、DuckDB 等数据库，以及语义层、BI、调度器服务</li>
-<li><strong>凭证安全</strong>：支持 <code>${ENV_VAR}</code> 环境变量展开</li>
-<li><strong>默认数据库</strong>：可通过 <code>default: true</code> 标记默认数据库</li>
-<li><strong>插件适配器</strong>：可按需安装数据库适配器</li>
-<li><strong>动态发现</strong>：支持通过 <code>path_pattern</code> 批量发现多个本地数据库文件</li>
-</ul>
-<blockquote>
-<p><strong>说明</strong>：早期版本的 <code>services.databases</code> 键已重命名为 <code>services.datasources</code>。请在 <code>agent.yml</code> 中手动更改键名——运行时会拒绝旧键。</p>
-</blockquote>
-<h2 id="_2">配置结构<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>数据库统一配置在 <code>agent.services.datasources</code> 下，每个条目都是一个独立数据库连接：</p>
+<h1 id="datasources">Datasources<a class="headerlink" href="#datasources" title="Permanent link">&para;</a></h1>
+<p>Datasource 是 Datus 用于执行 SQL、发现元数据和构建知识库索引的具名数据库连接。在 <code>agent.yml</code> 的 <code>agent.services.datasources</code> 下配置：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">my_snowflake</span><span class="p">:</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">snowflake</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">account</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ACCOUNT}</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_USER}</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_PASSWORD}</span><span class="w">  </span><span class="c1"># 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="c1"># private_key: ${SNOWFLAKE_PRIVATE_KEY}</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="c1"># private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_DATABASE}</span><span class="w">  </span><span class="c1"># 可选</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_SCHEMA}</span><span class="w">      </span><span class="c1"># 可选</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="nt">warehouse</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_WAREHOUSE}</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ROLE}</span><span class="w">          </span><span class="c1"># 可选</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">      </span><span class="nt">my_duckdb</span><span class="p">:</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">        </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./data/analytics.duckdb</span>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">    </span><span class="nt">bi_platforms</span><span class="p">:</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">      </span><span class="nt">superset</span><span class="p">:</span>
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">superset</span>
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:8088</span>
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_USER}</span>
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SUPERSET_PASSWORD}</span>
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">    </span><span class="nt">schedulers</span><span class="p">:</span>
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">      </span><span class="nt">airflow_prod</span><span class="p">:</span>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">airflow</span>
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_URL}</span>
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_USER}</span>
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_PASSWORD}</span>
-</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a><span class="w">        </span><span class="nt">dags_folder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${AIRFLOW_DAGS_DIR}</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">analytics</span><span class="p">:</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_HOST}</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_USER}</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">        </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_PASSWORD}</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span></code></pre></div>
-<h2 id="_3">服务分组<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p><code>datasources</code> 下的每个 key 都是 datasource 名称，只能包含字母、数字、下划线和连字符。最多为一个条目设置 <code>default: true</code>；仅有一个 datasource 时，Datus 会自动选择它。</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>配置路径仍然是 <code>agent.services.datasources</code>。Semantic adapter 在<a href="../../adapters/semantic_adapters/">适配器</a>中配置；Airflow 等外部系统优先使用 <a href="../../plugin/introduction/">Plugin</a>。</p>
+</div>
+<h2 id="_1">选择数据源<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<p>SQLite 和 DuckDB 内置在 Datus 中。其他 datasource 均由可独立安装的 <code>datus-&lt;type&gt;</code> adapter 提供。在 <code>/datasource</code> 中新增数据源时，Datus 可以自动安装缺失的 adapter，也可以手动安装对应包。</p>
 <table>
 <thead>
 <tr>
-<th>配置段</th>
-<th>用途</th>
-<th>选择方式</th>
+<th>Datasource</th>
+<th><code>type</code></th>
+<th>安装包</th>
+<th>命名空间</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>services.datasources</code></td>
-<td>SQL 与知识库操作使用的数据库连接</td>
-<td><code>--datasource</code> / 当前数据库 / 默认数据库</td>
+<td><a href="sqlite/">SQLite</a></td>
+<td><code>sqlite</code></td>
+<td>内置</td>
+<td>数据库文件 → 表</td>
 </tr>
 <tr>
-<td><code>services.semantic_layer</code></td>
-<td>语义适配器配置，例如 MetricFlow 或 OSI</td>
-<td>active/default semantic layer</td>
+<td><a href="duckdb/">DuckDB</a></td>
+<td><code>duckdb</code></td>
+<td>内置</td>
+<td>database → schema → table</td>
 </tr>
 <tr>
-<td><code>services.bi_platforms</code></td>
-<td>BI 平台凭据与数据集物化配置</td>
-<td><code>bi_platform</code></td>
+<td><a href="mysql/">MySQL</a></td>
+<td><code>mysql</code></td>
+<td><code>datus-mysql</code></td>
+<td>database → table</td>
 </tr>
 <tr>
-<td><code>services.schedulers</code></td>
-<td>调度器服务实例，例如 Airflow</td>
-<td><code>scheduler_service</code></td>
+<td><a href="postgresql/">PostgreSQL</a></td>
+<td><code>postgresql</code></td>
+<td><code>datus-postgresql</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="greenplum/">Greenplum</a></td>
+<td><code>greenplum</code></td>
+<td><code>datus-greenplum</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="redshift/">Amazon Redshift</a></td>
+<td><code>redshift</code></td>
+<td><code>datus-redshift</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="snowflake/">Snowflake</a></td>
+<td><code>snowflake</code></td>
+<td><code>datus-snowflake</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="bigquery/">Google BigQuery</a></td>
+<td><code>bigquery</code></td>
+<td><code>datus-bigquery</code></td>
+<td>project → dataset → table</td>
+</tr>
+<tr>
+<td><a href="starrocks/">StarRocks</a></td>
+<td><code>starrocks</code></td>
+<td><code>datus-starrocks</code></td>
+<td>catalog → database → table</td>
+</tr>
+<tr>
+<td><a href="doris/">Apache Doris</a></td>
+<td><code>doris</code></td>
+<td><code>datus-doris</code></td>
+<td>catalog → database → table</td>
+</tr>
+<tr>
+<td><a href="tidb/">TiDB</a></td>
+<td><code>tidb</code></td>
+<td><code>datus-tidb</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="clickhouse/">ClickHouse</a></td>
+<td><code>clickhouse</code></td>
+<td><code>datus-clickhouse</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="trino/">Trino</a></td>
+<td><code>trino</code></td>
+<td><code>datus-trino</code></td>
+<td>catalog → schema → table</td>
+</tr>
+<tr>
+<td><a href="hive/">Hive</a></td>
+<td><code>hive</code></td>
+<td><code>datus-hive</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="spark/">Spark SQL</a></td>
+<td><code>spark</code></td>
+<td><code>datus-spark</code></td>
+<td>database → table</td>
+</tr>
+<tr>
+<td><a href="clickzetta/">ClickZetta</a></td>
+<td><code>clickzetta</code></td>
+<td><code>datus-clickzetta</code></td>
+<td>instance/workspace → schema → table</td>
+</tr>
+<tr>
+<td><a href="hologres/">Hologres</a></td>
+<td><code>hologres</code></td>
+<td><code>datus-hologres</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="maxcompute/">MaxCompute</a></td>
+<td><code>maxcompute</code></td>
+<td><code>datus-maxcompute</code></td>
+<td>project → 可选 schema → table</td>
+</tr>
+<tr>
+<td><a href="oracle/">Oracle</a></td>
+<td><code>oracle</code></td>
+<td><code>datus-oracle</code></td>
+<td>schema → table</td>
+</tr>
+<tr>
+<td><a href="gaussdb/">GaussDB / openGauss</a></td>
+<td><code>gaussdb</code></td>
+<td><code>datus-gaussdb</code></td>
+<td>database → schema → table</td>
+</tr>
+<tr>
+<td><a href="dws/">GaussDB(DWS)</a></td>
+<td><code>dws</code></td>
+<td><code>datus-dws</code></td>
+<td>database → schema → table</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_4">支持的数据库类型<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<h3 id="snowflake">Snowflake<a class="headerlink" href="#snowflake" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">my_snowflake</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">snowflake</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">account</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ACCOUNT}</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_USER}</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_PASSWORD}</span><span class="w">      </span><span class="c1"># 可配置 private_key，或在没有 private_key 时 password 和 private_key_file 二选一</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="c1"># private_key: ${SNOWFLAKE_PRIVATE_KEY}</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="c1"># private_key_file: ${SNOWFLAKE_PRIVATE_KEY_FILE}</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="c1"># private_key_file_pwd: ${SNOWFLAKE_PRIVATE_KEY_FILE_PWD}  # 可选</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_DATABASE}</span><span class="w">    </span><span class="c1"># 可选</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_SCHEMA}</span><span class="w">        </span><span class="c1"># 可选</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span><span class="nt">warehouse</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_WAREHOUSE}</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${SNOWFLAKE_ROLE}</span><span class="w">            </span><span class="c1"># 可选</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                      </span><span class="c1"># 可选：设为默认数据库</span>
-</span></code></pre></div>
-<p>Snowflake 支持密码认证和 key-pair 认证。托管/SaaS 场景推荐把 PEM 私钥作为 secret 配置到 <code>private_key</code>；
-本地或 CI 已有私钥文件时可以使用 <code>private_key_file</code>。如果配置了 <code>private_key</code>，它会优先于
-<code>private_key_file</code> 和 <code>password</code>；没有 <code>private_key</code> 时，<code>password</code> 和 <code>private_key_file</code> 必须二选一。
-私钥加密时再配置 <code>private_key_file_pwd</code>；适配器内部会使用 Snowflake JWT 认证。</p>
-<p>Snowflake 使用 <code>database</code> + <code>schema</code> 命名空间。Snowflake 不要配置 <code>catalog</code>；<code>catalog</code> 过滤只适用于
-StarRocks 等支持 catalog 的引擎。</p>
-<h3 id="google-bigquery">Google BigQuery<a class="headerlink" href="#google-bigquery" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">my_bigquery</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bigquery</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">catalog</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${BIGQUERY_PROJECT}</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${BIGQUERY_DATASET}</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">location</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${BIGQUERY_LOCATION:-US}</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">credentials_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GOOGLE_APPLICATION_CREDENTIALS}</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="c1"># credentials_base64: ${BIGQUERY_CREDENTIALS_BASE64}</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="c1"># billing_project_id: ${BIGQUERY_BILLING_PROJECT}</span>
-</span></code></pre></div>
-<p><code>catalog</code> 对应 Google Cloud project，<code>database</code> 对应 BigQuery dataset；不要配置 <code>schema</code>。
-<code>credentials_path</code>、<code>credentials_info</code>、<code>credentials_base64</code> 只能配置一个；三者都不配置时使用 Application
-Default Credentials。YAML 中的 <code>credentials_info</code> 必须是 mapping，不能是加引号的 JSON 字符串。正确与错误示例、
-GitHub Secret 链路以及凭据和命名空间的详细说明见<a href="../../adapters/db_adapters/#google-bigquery">数据库适配器</a>。</p>
-<h3 id="maxcompute">MaxCompute<a class="headerlink" href="#maxcompute" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">my_maxcompute</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">maxcompute</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_PROJECT}</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_ENDPOINT}</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">access_key_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_ACCESS_KEY_ID}</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">access_key_secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MAXCOMPUTE_ACCESS_KEY_SECRET}</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="c1"># schema: default               # 可选；仅三层模型项目使用</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">namespace_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">            </span><span class="c1"># auto、two_level 或 three_level</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="c1"># quota_name: ${MAXCOMPUTE_QUOTA_NAME}</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span><span class="c1"># tunnel_endpoint: ${MAXCOMPUTE_TUNNEL_ENDPOINT}</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="c1"># query_timeout_seconds: 600</span>
-</span></code></pre></div>
-<p><code>database</code> 对应 MaxCompute 项目。两层模型不要配置 <code>schema</code>；开启 schema 的项目未配置时默认使用
-<code>default</code>。datasource 不使用 catalog，且查询范围保持在配置的项目内。命名空间与 endpoint 说明见
-<a href="../../adapters/db_adapters/#maxcompute">数据库适配器</a>。</p>
-<h3 id="starrocks">StarRocks<a class="headerlink" href="#starrocks" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">my_starrocks</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">starrocks</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_HOST}</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PORT}</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_USER}</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_PASSWORD}</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_DATABASE}</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">catalog</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${STARROCKS_CATALOG}</span><span class="w">      </span><span class="c1"># 可选</span>
-</span></code></pre></div>
-<h3 id="sqlite">SQLite<a class="headerlink" href="#sqlite" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">my_sqlite</span><span class="p">:</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite:////Users/xxx/data/orders.db</span>
-</span></code></pre></div>
-<h3 id="duckdb">DuckDB<a class="headerlink" href="#duckdb" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">my_duckdb</span><span class="p">:</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">uri</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">duckdb:////Users/xxx/data/analytics.duckdb</span>
-</span></code></pre></div>
-<h3 id="mysql">MySQL<a class="headerlink" href="#mysql" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">my_mysql</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mysql</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3306</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MYSQL_USER}</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MYSQL_PASSWORD}</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
-</span></code></pre></div>
-<h3 id="postgresql">PostgreSQL<a class="headerlink" href="#postgresql" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">my_postgresql</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgresql</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_USER}</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${POSTGRES_PASSWORD}</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
-</span></code></pre></div>
-<h3 id="apache-doris">Apache Doris<a class="headerlink" href="#apache-doris" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">my_doris</span><span class="p">:</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">doris</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_HOST}</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">9030</span><span class="w">                    </span><span class="c1"># FE 查询端口（MySQL 协议）</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_USER}</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_PASSWORD}</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DORIS_DATABASE}</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">  </span><span class="nt">catalog</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal</span><span class="w">             </span><span class="c1"># 可选，默认为 internal</span>
-</span></code></pre></div>
-<h3 id="tidb">TiDB<a class="headerlink" href="#tidb" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">my_tidb</span><span class="p">:</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tidb</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_HOST}</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4000</span><span class="w">                    </span><span class="c1"># TiDB 自身默认端口，不是 MySQL 的 3306</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_USER}</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_PASSWORD}</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TIDB_DATABASE}</span>
-</span></code></pre></div>
-<h3 id="hologres">Hologres<a class="headerlink" href="#hologres" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">my_hologres</span><span class="p">:</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hologres</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ENDPOINT}</span><span class="w">    </span><span class="c1"># 控制台 endpoint，hostname 或 hostname:port</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_ID}</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_ACCESS_KEY_SECRET}</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HOLOGRES_DATABASE}</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span><span class="w">                </span><span class="c1"># 可选</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prefer</span><span class="w">               </span><span class="c1"># 可选</span>
-</span></code></pre></div>
-<h3 id="gaussdb-opengauss">GaussDB / openGauss<a class="headerlink" href="#gaussdb-opengauss" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">my_gaussdb</span><span class="p">:</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gaussdb</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_HOST}</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5432</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_USER}</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${GAUSSDB_PASSWORD}</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">  </span><span class="c1"># driver: pg8000              # 可选；省略时使用平台默认值</span>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-ca</span><span class="w">             </span><span class="c1"># 生产环境基线配置</span>
-</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/datus/certs/gaussdb-ca.pem</span>
-</span></code></pre></div>
-<p>支持的驱动为 <code>gaussdb</code>（Linux；sha256/md5/sm3 认证）、<code>pg8000</code>（Linux/macOS；sha256/md5）和
-仅支持 md5 的 <code>psycopg2</code> 兜底方案。TLS 模式支持 <code>disable</code>、<code>allow</code>、<code>prefer</code>（默认）、<code>require</code>、
-<code>verify-ca</code> 和 <code>verify-full</code>。生产环境应以 <code>verify-ca</code> 配合 <code>sslrootcert</code> 提供服务端 CA 为基线；当配置的
-hostname 能保证与证书匹配时，使用 <code>verify-full</code> 可提供更严格的 hostname 验证，否则继续使用
-<code>verify-ca</code>。当前仅支持单向 TLS，不支持客户端证书双向认证。
-模式、平台、认证方式及 A/B/PG 兼容模式详情见<a href="../../adapters/db_adapters/#gaussdb">数据库适配器</a>。</p>
-<h3 id="gaussdbdws">华为云 GaussDB(DWS)<a class="headerlink" href="#gaussdbdws" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">my_dws</span><span class="p">:</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dws</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DWS_HOST}</span><span class="w">              </span><span class="c1"># 控制台 endpoint，可内嵌 ":8000"</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8000</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DWS_USER}</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DWS_PASSWORD}</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">  </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gaussdb</span><span class="w">              </span><span class="c1"># 集群默认库名</span>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">  </span><span class="nt">schema</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">public</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">  </span><span class="nt">sslmode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">verify-ca</span><span class="w">             </span><span class="c1"># 生产环境基线配置</span>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">  </span><span class="nt">sslrootcert</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/datus/certs/dws-cacert.pem</span>
-</span></code></pre></div>
-<p>DWS 使用 PostgreSQL wire 协议并支持标准 MD5 认证，无需选择驱动。生产环境应以 <code>verify-ca</code>
-配合 <code>sslrootcert</code> 提供服务端 CA 为基线；该 CA 应取自控制台 <code>dws_ssl_cert</code> 压缩包中的
-<code>v2/sslcert/cacert.pem</code>，v1 的 CA 与服务端证书签发者不匹配。<code>verify-full</code> 不受支持——华为官方
-明确说明 "verify-full: DWS does not support this mode"
-（<a href="https://support.huaweicloud.com/intl/en-us/mgtg-dws/dws_01_0038.html">SSL 连接设置</a>），
-原因是默认服务端证书的 CN 为 <code>server</code> 且不含 <code>subjectAltName</code>。<code>sslrootcert</code> 既接受文件路径，
-也接受 PEM 内容。</p>
-<p>需要注意 <code>verify-ca</code> 没有覆盖的部分：它只能证明证书由所配置的 CA 签发，不能证明连上的是目标集群。
-DWS 默认证书并非按集群签发，任何出示同一 CA 所签证书的 endpoint 都能通过；而 <code>verify-full</code>
-又不可用，因此没有任何 <code>sslmode</code> 能弥补这个缺口。请通过 VPC 或经过核实的固定 EIP 访问集群——
-被替换的 endpoint 依然会收到所配置的密码。</p>
-<p>新建集群默认为 ORA 兼容模式：空字符串在写入时即变为 NULL，且 <code>7/2</code> 得到 <code>3.5</code> 而非整数 <code>3</code>。
-兼容模式、TLS 细节与 DDL 可移植性详见<a href="../../adapters/db_adapters/#gaussdbdws">数据库适配器</a>。</p>
-<h3 id="_5">路径模式（批量发现多个文件）<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
-<p>使用 glob 模式自动发现数据库文件：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">bird_benchmark</span><span class="p">:</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">path_pattern</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">benchmark/bird/dev_20240627/dev_databases/**/*.sqlite</span>
-</span></code></pre></div>
-<p>常见模式包括：<code>*.sqlite</code>、<code>**/*.sqlite</code>、<code>data/2024/*.db</code></p>
-<h2 id="_6">配置参数<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<h3 id="_7">通用参数<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<h2 id="profile">通用 profile 字段<a class="headerlink" href="#profile" title="Permanent link">&para;</a></h2>
+<p>各 datasource 子页面只列该类型专用的连接字段。下面两个 profile 字段由 Datus 自身处理，适用于全部 datasource：</p>
 <table>
 <thead>
 <tr>
-<th>参数</th>
-<th>是否必填</th>
+<th>字段</th>
+<th>类型</th>
+<th style="text-align: right;">必填</th>
+<th>默认值</th>
 <th>说明</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>type</code></td>
-<td>是</td>
-<td>数据库类型，例如 <code>sqlite</code>、<code>duckdb</code>、<code>snowflake</code>、<code>starrocks</code>、<code>mysql</code>、<code>postgresql</code>、<code>doris</code>、<code>hologres</code> 等</td>
+<td>string</td>
+<td style="text-align: right;">是</td>
+<td>—</td>
+<td>上表列出的 adapter 类型。</td>
 </tr>
 <tr>
 <td><code>default</code></td>
-<td>否</td>
-<td>设为 <code>true</code> 后作为默认数据库</td>
-</tr>
-<tr>
-<td><code>uri</code></td>
-<td>文件型数据库必填</td>
-<td>SQLite / DuckDB 的连接 URI</td>
-</tr>
-<tr>
-<td><code>host</code></td>
-<td>服务型数据库必填</td>
-<td>数据库主机地址</td>
-</tr>
-<tr>
-<td><code>port</code></td>
-<td>服务型数据库必填</td>
-<td>数据库端口</td>
-</tr>
-<tr>
-<td><code>username</code></td>
-<td>服务型数据库必填</td>
-<td>用户名</td>
-</tr>
-<tr>
-<td><code>password</code></td>
-<td>服务型数据库必填</td>
-<td>密码</td>
-</tr>
-<tr>
-<td><code>database</code></td>
-<td>否</td>
-<td>数据库名</td>
+<td>boolean</td>
+<td style="text-align: right;">否</td>
+<td><code>false</code></td>
+<td>将当前条目标记为默认 datasource。</td>
 </tr>
 </tbody>
 </table>
-<h3 id="_8">数据库特定参数<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<p>Adapter 配置模型会拒绝未知字段，因此字段名必须与文档完全一致。凭证应通过环境变量传入：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_USERNAME}</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_PASSWORD}</span>
+</span></code></pre></div>
+<p><code>${NAME:-fallback}</code> 可以提供默认值。<code>${NAME}</code> 未定义时会展开为明显的缺失标记，连接会失败，不会静默使用空凭证。</p>
+<h2 id="_2">文件数据源批量匹配<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>SQLite 和 DuckDB 可以用 <code>path_pattern</code> 代替 <code>uri</code>，将多个文件绑定到一个 datasource：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">benchmark</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sqlite</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">path_pattern</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">benchmark/databases/**/*.sqlite</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">california_schools</span><span class="w">  </span><span class="c1"># 可选：初始文件名（不含扩展名）</span>
+</span></code></pre></div>
+<p>匹配到的文件会成为同一个 datasource 下的多个 database。启动时如果没有匹配到文件，Datus 会跳过该条目。</p>
+<h2 id="_3">添加、测试与选择数据源<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>推荐使用交互式 datasource 管理器：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus
+</span></code></pre></div>
+<p>在 CLI 中运行 <code>/datasource</code>。新增或编辑条目时会校验字段、安装缺失的 adapter、测试连通性，并写回 <code>--config</code> 或默认搜索顺序选中的当前 <code>agent.yml</code>。使用 <code>/datasource &lt;name&gt;</code> 可切换当前会话的数据源。</p>
+<p>如果手工编辑配置文件，可以指定目标 datasource 启动 Datus。创建 connector 和首次加载元数据时会直接暴露配置、网络与认证错误：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span>--datasource<span class="w"> </span>analytics
+</span></code></pre></div>
+<p>项目级默认选择写在 <code>.datus/config.yml</code>：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">default_datasource</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">analytics</span>
+</span></code></pre></div>
+<h2 id="_4">故障排查<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因与处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Unsupported value ... for field datasource</code></td>
+<td>选择的名称不是 <code>agent.services.datasources</code> 下的 key。检查拼写和实际加载的配置文件。</td>
+</tr>
+<tr>
+<td>Adapter 导入或安装失败</td>
+<td>在运行 <code>datus</code> 的同一个 Python 环境中安装子页面标明的包。</td>
+</tr>
+<tr>
+<td>提示未知或多余字段</td>
+<td>已安装的 adapter 会按自身 schema 校验配置。移除该字段，或改用对应 datasource 页面中的准确字段名。</td>
+</tr>
+<tr>
+<td>已连接但看不到目标对象</td>
+<td>检查 adapter 的命名空间字段（<code>catalog</code>、<code>database</code>、<code>schema</code> 或 <code>schema_name</code>）以及数据库账号授权。</td>
+</tr>
+<tr>
+<td>凭证显示为 <code>&lt;MISSING:...&gt;</code></td>
+<td>启动 Datus 前先导出对应环境变量。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_5">相关文档<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Snowflake</strong>：<code>account</code>、<code>warehouse</code>、<code>role</code>、<code>schema</code></li>
-<li><strong>StarRocks</strong>：<code>catalog</code></li>
-<li><strong>SQLite/DuckDB</strong>：<code>path_pattern</code> 用于批量发现数据库文件</li>
-<li><strong>MySQL/PostgreSQL</strong>：<code>host</code>、<code>port</code>、<code>username</code>、<code>password</code>、<code>database</code></li>
-<li><strong>Apache Doris</strong>：<code>catalog</code>（默认为 <code>internal</code>）</li>
-<li><strong>Hologres</strong>：<code>schema</code>、<code>sslmode</code>；<code>access_key_id</code>/<code>access_key_secret</code> 可作为 <code>username</code>/<code>password</code> 的别名</li>
-<li><strong>GaussDB/openGauss</strong>：<code>schema</code>、<code>driver</code>、<code>sslmode</code>、<code>sslrootcert</code></li>
-</ul>
-<h2 id="_9">管理数据库<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
-<h3 id="_10">交互式配置<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
-<p>使用 <code>datus-agent configure</code> 交互式添加、删除或管理数据库：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>datus-agent<span class="w"> </span>configure
-</span></code></pre></div>
-<p>它会先展示当前模型与数据库，然后提供菜单：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>Current Databases:
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>┏━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>┃ Name         ┃ Type      ┃ Connection              ┃ Default ┃
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>┡━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>│ demo         │ duckdb    │ ./demo.duckdb           │ *       │
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>│ prod_sf      │ snowflake │ account=my_account      │         │
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>└──────────────┴───────────┴─────────────────────────┴─────────┘
-</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>What would you like to do?
-</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>  → [add_database] Add a database
-</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>    [delete_database] Delete a database
-</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>    [done] Done
-</span></code></pre></div>
-<p>当你选择未安装的数据库类型（例如 snowflake、mysql）时，适配器插件会自动安装。</p>
-<h3 id="cli">CLI 命令<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># 列出所有数据库</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>list
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># 交互式添加数据库</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>add
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
-</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1"># 交互式删除数据库</span>
-</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>delete
-</span></code></pre></div>
-<h3 id="_11">指定自定义配置文件<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>datus-agent<span class="w"> </span>service<span class="w"> </span>list<span class="w"> </span>--config<span class="w"> </span>/path/to/agent.yml
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>datus-agent<span class="w"> </span>configure<span class="w"> </span>--config<span class="w"> </span>/path/to/agent.yml
-</span></code></pre></div>
-<h2 id="_12">默认数据库选择<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
-<p>运行 CLI 命令时，可以显式指定要使用的数据库：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>my_duckdb
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>datus-agent<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>my_snowflake<span class="w"> </span>--task<span class="w"> </span><span class="s2">"..."</span><span class="w"> </span>--task_db_name<span class="w"> </span>ANALYTICS
-</span></code></pre></div>
-<p>如果没有指定 <code>--datasource</code>：</p>
-<ol>
-<li>若某个数据库设置了 <code>default: true</code>，则自动使用它</li>
-<li>若只配置了一个数据库，则自动使用该数据库</li>
-<li>若配置了多个数据库且都未设置默认值，则展示可选列表</li>
-</ol>
-<h2 id="_13">安全建议<a class="headerlink" href="#_13" title="Permanent link">&para;</a></h2>
-<h3 id="_14">凭证管理<a class="headerlink" href="#_14" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="c1"># 推荐：使用环境变量</span>
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_USERNAME}</span>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_PASSWORD}</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="c1"># 不推荐：直接硬编码凭证</span>
-</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="nt">username</span><span class="p">:</span><span class="w"> </span><span class="s">"actual_username"</span>
-</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="s">"actual_password"</span>
-</span></code></pre></div>
-<h2 id="_15">相关文档<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="../../adapters/db_adapters/">数据库适配器</a> - 安装 MySQL、Snowflake、StarRocks 等插件适配器</li>
-<li><a href="../semantic_layer/">语义层配置</a> - 配置语义适配器</li>
-<li><a href="../bi_platforms/">BI 平台配置</a> - 配置 Superset 或 Grafana</li>
-<li><a href="../schedulers/">调度器配置</a> - 配置 Airflow 等调度器</li>
-<li><a href="../../cli/other_commands/">CLI 命令</a> - 查看 <code>configure</code>、<code>init</code>、<code>service</code> 等完整命令说明</li>
+<li><a href="../../adapters/db_adapters/">数据库 adapter 架构</a></li>
+<li><a href="../sql_policy/">SQL policy 与部署级只读模式</a></li>
+<li><a href="../../plugin/introduction/">Plugin 系统</a></li>
+<li><a href="../../cli/reference/">CLI 参考</a></li>
 </ul>
 
 
@@ -5553,7 +5438,7 @@ DWS 默认证书并非按集群签发，任何出示同一 CA 所签证书的 en
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../web_tool/" class="md-footer__link md-footer__link--prev" aria-label="上一页: Web Tools">
+          <a href="../image_tool/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 读图">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -5563,20 +5448,20 @@ DWS 默认证书并非按集群签发，任何出示同一 CA 所签证书的 en
                 上一页
               </span>
               <div class="md-ellipsis">
-                Web Tools
+                读图
               </div>
             </div>
           </a>
         
         
           
-          <a href="../semantic_layer/" class="md-footer__link md-footer__link--next" aria-label="下一页: 语义层">
+          <a href="sqlite/" class="md-footer__link md-footer__link--next" aria-label="下一页: SQLite">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                语义层
+                SQLite
               </div>
             </div>
             <div class="md-footer__button md-icon">
