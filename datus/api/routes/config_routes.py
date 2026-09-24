@@ -148,6 +148,12 @@ async def get_agent_config_endpoint(
     )
 
 
+def _namespace(db_config: Any, attr: str) -> Optional[str]:
+    # Strings only: on a pydantic-shaped config, ``schema`` is BaseModel's method.
+    value = getattr(db_config, attr, None)
+    return value if isinstance(value, str) and value else None
+
+
 @router.get(
     "/config/datasources",
     response_model=Result[DatasourceListData],
@@ -176,9 +182,9 @@ async def list_datasources_endpoint(
             is_current=(name == current),
             # Namespaces, not credentials: a client needs them to open a session on
             # the datasource's configured schema instead of the first one it lists.
-            catalog=getattr(db_config, "catalog", None) or None,
-            database=getattr(db_config, "database", None) or None,
-            db_schema=getattr(db_config, "schema", None) or None,
+            catalog=_namespace(db_config, "catalog"),
+            database=_namespace(db_config, "database"),
+            db_schema=_namespace(db_config, "schema"),
         )
         for name, db_config in config.datasource_configs.items()
         if db_config is not None

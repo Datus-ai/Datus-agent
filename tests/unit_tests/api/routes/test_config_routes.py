@@ -108,6 +108,17 @@ async def test_list_datasources_carries_configured_namespaces():
 
 
 @pytest.mark.asyncio
+async def test_list_datasources_ignores_non_string_namespaces():
+    """A pydantic-shaped config exposes ``schema`` as a bound method; it must not reach the wire."""
+    svc = _mock_svc(datasources={"pg": SimpleNamespace(type="postgresql", database="app", schema=lambda: None)})
+
+    result = await list_datasources_endpoint(svc)
+
+    assert result.data.datasources[0].database == "app"
+    assert result.data.datasources[0].db_schema is None
+
+
+@pytest.mark.asyncio
 async def test_list_datasources_unwraps_an_enum_type():
     """`DbConfig.type` is an enum at runtime; the wire form must be its value."""
     svc = _mock_svc(datasources={"lake": SimpleNamespace(type=SimpleNamespace(value="duckdb"))})
