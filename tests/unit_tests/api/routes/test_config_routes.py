@@ -78,7 +78,44 @@ async def test_list_datasources_carries_no_credentials():
     serialized = result.data.model_dump_json()
     for secret in ("s3cret", "pk-pass", "user:s3cret"):
         assert secret not in serialized
-    assert set(result.data.datasources[0].model_dump()) == {"name", "type", "is_current"}
+    assert set(result.data.datasources[0].model_dump()) == {
+        "name",
+        "type",
+        "is_current",
+        "catalog",
+        "database",
+        "db_schema",
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_carries_configured_namespaces():
+    """A client opening a session must land on the configured schema, not the first one listed."""
+    svc = _mock_svc(
+        datasources={
+            "aviation": SimpleNamespace(type="postgresql", catalog="", database="app", schema="aviation"),
+            "sr": SimpleNamespace(type="starrocks", catalog="default_catalog", database="ods", schema=""),
+        },
+        current_datasource="aviation",
+    )
+
+    result = await list_datasources_endpoint(svc)
+
+    assert [(d.name, d.catalog, d.database, d.db_schema) for d in result.data.datasources] == [
+        ("aviation", None, "app", "aviation"),
+        ("sr", "default_catalog", "ods", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_datasources_ignores_non_string_namespaces():
+    """A pydantic-shaped config exposes ``schema`` as a bound method; it must not reach the wire."""
+    svc = _mock_svc(datasources={"pg": SimpleNamespace(type="postgresql", database="app", schema=lambda: None)})
+
+    result = await list_datasources_endpoint(svc)
+
+    assert result.data.datasources[0].database == "app"
+    assert result.data.datasources[0].db_schema is None
 
 
 @pytest.mark.asyncio
