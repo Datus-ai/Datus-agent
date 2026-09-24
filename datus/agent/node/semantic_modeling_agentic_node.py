@@ -252,7 +252,9 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         """Allow the optional planning skill to persist a plan outside the model file."""
         from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 
-        self.semantic_plan_file_tool = SemanticPlanFileTools(self._resolve_workspace_root())
+        # Semantic models are authored under project_root even when a VS Code
+        # request renders "." as its prompt-side workspace hint.
+        self.semantic_plan_file_tool = SemanticPlanFileTools(self.agent_config.project_root)
         self.tools.extend(self.semantic_plan_file_tool.available_tools())
 
     def _setup_generation_tools(self):

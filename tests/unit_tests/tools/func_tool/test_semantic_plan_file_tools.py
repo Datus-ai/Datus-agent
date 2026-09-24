@@ -7,6 +7,8 @@
 import json
 import re
 
+import pytest
+
 from datus.tools.func_tool.semantic_plan_file_tools import SemanticPlanFileTools
 
 
@@ -40,6 +42,19 @@ def test_rejects_unsafe_name_and_invalid_json_without_overwriting(tmp_path):
     assert tool.write_semantic_model_plan_file("../subject", "{}").success == 0
     assert tool.write_semantic_model_plan_file("sales_model", "not json").success == 0
     assert tool.write_semantic_model_plan_file("sales_model", "[]").success == 0
+    assert json.loads(saved.read_text()) == {"summary": "first"}
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_rejects_non_finite_numbers_without_overwriting(tmp_path, number):
+    tool = SemanticPlanFileTools(tmp_path)
+    good = tool.write_semantic_model_plan_file("sales_model", '{"summary":"first"}')
+    saved = tmp_path / good.result["path"]
+
+    result = tool.write_semantic_model_plan_file("sales_model", f'{{"score":{number}}}')
+
+    assert result.success == 0
+    assert "valid JSON" in result.error
     assert json.loads(saved.read_text()) == {"summary": "first"}
 
 

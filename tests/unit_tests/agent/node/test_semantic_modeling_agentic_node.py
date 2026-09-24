@@ -6,6 +6,7 @@
 
 import hashlib
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -99,6 +100,25 @@ def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_confi
     assert "Use a derived filter metric" in prompt
     assert "Use a parameterized metric only" in prompt
     assert "active contract explicitly permits" in prompt
+
+
+def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_llm_create, tmp_path, monkeypatch):
+    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
+
+    daemon_cwd = tmp_path / "daemon"
+    daemon_cwd.mkdir()
+    monkeypatch.chdir(daemon_cwd)
+    real_agent_config._client_source = "vscode"
+    _set_adapter(real_agent_config, "dosi")
+
+    node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+    assert node._resolve_workspace_root() == "."
+
+    result = node.semantic_plan_file_tool.write_semantic_model_plan_file("sales_model", '{"summary":"plan"}')
+
+    assert result.success == 1
+    assert (Path(real_agent_config.project_root) / result.result["path"]).is_file()
+    assert not (daemon_cwd / result.result["path"]).exists()
 
 
 def test_semantic_modeling_db_tools_reject_writes_even_with_mutable_datasource(

@@ -15,6 +15,10 @@ from datus.storage.semantic_model.artifact_file import atomic_write_text, path_m
 from datus.tools.func_tool.base import FuncToolResult
 
 
+def _reject_non_finite_number(value: str):
+    raise ValueError(f"{value} is not valid JSON")
+
+
 class SemanticPlanFileTools:
     """Store a reviewable plan without validating or approving its design."""
 
@@ -42,11 +46,15 @@ class SemanticPlanFileTools:
         if not isinstance(model_name, str) or not self._MODEL_NAME.fullmatch(model_name):
             return FuncToolResult(success=0, error="model_name must be a simple semantic-model name")
         try:
-            plan = json.loads(plan_json)
-        except (TypeError, json.JSONDecodeError) as exc:
+            plan = json.loads(plan_json, parse_constant=_reject_non_finite_number)
+        except (TypeError, ValueError) as exc:
             return FuncToolResult(success=0, error=f"plan_json must be valid JSON: {exc}")
         if not isinstance(plan, dict):
             return FuncToolResult(success=0, error="plan_json must be a JSON object")
+        try:
+            content = json.dumps(plan, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+        except (TypeError, ValueError) as exc:
+            return FuncToolResult(success=0, error=f"plan_json must be valid JSON: {exc}")
 
         plan_id = self._plan_ids.get(model_name)
         if plan_id is None:
@@ -58,7 +66,7 @@ class SemanticPlanFileTools:
             return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
         try:
             with path_mutation_lock(target):
-                atomic_write_text(target, json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+                atomic_write_text(target, content)
         except OSError as exc:
             return FuncToolResult(success=0, error=f"Could not write semantic plan: {exc}")
         return FuncToolResult(result={"path": relative_path.as_posix()})
