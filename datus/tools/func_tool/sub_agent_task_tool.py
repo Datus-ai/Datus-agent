@@ -331,6 +331,10 @@ class SubAgentTaskTool:
             return FuncToolResult(success=0, error=self._missing_parameter_retry("type"))
         if not prompt:
             return FuncToolResult(success=0, error=self._missing_parameter_retry("prompt"))
+        # Some models fill an optional string with "" to mean "new session"; as a
+        # resume id it fails the format check and burns a turn on the retry.
+        if isinstance(session_id, str) and not session_id.strip():
+            session_id = None
 
         try:
             return await self._execute_node(
