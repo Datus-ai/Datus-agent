@@ -3498,6 +3498,37 @@ class AgenticNode(Node):
     # ``_build_error_result``.
     result_class: Any = None
 
+    def _apply_turn_db_context(self) -> None:
+        """Point the connector at this turn's catalog and schema.
+
+        The prompt already names ``user_input.db_schema`` as the authoritative
+        target, but unqualified SQL ran against the datasource's configured
+        schema — so a schema picked in the composer only reached the model. The
+        connector keeps this state in ContextVars, and each chat turn runs in its
+        own task (tools inherit it via ``asyncio.to_thread``), so it cannot leak
+        into another session or the next turn.
+        """
+        db_func_tool = getattr(self, "db_func_tool", None)
+        connector = getattr(db_func_tool, "connector", None) if db_func_tool is not None else None
+        if connector is None or not callable(getattr(connector, "switch_context", None)):
+            return
+        # A persistent native connection (Snowflake, Redshift, DuckDB, SQLite...)
+        # would get a live USE/SET that every session sharing it would see.
+        if hasattr(connector, "connection"):
+            return
+        # Not ``database``: some callers put the datasource key there, and on a
+        # PG-family connector that opens an engine to a database that does not exist.
+        catalog = getattr(self.input, "catalog", "") or ""
+        schema = getattr(self.input, "db_schema", "") or ""
+        if not (catalog or schema):
+            return
+        try:
+            connector.switch_context(catalog_name=catalog, schema_name=schema)
+        except Exception as e:
+            # A failed switch leaves the configured defaults in place, which is
+            # what every turn did before; never fail the turn over it.
+            logger.warning("Unable to apply turn db context: %s", e)
+
     async def execute_stream(
         self, action_history_manager: Optional[ActionHistoryManager] = None
     ) -> AsyncGenerator[ActionHistory, None]:
@@ -3554,6 +3585,8 @@ class AgenticNode(Node):
         )
         ahm.add_action(initial_action)
         yield initial_action
+
+        self._apply_turn_db_context()
 
         try:
             await self._before_stream(ctx)
