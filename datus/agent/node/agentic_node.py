@@ -3499,7 +3499,7 @@ class AgenticNode(Node):
     result_class: Any = None
 
     def _apply_turn_db_context(self) -> None:
-        """Point the connector at this turn's catalog/database/schema.
+        """Point the connector at this turn's catalog and schema.
 
         The prompt already names ``user_input.db_schema`` as the authoritative
         target, but unqualified SQL ran against the datasource's configured
@@ -3516,13 +3516,14 @@ class AgenticNode(Node):
         # would get a live USE/SET that every session sharing it would see.
         if hasattr(connector, "connection"):
             return
+        # Not ``database``: some callers put the datasource key there, and on a
+        # PG-family connector that opens an engine to a database that does not exist.
         catalog = getattr(self.input, "catalog", "") or ""
-        database = getattr(self.input, "database", "") or ""
         schema = getattr(self.input, "db_schema", "") or ""
-        if not (catalog or database or schema):
+        if not (catalog or schema):
             return
         try:
-            connector.switch_context(catalog_name=catalog, database_name=database, schema_name=schema)
+            connector.switch_context(catalog_name=catalog, schema_name=schema)
         except Exception as e:
             # A failed switch leaves the configured defaults in place, which is
             # what every turn did before; never fail the turn over it.

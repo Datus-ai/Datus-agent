@@ -22,6 +22,7 @@ from datus_db_core.base import BaseSqlConnector
 from datus_db_core.config import ConnectionConfig
 
 from datus.agent.node.agentic_node import AgenticNode
+from datus.schemas.action_bus import ActionBus
 from tests.unit_tests.agent.node.test_agentic_node_template import FakeAgenticNode, FakeInput, _ok_action, _StreamModel
 
 
@@ -60,11 +61,12 @@ def _node(connector, db_schema: str = "", database: str = "", catalog: str = "")
     )
 
 
-def test_applies_the_turn_schema_to_the_connector():
+def test_applies_the_turn_schema_but_not_the_database():
+    """``input.database`` can be a datasource key; switching it would target a missing database."""
     connector = _PooledConnector()
 
     async def turn():
-        AgenticNode._apply_turn_db_context(_node(connector, db_schema="public", database="app"))
+        AgenticNode._apply_turn_db_context(_node(connector, db_schema="public", database="aviation"))
         return connector.schema_name, connector.database_name
 
     assert asyncio.run(turn()) == ("public", "app")
@@ -168,6 +170,24 @@ async def test_execute_stream_applies_it_before_the_model_runs():
 
     async def turn():
         async for _ in node.execute_stream():
+            pass
+
+    await asyncio.create_task(turn())
+
+    assert model.schema_at_call == "public"
+
+
+@pytest.mark.asyncio
+async def test_holds_when_the_stream_is_pumped_through_the_action_bus():
+    """The API drives ``execute_stream`` via ``execute_stream_with_interactions`` → ``ActionBus.merge``."""
+    connector = _PooledConnector()
+    model = _RecordingModel(connector)
+    node = FakeAgenticNode(model)
+    node.db_func_tool = SimpleNamespace(connector=connector)
+    node.input = _DbInput(user_message="hi", db_schema="public")
+
+    async def turn():
+        async for _ in ActionBus().merge(node.execute_stream()):
             pass
 
     await asyncio.create_task(turn())
