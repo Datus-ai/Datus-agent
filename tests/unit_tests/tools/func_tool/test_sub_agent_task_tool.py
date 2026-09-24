@@ -2856,6 +2856,19 @@ class TestSessionPersistence:
         assert "gen_report" in result.error
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank", ["", "   "])
+    async def test_blank_session_id_starts_a_new_session(self, task_tool, blank):
+        """A model that sends session_id="" for a fresh run must not hit the resume path."""
+        node = _build_persistent_mock_node(session_id_to_assign="gen_sql_session_new12345")
+        with patch.object(task_tool, "_create_node", return_value=node) as create_node:
+            with patch.object(task_tool, "_build_node_input", return_value=Mock()):
+                result = await task_tool.task(type="gen_sql", prompt="x", session_id=blank)
+        assert result.success == 1
+        assert result.result["session_id"] == "gen_sql_session_new12345"
+        assert create_node.call_args.kwargs.get("session_id") is None
+        node.session_manager.session_exists.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_resume_invalid_format_returns_error(self, task_tool):
         """Path-traversal / illegal characters fail the session_id format check."""
         result = await task_tool.task(type="gen_sql", prompt="x", session_id="../etc/passwd")
