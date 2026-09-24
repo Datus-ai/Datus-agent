@@ -31,9 +31,15 @@ class TestProviderErrors:
         exc = _litellm(litellm.BadRequestError, DEEPSEEK_UNKNOWN_MODEL)
         assert classify_model_error(exc) == ErrorCode.MODEL_NOT_FOUND
 
-    def test_other_400_is_not_mistaken_for_an_unknown_model(self):
+    def test_other_400_is_left_unlabelled(self):
+        # Neither an unknown model nor anything else a host could act on: no
+        # code beats a guessed one, since hosts decide by the code alone.
         exc = _litellm(litellm.BadRequestError, "Invalid request: messages must not be empty")
-        assert classify_model_error(exc) == ErrorCode.MODEL_INVALID_RESPONSE
+        assert classify_model_error(exc) is None
+
+    def test_unmapped_status_is_left_unlabelled(self):
+        exc = _anthropic(anthropic.UnprocessableEntityError, 422, "Invalid parameter: temperature")
+        assert classify_model_error(exc) is None
 
     def test_rejected_key_is_authentication_error(self):
         exc = _litellm(litellm.AuthenticationError, "Incorrect API key provided: sk-stub")

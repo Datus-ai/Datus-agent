@@ -66,14 +66,17 @@ def classify_model_error(exc: BaseException) -> Optional[ErrorCode]:
         return None
 
     status = getattr(exc, "status_code", None)
-    if status == 400 and _UNKNOWN_MODEL.search(str(exc)):
-        return ErrorCode.MODEL_NOT_FOUND
-    if status == 429:
-        return ErrorCode.MODEL_QUOTA_EXCEEDED if _QUOTA.search(str(exc)) else ErrorCode.MODEL_RATE_LIMIT
-    if status in _BY_STATUS:
-        return _BY_STATUS[status]
+    if isinstance(status, int):
+        if status == 400 and _UNKNOWN_MODEL.search(str(exc)):
+            return ErrorCode.MODEL_NOT_FOUND
+        if status == 429:
+            return ErrorCode.MODEL_QUOTA_EXCEEDED if _QUOTA.search(str(exc)) else ErrorCode.MODEL_RATE_LIMIT
+        # Any other status (a 400 for another reason, 409, 422, ...) says too
+        # little to name: a host decides by the code alone, so a guessed one
+        # would be worse than none.
+        return _BY_STATUS.get(status)
 
-    # No status (connection, timeout, TLS) or an unmapped one: fall back to the
-    # message-based rules the retry path already uses.
+    # No status (connection, timeout, TLS): the message-based rules the retry
+    # path already uses.
     code, _ = classify_openai_compatible_error(exc)
     return code
