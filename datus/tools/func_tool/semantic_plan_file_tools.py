@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 from datus.storage.semantic_model.artifact_file import atomic_write_text, path_mutation_lock
@@ -28,6 +29,7 @@ class SemanticPlanFileTools:
     def __init__(self, project_root: str | Path):
         self.project_root = Path(project_root).resolve()
         self._plan_ids: dict[str, str] = {}
+        self._write_lock = Lock()
 
     def available_tools(self):
         from datus.tools.func_tool import trans_to_function_tool
@@ -56,17 +58,18 @@ class SemanticPlanFileTools:
         except (TypeError, ValueError) as exc:
             return FuncToolResult(success=0, error=f"plan_json must be valid JSON: {exc}")
 
-        plan_id = self._plan_ids.get(model_name)
-        if plan_id is None:
-            plan_id = uuid4().hex
-            self._plan_ids[model_name] = plan_id
-        relative_path = Path(".datus/semantic-model-plans") / plan_id / "semantic-model-plan.json"
-        target = self.project_root / relative_path
-        if not target.resolve(strict=False).is_relative_to(self.project_root):
-            return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
-        try:
-            with path_mutation_lock(target):
-                atomic_write_text(target, content)
-        except OSError as exc:
-            return FuncToolResult(success=0, error=f"Could not write semantic plan: {exc}")
-        return FuncToolResult(result={"path": relative_path.as_posix()})
+        with self._write_lock:
+            plan_id = self._plan_ids.get(model_name)
+            if plan_id is None:
+                plan_id = uuid4().hex
+                self._plan_ids[model_name] = plan_id
+            relative_path = Path(".datus/semantic-model-plans") / plan_id / "semantic-model-plan.json"
+            target = self.project_root / relative_path
+            if not target.resolve(strict=False).is_relative_to(self.project_root):
+                return FuncToolResult(success=0, error="Semantic plan path must stay inside the project workspace")
+            try:
+                with path_mutation_lock(target):
+                    atomic_write_text(target, content)
+            except OSError as exc:
+                return FuncToolResult(success=0, error=f"Could not write semantic plan: {exc}")
+            return FuncToolResult(result={"path": relative_path.as_posix()})

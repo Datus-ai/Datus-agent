@@ -6,6 +6,10 @@
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
+from time import sleep
+from uuid import UUID
 
 import pytest
 
@@ -68,6 +72,36 @@ def test_revisions_reuse_plan_id_but_different_models_do_not(tmp_path):
     assert other.result["path"] != first.result["path"]
     assert json.loads((tmp_path / first.result["path"]).read_text()) == {"summary": "revised"}
     assert json.loads((tmp_path / other.result["path"]).read_text()) == {"summary": "other"}
+
+
+def test_concurrent_first_writes_share_plan_id(tmp_path, monkeypatch):
+    tool = SemanticPlanFileTools(tmp_path)
+    start = Barrier(2)
+    call_lock = Lock()
+    uuid_calls = 0
+
+    def slow_uuid4():
+        nonlocal uuid_calls
+        with call_lock:
+            uuid_calls += 1
+            value = uuid_calls
+        sleep(0.05)
+        return UUID(int=value)
+
+    monkeypatch.setattr("datus.tools.func_tool.semantic_plan_file_tools.uuid4", slow_uuid4)
+
+    def write(summary):
+        start.wait(timeout=2)
+        return tool.write_semantic_model_plan_file("sales_model", json.dumps({"summary": summary}))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = executor.map(write, ("first", "second"))
+
+    assert first.success == second.success == 1
+    assert first.result["path"] == second.result["path"]
+    assert uuid_calls == 1
+    revision = tool.write_semantic_model_plan_file("sales_model", '{"summary":"revised"}')
+    assert revision.result["path"] == first.result["path"]
 
 
 def test_rejects_symlinked_plan_directory_outside_workspace(tmp_path):
