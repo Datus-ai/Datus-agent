@@ -6,7 +6,7 @@ chat-history retrieval can share the same conversion logic.
 """
 
 import json
-from typing import Any, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from datus.agent.node.compact_archive import parse_archived_marker
 from datus.api.models.cli_models import (
@@ -271,10 +271,19 @@ def _build_thinking_content(action: ActionHistory) -> Optional[List[IMessageCont
 
 
 def _build_error_content(action: ActionHistory) -> List[IMessageContent]:
-    """Build content for failed action event, extracting error from BaseResult format."""
+    """Build content for failed action event, extracting error from BaseResult format.
+
+    The output's ``error_code`` (an ``ErrorCode`` name such as
+    ``MODEL_NOT_FOUND``) goes out as ``errorCode`` when the node classified the
+    failure, so a host can offer the right fix without parsing the provider's
+    message.
+    """
     output = action.output if isinstance(action.output, dict) else {}
     error_message = output.get("error") or action.messages or "Unknown error"
-    return [IMessageContent(type="error", payload={"content": error_message})]
+    payload: Dict[str, Any] = {"content": error_message}
+    if output.get("error_code"):
+        payload["errorCode"] = output["error_code"]
+    return [IMessageContent(type="error", payload=payload)]
 
 
 def _build_interaction_content(action: ActionHistory) -> List[IMessageContent]:

@@ -669,6 +669,41 @@ class TestExecuteStreamGenReportError:
         last = actions[-1]
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
+        assert "error_code" not in last.output
+
+    @pytest.mark.asyncio
+    async def test_execute_stream_error_carries_model_error_code(self, real_agent_config, mock_llm_create):
+        """A provider rejecting the model name is labelled, so the host can offer to fix the connection."""
+        import litellm
+
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        async def _raise_error(*args, **kwargs):
+            raise litellm.BadRequestError(
+                message="The supported API model names are deepseek-flash, deepseek-v4-pro, "
+                "but you passed deepseek-v4-pro-0831.",
+                model="deepseek-v4-pro-0831",
+                llm_provider="deepseek",
+            )
+            yield  # noqa
+
+        node = GenReportAgenticNode(
+            node_id="report_model_error",
+            description="Model error test",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+        )
+        node.input = GenReportNodeInput(user_message="Analyze data")
+        mock_llm_create.generate_with_tools_stream = _raise_error
+
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+        last = actions[-1]
+        assert last.action_type == "error"
+        assert last.status == ActionStatus.FAILED
+        assert last.output["error_code"] == "MODEL_NOT_FOUND"
+        assert "you passed deepseek-v4-pro-0831" in last.output["error"]
 
 
 @pytest.mark.acceptance

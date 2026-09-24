@@ -611,6 +611,18 @@ class TestBuildErrorContent:
         contents = _build_error_content(action)
         assert contents[0].payload["content"] == "Unknown error"
 
+    def test_passes_error_code_through(self):
+        """A classified failure carries its ErrorCode name to the host."""
+        action = _make_action(output={"error": "model rejected", "error_code": "MODEL_NOT_FOUND"})
+        contents = _build_error_content(action)
+        assert contents[0].payload == {"content": "model rejected", "errorCode": "MODEL_NOT_FOUND"}
+
+    def test_omits_error_code_when_unclassified(self):
+        """No code key at all rather than a null one."""
+        action = _make_action(output={"error": "tool crashed"})
+        contents = _build_error_content(action)
+        assert contents[0].payload == {"content": "tool crashed"}
+
     def test_non_dict_output_uses_messages(self):
         """Non-dict output falls back to messages or default."""
         action = _make_action(output="raw", messages="Msg fallback")

@@ -3687,9 +3687,10 @@ class AgenticNode(Node):
 
             error_result = self._build_error_result(exc, ctx)
             self.result = error_result
+            error_output = self._error_output(error_result, exc)
             ahm.update_current_action(
                 status=ActionStatus.FAILED,
-                output=error_result.model_dump(),
+                output=error_output,
                 messages=f"Error: {error_msg}",
             )
             error_action = ActionHistory.create_action(
@@ -3697,7 +3698,7 @@ class AgenticNode(Node):
                 action_type="error",
                 messages=f"{node_name} interaction failed: {error_msg}",
                 input_data=self.input.model_dump(),
-                output_data=error_result.model_dump(),
+                output_data=error_output,
                 status=ActionStatus.FAILED,
             )
             ahm.add_action(error_action)
@@ -4605,6 +4606,22 @@ class AgenticNode(Node):
             if tokens > 0:
                 return tokens
         return 0
+
+    @staticmethod
+    def _error_output(error_result: BaseResult, exc: BaseException) -> Dict[str, Any]:
+        """The failed action's output: the error result, plus the model error code if any.
+
+        The code rides on the action rather than on ``BaseResult`` (which
+        forbids extra fields and is dumped by every node), and is what lets a
+        host tell a wrong model name or a rejected key from any other failure.
+        """
+        from datus.models.model_error import classify_model_error
+
+        output = error_result.model_dump()
+        code = classify_model_error(exc)
+        if code is not None:
+            output["error_code"] = code.name
+        return output
 
     @staticmethod
     def _format_execution_error(exc: BaseException) -> str:
