@@ -2786,3 +2786,88 @@ class TestDerivedSessionsDoNotInheritHistoryReadings:
             new_id = sm_custom.rewind_session(source_id, up_to_user_turn=1)
 
         assert sm_custom.get_session_info(new_id)["first_user_message"] == "How many buses ran today?"
+
+
+# ===========================================================================
+# TestReplayedToolStatus
+# ===========================================================================
+
+
+class TestReplayedToolStatus:
+    """A resumed transcript must classify a tool result the way the live turn did.
+
+    Function tools signal failure by returning ``FuncToolResult(success=0)``
+    rather than raising, so replay cannot infer the outcome from "the call
+    returned". Recording every result as SUCCESS renders a failed call with a
+    success mark and an empty payload — indistinguishable from a call that
+    legitimately found nothing.
+    """
+
+    @pytest.mark.parametrize(
+        "payload, expected",
+        [
+            # The shape that motivated this: a paging bound arrived as a string,
+            # the adapter raised, and the tool returned the error as a value.
+            ({"success": 0, "error": "Failed to list metrics: slice indices must be integers"}, "failed"),
+            ({"success": False, "error": "boom"}, "failed"),
+            ({"error": "boom"}, "failed"),
+            # A successful call that found nothing is NOT a failure.
+            ({"success": 1, "result": {"items": [], "total": 0}}, "success"),
+            ({"error": ""}, "success"),
+            # Payloads without the key carry no evidence either way.
+            ({"result": "plain text"}, "success"),
+            ({}, "success"),
+        ],
+    )
+    def test_status_is_read_from_the_result(self, payload, expected):
+        from datus.models.session_manager import tool_output_action_status
+
+        assert tool_output_action_status(payload).value == expected
+
+    def test_native_tool_result_replay_marks_a_failed_call_failed(self, sm):
+        """End to end on the Claude-native replay path."""
+        in_flight = ActionHistory(
+            action_id="toolu_1",
+            role=ActionRole.TOOL,
+            messages="Tool call: list_metrics",
+            action_type="list_metrics",
+            input={"function_name": "list_metrics", "arguments": '{"limit": "200", "offset": "0"}'},
+            output=None,
+            status=ActionStatus.PROCESSING,
+        )
+        actions = [in_flight]
+
+        sm._attach_native_tool_result(
+            actions,
+            "toolu_1",
+            json.dumps({"success": 0, "error": "Failed to list metrics: slice indices must be integers"}),
+            None,
+        )
+
+        assert len(actions) == 2
+        completion = actions[-1]
+        assert completion.action_type == "list_metrics"
+        assert completion.status == ActionStatus.FAILED
+        assert completion.output["success"] == 0
+
+    def test_native_tool_result_replay_keeps_an_empty_success_successful(self, sm):
+        """An empty result set is a successful call, not a failed one."""
+        in_flight = ActionHistory(
+            action_id="toolu_2",
+            role=ActionRole.TOOL,
+            messages="Tool call: list_metrics",
+            action_type="list_metrics",
+            input={"function_name": "list_metrics", "arguments": "{}"},
+            output=None,
+            status=ActionStatus.PROCESSING,
+        )
+        actions = [in_flight]
+
+        sm._attach_native_tool_result(
+            actions,
+            "toolu_2",
+            json.dumps({"success": 1, "result": {"items": [], "total": 0}}),
+            None,
+        )
+
+        assert actions[-1].status == ActionStatus.SUCCESS
