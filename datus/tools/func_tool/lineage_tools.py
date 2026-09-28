@@ -122,7 +122,8 @@ class LineageTools:
             paths: Files or glob patterns relative to the workspace, e.g. ["etl/**/*.sql", "dags/*.py"].
                 .sql files are parsed whole; .py files contribute only literal triple-quoted SQL strings.
             sections: Any of "joins", "rules", "comments" in addition to lineage (always returned).
-                Defaults to all. Request fewer sections to keep the result small.
+                Defaults to all — prefer one call with every section; to shrink the result, lower max_items
+                or narrow paths (lineage is repeated in every call, so splitting by section costs more).
             datasource: Datasource whose dialect and default database are used. Defaults to the active one.
             dialect: SQL dialect of the files (e.g. "hive", "starrocks"), overriding the datasource's —
                 use when the ETL scripts target a different engine than the connected datasource.

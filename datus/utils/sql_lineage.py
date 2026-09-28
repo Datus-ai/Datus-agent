@@ -645,19 +645,8 @@ def _owned_by(node: exp.Expression, select: exp.Select) -> bool:
     return node.find_ancestor(exp.Select) is select
 
 
-def _rules_in_scope(
-    scope: Scope,
-    default_database: str,
-    result: ExtractionResult,
-    file: str,
-    line: int,
-    target: Optional[str],
-    window: List[str],
-) -> None:
-    select = scope.expression
-    if not isinstance(select, exp.Select):
-        return
-
+def _rule_clauses(select: exp.Select) -> List[Tuple[exp.Expression, str, bool]]:
+    """``(condition, clause_name, include_or)`` for every condition owned by ``select``."""
     clauses: List[Tuple[exp.Expression, str, bool]] = []
     where = select.args.get("where")
     if where is not None:
@@ -677,16 +666,46 @@ def _rules_in_scope(
     for cond in select.find_all(exp.If):
         if _owned_by(cond, select) and cond.parent is not None and not isinstance(cond.parent, exp.Case):
             clauses.append((cond.this, "CASE", True))
+    return clauses
 
-    for clause, name, include_or in clauses:
+
+def _window_in_scope(scope: Scope) -> List[str]:
+    """Templated constant predicates (``month >= '${month}'``) bounding an incremental load.
+
+    Part of lineage (they decide ``load_mode``), so collected whichever sections are requested.
+    """
+    select = scope.expression
+    if not isinstance(select, exp.Select):
+        return []
+    window = []
+    for clause, _, include_or in _rule_clauses(select):
+        for atom, negated in _atoms(clause, include_or):
+            test = _constant_test(atom, negated)
+            if test is not None and _TEMPLATE_MARK in test[1]:
+                window.append(_restore_template(f"{test[0].name} {test[1]}"))
+    return window
+
+
+def _rules_in_scope(
+    scope: Scope,
+    default_database: str,
+    result: ExtractionResult,
+    file: str,
+    line: int,
+    target: Optional[str],
+) -> None:
+    select = scope.expression
+    if not isinstance(select, exp.Select):
+        return
+
+    for clause, name, include_or in _rule_clauses(select):
         for atom, negated in _atoms(clause, include_or):
             test = _constant_test(atom, negated)
             if test is None:
                 continue
             column, text = test
             if _TEMPLATE_MARK in text:
-                window.append(_restore_template(f"{column.name} {text}"))
-                continue
+                continue  # an incremental-load window, reported on the lineage edge
             result.rule_predicates += 1
             origin = _single_origin(scope, column, default_database)
             if origin is None:
@@ -987,7 +1006,11 @@ def _extract_fragment(
         target_name = table_full_name(target, default_database) if target is not None else None
         statement_spans.append((span_start, target_name))
         window: List[str] = []
-        for scope in _iter_scopes(query) if sections & {"joins", "rules"} else ():
+        # A write needs its scopes for the incremental window even when no section is requested.
+        walk_scopes = target is not None or bool(sections & {"joins", "rules"})
+        for scope in _iter_scopes(query) if walk_scopes else ():
+            if target is not None:
+                window.extend(_window_in_scope(scope))
             if "joins" in sections:
                 for left_table, right_table, keys, join_type, transforms in _join_edges_in_scope(
                     scope, default_database, result
@@ -1005,7 +1028,7 @@ def _extract_fragment(
                         )
                     )
             if "rules" in sections:
-                _rules_in_scope(scope, default_database, result, fragment.file, line, target_name, window)
+                _rules_in_scope(scope, default_database, result, fragment.file, line, target_name)
         if target is None:
             result.queries += 1
             continue

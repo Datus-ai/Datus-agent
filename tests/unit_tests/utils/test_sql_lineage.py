@@ -108,6 +108,17 @@ def test_load_mode_detection():
     assert plain.load_mode == "insert"
 
 
+@pytest.mark.parametrize("sections", [[], ["joins"], ["comments"], ["rules"], None])
+def test_lineage_does_not_depend_on_requested_sections(sections):
+    sql = (
+        "INSERT INTO dw.t SELECT s.a FROM (SELECT a, month FROM dw.s) s "
+        "LEFT JOIN dw.d d ON s.a = d.a WHERE s.month >= '${month}'"
+    )
+    edge = edge_map(run(sql, sections=sections))["dw.t"]
+    assert edge.load_mode == "incremental"
+    assert edge.window == ["month >= '${month}'"]
+
+
 # ---------------------------------------------------------------- templating
 
 

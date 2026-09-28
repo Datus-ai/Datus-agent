@@ -6,7 +6,7 @@ tags:
   - workspace
   - project
   - lineage
-version: 4.6.1
+version: 4.6.2
 user_invocable: true
 ---
 
@@ -59,9 +59,8 @@ The user may invoke `/init <free-text hints>`; hints arrive as "Additional conte
 
 Skip this step when there are no SQL scripts in scope.
 
-1. Call `extract_sql_lineage(paths=[<in-scope SQL globs>], sections=["joins", "rules"])`. Pass `dialect` when the scripts target a different engine than the datasource.
-2. Call it again with `sections=["comments"]` (kept separate to bound result size).
-3. **Database name mapping.** `stats.databases_referenced` lists the databases the scripts write to and read from. If they differ from the datasource's database, or table-name case differs, match script names against `list_tables` (case-insensitive) and record the mapping once in AGENTS.md.
+1. Call `extract_sql_lineage(paths=[<in-scope SQL globs>])` once — it returns every section. Pass `dialect` when the scripts target a different engine than the datasource. If the result is too large, lower `max_items` or narrow `paths` rather than splitting by `sections`: every result stays in context, so a split only repeats the lineage.
+2. **Database name mapping.** `stats.databases_referenced` lists the databases the scripts write to and read from. If they differ from the datasource's database, or table-name case differs, match script names against `list_tables` (case-insensitive) and record the mapping once in AGENTS.md.
 
 Read the result as leads, then open only what it points at:
 
