@@ -1307,7 +1307,7 @@ class TestExplorerServiceOSIAuthoring:
 
         assert kb_deleted == []
         assert (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text() == before
-        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"]) is not None
+        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"])["name"] == "daily"
 
     async def test_delete_metric_forgets_the_file_digest(self, real_agent_config, tmp_path, monkeypatch):
         """Reverting the file afterwards must read as a change, not as already projected."""
@@ -1487,7 +1487,7 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is False
         assert "disk full" in result.errorMessage
         assert kb_deleted == []
-        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"]) is not None
+        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"])["name"] == "daily"
 
     async def test_delete_directory_with_metrics_is_query_only_without_dosi(
         self, real_agent_config, tmp_path, monkeypatch
@@ -1504,7 +1504,7 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is False
         assert "query-only" in result.errorMessage
         assert kb_deleted == []
-        assert svc.subject_tree_store.get_node_by_path(["operations"]) is not None
+        assert svc.subject_tree_store.get_node_by_path(["operations"])["name"] == "operations"
 
     @pytest.mark.parametrize("adapter_type", ["dosi", "metricflow"])
     async def test_delete_directory_rejects_out_of_scope_metrics(
@@ -1534,7 +1534,7 @@ class TestExplorerServiceOSIAuthoring:
         assert "scope" in result.errorMessage
         assert kb_deleted == []
         assert (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text() == before
-        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"]) is not None
+        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"])["name"] == "daily"
 
 
 @pytest.mark.asyncio

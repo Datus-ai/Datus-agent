@@ -1705,12 +1705,10 @@ semantic_model:
             result = generation_tools.sync_osi_to_db(str(osi_file), **kwargs)
 
         assert result["success"] is True
-        assert record.called is recorded
+        recorded_paths = [list(call.args[2]) for call in record.call_args_list]
+        forgotten_paths = [list(call.args[2]) for call in forget.call_args_list]
         # A partial projection must not leave the last full digest vouching for the KB.
-        assert forget.called is not recorded
-        if recorded:
-            (_config, _datasource, digests) = record.call_args.args
-            assert list(digests) == [str(osi_file)]
+        assert (recorded_paths, forgotten_paths) == (([[str(osi_file)]], []) if recorded else ([], [[str(osi_file)]]))
 
     def test_sync_osi_to_db_reconciles_empty_metric_collection(self, generation_tools, tmp_path):
         osi_file = tmp_path / "model.yml"

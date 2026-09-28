@@ -113,9 +113,15 @@ def project(real_agent_config):
 
 
 def _reconcile(agent_config, paths=()):
+    return _reconcile_with(agent_config, _fake_sync, paths)
+
+
+def _reconcile_with(agent_config, make_sync, paths=()):
+    """Reconcile with ``make_sync(config)`` standing in for each datasource's ``sync_osi_to_db``."""
+
     class _Tools:
         def __init__(self, agent_config, **_kwargs):
-            self.sync_osi_to_db = _fake_sync(agent_config)
+            self.sync_osi_to_db = make_sync(agent_config)
 
     with patch("datus.tools.func_tool.generation_tools.GenerationTools", _Tools):
         return reconcile_semantic_artifacts(agent_config, paths)
@@ -157,8 +163,8 @@ def test_new_files_are_projected_per_datasource(project):
     agent_config, root = project
     _seed(agent_config, root)
 
-    assert _node(agent_config, ["sales", "orders"]) is not None
-    assert _node(agent_config, ["ops"], OTHER) is not None
+    assert _node(agent_config, ["sales", "orders"])["name"] == "orders"
+    assert _node(agent_config, ["ops"], OTHER)["name"] == "ops"
     # The other datasource's metric landed in its own scope, not the active one.
     assert _node(agent_config, ["ops"]) is None
 
@@ -174,7 +180,7 @@ def test_deleting_a_model_file_drops_its_metrics_and_emptied_directory(project):
     assert _metric_names(agent_config) == {"user_count"}
     assert _node(agent_config, ["sales", "orders"]) is None
     # ``sales`` still holds ``users``.
-    assert _node(agent_config, ["sales", "users"]) is not None
+    assert _node(agent_config, ["sales", "users"])["name"] == "users"
     assert result.removed_subject_paths == [["sales", "orders"]]
 
 
@@ -214,7 +220,7 @@ def test_editing_a_file_removes_dropped_metrics_and_moves_the_rest(project):
 
     assert result.synced_files == [str(orders.resolve())]
     assert _metric_names(agent_config) == {"order_count", "user_count"}
-    assert _node(agent_config, ["finance"]) is not None
+    assert _node(agent_config, ["finance"])["name"] == "finance"
     assert _node(agent_config, ["sales", "orders"]) is None
 
 
@@ -227,7 +233,7 @@ def test_renaming_a_file_keeps_its_metrics(project):
     result = _reconcile(agent_config, ["subject/semantic_models/california_schools/orders_v2.yml"])
 
     assert _metric_names(agent_config) == {"order_count", "order_total", "user_count"}
-    assert _node(agent_config, ["sales", "orders"]) is not None
+    assert _node(agent_config, ["sales", "orders"])["name"] == "orders"
     assert result.removed_subject_paths == []
 
 
@@ -242,8 +248,8 @@ def test_directories_that_were_already_empty_are_kept(project):
     _reconcile(agent_config)
 
     # ``orders`` lost its metrics but still holds a child someone created.
-    assert _node(agent_config, ["sales", "orders", "drafts"]) is not None
-    assert _node(agent_config, ["handmade"]) is not None
+    assert _node(agent_config, ["sales", "orders", "drafts"])["name"] == "drafts"
+    assert _node(agent_config, ["handmade"])["name"] == "handmade"
 
 
 def test_a_file_under_an_unbound_datasource_is_reported(project):
@@ -346,32 +352,36 @@ def test_rows_recorded_outside_the_models_root_are_left_alone(project, tmp_path)
     assert _metric_names(agent_config) == {"order_count"}
 
 
-def test_concurrent_reconciles_sync_a_changed_file_once(project):
-    """Every open browser reconciles on the same fs:changed event."""
-    import threading
-    import time
+def test_a_sync_that_lands_while_waiting_for_the_lock_is_not_repeated(project, monkeypatch):
+    """Every open browser reconciles on the same fs:changed event. One that
+    finds the file already projected once it holds the lock must skip it."""
+    from contextlib import contextmanager
+
+    from datus.storage.semantic_model import artifact_file
 
     agent_config, root = project
     orders, _, _ = _seed(agent_config, root)
     orders.write_text(_model("orders", {"order_count": ["sales", "orders"]}))
 
     calls = []
-    sync = _fake_sync(agent_config)
 
-    def slow_sync(yaml_path, **kwargs):
-        calls.append(yaml_path)
-        time.sleep(0.2)
-        return sync(yaml_path, **kwargs)
+    def counting_sync(config):
+        sync = _fake_sync(config)
+        return lambda yaml_path, **kw: calls.append(yaml_path) or sync(yaml_path, **kw)
 
-    class _Tools:
-        def __init__(self, agent_config, **_kwargs):
-            self.sync_osi_to_db = slow_sync
+    real_lock = artifact_file.semantic_artifact_lock
+    raced = []
 
-    with patch("datus.tools.func_tool.generation_tools.GenerationTools", _Tools):
-        threads = [threading.Thread(target=reconcile_semantic_artifacts, args=(agent_config,)) for _ in range(3)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+    @contextmanager
+    def lock_after_a_competing_reconcile(path):
+        # The competing request wins the race: it projects the file first.
+        if not raced:
+            raced.append(path)
+            _reconcile_with(agent_config, counting_sync)
+        with real_lock(path):
+            yield
+
+    monkeypatch.setattr(artifact_file, "semantic_artifact_lock", lock_after_a_competing_reconcile)
+    _reconcile_with(agent_config, counting_sync)
 
     assert calls == [str(orders.resolve())]
