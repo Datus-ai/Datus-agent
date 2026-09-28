@@ -2039,6 +2039,7 @@ class TestChatAgenticNodeHonoursConfiguredTools:
             "filesystem_tools": node.filesystem_func_tool is not None,
             "memory_tools": node.memory_func_tool is not None,
             "bash_tools": node.bash_tool is not None,
+            "lineage_tools": node.lineage_tools is not None,
         }
 
     def test_no_tools_key_mounts_everything(self, real_agent_config, mock_llm_create):
@@ -2079,6 +2080,23 @@ class TestChatAgenticNodeHonoursConfiguredTools:
         assert names, "a db-only node should still expose the db tools"
         for excluded in ("read_file", "write_file", "glob", "bash"):
             assert excluded not in names
+
+    def test_lineage_tool_is_mounted_by_default_and_survives_a_rebuild(self, real_agent_config, mock_llm_create):
+        """`/init` relies on the main chat agent having `extract_sql_lineage`; a
+        task-database switch rebuilds the tool list, which must not drop it."""
+        node = self._node(real_agent_config)
+
+        assert "extract_sql_lineage" in {tool.name for tool in node.tools}
+        node._rebuild_tools()
+        assert "extract_sql_lineage" in {tool.name for tool in node.tools}
+
+    def test_lineage_tool_follows_the_configured_families(self, real_agent_config, mock_llm_create):
+        excluded = self._node(real_agent_config, tools="db_tools.*")
+        assert excluded.lineage_tools is None
+        assert "extract_sql_lineage" not in {tool.name for tool in excluded.tools}
+
+        selected = self._node(real_agent_config, tools="lineage_tools.*")
+        assert [tool.name for tool in selected.tools if tool.name == "extract_sql_lineage"] == ["extract_sql_lineage"]
 
     def test_bash_is_dropped_even_though_init_built_it(self, real_agent_config, mock_llm_create):
         """`bash_tool` is created in `AgenticNode.__init__`, not in

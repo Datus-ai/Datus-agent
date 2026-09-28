@@ -1,117 +1,215 @@
 ---
 name: init
-description: Lightweight project initialization — optionally scoped to specific files / tables / datasources / domains. Infer the project goal and in-scope datasources, scan the in-scope file tree and database metadata (db/table/desc/sample), classify into business domains, then write an AGENTS.md inventory skeleton plus the cheap file-based stores (atomic facts to ./knowledge/*.md via lite extract-knowledge, durable preferences to memory). Stops short of the expensive vector-indexed stores (semantic_models / metrics / reference_sql). Single confirmation-free pass, low token cost.
+description: Lightweight project initialization — optionally scoped to specific files / tables / datasources / domains. Statically analyzes the project's SQL (lineage, joins, constant rules, author comments) with extract_sql_lineage, reads human-written docs, verifies the findings against the database with cheap probes, then writes an AGENTS.md project map (data architecture, core tables, global rules, knowledge index) and per-domain ./knowledge/*.md files (table cards, relationships, lineage, business rules, known issues). Stops short of the expensive vector-indexed stores (semantic_models / metrics / reference_sql). Single confirmation-free pass.
 tags:
   - init
   - workspace
   - project
-  - classify
-version: 3.1.0
+  - lineage
+version: 4.6.1
 user_invocable: true
 ---
 
 # Lightweight Project Initialization
 
-You are initializing a project workspace **lightly**. The goal is a fast, low-cost first pass that gives a downstream agent a usable map of the project without paying for the heavy vector-store generation. You scan the project (files + database metadata), classify it into business domains, then write:
+You are initializing a data project so that a downstream agent — one that answers questions with SQL or changes ETL — gets the answers right. Write down what that agent **cannot get from the schema** and would otherwise get wrong:
 
-1. an **`AGENTS.md` inventory skeleton** (the project map injected into every node's `<project_context>`), and
-2. the **cheap file-based stores** — atomic business facts to `./knowledge/*.md` (via lite `extract-knowledge`) and durable cross-session preferences to `memory` (via `add_memory`).
+1. **Which table to use** — the authoritative table among layers, versions, backups and copies.
+2. **Grain and keys** — what one row is; the most common cause of double counting.
+3. **How tables join** — keys, cardinality, fan-out traps, keys that need a transform.
+4. **Business rules** — metric definitions, mandatory filters, code/enum meanings, term→column mappings.
+5. **Time** — partition / date columns, load mode and latency, snapshot semantics, rule change dates.
+6. **Lineage** — which table is built from which, by which script.
+7. **Known issues** — data gaps, bugs worked around in SQL, doc/SQL/database disagreements.
 
-You **do not** build the vector-indexed stores (`semantic_models`, `metrics`, `reference_sql`) here — those cost tokens, fan out `explore` subagents, and write LanceDB, so they are out of scope for this lightweight pass. There is **no confirmation gate** in this skill: knowledge/memory/AGENTS.md are cheap markdown writes, so just do them.
+Do **not** write what the agent already knows or can fetch in one call: tool lists or "recommended tools", full column lists, column types, generic SQL advice.
 
-You run in the main agent context, so you may call `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), the database tools (`list_databases`, `list_tables`, `describe_table`, `get_table_ddl`, `search_table`, `execute_sql` for read-only `SELECT` / `SHOW` / `EXPLAIN` probes only), and `load_skill` (to run `extract-knowledge` lite and consult `storage-classify`). Do **NOT** use the todo tools (`todo_write` / `todo_update` / `todo_list` / `todo_read`): this is a single-pass, single-turn skill with no subagent fan-out — no later step consumes todos, so writing them only adds sidebar noise.
+Outputs:
+- **`./AGENTS.md`** — the project map, injected (first ~200 lines) into every node's `<project_context>`.
+- **`./knowledge/<domain>.md`** — per-domain detail, read on demand through the `## Knowledge` index.
+- **memory** (`add_memory`) — only durable, agent-bound preferences; usually nothing during init.
 
-**Routing authority is `storage-classify`.** This skill decides *what to scan*; for which content lands in `knowledge` vs `memory` vs `AGENTS.md`, follow `storage-classify`'s decision tree (branches 1, 5, 6) — do not re-invent routing here.
+You do **not** build `semantic_models` / `metrics` / `reference_sql` (that is `/build-kb`). No confirmation gate: these are cheap markdown writes.
 
----
+Tools: `extract_sql_lineage`, filesystem (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), database (`list_databases`, `list_tables`, `describe_table`, `get_table_ddl`, `search_table`, `execute_sql` for read-only `SELECT` / `SHOW` / `EXPLAIN`), `add_memory`, `load_skill` (`storage-classify` for routing edge cases). Do **not** use todo tools or subagents.
 
-## Step 0 — Resolve Scope & Project Context (inferred, no questions)
+## Evidence Rules (apply to every step)
 
-**Do NOT call `ask_user` in this step.** The user may invoke this skill as `/init <free-text scope hints>` — any hints arrive as an "Additional context from the user" block. Parse them into a concrete scope, then infer the project goal and the in-scope datasources from the repository and configuration. When no hints are given, default to the **whole project**.
-
-1. **Parse the scope hints** into any of: in-scope **files** (globs / paths, e.g. `queries/*.sql`), **datasources**, **tables** (e.g. `orders`, `order_items`), and **business domains** (e.g. "only the sales domain"). Free text — interpret generously, e.g. `/init orders + order_items tables and queries/*.sql, sales domain only`. When no hints are given, the scope is the whole project.
-2. **Infer the goal.** Read `README.md` if it exists (first 3000 chars); otherwise derive a 1-2 sentence goal from the directory name, top-level files, and the datasource/table names. State it as an explicit assumption you surface in `AGENTS.md`.
-3. **Infer datasource scope from configuration — default to the single active datasource.** Use the **currently active datasource** of the session (the one pinned via `--datasource` / `/datasource`, i.e. the project's `default_datasource`). **When multiple datasources are configured, scope to that active one only — do NOT initialize all of them.** Fall back to the sole configured datasource when only one exists, or to a specific one the project files clearly reference. Broaden beyond the active datasource only if item 1's hints explicitly name other datasources. Do not invent unconfigured services — only mention an extra service (Airflow, Superset, …) if a project file explicitly references it.
-4. Use `glob` to scan the **in-scope** directory tree (top 3 levels). Skip hidden dirs and `__pycache__` / `node_modules` / `.venv`. When the scope names specific files / dirs, narrow the scan to that subset.
-
-Record the resolved **goal**, **in-scope datasources**, and the **file / table / domain scope** — this scope governs every later step, **including which `AGENTS.md` sections you write** (Step 3 touches only in-scope sections, via a scoped `edit_file`). If the scope is empty after parsing, state plainly that you are defaulting to the whole project.
-
----
-
-## Step 1 — Scan & Classify
-
-Gather the raw material **inside the resolved scope**, then classify it into a **multi-level taxonomy of business domains / subtopics** (e.g. `sales/orders`, `sales/refunds`, `infra/etl`). This taxonomy feeds the `AGENTS.md` inventory and helps you locate atomic facts worth filing as knowledge.
-
-**File side:**
-- Use `glob` / `grep` to collect candidate files **within scope** — scan **all text files**, judged by content rather than extension. **Skip binary files** (images, executables, archives, compiled artifacts, parquet/db blobs, etc.) and **skip oversized files** (> ~1 MB) — if a large text file is clearly relevant, read its head/batches rather than the whole thing. When unsure whether a file is text, peek at the first bytes (`read_file` head) before committing to it.
-- **Note any validated-query corpus but do NOT enumerate it here.** A corpus of validated `(question, SQL)` pairs (a queries file, a golden/benchmark set, a saved-query catalog, a dbt/analysis SQL folder) feeds the vector-indexed `reference_sql` store, which is out of scope for this lightweight pass. You may mention its location under `## Data Assets` as a project asset, but do not generate `reference_sql` entries or a dedicated index section.
-
-**Database side (for each in-scope datasource):**
-- `list_databases` → `list_tables` to enumerate tables/views; restrict to in-scope tables when the scope names them.
-- For representative in-scope tables: `describe_table` (or `get_table_ddl`) for **desc** (column names/types/comments) and `search_table` (its `sample_data`) or `execute_sql("SELECT * FROM <t> LIMIT 5")` for **sample**. Sampling desc/sample is enough for the inventory — you do not need exhaustive statistics here.
-- For large databases (>50 tables), sample representative tables per naming pattern rather than describing every table.
-
-**Classify** every in-scope file and table into the domain taxonomy. A single domain may contain both files and tables.
-
-Keep the taxonomy in your working context — do **not** record it with todos (see the tool note above); no later step reads them.
+- **Every statement you write needs a source**: a script, a doc section, a comment, or a database probe. If you are inferring, say so (`inferred from naming`). Never invent a table, column, code value or number, and do not add caveats or interpretations the sources do not support.
+- **Authority order.** Human-written material states *intent*: docs written for people or agents, and SQL comments (the only place script authors explain themselves). The database states *reality*: what exists and what values actually occur. SQL states *practice*: what the pipelines really do. For business definitions prefer docs → comments → SQL; for existence, names and values prefer the database.
+- **Disagreements are findings, not noise.** A doc naming a table the database lacks, a doc rule the SQL does not apply, two script versions filtering differently — record each under the domain's `## Known Issues` with both sides, and tell the downstream agent what to do.
+- **Frequency is evidence.** A filter present in most scripts that use a table is a rule of that table; one present in a single script is a local choice — do not promote it.
 
 ---
 
-## Step 2 — File Cheap Stores (knowledge + memory)
+## Step 0 — Scope & Inventory (no questions)
 
-While scanning the in-scope material, you will encounter **atomic business facts** that a downstream agent cannot infer from `INFORMATION_SCHEMA` / column comments alone — field encodings / enum / status codes, mandatory constant filters, join traps, business-term→field mappings. These are cheap to file (plain markdown, no vector index) and high-value.
+The user may invoke `/init <free-text hints>`; hints arrive as "Additional context from the user". Parse them into files / datasources / tables / domains. No hints → whole project. Do **not** call `ask_user`.
 
-1. **Atomic facts → `knowledge`.** Run `extract-knowledge` in **lite** mode (do NOT trigger its deep blind-SQL flow): pass the **source** (a table's comments/sample, a doc, a config) and the **specific fact to mine**, plus the datasource it applies to. It writes `./knowledge/<domain-slug>.md`. Only file facts that are genuinely non-inferable — skip anything mechanically derivable from the schema.
-   - **Do not enumerate the validated-query corpus for knowledge here.** Mining the `(question, SQL)` corpus pair-by-pair is out of scope for this lightweight pass. Here, only file facts you can read directly off table metadata / docs.
-2. **Durable preferences/context → `memory`.** A user/team habit or a default the agent should remember next session goes to `add_memory` (≤ 2000 bytes). Skip session-specific or one-shot content.
-
-No confirmation gate — these are cheap, reversible writes. If a write would destructively overwrite an existing `./knowledge/*.md`, prefer a scoped `edit_file` and do not clobber unrelated entries.
-
----
-
-## Step 3 — Write the AGENTS.md Inventory Skeleton
-
-Write or update `./AGENTS.md`, following the *AGENTS.md Section Ownership* from `storage-classify`. The canonical section order is:
-
-`# <project name>` · `## Architecture` · `## Directory Map` · `## Services` · `## Data Assets` · `## Recommended Tools` · `## SQL Conventions` · `## Knowledge`
-
-**Honor the resolved scope here too.** When Step 0 resolved a narrower scope (specific files / tables / datasources / domains), write **only the in-scope content** and leave every out-of-scope section untouched: use a **scoped `edit_file`** that updates just the rows/bullets the in-scope material affects (e.g. add only the in-scope directories to `## Directory Map`, only the in-scope tables/domains to `## Data Assets`, only the knowledge files you wrote this run to `## Knowledge`). **Never collapse the whole map down to the scope** — an existing `AGENTS.md` keeps its out-of-scope sections verbatim. A full whole-project skeleton is written only when the scope is the whole project (no hints).
-
-**AGENTS.md is the project's KB entry point.** Because the agentic runtime injects AGENTS.md's first ~200 lines into every node's `<project_context>`, this is the one place that reliably tells a downstream agent *what exists and how to reach it*.
-
-You **own and fill** the inventory sections below — but **write only the sections that have real content**, in the canonical order:
-
-- `# <project name>` — one-line description (the inferred goal).
-- `## Architecture` — brief data flow / stack; ASCII diagram only if complex.
-- `## Directory Map` — main dirs only (Directory / Purpose / Key Entry Point).
-- `## Services` — configured datasources + any user-mentioned services.
-- `## Data Assets` — **never enumerate every table.** Summarize per database by domain + table count, naming 3-5 representative tables; note "Use `list_tables` / `search_table` to explore details at runtime."
-- `## Recommended Tools` — runtime tools per configured service type.
-- `## SQL Conventions` — if the project has a validated-SQL corpus, **induce** its recurring output conventions as a short bullet list (this rides in `<project_context>` and nudges downstream `gen_sql` toward the project's answer shape):
-  - **Induce, do not hardcode.** Read a representative slice of the corpus; state only patterns you actually observe, phrased schema-free (no specific table/column/code names).
-  - **Every rule carries its trigger phrasing** — write each as *"when the question says/asks ⟨observable phrasing⟩ → ⟨output shape⟩"*. A rule whose trigger you cannot state as question wording is not a rule — drop it.
-  - **Counter-example scan before persisting** — for each candidate rule, scan for pairs whose question matches the trigger but whose SQL differs; any counter-example means narrow or drop it.
-  - If the corpus is absent or too small to induce any convention, **omit the `## SQL Conventions` section entirely** — do not write a placeholder.
-- `## Knowledge` — index of the `./knowledge/*.md` files you wrote in Step 2. One bullet per file: `- [<Domain>](knowledge/<slug>.md) — <one-line scope>`. **Write the scope line to convey unguessable specifics** — name the kinds of concrete values inside (exact thresholds, literal filter codes, enum spellings, term→column mappings), not just the topic. If you wrote no knowledge files this run, **omit the `## Knowledge` section** — do not write a placeholder.
-
-**Only write sections that have real content.** The vector-index sections (`## Semantic Models`, `## Metrics`, `## Reference SQL`) are out of scope for this lightweight pass, so **do not write them at all** — neither the section header nor a "none yet" placeholder. Likewise omit any inventory section you have nothing concrete to put in. Never emit empty placeholder lines like `_No metrics yet._`.
-
-Hard constraints:
-- **AGENTS.md is a top-level overview, not a data dictionary.** Target **≤ 200 lines**.
-- If `AGENTS.md` already exists, prefer a scoped `edit_file` over a full rewrite, and **ask via `ask_user` before overwriting an existing file wholesale** (this is the only `ask_user` this skill may make). Never touch `## Knowledge` entries you did not write this run.
+1. **Datasource**: use the active datasource (`default_datasource` / `--datasource`); broaden only if hints name others. Note its dialect and database.
+2. **Files**: `glob` the in-scope tree (skip hidden dirs, `__pycache__`, `node_modules`, `.venv`, binaries, files > ~1 MB). Sort them into:
+   - **SQL scripts** — ETL (`INSERT` / `CREATE ... AS`) and query corpora (`.sql`, SQL inside `.py` DAGs);
+   - **human docs** — `.md` / `.txt` / wiki exports: business rules, metric definitions, agent instructions, data dictionaries;
+   - **config** — scheduler / dbt / pipeline definitions.
+3. **Goal**: first ~3000 chars of `README.md` if present, else infer 1–2 sentences from directory, doc titles and table names (mark it as inferred).
 
 ---
 
-## Step 4 — Wrap Up
+## Step 1 — Static Analysis of the SQL
 
-Close by telling the user what was written: the `AGENTS.md` inventory, any `./knowledge/*.md` files, and any memory entries. Keep it to a short summary — do not propose follow-up actions.
+Skip this step when there are no SQL scripts in scope.
+
+1. Call `extract_sql_lineage(paths=[<in-scope SQL globs>], sections=["joins", "rules"])`. Pass `dialect` when the scripts target a different engine than the datasource.
+2. Call it again with `sections=["comments"]` (kept separate to bound result size).
+3. **Database name mapping.** `stats.databases_referenced` lists the databases the scripts write to and read from. If they differ from the datasource's database, or table-name case differs, match script names against `list_tables` (case-insensitive) and record the mapping once in AGENTS.md.
+
+Read the result as leads, then open only what it points at:
+
+- `lineage` + `roots` → layers, main flows, and which tables are built vs. ingested. Several `scripts` for one target = versioned copies; several similarly named targets (version, backup or date suffixes) = a version family to resolve in Step 3.
+- `joins` → candidate relationships, ranked by `occurrences`. `transforms` expose hidden keys (a code embedded in another id, a date truncated to a coarser period).
+- `rules.filters` → ranked by `files`. The top entries on a shared dimension table are usually mandatory rules; entries whose `clauses` are mostly `CASE` are metric conditions or rule change points (look for date literals).
+- `rules.value_mappings` → code-to-label dictionaries, ready to use.
+- `rules.dedup` → snapshot / latest-record patterns (partition keys + `ORDER BY ... DESC`) — they tell you the table's real grain.
+- `comments.file_headers` → the full comment block each script opens with. In an ETL project it describes the script; when headers carry a business question with its definitions, notes or expected output, the scripts form a **question→SQL corpus** and the headers are the richest human input you have — read every one (see Step 5).
+- `comments.metric_notes` → the author's name for a computed column plus its expression: map metric names to where they are computed.
+- `comments.notes` → intent and caveats; notes on `WHERE` / `JOIN` lines often explain a rule or a workaround (bug, exclusion, temporary fix). Read the surrounding code for the ones that matter.
+- `comments.column_labels` → a glossary for non-obvious column names.
+- `unresolved` → files the tool could not analyze; read them directly if they build core tables.
+
+Then **read the build scripts of the published tables in full** — the most downstream targets in `lineage` and the summary tables they read. Their final `SELECT` is where official metrics are defined: formulas, ratios and their denominators, scoring / ranking / banding rules, thresholds, caps, weights. Record each one; these are the definitions a question-answering agent needs most and the tool cannot interpret for you. When several versions of such a script exist, read the one that builds the authoritative table (Step 3) and note material differences in the others.
 
 ---
+
+## Step 2 — Read the Human Docs
+
+Docs usually hold the business meaning SQL cannot: metric definitions, the rule behind a filter, which table is authoritative.
+
+- Read every in-scope doc. For a large doc (> ~60 KB) list its headings first (`grep -n "^#"`), then read it section by section — do not skip sections that define tables, rules or metrics.
+- Extract: metric definitions (name → formula → source columns / tables), mandatory rules, table catalogs and their stated purpose, source-priority rules, example SQL, caveats. Also list every **constant the docs prescribe** — default filter values, fixed values, named categories, value lists — for checking in Step 3.
+- **Compare every metric the docs define with the script that computes it** (from Step 1). Where they differ — source table, grain, denominator, threshold, direction — record the conflict in Known Issues, state which one the published data follows (the script's), and verify with one query when cheap.
+- A doc written as agent instructions is **input, not output**: distill it into the structures below; do not paste it into AGENTS.md.
+
+---
+
+## Step 3 — Verify Against the Database
+
+Budget roughly 30–60 cheap, read-only queries. Always use aggregates or `LIMIT`; add a partition / date filter on large tables. Record what each probe showed; write unverified claims as `unverified`. Check three things:
+
+1. **Existence and versions.** Every table or column you take from docs or scripts exists (`list_tables` / `describe_table`, matched case-insensitively and across version suffixes before you call it missing — a wrong "missing" claim sends the agent away from a table it needs). For each version family, compare freshness (`MAX(<date column>)`, row count): the authoritative one exists, is fresh, is consumed downstream in lineage, and/or is named by the docs.
+2. **Grain and time.** For each core table: `COUNT(*)` vs `COUNT(DISTINCT <candidate key>)`; its date range; and, for any snapshot / partition date, `SELECT <date col>, COUNT(*) ... GROUP BY 1 ORDER BY 1` over the range to see the real cadence, gaps and extra snapshots inside one period (they double count when a query filters by a longer period). Name suffixes are conventions, not evidence — write the cadence you observed. For the top relationships, check the side you believe is "one" the same way.
+3. **Values.** `SELECT <col>, COUNT(*) ... GROUP BY 1 LIMIT 20` for: code mappings from docs / SQL (note values that occur but are undocumented); every doc-prescribed constant from Step 2 (a value that matches no rows, or a "fixed" value that varies, is a Known Issue — write what the data holds, never the doc's value as a working rule); columns that look like variants of one name (which one is populated); and dimensions of published tables whose values differ from the detail tables (merged or renamed members — write the mapping).
+
+---
+
+## Step 4 — Choose Core Tables and Domains
+
+- **Core tables** (≤ 30): rank by downstream use in lineage, join-hub position, doc mentions, and being the authoritative version. Include the tables a question-answering agent should query directly (published / summary tables) and the shared dimension tables.
+- **Domains**: a few wide business areas (usually matching lineage chains or doc sections), one knowledge file each. Prefer fewer, wider domains; shared dimension tables go into a `common` domain.
+
+---
+
+## Step 5 — Write `./knowledge/<domain>.md`
+
+One file per domain, target ≤ ~400 lines; split a domain that grows past it (e.g. `<domain>-glossary.md` for a large term list). Reuse and extend an existing file for the same domain instead of creating a parallel one. Sections appear in this order and only when they have content:
+
+```markdown
+# <Domain Title>
+
+> **Domain:** <what this file covers and what it does not>. Sources: <script dirs / doc names>.
+
+## Tables
+
+### <table_name>
+- **Use for:** <when to pick it>. **Status:** authoritative | legacy — use <other> | realtime | staging
+- **Grain:** one row per <entity × time>; key `(<cols>)` (verified: count = distinct)
+- **Time:** <date / partition column>; data from <start>; <observed cadence, load mode and latency>
+- **Dimensions:** only non-obvious ones — `<col>`: <value>=<label>, …; snapshot / latest-record semantics
+- **Measures:** `<col>` — <meaning>, <additivity>, <unit>; <conditions the build script already applies inside it>
+- **Filters:** predicates the scripts consistently apply when reading this table (from `rules.filters` whose `seen_in` covers most of its consumers) or that docs require
+
+## Relationships
+| Left | Right | Keys | Cardinality | Note |
+|---|---|---|---|---|
+| a | b | `a.x = b.y` | N:1 (verified) | <transform / dedup first / fan-out trap> |
+
+## Lineage
+| Table | Upstream | Built by | Downstream |
+|---|---|---|---|
+
+## Metric Definitions
+- **<metric name>** = <formula in columns>; source `<table>`; filters <…>; <where it is precomputed, e.g. column `x` of `<summary table>`>; <scoring / ranking / threshold rule when the metric is scored>
+
+## <Business Rule Topic>
+- <one atomic fact per bullet>
+
+## Known Issues
+- <gap / bug / conflict> — <what to do about it>
+```
+
+Content rules:
+- **Only what the schema does not say.** A table card line is written only when it adds something beyond column names and types. No column lists.
+- **Atomic facts.** Business-rule topics follow the fact rules of `extract-knowledge` (its *Worth-Writing Test* and *Knowledge File Layout*): shortest atomic facts, no filler, no derivable facts. Do **not** run the `extract-knowledge` workflow itself during init.
+- **Self-contained.** Write the definition itself, never "see `<file>`": the downstream agent may not have the source files.
+- **Exact computations.** Take a metric's business name and intent from docs and its exact computation from the script that publishes it (Step 1), with its location (`<table>.<column>`). Cover every metric the docs define and every scored / ranked item of a published table. Transcribe scoring, ranking and banding rules exactly — every branch in evaluation order (first match wins), each threshold with its operator, what counts are relative to, partition and sort direction, tie handling (`RANK` vs `ROW_NUMBER`), and how NULL / zero / empty groups are treated — as a compact ordered rule such as `ratio ≥ 0.9 → A; ratio ≥ 0.7 → B; else C`. On measure lines, state the conditions the build script already applies inside the column, so consumers neither apply them twice nor miss them.
+- **Question→SQL corpus.** When the scripts are validated answers to business questions (Step 1 `file_headers`, or `queries_without_target` ≈ all statements), they specify the business vocabulary. Extract **every** term, segment, cohort, code list, fixed filter and metric the headers and SQL define — `**<term>**: <exact predicate / code list / table / date convention>`, one bullet per term, deduplicated across files — into a glossary topic per domain. The glossary should hold about as many bullets as there are distinct terms in the headers; a glossary much shorter than the term count means you summarized — go back and write the missing terms out. Also record per-question-type conventions: which table answers which kind of question, the output grain, default filters, and how date ranges and identifiers are handled.
+- **Coverage over brevity.** Knowledge files are read on demand: a missing rule costs a wrong answer, an extra line costs little. Brevity applies to each line, not to coverage.
+- Lineage tables list core tables only; do not paste the whole graph.
+
+---
+
+## Step 6 — Write `./AGENTS.md`
+
+Hard limit: **≤ 200 lines** (only the first 200 are injected). It is a map with the few rules that apply everywhere — details live in knowledge files. Canonical section order; write a section only when it has real content, never a placeholder:
+
+```markdown
+# <Project> — <one-line goal>
+
+## Data Architecture
+- Datasource `<name>` (<dialect>), database `<db>`; <N> tables by layer: <counts>
+- Layers & naming: <prefix → meaning>
+- Loading: <cadence / mode / latency>
+- Main flows: `<source> → <detail> → <summary> → <published>` (one line per domain)
+- <name mapping when scripts reference a different database or name case than the datasource>
+
+## Directory Map
+| Path | Contents |
+(only directories a downstream agent will open: scripts by layer, docs)
+
+## Core Tables
+| Table | Layer | Grain | Use for | Details |
+|---|---|---|---|---|
+| <table> | <layer> | <one row per …> | <when to query it; "legacy — use X"> | [<domain>](knowledge/<domain>.md) |
+
+## Global Rules
+- <rules that hold across domains: mandatory filters on shared dimension tables, snapshot handling, version choice, source priority, time conventions>
+
+## SQL Conventions
+- <only when the project has a validated question→SQL corpus; see below>
+
+## Knowledge
+- [<Domain>](knowledge/<domain>.md) — <scope naming the concrete contents: which tables, metric names, code tables>
+```
+
+- **Global Rules** are few (≤ ~12) and each must be supported by docs or by high `files` frequency across scripts.
+- **SQL Conventions**: only from a corpus of validated `(question, SQL)` pairs — ETL scripts are not such a corpus. Each rule is *"when the question says ⟨phrasing⟩ → ⟨output shape⟩"*, schema-free, checked for counter-examples. No corpus → omit the section.
+- Do not write `## Semantic Models` / `## Metrics` / `## Reference SQL` — `/build-kb` owns them.
+- `AGENTS.md` already exists → scoped `edit_file` of the sections you own; ask via `ask_user` only before replacing the whole file (the only question this skill may ask). With scope hints, edit only in-scope rows and keep every other section verbatim.
+
+---
+
+## Step 7 — Self-Check, Then Wrap Up
+
+Before finishing, check and fix:
+1. `AGENTS.md` ≤ 200 lines; no empty sections or placeholder lines.
+2. Every table name you wrote exists in `list_tables`, or is marked missing under Known Issues after the variant check in Step 3.
+3. Every `knowledge/...` link in `AGENTS.md` resolves to a file you wrote.
+4. Every core table has a card with at least **Use for** and **Grain**.
+5. For a question→SQL corpus: count the distinct terms the file headers define and the glossary bullets you wrote; every term must appear with its exact definition — add the missing ones. The summary **must** state `terms defined / terms written`.
+
+Then reply with a short summary: files written, the number of core tables / relationships / rules / known issues, and anything you could not verify. Do not propose follow-up actions.
 
 ## Important Notes
 
-- **Routing lives in `storage-classify`, not here.** Knowledge vs memory vs AGENTS.md follows its decision tree (branches 1, 5, 6).
-- **Honor the resolved scope in every step.** When Step 0 resolved scope hints, never scan, file knowledge/memory, or write AGENTS.md sections outside that scope — only default to whole-project when no hints were given.
-- **This is the lightweight pass — stay in scope.** Do NOT call `semantic_modeling` / `gen_sql_summary`, do NOT fan out `explore` subagents, and do NOT emit a Generation Manifest — the vector-indexed stores are out of scope for this skill.
-- Use placeholder comments (e.g. `<!-- Describe your architecture here -->`) when you cannot determine something rather than inventing facts.
-- **Do not ask the user anything except before wholesale-overwriting an existing `AGENTS.md`.** Goal, datasource scope, knowledge, and memory are all inferred and written directly.
+- **Stay in scope.** With scope hints, never scan, write knowledge for, or edit AGENTS.md sections outside that scope.
+- **Lightweight pass.** Do NOT call `semantic_modeling` / `gen_sql_summary`, do NOT fan out subagents, do NOT emit a Generation Manifest.
+- **Do not ask the user anything** except before wholesale-overwriting an existing `AGENTS.md`.

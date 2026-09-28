@@ -8,7 +8,7 @@ tags:
   - metrics
   - reference-sql
   - classify
-version: 1.1.0
+version: 1.1.1
 user_invocable: true
 ---
 
@@ -141,7 +141,7 @@ Do not hand-write semantic_models / metrics / reference_sql YAML yourself — us
 
 ## Step 4 — Refresh the AGENTS.md KB Index
 
-After all generation completes, update `./AGENTS.md` **last**, following the *AGENTS.md Section Ownership* from `storage-classify`. **Do not rewrite the inventory sections `/init` owns** (`# title` · `## Architecture` · `## Directory Map` · `## Services` · `## Data Assets` · `## Recommended Tools` · `## SQL Conventions`). Use a scoped `edit_file` that touches only the KB index:
+After all generation completes, update `./AGENTS.md` **last**, following the *AGENTS.md Section Ownership* from `storage-classify`. **Do not rewrite the sections `/init` owns** (`# title` · `## Data Architecture` · `## Directory Map` · `## Core Tables` · `## Global Rules` · `## SQL Conventions`). Use a scoped `edit_file` that touches only the KB index:
 
 - **`## Semantic Models` / `## Metrics` / `## Reference SQL` — the vector-index sections you just populated.** `/init` does not write these sections, so **insert each one** (in canonical order) with **what it covers + how many + which tool retrieves it** (these stores are queried by retrieval, not read as files). **Only insert a section if you actually generated content for it** — never write a "none yet" placeholder for a store you produced nothing for:
   - `## Semantic Models` — `N` models (`schools`, `satscores`, `frpm`); retrieve with `search_semantic_model`.

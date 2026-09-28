@@ -6,7 +6,7 @@ tags:
   - sql
   - gold-sql
   - iteration
-version: "1.3.0"
+version: "1.4.0"
 user_invocable: true
 disable_model_invocation: false
 ---
@@ -210,6 +210,7 @@ business domain   →   topic   →   facts
 - Do not write `Derived from` / `Why it matters` / `When it applies` label fields
 - The file must contain no question text (trace via git history instead)
 - **Strong preference: reuse first, create new last.** Before persisting anything, list `./knowledge/` and read each file's Domain intro. Prefer adding a new topic or fact under an existing domain over opening a new file.
+- **Reserved sections written by `/init`:** `## Tables`, `## Relationships`, `## Lineage`, `## Metric Definitions` and `## Known Issues`. Never name a topic after them. Add a fact about one table's grain / time / filters to that table's card under `## Tables` (one bullet line), a metric definition under `## Metric Definitions`, a data problem under `## Known Issues`; every other fact goes into a business-rule topic. Insert new topics before `## Known Issues`, which stays last.
 
 **Template for a new business-domain file:**
 
