@@ -1455,6 +1455,33 @@ class TestExplorerServiceOSIAuthoring:
         assert kb_deleted == []
         assert svc.subject_tree_store.get_node_by_path(["operations"]) is not None
 
+    async def test_delete_directory_rejects_out_of_scope_metrics(self, real_agent_config, tmp_path, monkeypatch):
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
+        kb_deleted = await self._metric_under(svc, monkeypatch, ["operations", "daily"], "daily_order_count")
+        node_id = svc.subject_tree_store.get_node_by_path(["operations", "daily"])["node_id"]
+        # The metric exists in the datasource but is hidden by the sub-agent filter.
+        monkeypatch.setattr(svc.metric_rag, "_sub_agent_filter", object())
+        monkeypatch.setattr(
+            svc.metric_rag.storage,
+            "list_entries",
+            lambda nid, extra_conditions=None, **k: (
+                [{"name": "daily_order_count"}] if nid == node_id and len(extra_conditions or []) < 2 else []
+            ),
+        )
+        before = (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text()
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.DIRECTORY, subject_path=["operations"])
+        )
+
+        assert result.success is False
+        assert "scope" in result.errorMessage
+        assert kb_deleted == []
+        assert (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text() == before
+        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"]) is not None
+
 
 class TestExplorerServiceSubAgentScope:
     """`sub_agent_name` is the second POSITIONAL parameter of all three RAGs.

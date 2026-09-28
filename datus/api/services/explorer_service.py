@@ -1266,7 +1266,9 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    async def _delete_metric_source_and_kb(self, parent_path: List[str], metric_name: str) -> Optional["Result[dict]"]:
+    async def _delete_metric_source_and_kb(
+        self, adapter: Any, parent_path: List[str], metric_name: str
+    ) -> Optional["Result[dict]"]:
         """Delete a metric from its source file, then its KB row.
 
         Returns ``None`` on success, else the failed ``Result``.
@@ -1277,7 +1279,6 @@ class ExplorerService:
         # source of truth), then drop the KB row below. The adapter owns
         # the format-correct file edit; metric_rag.delete_metric's own
         # file handling is then a no-op since the metric is already gone.
-        adapter = self._semantic_adapter()
         if adapter is not None:
             try:
                 await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
@@ -1354,7 +1355,13 @@ class ExplorerService:
 
                 all_node_ids = [node_id] + [d["node_id"] for d in descendants]
                 node_paths = {nid: self.subject_tree_store.get_full_path(nid) for nid in all_node_ids}
-                metrics_by_node = {nid: self.metric_rag.storage.list_entries(nid) for nid in all_node_ids}
+                # Enumerate with the same scope ``delete_metric`` applies, or a row
+                # it cannot see fails every retry after its source is already gone.
+                sub_agent_conditions = self.metric_rag._sub_agent_conditions()
+                metrics_by_node = {
+                    nid: self.metric_rag.storage.list_entries(nid, extra_conditions=sub_agent_conditions)
+                    for nid in all_node_ids
+                }
 
                 # Metrics live in the YAML source of truth, so each one goes
                 # through the same file-then-KB delete as a single metric.
@@ -1362,6 +1369,27 @@ class ExplorerService:
                     rejection = self._semantic_mutation_rejection()
                     if rejection is not None:
                         return rejection
+
+                # A scoped caller must not drop a directory whose out-of-scope
+                # metrics would stay in YAML and revive it on the next re-index.
+                if self.metric_rag._sub_agent_filter:
+                    from datus.storage.datasource_scope import datasource_condition
+
+                    in_datasource = [datasource_condition(self.metric_rag.datasource_id)]
+                    if any(
+                        len(self.metric_rag.storage.list_entries(nid, extra_conditions=in_datasource))
+                        > len(metrics_by_node[nid])
+                        for nid in all_node_ids
+                    ):
+                        return Result[dict](
+                            success=False,
+                            errorCode=ErrorCode.INVALID_PARAMETERS,
+                            errorMessage=(
+                                f"Directory {'/'.join(request.subject_path)} contains metrics "
+                                "outside this subagent's scope"
+                            ),
+                        )
+                adapter = self._semantic_adapter() if any(metrics_by_node.values()) else None
 
                 for nid in all_node_ids:
                     node_path = node_paths[nid]
@@ -1372,7 +1400,7 @@ class ExplorerService:
                         metric_name = metric.get("name", "")
                         if not metric_name:
                             continue
-                        failure = await self._delete_metric_source_and_kb(node_path, metric_name)
+                        failure = await self._delete_metric_source_and_kb(adapter, node_path, metric_name)
                         if failure is not None:
                             return failure
                         logger.info(f"Deleted metric '{metric_name}' from node {nid}")
@@ -1412,7 +1440,7 @@ class ExplorerService:
                 parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
                 metric_name = request.subject_path[-1]
 
-                failure = await self._delete_metric_source_and_kb(parent_path, metric_name)
+                failure = await self._delete_metric_source_and_kb(self._semantic_adapter(), parent_path, metric_name)
                 if failure is not None:
                     return failure
 
