@@ -1,7 +1,7 @@
 # Runtime dependencies, mirroring `project.dependencies` in pyproject.toml.
 # `ci/check_release_readiness.py` compares the two and fails on any drift, so
 # every edit here needs the matching edit there (and vice versa).
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 pandas==2.1.4
 sqlalchemy==2.0.23
 sqlglot>=26.12.0,<31
@@ -27,7 +27,7 @@ opentelemetry-sdk>=1.20.0
 opentelemetry-exporter-otlp>=1.20.0
 litellm==1.100.1
 pydantic>=2.11.7,<3.0
-pyarrow<19.0.0
+pyarrow>=23.0.1
 rich==14.0.0
 textual[syntax]==5.1.1
 prompt-toolkit>=3.0.51
