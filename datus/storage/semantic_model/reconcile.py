@@ -72,13 +72,22 @@ class _DatasourceStores:
             if row.get(SUBJECT_ID_COLUMN_NAME) is not None
         }
 
-    def prune_missing(self, keep: Set[str]) -> tuple[List[str], Set[int]]:
-        """Drop rows of artifacts no longer on disk; return them and the nodes they left."""
+    def prune_missing(self, keep: Set[str], under: Path) -> tuple[List[str], Set[int]]:
+        """Drop rows of artifacts no longer on disk; return them and the nodes they left.
+
+        Only rows whose ``yaml_path`` lies under ``under`` are candidates. A row
+        recorded under another root (a relocated mount, a relative legacy path)
+        would otherwise read as deleted and take the whole project with it.
+        """
+        root = under.expanduser().resolve(strict=False)
         pruned: Set[str] = set()
         node_ids: Set[int] = set()
         for rag in (self.dataset_rag, self.metric_rag):
             for yaml_path in rag.list_artifact_paths():
-                if _normalized(yaml_path) in keep or Path(yaml_path).exists():
+                normalized = Path(_normalized(yaml_path))
+                if not Path(yaml_path).is_absolute() or not _is_relative_to(normalized, root):
+                    continue
+                if str(normalized) in keep or Path(yaml_path).exists():
                     continue
                 try:
                     if rag is self.metric_rag:
@@ -165,6 +174,7 @@ def _reconcile_datasource(
     explicit: List[Path],
     result: SemanticReconcileResult,
 ) -> None:
+    from datus.storage.semantic_model.artifact_file import semantic_artifact_lock
     from datus.storage.semantic_model.semantic_model_init import reject_non_dosi_semantic_yaml, semantic_yaml_files
     from datus.storage.semantic_model.sync_state import (
         file_digest,
@@ -194,14 +204,20 @@ def _reconcile_datasource(
             result.failures[yaml_path] = rejection
             failed.add(yaml_path)
             continue
-        # A metric moved to another subject_path leaves its old directory behind.
-        touched_nodes |= stores.metric_node_ids(yaml_path)
-        tools = tools or GenerationTools(agent_config=agent_config, authoring_format="osi")
-        try:
-            sync = tools.sync_osi_to_db(yaml_path, include_semantic_objects=True, include_metrics=True)
-        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
-            logger.exception(f"Failed to sync semantic YAML file '{yaml_path}'")
-            sync = {"success": False, "error": str(exc)}
+        # Every open browser reconciles on the same fs:changed; holding the
+        # file's lock and re-checking its digest folds them into one sync.
+        with semantic_artifact_lock(path):
+            latest = load_digests(agent_config, datasource)
+            if latest is not None and latest.get(state_key(path)) == file_digest(path):
+                continue
+            # A metric moved to another subject_path leaves its old directory behind.
+            touched_nodes |= stores.metric_node_ids(yaml_path)
+            tools = tools or GenerationTools(agent_config=agent_config, authoring_format="osi")
+            try:
+                sync = tools.sync_osi_to_db(yaml_path, include_semantic_objects=True, include_metrics=True)
+            except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest
+                logger.exception(f"Failed to sync semantic YAML file '{yaml_path}'")
+                sync = {"success": False, "error": str(exc)}
         if sync.get("success"):
             result.synced_files.append(yaml_path)
         else:
@@ -214,7 +230,7 @@ def _reconcile_datasource(
         baseline = {str(path): file_digest(path) for path in on_disk if str(path) not in failed}
         record_digests(agent_config, datasource, {path: digest for path, digest in baseline.items() if digest})
 
-    pruned, pruned_nodes = stores.prune_missing(keep=set())
+    pruned, pruned_nodes = stores.prune_missing(keep=set(), under=root)
     result.pruned_files.extend(pruned)
     touched_nodes |= pruned_nodes
     present = {state_key(path) for path in on_disk}

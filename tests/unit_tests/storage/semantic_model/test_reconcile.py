@@ -278,3 +278,48 @@ def test_a_pruned_file_is_forgotten(project):
     _reconcile(agent_config)
 
     assert str(orders.resolve()) not in load_digests(agent_config, DATASOURCE)
+
+
+def test_rows_recorded_outside_the_models_root_are_left_alone(project, tmp_path):
+    """A relocated mount must not read as every file deleted."""
+    agent_config, root = project
+    elsewhere = tmp_path / "old_mount" / "orders.yml"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text(_model("orders", {"order_count": ["sales"]}))
+    _fake_sync(agent_config)(str(elsewhere))
+    elsewhere.unlink()
+
+    _reconcile(agent_config)
+
+    assert _metric_names(agent_config) == {"order_count"}
+
+
+def test_concurrent_reconciles_sync_a_changed_file_once(project):
+    """Every open browser reconciles on the same fs:changed event."""
+    import threading
+    import time
+
+    agent_config, root = project
+    orders, _, _ = _seed(agent_config, root)
+    orders.write_text(_model("orders", {"order_count": ["sales", "orders"]}))
+
+    calls = []
+    sync = _fake_sync(agent_config)
+
+    def slow_sync(yaml_path, **kwargs):
+        calls.append(yaml_path)
+        time.sleep(0.2)
+        return sync(yaml_path, **kwargs)
+
+    class _Tools:
+        def __init__(self, agent_config, **_kwargs):
+            self.sync_osi_to_db = slow_sync
+
+    with patch("datus.tools.func_tool.generation_tools.GenerationTools", _Tools):
+        threads = [threading.Thread(target=reconcile_semantic_artifacts, args=(agent_config,)) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    assert calls == [str(orders.resolve())]

@@ -420,7 +420,7 @@ def sync_semantic_yaml_tree(
     if not files:
         # Deleting the last model is the strongest form of the case this
         # prunes for, so it cannot return before reconciling.
-        pruned = _prune_rows_for_missing_artifacts(agent_config, []) if target.is_dir() else 0
+        pruned = _prune_rows_for_missing_artifacts(agent_config, [], target) if target.is_dir() else 0
         suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
         return True, f"No semantic YAML found under {target}{suffix}", 0
 
@@ -453,18 +453,18 @@ def sync_semantic_yaml_tree(
     # is scoped to a yaml_path, and a file that no longer exists is never
     # visited. Left behind, its rows keep describe_table offering a model whose
     # yaml_path does not open.
-    pruned = _prune_rows_for_missing_artifacts(agent_config, files) if target.is_dir() else 0
+    pruned = _prune_rows_for_missing_artifacts(agent_config, files, target) if target.is_dir() else 0
     suffix = f", pruned {pruned} deleted artifact(s)" if pruned else ""
     return True, f"Synced {synced} semantic YAML file(s) from {target}{suffix}", synced
 
 
-def _prune_rows_for_missing_artifacts(agent_config: AgentConfig, present: list[Path]) -> int:
-    """Drop rows whose source YAML is no longer on disk. Returns artifacts pruned."""
+def _prune_rows_for_missing_artifacts(agent_config: AgentConfig, present: list[Path], root: Path) -> int:
+    """Drop rows under ``root`` whose source YAML is no longer on disk. Returns artifacts pruned."""
     from datus.storage.semantic_model.reconcile import _DatasourceStores, _normalized
 
     try:
         stores = _DatasourceStores(agent_config, agent_config.current_datasource)
-        pruned, node_ids = stores.prune_missing(keep={_normalized(str(path)) for path in present})
+        pruned, node_ids = stores.prune_missing(keep={_normalized(str(path)) for path in present}, under=root)
         stores.remove_emptied_nodes(node_ids)
     except Exception:  # noqa: BLE001 - pruning must never fail an otherwise good sync
         logger.exception("Failed to prune rows for deleted semantic models")
