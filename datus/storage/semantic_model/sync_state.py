@@ -21,10 +21,16 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Iterable, Optional
 
 from datus.utils.loggings import get_logger
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback for local development
+    fcntl = None
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
@@ -73,6 +79,19 @@ def _state_path(agent_config: "AgentConfig") -> Optional[Path]:
         return None
 
 
+@contextmanager
+def _exclusive(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _lock, path.with_name(f"{path.name}.lock").open("a+", encoding="utf-8") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _read(agent_config: "AgentConfig") -> Optional[Dict[str, Dict[str, str]]]:
     path = _state_path(agent_config)
     if path is None or not path.exists():
@@ -91,8 +110,9 @@ def _update(agent_config: "AgentConfig", datasource: str, change) -> None:
     path = _state_path(agent_config)
     if path is None:
         return
-    # Cross-process writers can still interleave; that only costs a re-sync.
-    with _lock:
+    # Across processes too: a writer holding an older snapshot would otherwise
+    # restore a digest another one just forgot.
+    with _exclusive(path):
         state = _read(agent_config) or {}
         entries = dict(state.get(datasource) or {})
         change(entries)
