@@ -1349,6 +1349,8 @@ class ExplorerService:
         return None
 
     def _metric_yaml_paths(self, parent_path: List[str], metric_name: str) -> set:
+        # Scoped like delete_metric; a row outside the scope is covered by the
+        # adapter's own (unscoped) file_path, and no file found means none to forget.
         try:
             rows = self.metric_rag.search_all_metrics(
                 subject_path=[*parent_path, metric_name], select_fields=["yaml_path"]
