@@ -2,6 +2,31 @@
 
 ## 0.4
 
+### 0.4.2
+
+**新功能**
+
+- **读取本地图片并进行多模态对话** - 新增 `filesystem_tools.read_image`，可将本地 PNG、JPEG 和 WebP 图片交给当前选用的多模态模型。会话恢复和上下文压缩会保留图片内容或元数据，CLI 输出及追踪记录不会暴露图片字节。工具遵循现有文件权限，自动校正方向并限制图片尺寸。[#1412](https://github.com/Datus-ai/Datus-agent/pull/1412) [图片读取文档](https://docs.datus.ai/zh/0.4/configuration/image_tool/)
+
+**增强**
+
+- **Dosi/OSI 指标归因与维度发现** - OSI 的 `Date`、`Time`、`DateTime` 和 `DateTimeTz` 类型现在会自动映射为时间维度，编辑时也能保留类型。AskMetrics 可调用 Dosi 原生 `term_wise`、`mix_shift` 和 `factor_shapley` 归因。指标维度 API 增加分组推荐及其来源，同时保留全部可查询维度；`list_metrics(path=...)` 与 Subject Tree 使用一致的 Knowledge Base 路径，Dosi 的非阻断性校验警告也不再让成功写入显示为失败。[#1421](https://github.com/Datus-ai/Datus-agent/pull/1421) [#1436](https://github.com/Datus-ai/Datus-agent/pull/1436) [#1443](https://github.com/Datus-ai/Datus-agent/pull/1443) [#1447](https://github.com/Datus-ai/Datus-agent/pull/1447) [datus-semantic-adapter#100](https://github.com/Datus-ai/datus-semantic-adapter/pull/100) [#101](https://github.com/Datus-ai/datus-semantic-adapter/pull/101) [#104](https://github.com/Datus-ai/datus-semantic-adapter/pull/104) [#106](https://github.com/Datus-ai/datus-semantic-adapter/pull/106) [#107](https://github.com/Datus-ai/datus-semantic-adapter/pull/107) [指标与维度文档](https://docs.datus.ai/zh/0.4/knowledge_base/metrics/) [Dosi 语义适配器文档](https://docs.datus.ai/zh/0.4/adapters/dosi_semantic_adapter/)
+- **统一模型调用追踪与缓存用量统计** - CLI、API、Agent 和 Gateway 使用一致的日志配置。追踪记录保留模型服务商请求关联 ID、完整工具定义与选择设置、归一化消息和调用结果。API/SSE 事件、会话、基准测试及追踪记录现在统一统计 prompt cache-write token，便于排查调用链并核算缓存写入成本。[#1408](https://github.com/Datus-ai/Datus-agent/pull/1408) [#1418](https://github.com/Datus-ai/Datus-agent/pull/1418) [Agent 配置文档](https://docs.datus.ai/zh/0.4/configuration/agent/) [可观测性文档](https://docs.datus.ai/zh/0.4/develop/observability/)
+- **21 种数据库的数据源配置指南** - 文档导航新增 Datasources 分类，分别介绍 BigQuery、ClickHouse、ClickZetta、Doris、DuckDB、DWS、GaussDB、Greenplum、Hive、Hologres、MaxCompute、MySQL、Oracle、PostgreSQL、Redshift、Snowflake、Spark、SQLite、StarRocks、TiDB 和 Trino 的配置字段、默认值、别名、认证方式、命名空间及 TLS 行为。[#1448](https://github.com/Datus-ai/Datus-agent/pull/1448) [数据源配置文档](https://docs.datus.ai/zh/0.4/configuration/datasources/) [数据库适配器文档](https://docs.datus.ai/zh/0.4/adapters/db_adapters/)
+- **更高效的指标发现与查询** - 指标目录改用精简摘要，降低大型指标集合的上下文占用。新增 `get_metric` 工具，一次返回指标可查询维度、分组推荐、时间粒度，以及语义适配器提供的派生关系、表达式或窗口要求。`query_metrics` 仅在 `dry_run` 时返回编译后的 SQL；结果预览容量增大，压缩时优先保留请求的指标和维度，并保持列元数据与预览数据一致。CLI 也会显示发现详情、结果大小、压缩状态和校验警告；派生表达式与必需维度仅在语义适配器提供时返回。[#1444](https://github.com/Datus-ai/Datus-agent/pull/1444) [指标与维度文档](https://docs.datus.ai/zh/0.4/knowledge_base/metrics/) [AskMetrics 文档](https://docs.datus.ai/zh/0.4/subagent/ask_metrics/)
+
+**Bug 修复**
+
+- **模型流式输出与推理模式** - LiteLLM 流式响应不再为每个分块重复导出完整模型调用 span，避免追踪处理占满事件循环并拖住后端实例。`OpenAIModel` 不再默认关闭已配置的 Kimi thinking 模式，并兼容当前 Kimi、DeepSeek 的参数与输出预算行为。[#1419](https://github.com/Datus-ai/Datus-agent/pull/1419) [#1435](https://github.com/Datus-ai/Datus-agent/pull/1435)
+- **并发文件编辑** - 针对同一路径的 `edit_file` 调用会串行执行并检查文件版本，避免多个调用同时读取旧内容、互相覆盖却都报告成功。[#1429](https://github.com/Datus-ai/Datus-agent/pull/1429)
+- **托管会话与自定义节点配置** - 基础 Agent 节点现在按 `node_config.system_prompt` 选择模板；请求级数据源未绑定时不再中断整个对话轮次；上下文压缩归档会使用显式配置的 `session_dir`，支持项目快照只读、会话目录单独挂载为可写的部署方式。[#1437](https://github.com/Datus-ai/Datus-agent/pull/1437) [#1438](https://github.com/Datus-ai/Datus-agent/pull/1438) [#1439](https://github.com/Datus-ai/Datus-agent/pull/1439)
+
+**升级说明**
+
+- **迁移 SQL Policy 配置** - 每条 `row_filter` 和 `metric_row_filter` 都需要稳定且唯一的 `id`。全局 `access_mode: unrestricted` 已移除；如需绕过某条策略，应将请求级 `access_mode` 设为 `scoped`，再设置 `policy_modes.<policy_id>: unrestricted`。[#1416](https://github.com/Datus-ai/Datus-agent/pull/1416) [datus-sql-policies#9](https://github.com/Datus-ai/datus-sql-policies/pull/9) [SQL Policy 文档](https://docs.datus.ai/zh/0.4/configuration/sql_policy/)
+- **升级 Dosi 语义依赖** - 使用原生归因与维度推荐需安装 `datus-semantic-core>=0.2.6` 和 `datus-semantic-dosi>=0.1.14`；`datus-semantic-dosi 0.1.14` 固定依赖 `dosi-engine 0.1.11`。[#1421](https://github.com/Datus-ai/Datus-agent/pull/1421) [#1443](https://github.com/Datus-ai/Datus-agent/pull/1443) [datus-semantic-adapter#101](https://github.com/Datus-ai/datus-semantic-adapter/pull/101) [#107](https://github.com/Datus-ai/datus-semantic-adapter/pull/107) [Dosi 语义适配器文档](https://docs.datus.ai/zh/0.4/adapters/dosi_semantic_adapter/)
+- **同步模型 SDK 依赖** - 自行维护依赖锁文件或模型兼容性补丁的部署应更新为 `openai>=2.45,<3`、`openai-agents[litellm]==0.18.1`、`litellm==1.100.1` 和 `httpx==0.28.1`；图片读取还需要 `Pillow>=10.4`。[#1412](https://github.com/Datus-ai/Datus-agent/pull/1412) [#1418](https://github.com/Datus-ai/Datus-agent/pull/1418) [图片读取文档](https://docs.datus.ai/zh/0.4/configuration/image_tool/)
+
 ### 0.4.1
 
 **新功能**
