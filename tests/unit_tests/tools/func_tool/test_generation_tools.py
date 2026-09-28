@@ -1700,11 +1700,14 @@ semantic_model:
                 return_value=[{"id": "metric:order_count", "name": "order_count", "sql": ""}],
             ),
             patch("datus.storage.semantic_model.sync_state.record_digests") as record,
+            patch("datus.storage.semantic_model.sync_state.forget_digests") as forget,
         ):
             result = generation_tools.sync_osi_to_db(str(osi_file), **kwargs)
 
         assert result["success"] is True
         assert record.called is recorded
+        # A partial projection must not leave the last full digest vouching for the KB.
+        assert forget.called is not recorded
         if recorded:
             (_config, _datasource, digests) = record.call_args.args
             assert list(digests) == [str(osi_file)]

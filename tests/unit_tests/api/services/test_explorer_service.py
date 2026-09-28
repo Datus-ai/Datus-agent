@@ -1288,6 +1288,24 @@ class TestExplorerServiceOSIAuthoring:
         on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
         assert on_disk["semantic_model"][0]["metrics"] == []
 
+    async def test_delete_metric_forgets_the_file_digest(self, real_agent_config, tmp_path, monkeypatch):
+        """Reverting the file afterwards must read as a change, not as already projected."""
+        from datus.storage.semantic_model.sync_state import load_digests, record_digests
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
+        monkeypatch.setattr(svc.metric_rag, "delete_metric", lambda *a, **k: {"success": True})
+        model_file = str((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").resolve())
+        record_digests(real_agent_config, svc.datasource_id, {model_file: "before"})
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.METRIC, subject_path=["operations", "daily", "daily_order_count"])
+        )
+
+        assert result.success is True, result.errorMessage
+        assert model_file not in load_digests(real_agent_config, svc.datasource_id)
+
     async def test_create_metric_rolls_back_on_kb_sync_failure(self, real_agent_config, tmp_path, monkeypatch):
         import yaml
 

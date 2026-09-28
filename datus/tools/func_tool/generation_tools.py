@@ -1758,10 +1758,14 @@ class GenerationTools:
                     ) from sync_exc
                 raise
 
-            if digest:
-                from datus.storage.semantic_model.sync_state import record_digests
+            from datus.storage.semantic_model.sync_state import forget_digests, record_digests
 
+            if digest:
                 record_digests(self.agent_config, self.agent_config.current_datasource, {osi_file_path: digest})
+            else:
+                # A partial projection changed the KB without matching the whole
+                # file; the last full digest no longer describes it.
+                forget_digests(self.agent_config, self.agent_config.current_datasource, [osi_file_path])
 
             synced = len(metric_objects) if include_metrics else len(dataset_rows)
             return {

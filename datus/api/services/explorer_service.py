@@ -1314,9 +1314,13 @@ class ExplorerService:
         # source of truth), then drop the KB row below. The adapter owns
         # the format-correct file edit; metric_rag.delete_metric's own
         # file handling is then a no-op since the metric is already gone.
+        touched_files = self._metric_yaml_paths(parent_path, metric_name)
         if adapter is not None:
             try:
-                await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
+                mutation = await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
+                touched_files.update(getattr(mutation, "affected_paths", None) or [])
+                if getattr(mutation, "file_path", None):
+                    touched_files.add(mutation.file_path)
             except Exception as e:  # noqa: BLE001
                 # Only a genuine "not found" is a benign fallback to KB
                 # cleanup (file/KB drift). Real failures (I/O, lock, parse)
@@ -1333,6 +1337,9 @@ class ExplorerService:
                 logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
 
         result = self.metric_rag.delete_metric(parent_path, metric_name)
+        # The KB no longer is the full projection its recorded digest vouches
+        # for; left in place, reverting the file would read as unchanged.
+        self._forget_projection_digests(touched_files)
         if not result.get("success", False):
             return Result[dict](
                 success=False,
@@ -1340,6 +1347,21 @@ class ExplorerService:
                 errorMessage=result.get("message", f"Failed to delete metric: {metric_name}"),
             )
         return None
+
+    def _metric_yaml_paths(self, parent_path: List[str], metric_name: str) -> set:
+        try:
+            rows = self.metric_rag.search_all_metrics(
+                subject_path=[*parent_path, metric_name], select_fields=["yaml_path"]
+            )
+        except Exception:  # noqa: BLE001 - only used to invalidate digests
+            return set()
+        return {row["yaml_path"] for row in rows if row.get("yaml_path")}
+
+    def _forget_projection_digests(self, yaml_paths: set) -> None:
+        from datus.storage.semantic_model.sync_state import forget_digests
+
+        if yaml_paths:
+            forget_digests(self.agent_config, self.datasource_id, yaml_paths)
 
     async def delete_subject(self, request: DeleteSubjectInput) -> Result[dict]:
         """Delete subject from the subject tree.
