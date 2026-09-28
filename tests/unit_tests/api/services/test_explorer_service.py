@@ -1378,6 +1378,83 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is True, result.errorMessage
         assert kb_deleted["called"] is True  # stale KB row cleaned up
 
+    @staticmethod
+    async def _metric_under(svc, monkeypatch, subject_path, metric_name):
+        """Index ``metric_name`` in the KB under ``subject_path``; returns the KB deletes."""
+        await svc.create_directory(CreateDirectoryInput(subject_path=subject_path))
+        node_id = svc.subject_tree_store.get_node_by_path(subject_path)["node_id"]
+        monkeypatch.setattr(
+            svc.metric_rag.storage,
+            "list_entries",
+            lambda nid, *a, **k: [{"name": metric_name}] if nid == node_id else [],
+        )
+        kb_deleted = []
+        monkeypatch.setattr(
+            svc.metric_rag,
+            "delete_metric",
+            lambda path, name: kb_deleted.append((list(path), name)) or {"success": True},
+        )
+        return kb_deleted
+
+    async def test_delete_directory_removes_nested_metrics_from_osi_file(
+        self, real_agent_config, tmp_path, monkeypatch
+    ):
+        import yaml
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
+        kb_deleted = await self._metric_under(svc, monkeypatch, ["operations", "daily"], "daily_order_count")
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.DIRECTORY, subject_path=["operations"])
+        )
+
+        assert result.success is True, result.errorMessage
+        on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
+        assert on_disk["semantic_model"][0]["metrics"] == []
+        assert kb_deleted == [(["operations", "daily"], "daily_order_count")]
+        assert svc.subject_tree_store.get_node_by_path(["operations"]) is None
+
+    async def test_delete_directory_keeps_tree_when_metric_file_delete_fails(
+        self, real_agent_config, tmp_path, monkeypatch
+    ):
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
+        kb_deleted = await self._metric_under(svc, monkeypatch, ["operations", "daily"], "daily_order_count")
+
+        def boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(adapter, "delete_metric_source", boom)
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.DIRECTORY, subject_path=["operations"])
+        )
+
+        assert result.success is False
+        assert "disk full" in result.errorMessage
+        assert kb_deleted == []
+        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"]) is not None
+
+    async def test_delete_directory_with_metrics_is_query_only_without_dosi(
+        self, real_agent_config, tmp_path, monkeypatch
+    ):
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter, adapter_type="metricflow")
+        kb_deleted = await self._metric_under(svc, monkeypatch, ["operations", "daily"], "daily_order_count")
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.DIRECTORY, subject_path=["operations"])
+        )
+
+        assert result.success is False
+        assert "query-only" in result.errorMessage
+        assert kb_deleted == []
+        assert svc.subject_tree_store.get_node_by_path(["operations"]) is not None
+
 
 class TestExplorerServiceSubAgentScope:
     """`sub_agent_name` is the second POSITIONAL parameter of all three RAGs.

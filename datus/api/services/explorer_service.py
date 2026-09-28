@@ -1266,6 +1266,45 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
+    async def _delete_metric_source_and_kb(self, parent_path: List[str], metric_name: str) -> Optional["Result[dict]"]:
+        """Delete a metric from its source file, then its KB row.
+
+        Returns ``None`` on success, else the failed ``Result``.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        # Remove the metric from its source file first (the file is the
+        # source of truth), then drop the KB row below. The adapter owns
+        # the format-correct file edit; metric_rag.delete_metric's own
+        # file handling is then a no-op since the metric is already gone.
+        adapter = self._semantic_adapter()
+        if adapter is not None:
+            try:
+                await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
+            except Exception as e:  # noqa: BLE001
+                # Only a genuine "not found" is a benign fallback to KB
+                # cleanup (file/KB drift). Real failures (I/O, lock, parse)
+                # must fail the request, or the file keeps the metric while
+                # the KB row is dropped and it "revives" on the next
+                # re-index — breaking the YAML-source-of-truth invariant.
+                if not self._is_metric_absent_error(e):
+                    logger.error(f"Failed to delete metric from source file: {e}")
+                    return Result[dict](
+                        success=False,
+                        errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                        errorMessage=f"Failed to remove metric from source file: {e}",
+                    )
+                logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
+
+        result = self.metric_rag.delete_metric(parent_path, metric_name)
+        if not result.get("success", False):
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage=result.get("message", f"Failed to delete metric: {metric_name}"),
+            )
+        return None
+
     async def delete_subject(self, request: DeleteSubjectInput) -> Result[dict]:
         """Delete subject from the subject tree.
 
@@ -1313,27 +1352,30 @@ class ExplorerService:
                 # Get all descendant nodes
                 descendants = self.subject_tree_store.get_descendants(node_id)
 
-                candidate_node_ids = [node_id] + [d["node_id"] for d in descendants]
-                if any(self.metric_rag.storage.list_entries(candidate_id) for candidate_id in candidate_node_ids):
-                    return self._semantic_agent_required_rejection()
-
-                # Delete all entries for this node and its descendants
                 all_node_ids = [node_id] + [d["node_id"] for d in descendants]
+                node_paths = {nid: self.subject_tree_store.get_full_path(nid) for nid in all_node_ids}
+                metrics_by_node = {nid: self.metric_rag.storage.list_entries(nid) for nid in all_node_ids}
+
+                # Metrics live in the YAML source of truth, so each one goes
+                # through the same file-then-KB delete as a single metric.
+                if any(metrics_by_node.values()):
+                    rejection = self._semantic_mutation_rejection()
+                    if rejection is not None:
+                        return rejection
 
                 for nid in all_node_ids:
-                    # Get the path for this node to pass to delete methods
-                    node_path = self.subject_tree_store.get_full_path(nid)
+                    node_path = node_paths[nid]
 
-                    # Delete metrics
-                    try:
-                        metrics = self.metric_rag.storage.list_entries(nid)
-                        for metric in metrics:
-                            metric_name = metric.get("name", "")
-                            if metric_name:
-                                self.metric_rag.delete_metric(node_path, metric_name)
-                                logger.info(f"Deleted metric '{metric_name}' from node {nid}")
-                    except Exception as ex:
-                        logger.debug(f"Error deleting metrics for node {nid}: {ex}")
+                    # A failure stops before the tree node goes, so a retry
+                    # resumes instead of leaving metrics under a missing directory.
+                    for metric in metrics_by_node[nid]:
+                        metric_name = metric.get("name", "")
+                        if not metric_name:
+                            continue
+                        failure = await self._delete_metric_source_and_kb(node_path, metric_name)
+                        if failure is not None:
+                            return failure
+                        logger.info(f"Deleted metric '{metric_name}' from node {nid}")
 
                     # Delete reference_sqls
                     try:
@@ -1370,36 +1412,9 @@ class ExplorerService:
                 parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
                 metric_name = request.subject_path[-1]
 
-                # Remove the metric from its source file first (the file is the
-                # source of truth), then drop the KB row below. The adapter owns
-                # the format-correct file edit; metric_rag.delete_metric's own
-                # file handling is then a no-op since the metric is already gone.
-                adapter = self._semantic_adapter()
-                if adapter is not None:
-                    try:
-                        await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
-                    except Exception as e:  # noqa: BLE001
-                        # Only a genuine "not found" is a benign fallback to KB
-                        # cleanup (file/KB drift). Real failures (I/O, lock, parse)
-                        # must fail the request, or the file keeps the metric while
-                        # the KB row is dropped and it "revives" on the next
-                        # re-index — breaking the YAML-source-of-truth invariant.
-                        if not self._is_metric_absent_error(e):
-                            logger.error(f"Failed to delete metric from source file: {e}")
-                            return Result[dict](
-                                success=False,
-                                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
-                                errorMessage=f"Failed to remove metric from source file: {e}",
-                            )
-                        logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
-
-                result = self.metric_rag.delete_metric(parent_path, metric_name)
-                if not result.get("success", False):
-                    return Result[dict](
-                        success=False,
-                        errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                        errorMessage=result.get("message", f"Failed to delete metric: {metric_name}"),
-                    )
+                failure = await self._delete_metric_source_and_kb(parent_path, metric_name)
+                if failure is not None:
+                    return failure
 
                 logger.info(f"Successfully deleted metric: {metric_name}")
                 return Result[dict](success=True, data={})
