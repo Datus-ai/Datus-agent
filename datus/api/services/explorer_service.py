@@ -1363,13 +1363,6 @@ class ExplorerService:
                     for nid in all_node_ids
                 }
 
-                # Metrics live in the YAML source of truth, so each one goes
-                # through the same file-then-KB delete as a single metric.
-                if any(metrics_by_node.values()):
-                    rejection = self._semantic_mutation_rejection()
-                    if rejection is not None:
-                        return rejection
-
                 # A scoped caller must not drop a directory whose out-of-scope
                 # metrics would stay in YAML and revive it on the next re-index.
                 if self.metric_rag._sub_agent_filter:
@@ -1389,6 +1382,14 @@ class ExplorerService:
                                 "outside this subagent's scope"
                             ),
                         )
+
+                # Metrics live in the YAML source of truth, so each one goes
+                # through the same file-then-KB delete as a single metric.
+                if any(metrics_by_node.values()):
+                    rejection = self._semantic_mutation_rejection()
+                    if rejection is not None:
+                        return rejection
+
                 adapter = self._semantic_adapter() if any(metrics_by_node.values()) else None
 
                 for nid in all_node_ids:

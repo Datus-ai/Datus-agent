@@ -1455,10 +1455,13 @@ class TestExplorerServiceOSIAuthoring:
         assert kb_deleted == []
         assert svc.subject_tree_store.get_node_by_path(["operations"]) is not None
 
-    async def test_delete_directory_rejects_out_of_scope_metrics(self, real_agent_config, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("adapter_type", ["dosi", "metricflow"])
+    async def test_delete_directory_rejects_out_of_scope_metrics(
+        self, real_agent_config, tmp_path, monkeypatch, adapter_type
+    ):
         adapter = self._osi_adapter(tmp_path)
         svc = ExplorerService(agent_config=real_agent_config)
-        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
+        self._wire(svc, monkeypatch, adapter, adapter_type=adapter_type)
         kb_deleted = await self._metric_under(svc, monkeypatch, ["operations", "daily"], "daily_order_count")
         node_id = svc.subject_tree_store.get_node_by_path(["operations", "daily"])["node_id"]
         # The metric exists in the datasource but is hidden by the sub-agent filter.
