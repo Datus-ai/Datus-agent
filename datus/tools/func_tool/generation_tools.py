@@ -1658,6 +1658,12 @@ class GenerationTools:
         try:
             if not include_semantic_objects and not include_metrics:
                 return {"success": False, "error": "At least one OSI sync scope must be enabled", "synced": 0}
+            from datus.storage.semantic_model.sync_state import file_digest
+
+            # Taken before the load: a write racing the sync then reads as a
+            # change, costing a re-sync rather than hiding it.
+            full_projection = include_semantic_objects and include_metrics and metric_names_to_sync is None
+            digest = file_digest(Path(osi_file_path)) if full_projection else None
             doc = self._load_osi_document(
                 metric_file=osi_file_path if include_metrics else None,
                 semantic_model_file=osi_file_path if include_semantic_objects else None,
@@ -1751,6 +1757,11 @@ class GenerationTools:
                         f"{', '.join(restore_failures)}"
                     ) from sync_exc
                 raise
+
+            if digest:
+                from datus.storage.semantic_model.sync_state import record_digests
+
+                record_digests(self.agent_config, self.agent_config.current_datasource, {osi_file_path: digest})
 
             synced = len(metric_objects) if include_metrics else len(dataset_rows)
             return {

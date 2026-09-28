@@ -1117,6 +1117,18 @@ class TestExplorerServiceOSIAuthoring:
         # content is irrelevant since the adapter supplies the returned YAML.
         monkeypatch.setattr(svc.metric_rag, "get_metrics_detail", lambda parent, name, *a, **k: [{"name": name}])
 
+    async def test_get_metric_reports_a_metric_gone_from_its_file(self, real_agent_config, tmp_path, monkeypatch):
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+        model_file = tmp_path / "jeff_shop_live" / "jeff_shop_live.yml"
+        model_file.write_text(self.SAMPLE.split("    metrics:\n")[0])
+
+        result = await svc.get_metric(["operations", "daily", "daily_order_count"])
+
+        assert result.success is False
+        assert "no longer in its semantic model file" in result.errorMessage
+
     async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch):
         import yaml
 
@@ -1484,6 +1496,28 @@ class TestExplorerServiceOSIAuthoring:
         assert kb_deleted == []
         assert (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text() == before
         assert svc.subject_tree_store.get_node_by_path(["operations", "daily"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_subject_reports_the_outcome(real_agent_config, monkeypatch):
+    from datus.api.models.explorer_models import ReconcileSubjectInput
+    from datus.storage.semantic_model.reconcile import SemanticReconcileResult
+
+    calls = []
+
+    def fake(agent_config, paths):
+        calls.append((agent_config, list(paths)))
+        return SemanticReconcileResult(pruned_files=["/p/orders.yml"], removed_subject_paths=[["sales"]])
+
+    monkeypatch.setattr("datus.storage.semantic_model.reconcile.reconcile_semantic_artifacts", fake)
+    svc = ExplorerService(agent_config=real_agent_config)
+
+    result = await svc.reconcile_subject(ReconcileSubjectInput(paths=["subject/semantic_models/a.yml"]))
+
+    assert result.success is True
+    assert result.data.pruned_files == ["/p/orders.yml"]
+    assert result.data.removed_subject_paths == [["sales"]]
+    assert calls == [(real_agent_config, ["subject/semantic_models/a.yml"])]
 
 
 class TestExplorerServiceSubAgentScope:

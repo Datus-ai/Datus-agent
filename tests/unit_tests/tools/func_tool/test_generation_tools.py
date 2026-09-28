@@ -1672,6 +1672,43 @@ semantic_model:
         assert result["semantic_dataset_rows"] == 1
         assert result["metric_names"] == ["order_count"]
 
+    @pytest.mark.parametrize(
+        ("kwargs", "recorded"),
+        [
+            ({}, True),
+            ({"include_metrics": False}, False),
+            ({"metric_names_to_sync": {"order_count"}}, False),
+        ],
+    )
+    def test_sync_osi_to_db_records_the_digest_of_a_full_projection_only(
+        self, generation_tools, tmp_path, kwargs, recorded
+    ):
+        osi_file = tmp_path / "shop.yml"
+        osi_file.write_text("version: 0.2.0.dev0\n")
+        generation_tools.metric_rag.list_artifact_rows.return_value = []
+        with (
+            patch.object(generation_tools, "_load_osi_document", return_value=SimpleNamespace()),
+            patch.object(generation_tools, "extract_osi_metric_names", return_value=["order_count"]),
+            patch.object(
+                generation_tools,
+                "_sync_osi_semantic_objects_to_db",
+                return_value={"success": True, "semantic_dataset_rows": [], "synced_items": []},
+            ),
+            patch.object(
+                generation_tools,
+                "_build_osi_metric_objects",
+                return_value=[{"id": "metric:order_count", "name": "order_count", "sql": ""}],
+            ),
+            patch("datus.storage.semantic_model.sync_state.record_digests") as record,
+        ):
+            result = generation_tools.sync_osi_to_db(str(osi_file), **kwargs)
+
+        assert result["success"] is True
+        assert record.called is recorded
+        if recorded:
+            (_config, _datasource, digests) = record.call_args.args
+            assert list(digests) == [str(osi_file)]
+
     def test_sync_osi_to_db_reconciles_empty_metric_collection(self, generation_tools, tmp_path):
         osi_file = tmp_path / "model.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")

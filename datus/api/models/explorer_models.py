@@ -96,6 +96,29 @@ class DeleteSubjectInput(BaseModel):
     subject_path: List[str] = Field(..., description="Path of the subject to delete")
 
 
+class ReconcileSubjectInput(BaseModel):
+    """Reconcile the subject tree with semantic YAML after files changed."""
+
+    paths: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Project-relative paths created, modified or renamed to. Deleted paths need not be listed: "
+            "rows whose file is gone are pruned regardless."
+        ),
+    )
+
+
+class ReconcileSubjectData(BaseModel):
+    """Outcome of a subject reconcile."""
+
+    synced_files: List[str] = Field(default_factory=list, description="Semantic YAML files re-projected")
+    pruned_files: List[str] = Field(default_factory=list, description="Deleted files whose rows were dropped")
+    removed_subject_paths: List[List[str]] = Field(
+        default_factory=list, description="Subject directories removed because they were left empty"
+    )
+    failures: Dict[str, str] = Field(default_factory=dict, description="Path or datasource -> error")
+
+
 # ========== Metric Get/Edit ==========
 
 

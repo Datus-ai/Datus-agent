@@ -17,6 +17,8 @@ from datus.api.models.explorer_models import (
     MetricInfo,
     MetricPreviewData,
     MetricPreviewInput,
+    ReconcileSubjectData,
+    ReconcileSubjectInput,
     ReferenceSQLInfo,
     ReferenceSQLInput,
     RenameSubjectInput,
@@ -717,7 +719,15 @@ class ExplorerService:
                     )
                 except AuthoringNotSupportedError:
                     pass  # adapter has no file source; fall back to KB reconstruction
-                except Exception as e:  # noqa: BLE001 - fall back on any read failure
+                except Exception as e:  # noqa: BLE001 - fall back on any other read failure
+                    # A metric gone from its source file must not be dressed up
+                    # from its stale KB row as if it still existed.
+                    if self._is_metric_absent_error(e):
+                        return Result[MetricInfo](
+                            success=False,
+                            errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                            errorMessage=f"Metric {metric_name} is no longer in its semantic model file",
+                        )
                     logger.warning(f"Adapter read_metric_source failed, using KB fallback: {e}")
 
             # Fallback: reconstruct MetricFlow-shaped YAML from the KB projection.
@@ -1265,6 +1275,31 @@ class ExplorerService:
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                 errorMessage=str(e),
             )
+
+    async def reconcile_subject(self, request: ReconcileSubjectInput) -> Result[ReconcileSubjectData]:
+        """Re-project changed semantic YAML and drop what deleted files projected."""
+        from datus.storage.semantic_model.reconcile import reconcile_semantic_artifacts
+
+        try:
+            outcome = await asyncio.to_thread(reconcile_semantic_artifacts, self.agent_config, request.paths)
+        except Exception as e:
+            logger.error(f"Failed to reconcile subject tree: {e}")
+            from datus.api.models.config_models import ErrorCode
+
+            return Result[ReconcileSubjectData](
+                success=False,
+                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                errorMessage=str(e),
+            )
+        return Result[ReconcileSubjectData](
+            success=True,
+            data=ReconcileSubjectData(
+                synced_files=outcome.synced_files,
+                pruned_files=outcome.pruned_files,
+                removed_subject_paths=outcome.removed_subject_paths,
+                failures=outcome.failures,
+            ),
+        )
 
     async def _delete_metric_source_and_kb(
         self, adapter: Any, parent_path: List[str], metric_name: str

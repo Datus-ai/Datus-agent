@@ -15,6 +15,8 @@ from datus.api.models.explorer_models import (
     MetricInfo,
     MetricPreviewData,
     MetricPreviewInput,
+    ReconcileSubjectData,
+    ReconcileSubjectInput,
     ReferenceSQLInfo,
     ReferenceSQLInput,
     RenameSubjectInput,
@@ -82,6 +84,23 @@ async def delete_subject(
 ) -> Result[dict]:
     """Delete subject."""
     return await svc.explorer.delete_subject(request)
+
+
+@router.post(
+    "/subject/reconcile",
+    response_model=Result[ReconcileSubjectData],
+    summary="Reconcile Subject Tree",
+    description=(
+        "Re-project changed semantic YAML into the subject tree and drop metrics, datasets and emptied "
+        "directories left by deleted files"
+    ),
+)
+async def reconcile_subject(
+    request: ReconcileSubjectInput,
+    svc: ServiceDep,
+) -> Result[ReconcileSubjectData]:
+    """Reconcile subject tree with semantic YAML."""
+    return await svc.explorer.reconcile_subject(request)
 
 
 @router.post(

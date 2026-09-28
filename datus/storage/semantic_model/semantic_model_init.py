@@ -460,30 +460,15 @@ def sync_semantic_yaml_tree(
 
 def _prune_rows_for_missing_artifacts(agent_config: AgentConfig, present: list[Path]) -> int:
     """Drop rows whose source YAML is no longer on disk. Returns artifacts pruned."""
-    from datus.storage.metric.store import MetricRAG
-    from datus.storage.semantic_dataset.store import SemanticDatasetRAG
+    from datus.storage.semantic_model.reconcile import _DatasourceStores, _normalized
 
-    keep = {str(path.resolve(strict=False)) for path in present}
-    pruned: set[str] = set()
     try:
-        rags = [SemanticDatasetRAG(agent_config), MetricRAG(agent_config)]
+        stores = _DatasourceStores(agent_config, agent_config.current_datasource)
+        pruned, node_ids = stores.prune_missing(keep={_normalized(str(path)) for path in present})
+        stores.remove_emptied_nodes(node_ids)
     except Exception:  # noqa: BLE001 - pruning must never fail an otherwise good sync
-        logger.exception("Failed to open semantic stores while pruning deleted semantic models")
+        logger.exception("Failed to prune rows for deleted semantic models")
         return 0
-    for rag in rags:
-        try:
-            stored = rag.list_artifact_paths()
-        except Exception:  # noqa: BLE001
-            logger.exception("Failed to list artifact paths while pruning deleted semantic models")
-            continue
-        for yaml_path in stored:
-            if str(Path(yaml_path).resolve(strict=False)) in keep or Path(yaml_path).exists():
-                continue
-            try:
-                rag.delete_artifact_rows(yaml_path)
-                pruned.add(yaml_path)
-            except Exception:  # noqa: BLE001
-                logger.exception(f"Failed to prune rows for deleted semantic model '{yaml_path}'")
     if pruned:
         logger.info(f"Pruned knowledge-base rows for {len(pruned)} deleted semantic YAML file(s)")
     return len(pruned)
