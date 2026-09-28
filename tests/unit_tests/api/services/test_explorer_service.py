@@ -1288,6 +1288,27 @@ class TestExplorerServiceOSIAuthoring:
         on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
         assert on_disk["semantic_model"][0]["metrics"] == []
 
+    async def test_delete_fails_when_the_adapter_is_unavailable(self, real_agent_config, tmp_path, monkeypatch):
+        """A KB-only delete would leave the metric in YAML to come back on the next reconcile."""
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter, adapter_type="dosi")
+        monkeypatch.setattr(svc, "_semantic_adapter", lambda: None)
+        kb_deleted = await self._metric_under(svc, monkeypatch, ["operations", "daily"], "daily_order_count")
+        before = (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text()
+
+        for request in (
+            DeleteSubjectInput(type=SubjectNodeType.METRIC, subject_path=["operations", "daily", "daily_order_count"]),
+            DeleteSubjectInput(type=SubjectNodeType.DIRECTORY, subject_path=["operations"]),
+        ):
+            result = await svc.delete_subject(request)
+            assert result.success is False
+            assert "adapter is unavailable" in result.errorMessage
+
+        assert kb_deleted == []
+        assert (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text() == before
+        assert svc.subject_tree_store.get_node_by_path(["operations", "daily"]) is not None
+
     async def test_delete_metric_forgets_the_file_digest(self, real_agent_config, tmp_path, monkeypatch):
         """Reverting the file afterwards must read as a change, not as already projected."""
         from datus.storage.semantic_model.sync_state import load_digests, record_digests

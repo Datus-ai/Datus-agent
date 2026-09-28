@@ -1314,27 +1314,34 @@ class ExplorerService:
         # source of truth), then drop the KB row below. The adapter owns
         # the format-correct file edit; metric_rag.delete_metric's own
         # file handling is then a no-op since the metric is already gone.
+        if adapter is None:
+            # A KB-only delete would leave the metric in YAML to revive on the
+            # next reconcile, so an unavailable adapter fails the request.
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage="Semantic adapter is unavailable; cannot remove the metric from its source file",
+            )
         touched_files = self._metric_yaml_paths(parent_path, metric_name)
-        if adapter is not None:
-            try:
-                mutation = await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
-                touched_files.update(getattr(mutation, "affected_paths", None) or [])
-                if getattr(mutation, "file_path", None):
-                    touched_files.add(mutation.file_path)
-            except Exception as e:  # noqa: BLE001
-                # Only a genuine "not found" is a benign fallback to KB
-                # cleanup (file/KB drift). Real failures (I/O, lock, parse)
-                # must fail the request, or the file keeps the metric while
-                # the KB row is dropped and it "revives" on the next
-                # re-index — breaking the YAML-source-of-truth invariant.
-                if not self._is_metric_absent_error(e):
-                    logger.error(f"Failed to delete metric from source file: {e}")
-                    return Result[dict](
-                        success=False,
-                        errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
-                        errorMessage=f"Failed to remove metric from source file: {e}",
-                    )
-                logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
+        try:
+            mutation = await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
+            touched_files.update(getattr(mutation, "affected_paths", None) or [])
+            if getattr(mutation, "file_path", None):
+                touched_files.add(mutation.file_path)
+        except Exception as e:  # noqa: BLE001
+            # Only a genuine "not found" is a benign fallback to KB
+            # cleanup (file/KB drift). Real failures (I/O, lock, parse)
+            # must fail the request, or the file keeps the metric while
+            # the KB row is dropped and it "revives" on the next
+            # re-index — breaking the YAML-source-of-truth invariant.
+            if not self._is_metric_absent_error(e):
+                logger.error(f"Failed to delete metric from source file: {e}")
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to remove metric from source file: {e}",
+                )
+            logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
 
         result = self.metric_rag.delete_metric(parent_path, metric_name)
         # The KB no longer is the full projection its recorded digest vouches

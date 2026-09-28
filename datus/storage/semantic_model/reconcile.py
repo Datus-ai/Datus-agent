@@ -72,7 +72,9 @@ class _DatasourceStores:
             if row.get(SUBJECT_ID_COLUMN_NAME) is not None
         }
 
-    def prune_missing(self, keep: Set[str], under: Path) -> tuple[List[str], Set[int]]:
+    def prune_missing(
+        self, keep: Set[str], under: Path, failures: Optional[Dict[str, str]] = None
+    ) -> tuple[List[str], Set[int]]:
         """Drop rows of artifacts no longer on disk; return them and the nodes they left.
 
         Only rows whose ``yaml_path`` lies under ``under`` are candidates. A row
@@ -93,11 +95,28 @@ class _DatasourceStores:
                     if rag is self.metric_rag:
                         node_ids |= self.metric_node_ids(yaml_path)
                     rag.delete_artifact_rows(yaml_path)
-                except Exception:  # noqa: BLE001 - one artifact must not block the rest
+                except Exception as exc:  # noqa: BLE001 - one artifact must not block the rest
                     logger.exception(f"Failed to prune rows for deleted semantic model '{yaml_path}'")
+                    if failures is not None:
+                        failures[yaml_path] = str(exc)
                     continue
                 pruned.add(yaml_path)
         return sorted(pruned), node_ids
+
+    def projection_matches(self, yaml_path: str) -> bool:
+        """Whether the KB holds what ``yaml_path`` declares, by metric names and dataset presence.
+
+        Cheap enough to run on every file of a first reconcile; catches metrics
+        added or removed behind the save path, not an expression edited in place.
+        """
+        declared = _declared_objects(yaml_path)
+        if declared is None:
+            return True  # Unreadable: a sync would only fail the same way.
+        metric_names, declares_datasets = declared
+        projected = {str(row.get("name") or "").strip() for row in self.metric_rag.list_artifact_rows(yaml_path)}
+        if projected - {""} != metric_names:
+            return False
+        return not declares_datasets or bool(self.dataset_rag.list_artifact_rows(yaml_path))
 
     def remove_emptied_nodes(self, node_ids: Iterable[int]) -> List[List[str]]:
         removed: List[List[str]] = []
@@ -190,9 +209,12 @@ def _reconcile_datasource(
     digests = load_digests(agent_config, datasource)
     # Files edited behind the save path (agent tools, shell, git) show up as a
     # digest that no longer matches what was last projected.
-    changed = (
-        [path for path in on_disk if digests.get(state_key(path)) != file_digest(path)] if digests is not None else []
-    )
+    if digests is not None:
+        changed = [path for path in on_disk if digests.get(state_key(path)) != file_digest(path)]
+    else:
+        # No digests (first run, or the state was lost): trust only projections
+        # that still match what their file declares, and re-project the rest.
+        changed = [path for path in on_disk if not stores.projection_matches(str(path))]
 
     touched_nodes: Set[int] = set()
     failed: Set[str] = set()
@@ -225,12 +247,12 @@ def _reconcile_datasource(
             failed.add(yaml_path)
 
     if digests is None:
-        # First run for this datasource: take what is on disk as the baseline
-        # rather than re-projecting every file of every project at once.
+        # Re-projecting every file of every project at once on upgrade is what
+        # the baseline avoids; the mismatching ones were synced above.
         baseline = {str(path): file_digest(path) for path in on_disk if str(path) not in failed}
         record_digests(agent_config, datasource, {path: digest for path, digest in baseline.items() if digest})
 
-    pruned, pruned_nodes = stores.prune_missing(keep=set(), under=root)
+    pruned, pruned_nodes = stores.prune_missing(keep=set(), under=root, failures=result.failures)
     result.pruned_files.extend(pruned)
     touched_nodes |= pruned_nodes
     present = {state_key(path) for path in on_disk}
@@ -277,6 +299,29 @@ def _files_to_sync(
                 if len(file.relative_to(root).parts) > 1:
                     found.setdefault(datasource, set()).add(file.resolve(strict=False))
     return {datasource: sorted(files) for datasource, files in found.items()}
+
+
+def _declared_objects(yaml_path: str) -> Optional[tuple[Set[str], bool]]:
+    """``(metric names, declares any dataset)`` of an OSI file, or ``None`` if unreadable."""
+    import yaml
+
+    try:
+        doc = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    models = doc.get("semantic_model") if isinstance(doc, dict) else None
+    if not isinstance(models, list):
+        return None
+    metrics: Set[str] = set()
+    datasets = False
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        datasets = datasets or bool(model.get("datasets"))
+        for metric in model.get("metrics") or []:
+            if isinstance(metric, dict) and str(metric.get("name") or "").strip():
+                metrics.add(str(metric["name"]).strip())
+    return metrics, datasets
 
 
 def _config_for(agent_config: "AgentConfig", datasource: str) -> "AgentConfig":

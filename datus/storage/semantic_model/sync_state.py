@@ -7,8 +7,13 @@
 A file edited outside the validating save path — an agent's ``edit_file``, a
 shell ``sed``, a ``git pull`` — is only noticed by comparing what is on disk
 with what the Knowledge Base was built from. Only a full-file projection is
-recorded, so a stale or lost entry can only cause one redundant re-sync, never
-a missed one.
+recorded, and any path that changes the KB otherwise forgets the entry, so a
+stale entry can only cause one redundant re-sync, never a missed one.
+
+With no entries at all (first run, or the state file lost) a reconcile trusts
+only the files whose projection still matches what they declare — by metric
+names and dataset presence — and re-projects the rest. An expression edited in
+place while no state existed is the one change that goes unnoticed.
 """
 
 from __future__ import annotations

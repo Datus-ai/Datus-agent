@@ -14,6 +14,7 @@ import yaml
 
 from datus.storage.metric.store import MetricRAG
 from datus.storage.registry import get_subject_tree_store
+from datus.storage.semantic_dataset.store import KIND_DATASET, SemanticDatasetRAG, dataset_row_id
 from datus.storage.semantic_model.reconcile import reconcile_semantic_artifacts
 from datus.storage.semantic_model.sync_state import file_digest, load_digests, record_digests
 
@@ -77,6 +78,22 @@ def _fake_sync(agent_config):
         if rows:
             rag.upsert_batch(rows)
         rag.delete_artifact_rows_except(yaml_path, [row["id"] for row in rows])
+        model = doc["semantic_model"][0]["name"]
+        datasets = SemanticDatasetRAG(agent_config)
+        datasets.upsert_batch(
+            [
+                {
+                    "id": dataset_row_id(model, model),
+                    "kind": KIND_DATASET,
+                    "semantic_model_name": model,
+                    "dataset_name": model,
+                    "name": model,
+                    "source_table": model,
+                    "search_text": model,
+                    "yaml_path": yaml_path,
+                }
+            ]
+        )
         record_digests(agent_config, agent_config.current_datasource, {yaml_path: file_digest(Path(yaml_path))})
         return {"success": True}
 
@@ -110,6 +127,10 @@ def _metric_names(agent_config, datasource=DATASOURCE) -> set[str]:
     rag = MetricRAG(agent_config, datasource_id=datasource)
     rows = rag.storage._search_all(where=and_(*rag._sub_agent_conditions())).to_pylist()
     return {row["name"] for row in rows}
+
+
+def _state_file(agent_config) -> Path:
+    return Path(agent_config.path_manager.project_data_dir) / "semantic_sync_state.json"
 
 
 def _node(agent_config, path, datasource=DATASOURCE):
@@ -258,16 +279,47 @@ def test_an_untouched_file_is_not_re_projected(project):
     assert result.synced_files == []
 
 
-def test_the_first_run_records_a_baseline_instead_of_re_projecting(project):
+def test_the_first_run_records_a_baseline_for_a_matching_projection(project):
+    """Without digests, a projection that still matches its file is trusted, not re-embedded."""
     agent_config, root = project
     orders = root / DATASOURCE / "orders.yml"
     orders.write_text(_model("orders", {"order_count": ["sales"]}))
+    _fake_sync(agent_config)(str(orders.resolve()))
+    _state_file(agent_config).unlink()
 
     result = _reconcile(agent_config)
 
     assert result.synced_files == []
-    assert _metric_names(agent_config) == set()
     assert load_digests(agent_config, DATASOURCE) == {str(orders.resolve()): file_digest(orders)}
+
+
+def test_the_first_run_re_projects_a_file_the_kb_does_not_match(project):
+    """Lost state must not bless a stale KB: a declared metric missing from it is synced."""
+    agent_config, root = project
+    orders = root / DATASOURCE / "orders.yml"
+    orders.write_text(_model("orders", {"order_count": ["sales"]}))
+    _fake_sync(agent_config)(str(orders.resolve()))
+    _state_file(agent_config).unlink()
+    orders.write_text(_model("orders", {"order_count": ["sales"], "refund_count": ["sales"]}))
+
+    result = _reconcile(agent_config)
+
+    assert result.synced_files == [str(orders.resolve())]
+    assert _metric_names(agent_config) == {"order_count", "refund_count"}
+
+
+def test_a_prune_that_fails_is_reported(project, monkeypatch):
+    agent_config, root = project
+    orders, _, _ = _seed(agent_config, root)
+    orders.unlink()
+
+    def boom(self, yaml_path):
+        raise RuntimeError("storage down")
+
+    monkeypatch.setattr(MetricRAG, "delete_artifact_rows", boom)
+    result = _reconcile(agent_config)
+
+    assert result.failures[str(orders.resolve())] == "storage down"
 
 
 def test_a_pruned_file_is_forgotten(project):
