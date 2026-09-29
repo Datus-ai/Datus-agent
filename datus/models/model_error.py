@@ -6,8 +6,10 @@ code the host can only pattern-match the provider's wording. This maps the
 exception to the ``ErrorCode`` it amounts to, so the block can carry one.
 """
 
+import ast
+import json
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from openai import APIError as OpenAIAPIError
 
@@ -45,6 +47,12 @@ _UNKNOWN_MODEL = re.compile(
 
 _QUOTA = re.compile(r"quota|billing", re.IGNORECASE)
 
+# The SDKs stringify a rejection as ``Error code: 400 - {<body as a Python
+# dict repr>}``; litellm as ``litellm.BadRequestError: AnthropicException -
+# b'{<json>}'`` or with bare JSON.
+_BYTES_LITERAL = re.compile(r"b'(?:[^'\\]|\\.)*'|b\"(?:[^\"\\]|\\.)*\"")
+_MAX_MESSAGE_LEN = 300
+
 
 def _is_provider_error(exc: BaseException) -> bool:
     if isinstance(exc, OpenAIAPIError):  # litellm's exceptions subclass these
@@ -80,3 +88,60 @@ def classify_model_error(exc: BaseException) -> Optional[ErrorCode]:
     # path already uses.
     code, _ = classify_openai_compatible_error(exc)
     return code
+
+
+def model_error_message(exc: BaseException) -> Optional[str]:
+    """The provider's own sentence behind a failed model call, or None.
+
+    ``str(exc)`` on a provider rejection is ``Error code: 400 - {...}`` with the
+    whole response body inlined; a chat error card should carry only the
+    ``error.message`` inside it. Returns None for anything that is not a
+    provider error, or when no message can be recovered, so the caller keeps
+    its usual rendering.
+    """
+    if not _is_provider_error(exc):
+        return None
+
+    message = _body_message(getattr(exc, "body", None)) or _body_message(_decode_embedded_body(str(exc)))
+    if not message:
+        return None
+    message = re.sub(r"\s+", " ", message).strip()
+    if len(message) > _MAX_MESSAGE_LEN:
+        message = message[:_MAX_MESSAGE_LEN].rstrip() + "…"
+    return message
+
+
+def _body_message(body: Any) -> Optional[str]:
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error")
+    # Anthropic nests ``{"type": "error", "error": {...}}``; OpenAI-compatible
+    # servers send ``{"error": {...}}`` or, via the openai SDK, the inner object.
+    message = error.get("message") if isinstance(error, dict) else error
+    message = message or body.get("message")
+    return message if isinstance(message, str) and message.strip() else None
+
+
+def _decode_embedded_body(raw: str) -> Optional[dict]:
+    literal = _BYTES_LITERAL.search(raw)
+    if literal:
+        try:
+            decoded = ast.literal_eval(literal.group(0))
+            text = decoded.decode("utf-8", "replace") if isinstance(decoded, bytes) else str(decoded)
+            return json.loads(text)
+        except (ValueError, SyntaxError, json.JSONDecodeError):
+            pass
+
+    start, end = raw.find("{"), raw.rfind("}")
+    if not 0 <= start < end:
+        return None
+    candidate = raw[start : end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+    try:
+        parsed = ast.literal_eval(candidate)  # a Python dict repr
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
