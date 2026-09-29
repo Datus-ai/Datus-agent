@@ -136,6 +136,16 @@ class TestModelErrorMessage:
             "but you passed deepseek-v4-pro-0831. (request_id: cd58d435)"
         )
 
+    def test_gateway_bracket_pack_yields_the_readable_segment(self):
+        body = {"error": {"message": "[1234][网络错误 20260708110941e974e209bda24c95，请稍后重试。][req-1]"}}
+        exc = _with_body(anthropic.InternalServerError, 500, body)
+        assert model_error_message(exc) == "网络错误 ，请稍后重试。"
+
+    def test_indexes_inside_a_message_are_kept(self):
+        body = {"error": {"message": "messages[1].content[0]: tool_use ids must be unique"}}
+        exc = _with_body(anthropic.BadRequestError, 400, body)
+        assert model_error_message(exc) == "messages[1].content[0]: tool_use ids must be unique"
+
     def test_long_message_is_capped(self):
         exc = _with_body(anthropic.BadRequestError, 400, {"error": {"message": "x" * 1000}})
         message = model_error_message(exc)

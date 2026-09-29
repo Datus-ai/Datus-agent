@@ -51,6 +51,14 @@ _QUOTA = re.compile(r"quota|billing", re.IGNORECASE)
 # dict repr>}``; litellm as ``litellm.BadRequestError: AnthropicException -
 # b'{<json>}'`` or with bare JSON.
 _BYTES_LITERAL = re.compile(r"b'(?:[^'\\]|\\.)*'|b\"(?:[^\"\\]|\\.)*\"")
+# Some gateways pack the whole message as ``[code][human text][request id]``.
+# Anchored so a message that merely contains ``content[0]`` is left alone.
+_BRACKETED_ONLY = re.compile(r"^\s*(?:\[[^\[\]]*\]\s*)+$")
+_CJK = re.compile(r"[一-鿿]")
+# Long opaque tokens (request ids, trace ids) embedded in a provider message.
+# Hex-specific lookarounds (not ``\b``) so ids touching CJK text are stripped
+# too: CJK chars are ``\w`` under Unicode, so ``\b`` finds no boundary there.
+_ID_TOKEN = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{16,}(?![0-9a-fA-F])")
 _MAX_MESSAGE_LEN = 300
 
 
@@ -101,14 +109,24 @@ def model_error_message(exc: BaseException) -> Optional[str]:
     """
     if not _is_provider_error(exc):
         return None
+    return provider_error_message(exc)
 
+
+def provider_error_message(exc: BaseException) -> Optional[str]:
+    """Best-effort: the readable ``error.message`` carried by ``exc``, or None.
+
+    Unlike ``model_error_message`` this does not check the exception type, for
+    callers that already know the failure came from the model call.
+    """
     message = _body_message(getattr(exc, "body", None)) or _body_message(_decode_embedded_body(str(exc)))
     if not message:
         return None
-    message = re.sub(r"\s+", " ", message).strip()
+    message = _pick_readable_segment(message)
+    message = _ID_TOKEN.sub("", message)
+    message = re.sub(r"\s+", " ", message).strip(" ,;:")
     if len(message) > _MAX_MESSAGE_LEN:
         message = message[:_MAX_MESSAGE_LEN].rstrip() + "…"
-    return message
+    return message or None
 
 
 def _body_message(body: Any) -> Optional[str]:
@@ -123,6 +141,8 @@ def _body_message(body: Any) -> Optional[str]:
 
 
 def _decode_embedded_body(raw: str) -> Optional[dict]:
+    # ``b'...\xe7...'`` — a Python bytes literal; eval it back to bytes and
+    # decode as UTF-8 so escaped multibyte chars become real text.
     literal = _BYTES_LITERAL.search(raw)
     if literal:
         try:
@@ -145,3 +165,13 @@ def _decode_embedded_body(raw: str) -> Optional[dict]:
     except (ValueError, SyntaxError, MemoryError, RecursionError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _pick_readable_segment(message: str) -> str:
+    """For ``[code][text][id]``, the most readable segment: CJK first, then longest."""
+    if not _BRACKETED_ONLY.match(message):
+        return message
+    segments = [s for s in re.findall(r"\[([^\[\]]*)\]", message) if s.strip()]
+    if not segments:
+        return message
+    return max(segments, key=lambda s: (1 if _CJK.search(s) else 0, len(s)))
