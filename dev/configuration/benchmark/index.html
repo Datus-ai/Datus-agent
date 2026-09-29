@@ -5131,18 +5131,19 @@
 <li><strong>Semantic Layer</strong>: Business metric and semantic understanding benchmark</li>
 </ul>
 <h2 id="benchmark-configuration-structure">Benchmark Configuration Structure<a class="headerlink" href="#benchmark-configuration-structure" title="Permanent link">&para;</a></h2>
-<p>Configure benchmarks in the <code>benchmark</code> section of your configuration file:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">benchmark</span><span class="p">:</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">custom_bird</span><span class="p">:</span><span class="w">                       </span><span class="c1"># Custom benchmark datasource</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">benchmark_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">benchmark/custom_bird/dev_data</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">custom_spider</span><span class="p">:</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">benchmark_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/spider/data</span>
+<p>Configure custom benchmarks in the <code>agent.benchmark</code> section of your configuration file:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">benchmark</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">custom_bird</span><span class="p">:</span><span class="w">                     </span><span class="c1"># Custom benchmark dataset</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">benchmark_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">benchmark/custom_bird/dev_data</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">custom_spider</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">benchmark_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">path/to/spider/data</span>
 </span></code></pre></div>
 <h2 id="bird-dev-benchmark">BIRD-DEV Benchmark<a class="headerlink" href="#bird-dev-benchmark" title="Permanent link">&para;</a></h2>
 <p>The BIRD (Big Bench for Large-scale Database Grounded Text-to-SQL Evaluation) benchmark tests complex SQL generation capabilities.</p>
 <h3 id="pre-configured-built-in-benchmarks">Pre-configured Built-in Benchmarks<a class="headerlink" href="#pre-configured-built-in-benchmarks" title="Permanent link">&para;</a></h3>
-<p>The <code>bird_dev</code>, <code>spider2</code>, and <code>semantic_layer</code> benchmarks are built-in and their paths are pre-configured in the system. You do not need (and cannot) override their <code>benchmark_path</code> in <code>agent.yml</code>.</p>
+<p>The <code>bird_dev</code>, <code>spider2</code>, and <code>semantic_layer</code> benchmarks are built-in and their paths are pre-configured under <code>{agent.home}/benchmark</code>. You do not need (and cannot) override their <code>benchmark_path</code> in <code>agent.yml</code>. <a href="../../benchmark/benchmark_manual/#spider2-data">Download Spider2 data separately</a> before running its benchmark.</p>
 <p>For detailed usage instructions and advanced custom configuration options, see the <a href="../../benchmark/benchmark_manual/">Benchmarks</a> chapter.</p>
 
 
