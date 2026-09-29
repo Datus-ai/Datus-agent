@@ -542,6 +542,18 @@ class TestChatServiceGetHistory:
         assert [c.type for c in contents] == ["user-interaction", "thinking"]
         assert contents[1].payload["content"] == "here is table a"
 
+    @pytest.mark.parametrize("bad_options", [5, "Red,Blue"])
+    def test_get_history_skips_card_for_non_list_options(self, chat_svc, bad_options):
+        """A malformed stored call must not take the whole history down."""
+        questions = [{"title": "Color", "question": "Which color?", "options": bad_options}]
+        output = {"success": 1, "error": None, "result": json.dumps([{"question": "Which color?", "answer": "Red"}])}
+        raw = [{"role": "assistant", "actions": self._ask_user_pair("call_1", questions, output)}]
+        with self._patch_messages(raw):
+            result = chat_svc.get_history("sid")
+
+        assert result.success is True
+        assert [m.content[0].type for m in result.data.messages] == ["call-tool", "call-tool-result"]
+
     def test_get_history_keeps_cancelled_ask_user_as_plain_tool_events(self, chat_svc):
         """No answer means no submitted card — the tool pair renders as before."""
         questions = [{"title": "Table", "question": "Which table?", "options": ["a", "b"]}]

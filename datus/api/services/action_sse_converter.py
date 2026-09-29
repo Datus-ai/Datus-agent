@@ -428,6 +428,8 @@ def _build_answered_ask_user_content(
         if not isinstance(question, dict) or not isinstance(answer_item, dict):
             return None
         options = question.get("options") or None
+        if options is not None and not isinstance(options, list):
+            return None
         multi_select = bool(question.get("multi_select")) if options else False
         # Keys mirror ``AskUserTool``'s ``choices_dict`` so replay and live agree.
         requests_payload.append(
