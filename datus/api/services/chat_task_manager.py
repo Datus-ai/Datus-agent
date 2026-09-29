@@ -190,6 +190,16 @@ def _message_id_of(event: SSEEvent) -> str:
     return data.payload.message_id if isinstance(data, SSEMessageData) else ""
 
 
+def _is_turn_error_action(action) -> bool:
+    """True for the main agent's terminal ``error`` action (not a sub-agent's)."""
+    return action.action_type == "error" and action.status == ActionStatus.FAILED and getattr(action, "depth", 0) == 0
+
+
+def _turn_error_message(action) -> str:
+    output = action.output if isinstance(action.output, dict) else {}
+    return str(output.get("error") or action.messages or "Unknown error")
+
+
 def _should_include_final_response(action, assistant_response_sent: bool) -> bool:
     """Return True for top-level wrapper responses that should be rendered.
 
@@ -891,9 +901,15 @@ class ChatTaskManager:
             action_count = 0
             # action_id is globally unique, so delta de-dup can safely span passes.
             seen_delta_action_ids: set[str] = set()
+            # The node catches its own failures and ends the pass with an
+            # ``error`` action instead of raising, so the ``except`` below never
+            # sees them. Remember the main agent's so the turn still settles
+            # as ``error`` for the host hooks.
+            turn_error: Optional[str] = None
 
             async def _run_pass() -> None:
-                nonlocal event_id, action_count, collect_turn_stats, last_usage
+                nonlocal event_id, action_count, collect_turn_stats, last_usage, turn_error
+                turn_error = None  # a continuation pass that succeeds clears it
                 # Per-run render state — reset each pass. A continuation pass is a
                 # fresh turn, so its reply must not be dropped as a duplicate of an
                 # earlier pass ("re-run it" is a common steering ask) nor suppressed
@@ -903,6 +919,8 @@ class ChatTaskManager:
                 seen_assistant_message_fingerprints: dict[str, str] = {}
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
+                    if _is_turn_error_action(action):
+                        turn_error = _turn_error_message(action)
                     running = getattr(node, "running_turn_usage", None)
                     if running is not None:
                         last_usage = running
@@ -1069,7 +1087,11 @@ class ChatTaskManager:
             )
             event_id += 1
 
-            task.status = "completed"
+            if turn_error is not None:
+                task.status = "error"
+                task.error = turn_error
+            else:
+                task.status = "completed"
 
         except asyncio.CancelledError:
             task.status = "cancelled"
