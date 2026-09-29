@@ -1665,3 +1665,32 @@ class TestExplorerServiceSemanticScope:
 
         assert result.success is False
         assert "secret_metric" in result.errorMessage
+
+
+@pytest.mark.asyncio
+async def test_metric_reads_use_request_local_model(real_agent_config, tmp_path):
+    """Hub snapshots can differ from the project's saved semantic models."""
+    saved_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+    saved_dir.mkdir(parents=True, exist_ok=True)
+    (saved_dir / "saved.yml").write_text(
+        TestExplorerServiceOSIAuthoring.SAMPLE.replace("daily_order_count", "saved_order_count"),
+        encoding="utf-8",
+    )
+    snapshot = tmp_path / "hub_model.yml"
+    snapshot.write_text(
+        TestExplorerServiceOSIAuthoring.SAMPLE.replace("daily_order_count", "hub_order_count"),
+        encoding="utf-8",
+    )
+
+    svc = ExplorerService(
+        agent_config=real_agent_config,
+        semantic_model_path_provider=lambda: str(snapshot),
+    )
+    dimensions = await svc.get_metric_dimensions(SubjectPathInput(subject_path=["Hub", "hub_order_count"]))
+    preview = await svc.preview_metric(MetricPreviewInput(subject_path=["Hub", "hub_order_count"]))
+
+    assert dimensions.success is True, dimensions.errorMessage
+    assert dimensions.data.metric == "hub_order_count"
+    assert preview.success is True, preview.errorMessage
+    assert preview.data.sql
+    assert "hub_order_count" in preview.data.sql

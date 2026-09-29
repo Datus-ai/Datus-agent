@@ -3,7 +3,7 @@ Explorer service for catalog and subject tree management.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
@@ -41,7 +41,12 @@ class ExplorerService:
     directories, metrics, and reference SQL.
     """
 
-    def __init__(self, agent_config: "AgentConfig", sub_agent_name: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        agent_config: "AgentConfig",
+        sub_agent_name: Optional[str] = None,
+        semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
+    ) -> None:
         """Initialize ExplorerService.
 
         Args:
@@ -55,9 +60,12 @@ class ExplorerService:
                 mapping, so an ``id`` misses, yields ``{}``, and the scope
                 filter degrades to "no filter" — unrestricted results with a
                 200, not an error. Callers resolve id -> key before this point.
+            semantic_model_path_provider: Select a request-local model file for
+                Dosi metric reads and previews, such as a Semantic Hub snapshot.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
+        self._semantic_model_path_provider = semantic_model_path_provider
         self.datasource_id = str(agent_config.current_datasource or "").strip()
         logger.info("ExplorerService initialized")
 
@@ -101,7 +109,11 @@ class ExplorerService:
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         try:
-            return SemanticTools(self.agent_config, self.sub_agent_name).runtime
+            return SemanticTools(
+                self.agent_config,
+                self.sub_agent_name,
+                semantic_model_path_provider=self._semantic_model_path_provider,
+            ).runtime
         except Exception as e:  # noqa: BLE001 - report unavailable runtime at the call site
             logger.warning(f"Dosi runtime unavailable: {e}")
             return None
@@ -696,6 +708,7 @@ class ExplorerService:
                 self.agent_config,
                 self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
+                semantic_model_path_provider=self._semantic_model_path_provider,
             )
             runtime = tools.runtime
             if runtime is None:
@@ -833,6 +846,7 @@ class ExplorerService:
                 self.agent_config,
                 self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
+                semantic_model_path_provider=self._semantic_model_path_provider,
             )
             if tools.runtime is None:
                 return Result[MetricPreviewData](
