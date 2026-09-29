@@ -1,6 +1,7 @@
 """Tests for datus.api.services.chat_service — chat session management."""
 
 import asyncio
+import json
 from contextlib import AbstractContextManager
 from unittest.mock import MagicMock, patch
 
@@ -455,6 +456,113 @@ class TestChatServiceGetHistory:
 
         assert result.success is True
         assert len(result.data.messages) == 1
+
+    def _ask_user_pair(self, call_id: str, questions: list[dict], output: dict) -> list[ActionHistory]:
+        arguments = json.dumps({"questions": questions}, ensure_ascii=False)
+        tool_input = {"function_name": "ask_user", "arguments": arguments}
+        return [
+            ActionHistory(
+                action_id=call_id,
+                role=ActionRole.TOOL,
+                action_type="ask_user",
+                status=ActionStatus.PROCESSING,
+                input=tool_input,
+            ),
+            ActionHistory(
+                action_id="complete_" + call_id,
+                role=ActionRole.TOOL,
+                action_type="ask_user",
+                status=ActionStatus.SUCCESS,
+                input=tool_input,
+                output=output,
+            ),
+        ]
+
+    def test_get_history_replays_answered_ask_user_as_submitted_card(self, chat_svc):
+        """The live INTERACTION card is never persisted; the tool pair rebuilds it."""
+        questions = [
+            {"title": "Table", "question": "Which table?", "options": ["raw_orders", "raw_users"]},
+            {"title": "Cols", "question": "Which columns?", "options": ["id", "name"], "multi_select": True},
+        ]
+        answers = [
+            {"question": "Which table?", "answer": "raw_orders"},
+            {"question": "Which columns?", "answer": ["id", "name"]},
+        ]
+        output = {"success": 1, "error": None, "result": json.dumps(answers)}
+        raw = [
+            {
+                "role": "assistant",
+                "actions": [*self._ask_user_pair("call_1", questions, output), self._assistant_response("a1", "ok")],
+            }
+        ]
+        with self._patch_messages(raw):
+            result = chat_svc.get_history("sid")
+
+        assert result.success is True
+        # The card replaces both the hidden call-tool and its call-tool-result.
+        assert [m.content[0].type for m in result.data.messages] == ["user-interaction", "markdown"]
+        payload = result.data.messages[0].content[0].payload
+        assert payload["interactionKey"] == "call_1"
+        assert payload["submitted"] is True
+        assert payload["answers"] == [["raw_orders"], ["id", "name"]]
+        assert payload["requests"][0]["options"] == [
+            {"key": "1", "title": "raw_orders"},
+            {"key": "2", "title": "raw_users"},
+        ]
+        assert payload["requests"][1]["multiSelect"] is True
+
+    def test_get_history_folded_ask_user_result_still_counts_as_tool_result(self, chat_svc):
+        """Post-tool thinking text is the visible answer, so the wrapper stays hidden."""
+        questions = [{"title": "Table", "question": "Which table?", "options": ["a", "b"]}]
+        output = {"success": 1, "error": None, "result": json.dumps([{"question": "Which table?", "answer": "a"}])}
+        thinking = ActionHistory(
+            action_id="t1",
+            role=ActionRole.ASSISTANT,
+            action_type="response",
+            status=ActionStatus.SUCCESS,
+            output={"is_thinking": True, "response": "here is table a"},
+        )
+        wrapper = ActionHistory(
+            action_id="w1",
+            role=ActionRole.ASSISTANT,
+            action_type="chat_response",
+            status=ActionStatus.SUCCESS,
+            output={"response": "wrapper text"},
+        )
+        raw = [
+            {
+                "role": "assistant",
+                "actions": [*self._ask_user_pair("call_1", questions, output), thinking, wrapper],
+            }
+        ]
+        with self._patch_messages(raw):
+            result = chat_svc.get_history("sid")
+
+        contents = [m.content[0] for m in result.data.messages]
+        assert [c.type for c in contents] == ["user-interaction", "thinking"]
+        assert contents[1].payload["content"] == "here is table a"
+
+    @pytest.mark.parametrize("bad_options", [5, "Red,Blue"])
+    def test_get_history_skips_card_for_non_list_options(self, chat_svc, bad_options):
+        """A malformed stored call must not take the whole history down."""
+        questions = [{"title": "Color", "question": "Which color?", "options": bad_options}]
+        output = {"success": 1, "error": None, "result": json.dumps([{"question": "Which color?", "answer": "Red"}])}
+        raw = [{"role": "assistant", "actions": self._ask_user_pair("call_1", questions, output)}]
+        with self._patch_messages(raw):
+            result = chat_svc.get_history("sid")
+
+        assert result.success is True
+        assert [m.content[0].type for m in result.data.messages] == ["call-tool", "call-tool-result"]
+
+    def test_get_history_keeps_cancelled_ask_user_as_plain_tool_events(self, chat_svc):
+        """No answer means no submitted card — the tool pair renders as before."""
+        questions = [{"title": "Table", "question": "Which table?", "options": ["a", "b"]}]
+        output = {"success": 0, "error": "User cancelled the question", "result": None}
+        raw = [{"role": "assistant", "actions": self._ask_user_pair("call_1", questions, output)}]
+        with self._patch_messages(raw):
+            result = chat_svc.get_history("sid")
+
+        assert [m.content[0].type for m in result.data.messages] == ["call-tool", "call-tool-result"]
 
 
 class TestChatServiceScopePropagation:
