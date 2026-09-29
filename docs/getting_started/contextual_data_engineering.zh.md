@@ -128,7 +128,7 @@ Datus 会按需捕获、存储并召回历史 SQL、数据表结构、指标与�
 
 - 已安装 `datus`（参见[快速开始](Quickstart.zh.md)）
 - 在 `datus` 内通过 `/model` 配置好 LLM provider；选择器会把凭据写入 `~/.datus/conf/agent.yml`
-- 使用默认的 Dosi 语义层适配器；交互式启动且未配置语义适配器时，Datus 会自动安装，也可以通过 `/services semantic` 显式选择
+- Dosi 随 Agent 安装并默认启用，无需另行安装语义层包
 
 不需要下载或手动 `cp` 任何文件。首次启动 `datus` 在没有配置时会自动 bootstrap `~/.datus/`：
 
@@ -217,7 +217,7 @@ success_story:     ~/.datus/benchmark/california_schools/success_story.csv
 [*] overwrite
 ```
 
-`success_story.csv` 是 `(question, sql)` 对的 CSV，Datus 会把它作为创作 Dosi dataset、relationship 和 metric 的证据。该文件随样本数据集一起发布，因此上面的路径可直接使用。此创作流程要求项目使用 Dosi semantic adapter。
+`success_story.csv` 是 `(question, sql)` 对的 CSV，Datus 会把它作为创作 Dosi dataset、relationship 和 metric 的证据。该文件随样本数据集一起发布，因此上面的路径可直接使用。此创作流程使用内置 Dosi 引擎。
 
 按 **Ctrl+R**，预期输出：
 

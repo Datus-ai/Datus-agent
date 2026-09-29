@@ -740,7 +740,7 @@ class TestBakeKeyTablesSchema:
         analysis_dir.mkdir()
         warning = bake_key_tables_schema(
             db_func_tool=None,
-            key_tables=["jeff_shop.raw_orders"],
+            key_tables=["sample_shop.raw_orders"],
             analysis_dir=analysis_dir,
         )
         assert warning is None
@@ -860,7 +860,7 @@ class TestBakeKeyTablesSchema:
         analysis_dir.mkdir()
         tool = _mock_describe_table_tool(
             {
-                "jeff_shop.raw_orders": {
+                "sample_shop.raw_orders": {
                     "result": {
                         "columns": [
                             {"name": "order_id", "type": "bigint", "comment": "primary key"},
@@ -876,7 +876,7 @@ class TestBakeKeyTablesSchema:
         )
         warning = bake_key_tables_schema(
             db_func_tool=tool,
-            key_tables=["jeff_shop.raw_orders"],
+            key_tables=["sample_shop.raw_orders"],
             analysis_dir=analysis_dir,
         )
         assert warning is None
@@ -885,7 +885,7 @@ class TestBakeKeyTablesSchema:
         assert out == {
             "tables": [
                 {
-                    "name": "jeff_shop.raw_orders",
+                    "name": "sample_shop.raw_orders",
                     "description": "canonical orders fact table",
                     "columns": [
                         {
@@ -1200,14 +1200,12 @@ class TestUpdateManifestKeyTables:
 
     def test_missing_manifest_returns_error_string(self, tmp_path: Path):
         err = update_manifest_key_tables(tmp_path / "nope.json", ["Account"])
-        assert err is not None
         assert "manifest missing" in err
 
     def test_corrupt_manifest_returns_error_string(self, tmp_path: Path):
         path = tmp_path / "manifest.json"
         path.write_text("{not-json", encoding="utf-8")
         err = update_manifest_key_tables(path, ["Account"])
-        assert err is not None
         assert "unreadable" in err
 
 
@@ -1406,7 +1404,6 @@ class TestRunIntentCuration:
             _curation_model(returns=RuntimeError("provider 500")),
             path,
         )
-        assert result is not None
         assert "LLM call failed" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 
@@ -1414,7 +1411,6 @@ class TestRunIntentCuration:
         path = tmp_path / "intent.md"
         path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
         result = run_intent_curation(_curation_model(returns="   \n  "), path)
-        assert result is not None
         assert "empty body" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 
@@ -1427,7 +1423,6 @@ class TestRunIntentCuration:
             _curation_model(returns="I'm sorry, I cannot perform this task."),
             path,
         )
-        assert result is not None
         assert "no '### ' heading" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 
@@ -1438,7 +1433,6 @@ class TestRunIntentCuration:
         path.write_text(_ORIGINAL_INTENT, encoding="utf-8")
         tiny = "### [x] mode: y\n> z\n"
         result = run_intent_curation(_curation_model(returns=tiny), path)
-        assert result is not None
         assert "too short" in result
         assert path.read_text(encoding="utf-8") == _ORIGINAL_INTENT
 

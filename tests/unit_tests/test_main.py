@@ -11,6 +11,8 @@ CI-level: zero external dependencies. All I/O and subprocess calls mocked.
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from datus.main import create_parser, main
 
 # ---------------------------------------------------------------------------
@@ -184,8 +186,6 @@ class TestCreateParser:
         assert args.pool_size == 4
 
     def test_bootstrap_kb_requires_datasource(self):
-        import pytest
-
         parser = create_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["bootstrap-kb", "--components", "metadata"])
@@ -236,8 +236,6 @@ class TestCreateParser:
                 "ds",
                 "--benchmark",
                 "spider2",
-                "--from_adapter",
-                "metricflow",
                 "--semantic_yaml",
                 "/tmp/s.yaml",
                 "--validate-only",
@@ -250,7 +248,6 @@ class TestCreateParser:
             ]
         )
         assert args.benchmark == "spider2"
-        assert args.from_adapter == "metricflow"
         assert args.semantic_yaml == "/tmp/s.yaml"
         assert args.validate_only is True
         assert args.catalog == "main"

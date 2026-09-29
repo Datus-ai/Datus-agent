@@ -291,7 +291,7 @@ def _create_real_agent_config(
     - models with a mock OpenAI config
     - datasource "test_ns" with california_schools.sqlite ("california_schools")
     - agentic_nodes config for chat, gen_sql, compare,
-      gen_sql_summary, gen_metrics, gen_semantic_model, gen_report
+      gen_sql_summary, gen_report
     """
     # Create workspace subdirectory for filesystem tools
     os.makedirs(os.path.join(str(tmp_path), "workspace"), exist_ok=True)
@@ -320,7 +320,6 @@ def _create_real_agent_config(
             "datasources": {
                 "california_schools": datasource_config,
             },
-            "semantic_layer": {},
             "bi_platforms": {},
             "schedulers": {},
         },
@@ -354,15 +353,6 @@ def _create_real_agent_config(
             },
             "gen_sql_summary": {
                 "system_prompt": "gen_sql_summary",
-                "max_turns": 5,
-            },
-            "gen_metrics": {
-                "system_prompt": "gen_metrics",
-                "max_turns": 5,
-            },
-            "gen_semantic_model": {
-                "system_prompt": "gen_semantic_model",
-                "tools": "db_tools.*",
                 "max_turns": 5,
             },
             "gen_report": {

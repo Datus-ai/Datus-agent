@@ -846,7 +846,7 @@ class AgenticNode(Node):
         return line
 
     def _semantic_runtime_db_context(self) -> Dict[str, str]:
-        """Return the current datasource/catalog/database/schema for semantic adapter initialization."""
+        """Return the current datasource/catalog/database/schema for Dosi initialization."""
         agent_config = getattr(self, "agent_config", None)
         if not agent_config:
             return {}
@@ -860,7 +860,7 @@ class AgenticNode(Node):
             try:
                 runtime_context = runtime_context_getter() or {}
             except Exception as e:
-                logger.debug("Unable to read runtime DB context for semantic adapter: %s", e)
+                logger.debug("Unable to read runtime DB context for Dosi: %s", e)
                 runtime_context = {}
         datasource = runtime_context.get("datasource") or datasource
         context: Dict[str, str] = {}
@@ -871,7 +871,7 @@ class AgenticNode(Node):
         try:
             db_config = agent_config.current_db_config(datasource)
         except Exception as e:
-            logger.debug("Unable to read current DB config for semantic adapter context: %s", e)
+            logger.debug("Unable to read current DB config for Dosi context: %s", e)
 
         user_input = getattr(self, "input", None)
         connector = getattr(getattr(self, "db_func_tool", None), "connector", None)

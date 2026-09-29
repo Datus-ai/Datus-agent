@@ -1237,7 +1237,7 @@ class TestListSchedulerConnections:
     def test_returns_configured_connections(self):
         cfg = _make_agent_config()
         cfg.scheduler_config["connections"] = {
-            "starrocks_default": "StarRocks ac_manage",
+            "starrocks_default": "StarRocks analytics",
             "pg_conn": "PostgreSQL test DB",
         }
         tools = SchedulerTools(cfg)

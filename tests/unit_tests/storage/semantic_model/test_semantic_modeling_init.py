@@ -26,7 +26,6 @@ def _query(index: int) -> SourceQueryEvidence:
 
 def _config() -> MagicMock:
     config = MagicMock()
-    config.resolve_semantic_adapter.return_value = "dosi"
     config.current_db_config.return_value = SimpleNamespace(catalog="", database="db", schema="")
     config.runtime_db_context.return_value = {}
     return config
@@ -177,20 +176,6 @@ async def test_stops_after_first_failed_batch():
     assert run_batch.await_count == 2
     assert result["batches_completed"] == 1
     assert result["sql_entries_covered"] == 5
-
-
-@pytest.mark.asyncio
-async def test_rejects_non_dosi_adapter_before_loading_csv():
-    config = _config()
-    config.resolve_semantic_adapter.return_value = "metricflow"
-
-    with patch("datus.storage.semantic_model.semantic_modeling_init._load_source_queries") as load:
-        success, error, result = await init_success_story_semantic_modeling_async(config, "stories.csv")
-
-    assert success is False
-    assert "semantic_adapter=dosi" in error
-    assert result is None
-    load.assert_not_called()
 
 
 def test_storage_setup_preserves_existing_artifact_projections():

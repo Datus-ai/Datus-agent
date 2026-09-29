@@ -7,13 +7,13 @@
 
 ## 1. 安装
 
-Linux / macOS 一键安装（推荐）：
+Linux x86_64/aarch64（glibc 2.28+）或 Apple Silicon macOS 一键安装（推荐）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-脚本会自动 bootstrap `uv`，在 `~/.datus/venv` 下建独立 venv（缺 Python 3.12 时自动下载），并把 `datus`、`datus-cli`、`datus-api`、`datus-mcp`、`datus-pip` 等 shim 写入 `~/.local/bin`。开新 shell（或 `source ~/.zshrc`）使 PATH 生效。
+脚本会自动 bootstrap `uv`，在 `~/.datus/venv` 下建独立 venv（缺 Python 3.12 时自动下载），并把 `datus`、`datus-cli`、`datus-api`、`datus-mcp`、`datus-pip` 等 shim 写入 `~/.local/bin`。内置 `dosi-engine` 目前只提供上述平台的 wheel。开新 shell（或 `source ~/.zshrc`）使 PATH 生效。
 
 ??? note "其他安装方式"
     **固定版本**（变量传给接收脚本的 shell，不是 `curl`）：
@@ -111,4 +111,4 @@ bash> git status
 - **[将 Dashboard 变成 Copilot](./dashboard_copilot.zh.md)** —— 将已有 Superset Dashboard 转换成分析子代理
 - **[配置指南](../configuration/introduction.md)** —— 自有数据库与高级配置
 - **[CLI 参考](../cli/introduction.md)** —— 全部命令与选项
-- **[语义层适配器](../adapters/semantic_adapters.zh.md)** —— 默认使用 Dosi，并兼容 MetricFlow 与 OSI 查询
+- **[语义引擎](../semantic/dosi_engine.zh.md)** —— Dosi 配置与 Agent 集成

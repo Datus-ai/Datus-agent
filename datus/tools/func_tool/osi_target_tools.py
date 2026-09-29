@@ -400,13 +400,8 @@ class OsiSemanticModelTargetTools:
         if not self.target_state.target_mutated:
             self.target_state.reset()
         try:
-            from datus.agent.node.semantic_authoring import (
-                is_osi_authoring,
-                plan_osi_semantic_model_target,
-            )
+            from datus.agent.node.semantic_authoring import plan_osi_semantic_model_target
 
-            if not is_osi_authoring(self.agent_config):
-                return self._plan_failure("OSI target planning is only available in OSI mode.")
             target = plan_osi_semantic_model_target(
                 self.agent_config,
                 semantic_model_name=semantic_model_name,

@@ -48,7 +48,6 @@ from datus.api.models.cli_models import (
 from datus.api.services.background_drain import track_background_task
 from datus.api.utils.stream_errors import humanize_stream_error
 from datus.tools.policy_runtime import PolicyRuntime
-from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
 from datus.utils.exceptions import DatusException
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
@@ -75,11 +74,7 @@ _EXTRA_BUILTIN_SUBAGENTS = {"feedback"}
 
 
 def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
-    """Return True if *subagent_id* resolves to a builtin or custom sub-agent.
-
-    Existence only. Whether an existing agent may run on *this* project is a
-    separate question — see :func:`_query_only_semantic_detail`.
-    """
+    """Return True if *subagent_id* resolves to a builtin or custom sub-agent."""
     if subagent_id in BUILTIN_SUBAGENTS or subagent_id in _EXTRA_BUILTIN_SUBAGENTS:
         return True
     agentic_nodes = getattr(svc.agent_config, "agentic_nodes", None) or {}
@@ -91,24 +86,6 @@ def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
         if isinstance(entry, dict) and entry.get("id") == subagent_id:
             return True
     return False
-
-
-def _query_only_semantic_detail(svc, subagent_id: Optional[str]) -> Optional[str]:
-    """Return the query-only message when this project cannot author semantics.
-
-    Kept out of ``_is_valid_subagent_id`` on purpose: a Dosi-only gate deserves
-    a 400 naming the migration, not a 404 that reads as "no such agent".
-    """
-    if subagent_id != "semantic_modeling":
-        return None
-    from datus.agent.node.semantic_authoring import (
-        QUERY_ONLY_MIGRATION_MESSAGE,
-        is_semantic_modeling_available,
-    )
-
-    if is_semantic_modeling_available(svc.agent_config):
-        return None
-    return QUERY_ONLY_MIGRATION_MESSAGE
 
 
 def _policy_context_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
@@ -149,16 +126,6 @@ async def stream_chat(
     http_request: Request,
 ):
     sub_agent_id = request.subagent_id
-    if sub_agent_id in RETIRED_SYS_SUB_AGENTS:
-        from datus.agent.node.semantic_authoring import retired_semantic_agent_message
-
-        raise HTTPException(
-            status_code=400,
-            detail=retired_semantic_agent_message(sub_agent_id, svc.agent_config),
-        )
-    query_only_detail = _query_only_semantic_detail(svc, sub_agent_id)
-    if query_only_detail:
-        raise HTTPException(status_code=400, detail=query_only_detail)
     if sub_agent_id and not _is_valid_subagent_id(svc, sub_agent_id):
         raise HTTPException(
             status_code=404,

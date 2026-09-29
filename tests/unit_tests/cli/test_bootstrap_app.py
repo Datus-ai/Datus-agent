@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 
 from datus.cli.bootstrap_app import (
@@ -120,7 +121,7 @@ def test_collect_semantic_only_success_story(app: BootstrapApp) -> None:
     app._sem_success_story.text = "/data/success.csv"
     app._sem_subject_tree.text = "Sales, Orders"
     opts = app._collect_for(_Tab.SEMANTIC)
-    # No semantic_yaml / from_adapter / catalog / subject_path / source.
+    # No semantic_yaml / catalog / subject_path / source.
     assert opts == {
         "datasource": "ssb_sqlite",
         "success_story": "/data/success.csv",
@@ -190,9 +191,9 @@ class TestEmbeddedPanel:
             assert isinstance(panel, EmbeddedWizard)
             assert panel.done_future is fut
             # Key bindings instance is attached to the panel container subtree.
-            assert panel.key_bindings is not None
+            assert isinstance(panel.key_bindings, KeyBindings)
             # _on_done must be installed so _finish dispatches through the future.
-            assert app._on_done is not None
+            assert callable(app._on_done)
         finally:
             loop.close()
 

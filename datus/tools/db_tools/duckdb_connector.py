@@ -125,8 +125,8 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
     def _connect_locked(self):
         try:
             # Align with the `custom_user_agent` that duckdb_engine auto-injects on every connect:
-            # without this, any same-process SQLAlchemy+duckdb_engine client (metricflow validator,
-            # dbt, etc.) hits DuckDB's config-consistency check and fails with
+            # without this, any same-process SQLAlchemy+duckdb_engine client hits
+            # DuckDB's config-consistency check and fails with
             # "Can't open a connection to same database file with a different configuration".
             try:
                 import sqlalchemy as _sa

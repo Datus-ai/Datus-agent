@@ -255,9 +255,7 @@ Spider metadata bootstrap can take hours because the benchmark contains thousand
 
 ### Semantic Layer
 
-MetricFlow is configured through the semantic adapter system, not by running `poetry lock`, `mf setup`, or editing `~/.metricflow/config.yml` manually.
-
-At minimum, configure a datasource and an explicit MetricFlow semantic adapter:
+Agent uses the bundled Dosi engine for semantic models and metrics. Configure a datasource:
 
 ```yaml
 agent:
@@ -266,11 +264,9 @@ agent:
       duckdb:
         type: duckdb
         uri: duckdb:///path/to/duck.db
-    semantic_layer:
-      metricflow: {}
 ```
 
-The `/services semantic` TUI can add the `metricflow` entry and install `datus-semantic-metricflow` if the adapter package is missing.
+Install Agent dependencies with `uv sync --locked`. Dosi loads models from the project's `subject/semantic_models/<datasource>/` directory.
 
 Place semantic-layer benchmark data under:
 
@@ -305,5 +301,5 @@ Observability setup and tracing examples now live in the dedicated [Observabilit
 - [Agent Configuration](../configuration/agent.md)
 - [Observability](observability.md)
 - [Benchmark Manual](../benchmark/benchmark_manual.md)
-- [Semantic Layer Configuration](../configuration/semantic_layer.md)
+- [Dosi Semantic Engine](../semantic/dosi_engine.md)
 - [LLM Trace Usage](../training/llm_trace_usage.md)

@@ -145,16 +145,6 @@ def test_expected_sources_include_new_database_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-gaussdb"] == "datus-db-adapters/datus-gaussdb"
 
 
-def test_expected_sources_include_query_compatible_semantic_adapters():
-    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-semantic-dosi"] == (
-        "datus-semantic-adapter/datus-semantic-dosi"
-    )
-    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-semantic-metricflow"] == (
-        "datus-semantic-adapter/datus-semantic-metricflow"
-    )
-    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-semantic-osi"] == ("datus-semantic-adapter/datus-semantic-osi")
-
-
 def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
@@ -325,18 +315,14 @@ def test_verify_database_adapter_imports_requires_complete_oracle_operations(mon
     ]
 
 
-def test_verify_local_sources_rejects_registry_package(monkeypatch, tmp_path):
+def test_verify_local_sources_does_not_require_registry_semantic_packages(monkeypatch, tmp_path):
     external_root = tmp_path / "external"
     distributions = {
         name: _local_distribution(external_root / relative_path)
         for name, relative_path in verify_sources.EXPECTED_LOCAL_PACKAGES.items()
     }
-    distributions["datus-semantic-core"] = _FakeDistribution(None)
     monkeypatch.setattr(verify_sources.metadata, "distribution", distributions.__getitem__)
-
-    errors = verify_sources.verify_local_sources(external_root)
-
-    assert errors == ["datus-semantic-core: package has no direct_url.json and was likely installed from a registry"]
+    assert verify_sources.verify_local_sources(external_root) == []
 
 
 def test_verify_local_sources_rejects_wrong_checkout(monkeypatch, tmp_path):
@@ -355,18 +341,13 @@ def test_verify_local_sources_rejects_wrong_checkout(monkeypatch, tmp_path):
     assert errors[0].endswith(f", got {(tmp_path / 'somewhere-else').resolve()}")
 
 
-def test_verify_semantic_adapter_imports_requires_shared_contract(monkeypatch):
+def test_verify_dosi_runtime_imports_requires_engine_contract(monkeypatch):
     modules = {
-        "datus_semantic_core.models": SimpleNamespace(),
-        "datus_semantic_metricflow": SimpleNamespace(),
-        "datus_semantic_dosi": SimpleNamespace(),
-        "datus_semantic_osi": SimpleNamespace(),
+        "dosi_engine": SimpleNamespace(Engine=object(), validate=lambda _: None),
+        "datus.tools.semantic_tools.dosi": SimpleNamespace(),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
-
-    assert verify_sources.verify_semantic_adapter_imports() == [
-        "datus-semantic-core is missing SemanticValidationError"
-    ]
+    assert verify_sources.verify_dosi_runtime_imports() == ["dosi-engine is missing render_datus_authoring_spec"]
 
 
 def test_verify_storage_adapter_imports_requires_shared_contract(monkeypatch):

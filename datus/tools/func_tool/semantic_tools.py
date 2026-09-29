@@ -5,19 +5,17 @@
 """
 Semantic Function Tools
 
-Provides unified interface to semantic layer services through adapters.
-All public semantic tools require a successfully initialized semantic adapter.
+Provides unified interface to semantic layer services through runtimes.
+All public semantic tools require a successfully initialized semantic runtime.
 """
 
 import csv
 import hashlib
-import inspect
 import io
 import itertools
 import json
 import secrets
 from collections import OrderedDict
-from copy import copy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
 
@@ -26,10 +24,6 @@ from pydantic import BaseModel
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG, normalize_metric_name
-from datus.tools.func_tool.attribution_utils import (
-    AttributionValidationException,
-    GenericAttributeAnalyzer,
-)
 from datus.tools.func_tool.base import (
     FuncToolListResult,
     FuncToolResult,
@@ -38,7 +32,7 @@ from datus.tools.func_tool.base import (
     trans_to_function_tool,
 )
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
-from datus.tools.semantic_tools.base import BaseSemanticAdapter
+from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
 from datus.tools.semantic_tools.models import (
     AttributionRequest,
     AttributionResult,
@@ -49,7 +43,6 @@ from datus.tools.semantic_tools.paging import (
     METRIC_CATALOG_PAGE_SIZE,
     metric_catalog_paging,
 )
-from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -63,8 +56,8 @@ NO_METRICS_PRESENT_MESSAGE = "No metrics present in the model."
 def _normalize_dimension_rows(raw) -> list:
     """Normalize dimension payload into ``List[Dict[str, Any]]`` for the envelope.
 
-    Adapters (MetricFlow) return pydantic ``DimensionInfo`` objects with a
-    full schema; storage may hold bare strings (dimension name only) or
+    Dosi returns pydantic ``DimensionInfo`` objects with a full schema;
+    storage may hold bare strings (dimension name only) or
     dicts. FuncToolListResult.items must be ``List[Dict]`` either way, so
     wrap naked strings into ``{"name": str}`` and leave structured rows
     untouched.
@@ -85,7 +78,7 @@ def _normalize_dimension_rows(raw) -> list:
 
 
 def _normalize_metric_metadata(raw) -> dict:
-    """Keep adapter-provided metric metadata only when it is tool-safe."""
+    """Keep runtime-provided metric metadata only when it is tool-safe."""
     if not isinstance(raw, dict):
         return {}
 
@@ -99,7 +92,7 @@ def _normalize_metric_metadata(raw) -> dict:
     return safe_metadata
 
 
-# Metadata keys an adapter may publish that describe how a metric derives from
+# Metadata keys a runtime may publish that describe how a metric derives from
 # other metrics. They are the dependency edges of the metric graph, so the
 # summary row carries them while the bulkier per-metric detail stays in
 # ``get_metric``.
@@ -107,8 +100,8 @@ _METRIC_DERIVATION_KEYS = ("derive_family", "derive_base", "derive_expr")
 
 # Metadata keys promoted onto the detail row alongside the derivation edges.
 # Passed through verbatim: what a partition rule means, and which dimensions a
-# metric needs before its partitions do, is the adapter's to decide and publish.
-# This layer must not reconstruct either from the rule's internals — an adapter
+# metric needs before its partitions do, is the runtime's to decide and publish.
+# This layer must not reconstruct either from the rule's internals — a runtime
 # that resolves a requirement through metrics it never published would leave us
 # reporting "no requirement" for exactly the metrics that have one.
 _METRIC_DETAIL_KEYS = (
@@ -125,12 +118,12 @@ def _metric_summary_row(metric: Any, subject_path: Optional[List[str]] = None) -
     """One ``list_metrics`` row: identity plus how the metric derives.
 
     ``subject_path`` is the knowledge-base navigation path, which the caller owns
-    because the KB — not the adapter — is the source of truth for it. An adapter
+    because the KB — not the runtime — is the source of truth for it. An runtime
     may publish a ``path`` of its own; it is deliberately ignored so that the
     navigation path a caller reads here is the one the subject tree shows.
 
     Deliberately omits ``measures`` (compiled internal measure names, unusable as
-    tool arguments), ``dimensions`` (adapters publish an empty list here because
+    tool arguments), ``dimensions`` (runtimes publish an empty list here because
     the catalog only knows model-wide dimensions — ``get_metric`` verifies them
     per metric), and ``unit``/``format`` when unset.
     """
@@ -177,7 +170,7 @@ def _metric_detail_row(metric: Any, subject_path: Optional[List[str]] = None) ->
 
 
 def _normalize_dataset_names(raw: Any) -> List[str]:
-    """Dataset names an adapter reports for a metric, as a list of non-empty strings.
+    """Dataset names a runtime reports for a metric, as a list of non-empty strings.
 
     A lone string names one dataset; iterating it would yield characters. Only
     string entries are kept — coercing anything else would invent names like
@@ -195,7 +188,7 @@ def _normalize_pagination_bound(value: Any, *, default: int, minimum: int) -> in
     """Coerce an LLM-supplied paging bound to an int.
 
     A tool schema declaring ``int`` does not stop a model from sending ``"200"``,
-    and adapters use these values in arithmetic and slicing — a string reaches
+    and runtimes use these values in arithmetic and slicing — a string reaches
     them as ``TypeError: slice indices must be integers``, which surfaces as a
     failed call the caller cannot act on. Anything unusable falls back to the
     default rather than failing the listing.
@@ -234,57 +227,13 @@ def _normalize_name_list(value) -> List[str]:
     return names
 
 
-def _normalize_validation_checks(value) -> Optional[List[str]]:
-    """Normalize optional adapter validation check names."""
-    value = normalize_null(value)
-    if value is None:
-        return None
-    candidates: List[Any]
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        if text.startswith("["):
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, list):
-                candidates = parsed
-            else:
-                candidates = [part.strip() for part in text.split(",")]
-        else:
-            candidates = [part.strip() for part in text.split(",")]
-    elif isinstance(value, (list, tuple, set)):
-        candidates = list(value)
-    else:
-        candidates = [value]
-
-    checks = []
-    for candidate in candidates:
-        candidate = normalize_null(candidate)
-        if candidate is None:
-            continue
-        check = str(candidate).strip()
-        if check:
-            checks.append(check)
-    return checks or None
-
-
 def _normalize_optional_path(value) -> Optional[List[str]]:
     """Normalize optional subject paths and drop null placeholders."""
     names = _normalize_name_list(value)
     return names or None
 
 
-def _signature_accepts_parameter(parameters, name: str) -> bool:
-    """Return true when a callable explicitly accepts ``name`` or arbitrary kwargs."""
-    return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
-
-
-# Defaults for `metric_datasets` paging; override per adapter under
-# `services.semantic_layer.<adapter>` with `metric_catalog_page_size` /
-# `metric_catalog_max_pages`. The page is large because an adapter may rebuild
+# Defaults for `metric_datasets` paging. The page is large because Dosi may rebuild
 # its whole catalog per request, making each extra page cost a full pass.
 _METRIC_DATASETS_PAGE_SIZE = METRIC_CATALOG_PAGE_SIZE
 _METRIC_DATASETS_MAX_PAGES = METRIC_CATALOG_MAX_PAGES
@@ -308,7 +257,7 @@ _LIST_METRICS_DEFAULT_LIMIT = 200
 
 
 def extract_time_query_capabilities(raw_dimensions) -> Dict[str, Any]:
-    """Extract the metric-level time contract carried by the adapter's dimensions."""
+    """Extract the metric-level time contract carried by the runtime's dimensions."""
     candidates = []
     for dimension in raw_dimensions or []:
         if isinstance(dimension, dict):
@@ -469,19 +418,8 @@ class SemanticTools:
 
     @classmethod
     def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "SemanticTools":
-        """Create a SemanticTools instance for dynamic MCP mode.
-
-        Resolves the adapter the way the agent nodes do
-        (``resolve_semantic_adapter_type``), so an MCP client sees the same
-        semantic layer a node's model would.
-        """
-        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-        return cls(
-            agent_config,
-            sub_agent_name=sub_agent_name,
-            adapter_type=resolve_semantic_adapter_type(agent_config),
-        )
+        """Create a Dosi-backed SemanticTools instance for dynamic MCP mode."""
+        return cls(agent_config, sub_agent_name=sub_agent_name)
 
     @classmethod
     def create_static(
@@ -497,7 +435,6 @@ class SemanticTools:
         self,
         agent_config: AgentConfig,
         sub_agent_name: Optional[str] = None,
-        adapter_type: Optional[str] = None,
         generation_evidence: Optional[GenerationEvidence] = None,
         runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
         warehouse_dry_run_provider: Optional[Callable[[str], Mapping[str, Any]]] = None,
@@ -510,13 +447,12 @@ class SemanticTools:
         Args:
             agent_config: Agent configuration
             sub_agent_name: Optional sub-agent name for scoped storage
-            adapter_type: Optional adapter type (e.g., "metricflow"). If not provided, tools will use storage only.
             generation_evidence: Optional shared tracker for validate_semantic and query_metrics(dry_run=True)
                 publish-gate evidence.
             runtime_db_context_provider: Optional callback that returns the per-turn datasource/catalog/database/schema
-                context used to initialize the semantic adapter.
+                context used to initialize the semantic runtime.
             warehouse_dry_run_provider: Optional host callback that validates
-                adapter-compiled SQL against the active warehouse.
+                runtime-compiled SQL against the active warehouse.
             semantic_model_path_provider: Optional callback that returns the exact
                 request-local semantic model selected for authoring or validation.
             semantic_metric_names_provider: Optional callback returning the
@@ -524,7 +460,6 @@ class SemanticTools:
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
-        self.adapter_type = adapter_type
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
@@ -533,7 +468,7 @@ class SemanticTools:
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
-        # The semantic adapter remains the source of executable metric definitions.
+        # The semantic runtime remains the source of executable metric definitions.
         # list_metrics reads the KB only for navigation paths shared with
         # ContextSearchTools.list_subject_tree; ContextSearchTools owns RAG discovery.
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
@@ -543,11 +478,10 @@ class SemanticTools:
         )
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
 
-        # Lazy load adapter and attribution tool
-        self._adapter: Optional[BaseSemanticAdapter] = None
-        self._attribution_tool: Optional[GenericAttributeAnalyzer] = None
-        self._adapter_load_error: Optional[str] = None
-        self._adapter_context_key: Optional[Tuple[str, ...]] = None
+        # Lazy load runtime and attribution tool
+        self._runtime: Optional[DosiRuntime] = None
+        self._runtime_load_error: Optional[str] = None
+        self._runtime_context_key: Optional[Tuple[str, ...]] = None
 
     @staticmethod
     def _query_data_row_count(data: Any) -> int:
@@ -621,11 +555,14 @@ class SemanticTools:
 
     # One page has to fit an MCP response; the cached result is bounded only by the query.
     MAX_QUERY_METRICS_RESULT_PAGE = 1000
+    # ...and a row cap alone does not bound it: a few wide cells can make 1000 rows
+    # any size. A page over this many characters is cut down to fewer rows.
+    MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 1_000_000
 
     # MCP only, deliberately not in ``available_tools``: a node's model is told the
     # full result is used for its final output, and paging it into the context
     # would be the opposite of the compression.
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
         """
         Read the full rows behind a ``query_metrics`` result, one page at a time.
@@ -638,7 +575,10 @@ class SemanticTools:
         Args:
             result_id: The ``result_id`` an earlier ``query_metrics`` call returned.
             offset: Index of the first row to return, 0-based.
-            limit: Maximum number of rows to return, at most 1000.
+            limit: Maximum number of rows to return, at most 1000. A page is also
+                cut to fewer rows when its CSV would pass about 1,000,000
+                characters; ``returned`` says how many came back, so continue
+                from ``offset + returned``.
 
         Returns:
             result = {"result_id", "columns", "csv" (header plus this page's rows),
@@ -652,14 +592,23 @@ class SemanticTools:
         limit = min(max(int(limit or 0), 1), self.MAX_QUERY_METRICS_RESULT_PAGE)
 
         # Serialized with the same writer as the full ``csv``, so a page reads
-        # exactly like the matching rows of it.
-        page = self._slice_query_data(cached["data"], offset, limit)
+        # exactly like the matching rows of it. Halved until it fits the character
+        # budget, but never below one row: paging has to advance past a row that
+        # is on its own wider than the budget.
+        columns = list(cached["columns"])
+        page_rows = limit
+        while True:
+            page = self._slice_query_data(cached["data"], offset, page_rows)
+            page_csv = self._query_data_to_csv(columns, page)
+            if len(page_csv) <= self.MAX_QUERY_METRICS_RESULT_PAGE_CHARS or page_rows == 1:
+                break
+            page_rows = max(1, page_rows // 2)
         returned = self._query_data_row_count(page)
         return FuncToolResult(
             result={
                 "result_id": result_id,
-                "columns": list(cached["columns"]),
-                "csv": self._query_data_to_csv(list(cached["columns"]), page),
+                "columns": columns,
+                "csv": page_csv,
                 "row_count": cached["row_count"],
                 "offset": offset,
                 "returned": returned,
@@ -709,21 +658,21 @@ class SemanticTools:
     def metric_datasets(self) -> Optional[Dict[str, List[str]]]:
         """Metric name -> datasets it reads, for the tool-transformer context.
 
-        ``None`` when no adapter is configured; ``{}`` when the catalog is empty.
+        ``None`` when no runtime is configured; ``{}`` when the catalog is empty.
         Consumers treat a name missing from the map as "no such metric", so every
         page is read. Result is fresh on each call, making a metric added after a
         model reload visible.
         """
-        adapter = self.adapter
-        if adapter is None:
+        runtime = self.runtime
+        if runtime is None:
             return None
 
-        lightweight = getattr(adapter, "metric_datasets", None)
+        lightweight = getattr(runtime, "metric_datasets", None)
         if callable(lightweight):
             reported = _run_async(lightweight())
             if not isinstance(reported, Mapping):
                 logger.warning(
-                    "Adapter metric_datasets returned %s; reporting the mapping as unavailable.",
+                    "Runtime metric_datasets returned %s; reporting the mapping as unavailable.",
                     type(reported).__name__,
                 )
                 return None
@@ -738,7 +687,7 @@ class SemanticTools:
         mapping: Dict[str, List[str]] = {}
         offset = 0
         for _ in range(max_pages):
-            page = list(_run_async(adapter.list_metrics(limit=page_size, offset=offset)))
+            page = list(_run_async(runtime.list_metrics(limit=page_size, offset=offset)))
             if not page:
                 return mapping
             for metric in page:
@@ -750,7 +699,7 @@ class SemanticTools:
             offset += len(page)
 
         # A catalog that fills the bound exactly is complete; one more request tells them apart.
-        if not list(_run_async(adapter.list_metrics(limit=page_size, offset=offset))):
+        if not list(_run_async(runtime.list_metrics(limit=page_size, offset=offset))):
             return mapping
 
         logger.warning(
@@ -760,38 +709,12 @@ class SemanticTools:
         return None
 
     def _metric_catalog_paging(self) -> Tuple[int, int]:
-        """Page size and page cap for adapter catalog scans, from the adapter's config."""
-        return metric_catalog_paging(self.agent_config, self.adapter_type)
-
-    @property
-    def has_semantic_adapter(self) -> bool:
-        """Whether a semantic adapter is configured — the same gate ``available_tools`` uses."""
-        return bool(self._configured_adapter_type())
-
-    def _configured_adapter_type(self) -> Optional[str]:
-        """Return the configured adapter type without instantiating the adapter."""
-        if self.adapter_type:
-            return self.adapter_type
-
-        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
-        if not callable(resolver):
-            return None
-
-        try:
-            resolved_adapter = resolver(self.adapter_type)
-        except Exception as e:
-            logger.debug(f"No semantic adapter configuration available: {e}")
-            return None
-
-        if resolved_adapter:
-            self.adapter_type = resolved_adapter
-        return resolved_adapter
+        """Page size and page cap for Dosi catalog scans."""
+        return metric_catalog_paging()
 
     def _semantic_model_artifact_evidence(self, semantic_model_name: str) -> Dict[str, str]:
         """Return exact Ossie artifact identity for target-bound validation evidence."""
-        from datus.agent.node.semantic_authoring import is_osi_semantic_adapter
-
-        if not is_osi_semantic_adapter(self.adapter_type) or not semantic_model_name:
+        if not semantic_model_name:
             return {}
         try:
             from datus.agent.node.semantic_authoring import discover_osi_semantic_models
@@ -847,22 +770,21 @@ class SemanticTools:
         return normalized
 
     def set_runtime_db_context(self, runtime_db_context: Optional[Mapping[str, Any]]) -> None:
-        """Set a static runtime DB context and invalidate any adapter built for the old context."""
+        """Set a static runtime DB context and invalidate any runtime built for the old context."""
         normalized = self._normalize_runtime_db_context(runtime_db_context)
         if normalized == self._runtime_db_context_static and self._runtime_db_context_static_set:
             return
         self._runtime_db_context_static = normalized
         self._runtime_db_context_static_set = True
-        self._adapter = None
-        self._attribution_tool = None
-        self._adapter_context_key = None
+        self._runtime = None
+        self._runtime_context_key = None
 
     def _runtime_db_context(self) -> Dict[str, str]:
         if callable(self._runtime_db_context_provider):
             try:
                 return self._normalize_runtime_db_context(self._runtime_db_context_provider())
             except Exception as e:
-                logger.debug("Failed to resolve runtime DB context for semantic adapter: %s", e)
+                logger.debug("Failed to resolve runtime DB context for semantic runtime: %s", e)
                 return {}
         if self._runtime_db_context_static_set:
             return dict(self._runtime_db_context_static)
@@ -871,7 +793,7 @@ class SemanticTools:
             try:
                 return self._normalize_runtime_db_context(runtime_context_getter())
             except Exception as e:
-                logger.debug("Failed to resolve AgentConfig runtime DB context for semantic adapter: %s", e)
+                logger.debug("Failed to resolve AgentConfig runtime DB context for semantic runtime: %s", e)
         return {}
 
     def _selected_semantic_model_path(self) -> str:
@@ -907,172 +829,92 @@ class SemanticTools:
         return db_config
 
     @property
-    def adapter(self) -> Optional[BaseSemanticAdapter]:
-        """Lazy load semantic adapter if configured."""
+    def runtime(self) -> Optional[DosiRuntime]:
+        """Load the embedded Dosi runtime for the current datasource/model."""
         try:
-            resolved_adapter = self.adapter_type
-            resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
-            if callable(resolver):
-                resolved_adapter = resolver(self.adapter_type)
-            if not resolved_adapter:
-                return None
-
             runtime_db_context = self._runtime_db_context()
             datasource = runtime_db_context.get("datasource") or self.agent_config.current_datasource
             semantic_model_path = self._selected_semantic_model_path()
             context_key = (
-                resolved_adapter,
                 datasource or "",
                 runtime_db_context.get("catalog", ""),
                 runtime_db_context.get("database", ""),
                 runtime_db_context.get("schema", ""),
                 semantic_model_path,
             )
-            if self._adapter is not None:
-                if self._adapter_context_key is None or self._adapter_context_key == context_key:
-                    return self._adapter
-                self._adapter = None
-                self._attribution_tool = None
-                self._adapter_context_key = None
+            if self._runtime is not None:
+                if self._runtime_context_key is None or self._runtime_context_key == context_key:
+                    return self._runtime
+                self._runtime = None
+                self._runtime_context_key = None
 
-            metadata = semantic_adapter_registry.get_metadata(resolved_adapter)
-            config_class = metadata.config_class if metadata and metadata.config_class else None
-            config_fields = getattr(config_class, "model_fields", {})
-            artifact_overrides = (
-                {"semantic_model_path": semantic_model_path}
-                if semantic_model_path and "semantic_model_path" in config_fields
-                else {}
+            from datus.configuration.agent_config import _apply_runtime_db_context_to_dosi_profile
+
+            db_config = _apply_runtime_db_context_to_dosi_profile(
+                self._extract_db_config(datasource), runtime_db_context
             )
-            builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
-            adapter_config = None
-            if callable(builder):
-                builder_kwargs: Dict[str, Any] = {}
-                try:
-                    builder_params = inspect.signature(builder).parameters
-                    if "database_name" in builder_params:
-                        builder_kwargs["database_name"] = datasource or None
-                    if "runtime_db_context" in builder_params:
-                        builder_kwargs["runtime_db_context"] = runtime_db_context
-                except (TypeError, ValueError):
-                    pass
-                adapter_config = builder(resolved_adapter, **builder_kwargs)
-            if adapter_config is None:
-                db_config = self._extract_db_config(datasource)
-                semantic_models_path = str(self.agent_config.path_manager.semantic_model_path(datasource))
-
-                if config_class:
-                    adapter_config = config_class(
-                        datasource=datasource,
-                        db_config=db_config,
-                        semantic_models_path=semantic_models_path,
-                        **artifact_overrides,
-                    )
-                else:
-                    from datus.tools.semantic_tools.config import SemanticAdapterConfig
-
-                    adapter_config = SemanticAdapterConfig(datasource=datasource)
-            elif isinstance(adapter_config, dict):
-                adapter_config = {**adapter_config, **artifact_overrides}
-                if config_class:
-                    adapter_config = config_class(**adapter_config)
-                else:
-                    from datus.tools.semantic_tools.config import SemanticAdapterConfig
-
-                    adapter_config = SemanticAdapterConfig(**adapter_config)
-            elif artifact_overrides:
-                model_copy = getattr(adapter_config, "model_copy", None)
-                if callable(model_copy):
-                    adapter_config = model_copy(update=artifact_overrides)
-                else:
-                    adapter_config = copy(adapter_config)
-                    for key, value in artifact_overrides.items():
-                        setattr(adapter_config, key, value)
-
-            self.adapter_type = resolved_adapter
-            self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
-            self._adapter_context_key = context_key
-            self._adapter_load_error = None
-            logger.info(f"Loaded semantic adapter: {resolved_adapter}")
+            runtime_config = DosiConfig(
+                datasource=datasource,
+                db_config=db_config,
+                semantic_models_path=str(self.agent_config.path_manager.semantic_model_path(datasource)),
+                semantic_model_path=semantic_model_path or None,
+            )
+            self._runtime = DosiRuntime(runtime_config)
+            self._runtime_context_key = context_key
+            self._runtime_load_error = None
+            logger.info("Loaded Dosi runtime for datasource %s", datasource)
         except Exception as e:
-            logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
-            self._adapter_load_error = str(e)
-            self._adapter = None
-            self._adapter_context_key = None
-        return self._adapter
+            logger.warning("Failed to load Dosi runtime: %s", e)
+            self._runtime_load_error = str(e)
+            self._runtime = None
+            self._runtime_context_key = None
+        return self._runtime
 
-    @property
-    def attribution_tool(self) -> Optional[GenericAttributeAnalyzer]:
-        """Lazy load attribution tool when adapter is available."""
-        if self._attribution_tool is None and self.adapter is not None:
-            self._attribution_tool = GenericAttributeAnalyzer(self.adapter)
-        return self._attribution_tool
+    async def _attribute(self, runtime: DosiRuntime, request: AttributionRequest) -> AttributionResult:
+        return await runtime.attribute(request)
 
-    async def _attribute(
-        self,
-        adapter: BaseSemanticAdapter,
-        request: AttributionRequest,
-    ) -> AttributionResult:
-        native_result = await adapter.attribute(request)
-        if native_result is not None:
-            return native_result
-        attribution_tool = self.attribution_tool
-        if attribution_tool is None:
-            raise RuntimeError("Generic attribution is unavailable.")
-        return await attribution_tool.attribute(request)
+    def _runtime_unavailable_message(self) -> str:
+        """Return a consistent message for Dosi runtime failures."""
+        if self._runtime_load_error:
+            return f"Dosi runtime unavailable: {self._runtime_load_error}"
+        return "Dosi runtime unavailable."
 
-    def _adapter_unavailable_message(self) -> str:
-        """Return a consistent message for semantic-adapter failures."""
-        if self._adapter_load_error:
-            adapter_name = self.adapter_type or "configured"
-            return f"Semantic adapter unavailable: failed to load '{adapter_name}': {self._adapter_load_error}"
-
-        adapter_name = self._configured_adapter_type()
-        if not adapter_name:
-            return "Semantic adapter unavailable: no semantic adapter configured."
-
-        return f"Semantic adapter unavailable: failed to load '{adapter_name}'."
-
-    def _require_adapter(self, tool_name: str) -> tuple[Optional[BaseSemanticAdapter], Optional[FuncToolResult]]:
-        """Load the semantic adapter or return a tool failure result."""
-        adapter = self.adapter
-        if adapter is not None:
-            return adapter, None
+    def _require_runtime(self, tool_name: str) -> tuple[Optional[DosiRuntime], Optional[FuncToolResult]]:
+        """Load the semantic runtime or return a tool failure result."""
+        runtime = self.runtime
+        if runtime is not None:
+            return runtime, None
         return None, FuncToolResult(
             success=0,
-            error=f"{tool_name} requires a successfully initialized semantic adapter. "
-            f"{self._adapter_unavailable_message()}",
+            error=f"{tool_name} requires a successfully initialized Dosi runtime. "
+            f"{self._runtime_unavailable_message()}",
         )
 
-    def _reload_adapter(self) -> bool:
+    def _reload_runtime(self) -> bool:
         """
-        Reload the semantic adapter to pick up new configuration changes.
+        Reload the semantic runtime to pick up new configuration changes.
 
-        This is useful after writing new metric/semantic model YAML files,
-        as MetricFlow needs to reload the configuration to know about new metrics.
+        This is useful after writing new metric/semantic model YAML files so
+        subsequent calls discover the updated Dosi model catalog.
 
         Returns:
             True if reload succeeded, False otherwise
         """
-        if not self.adapter_type:
-            logger.warning("No adapter type configured, cannot reload")
-            return False
-
         try:
-            # Clear cached adapter and attribution tool
-            self._adapter = None
-            self._attribution_tool = None
-            self._adapter_context_key = None
+            # Clear cached runtime and attribution tool
+            self._runtime = None
+            self._runtime_context_key = None
 
             # Force reload by accessing the property
-            if self.adapter is not None:
-                logger.info(f"Successfully reloaded semantic adapter: {self.adapter_type}")
+            if self.runtime is not None:
+                logger.info("Successfully reloaded Dosi runtime")
                 return True
             else:
-                logger.error("Failed to reload semantic adapter")
+                logger.error("Failed to reload semantic runtime")
                 return False
 
         except Exception as e:
-            logger.error(f"Error reloading semantic adapter: {e}", exc_info=True)
+            logger.error(f"Error reloading semantic runtime: {e}", exc_info=True)
             return False
 
     def available_tools(self) -> List[Tool]:
@@ -1082,10 +924,6 @@ class SemanticTools:
         Returns:
             List of Tool objects for LLM function calling
         """
-        if not self._configured_adapter_type():
-            logger.warning("SemanticTools unavailable: %s", self._adapter_unavailable_message())
-            return []
-
         return [
             trans_to_function_tool(self.list_metrics),
             trans_to_function_tool(self.get_metric),
@@ -1094,7 +932,7 @@ class SemanticTools:
             trans_to_function_tool(self.attribution_analyze),
         ]
 
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -1138,7 +976,7 @@ class SemanticTools:
         limit = _normalize_pagination_bound(limit, default=_LIST_METRICS_DEFAULT_LIMIT, minimum=1)
         offset = _normalize_pagination_bound(offset, default=0, minimum=0)
         logger.debug(f"list_metrics called: path={path}, limit={limit}, offset={offset}")
-        adapter, error = self._require_adapter("list_metrics")
+        runtime, error = self._require_runtime("list_metrics")
         if error:
             return error
 
@@ -1149,7 +987,7 @@ class SemanticTools:
                 if path:
                     raise
                 logger.warning(
-                    "Could not load KB metric subject paths; returning the adapter catalog without paths: %s",
+                    "Could not load KB metric subject paths; returning the runtime catalog without paths: %s",
                     exc,
                 )
                 kb_paths = {}
@@ -1157,14 +995,14 @@ class SemanticTools:
                 if not kb_paths:
                     return self._build_metrics_envelope([], total=0, offset=offset, limit=limit)
 
-                async_result = self._adapter_metrics_for_names(adapter, set(kb_paths))
-                adapter_metrics = [
+                async_result = self._runtime_metrics_for_names(runtime, set(kb_paths))
+                runtime_metrics = [
                     _metric_summary_row(metric, kb_paths[normalize_metric_name(metric.name)])
                     for metric in async_result
                     if normalize_metric_name(metric.name) in kb_paths
                 ]
-                total = len(adapter_metrics)
-                paginated_metrics = adapter_metrics[offset : offset + limit]
+                total = len(runtime_metrics)
+                paginated_metrics = runtime_metrics[offset : offset + limit]
                 return self._build_metrics_envelope(
                     paginated_metrics,
                     total=total,
@@ -1172,13 +1010,13 @@ class SemanticTools:
                     limit=limit,
                 )
 
-            async_result = _run_async(adapter.list_metrics(path=None, limit=limit, offset=offset))
-            adapter_metrics = [
+            async_result = _run_async(runtime.list_metrics(path=None, limit=limit, offset=offset))
+            runtime_metrics = [
                 _metric_summary_row(metric, kb_paths.get(normalize_metric_name(metric.name))) for metric in async_result
             ]
-            # Adapter path has no guaranteed upstream total — leave it None so consumers
+            # Runtime path has no guaranteed upstream total — leave it None so consumers
             # know to use has_more / len(items) < limit as the pagination hint.
-            return self._build_metrics_envelope(adapter_metrics, total=None, offset=offset, limit=limit)
+            return self._build_metrics_envelope(runtime_metrics, total=None, offset=offset, limit=limit)
 
         except Exception as e:
             logger.error(f"Error listing metrics: {e}")
@@ -1201,15 +1039,15 @@ class SemanticTools:
                 paths[name] = subject_path
         return paths
 
-    def _adapter_metrics_for_names(self, adapter: BaseSemanticAdapter, names: set[str]) -> List[Any]:
-        """Read unfiltered adapter pages until every KB candidate is found or the catalog ends."""
+    def _runtime_metrics_for_names(self, runtime: DosiRuntime, names: set[str]) -> List[Any]:
+        """Read unfiltered runtime pages until every KB candidate is found or the catalog ends."""
         page_size, max_pages = self._metric_catalog_paging()
         matched: List[Any] = []
         found: set[str] = set()
         offset = 0
 
         for _ in range(max_pages):
-            page = list(_run_async(adapter.list_metrics(path=None, limit=page_size, offset=offset)))
+            page = list(_run_async(runtime.list_metrics(path=None, limit=page_size, offset=offset)))
             if not page:
                 return matched
 
@@ -1223,7 +1061,7 @@ class SemanticTools:
                 return matched
             offset += len(page)
 
-        if not list(_run_async(adapter.list_metrics(path=None, limit=page_size, offset=offset))):
+        if not list(_run_async(runtime.list_metrics(path=None, limit=page_size, offset=offset))):
             return matched
 
         raise DatusException(
@@ -1234,14 +1072,14 @@ class SemanticTools:
             ),
         )
 
-    def _adapter_metric_by_name(self, adapter: BaseSemanticAdapter, name: str) -> Optional[Any]:
+    def _runtime_metric_by_name(self, runtime: DosiRuntime, name: str) -> Optional[Any]:
         """The catalog entry for one metric, over the whole catalog.
 
         Paged the same way ``list_metrics`` pages it rather than read once with a
         bound, so a name ``list_metrics`` handed out from a later page is still
         describable. Running out of pages means the name is not in the catalog —
         the caller reports an unknown metric, which is a different answer from
-        the integrity failure ``_adapter_metrics_for_names`` raises when a name
+        the integrity failure ``_runtime_metrics_for_names`` raises when a name
         the knowledge base knows cannot be located.
         """
         page_size, max_pages = self._metric_catalog_paging()
@@ -1249,7 +1087,7 @@ class SemanticTools:
         offset = 0
 
         for _ in range(max_pages):
-            page = list(_run_async(adapter.list_metrics(path=None, limit=page_size, offset=offset)))
+            page = list(_run_async(runtime.list_metrics(path=None, limit=page_size, offset=offset)))
             if not page:
                 return None
             for metric in page:
@@ -1264,7 +1102,7 @@ class SemanticTools:
         )
         return None
 
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def get_metric(
         self,
         name: str,
@@ -1284,25 +1122,25 @@ class SemanticTools:
 
         Returns:
             FuncToolResult with result as a dict carrying every list_metrics
-            field plus, when the adapter reports them:
+            field plus, when the runtime reports them:
               - dimensions (List[Dict]): dimensions queryable for this metric,
-                verified by the adapter. Group by these in query_metrics.
+                verified by the runtime. Group by these in query_metrics.
                 ``recommended`` is a grouping-selection hint, not an allow/deny
                 flag: a dimension with ``recommended=false`` can still be
                 grouped explicitly. ``recommendation_source`` explains whether
-                the adapter declared or inferred that classification.
-              - required_dimensions (List[str]): dimensions the adapter needs in
+                the runtime declared or inferred that classification.
+              - required_dimensions (List[str]): dimensions the runtime needs in
                 the query before this metric means anything. Pass every one of
-                them to query_metrics; the adapter rejects the query otherwise.
+                them to query_metrics; the runtime rejects the query otherwise.
               - window: the partition and rank rule behind those requirements.
               - time_dimension, time_granularities: the metric's time axis and
-                the grains the adapter compiles for it.
+                the grains the runtime compiles for it.
               - datasets: the datasets the metric reads.
         """
         name = str(normalize_null(name) or "").strip()
         path = _normalize_optional_path(path)
         logger.debug(f"get_metric called: name={name}, path={path}")
-        adapter, error = self._require_adapter("get_metric")
+        runtime, error = self._require_runtime("get_metric")
         if error:
             return error
 
@@ -1315,7 +1153,7 @@ class SemanticTools:
             )
 
         try:
-            metric = self._adapter_metric_by_name(adapter, name)
+            metric = self._runtime_metric_by_name(runtime, name)
         except Exception as e:
             logger.error(f"Error reading the metric catalog: {e}")
             return FuncToolResult(success=0, error=f"Failed to get metric detail: {str(e)}")
@@ -1327,7 +1165,7 @@ class SemanticTools:
             )
 
         try:
-            # The KB, not the adapter, owns the navigation path — same rule
+            # The KB, not the runtime, owns the navigation path — same rule
             # list_metrics follows, so both tools name a metric the same way.
             subject_path = self._metric_subject_paths(None).get(normalize_metric_name(name))
         except Exception as exc:
@@ -1336,7 +1174,7 @@ class SemanticTools:
 
         row = _metric_detail_row(metric, subject_path)
         try:
-            dimensions = _run_async(adapter.get_dimensions(metric_name=name, path=path))
+            dimensions = _run_async(runtime.get_dimensions(metric_name=name, path=path))
         except Exception as e:
             # Detail the caller can still use should survive a failing sub-query.
             logger.warning("get_metric could not resolve dimensions for %s: %s", name, e)
@@ -1368,7 +1206,7 @@ class SemanticTools:
         """Wrap paginated metric rows into a FuncToolListResult.
 
         When ``total`` is known (storage path) ``has_more`` is exact. When
-        ``total`` is None (adapter path) ``has_more`` falls back to
+        ``total`` is None (runtime path) ``has_more`` falls back to
         ``len(items) == limit`` — a heuristic, but good enough for the LLM
         to decide whether to fetch another page.
         """
@@ -1386,12 +1224,11 @@ class SemanticTools:
 
     # Dosi binding names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def query_metrics(
         self,
         metrics: List[str],
         dimensions: Optional[List[str]] = None,
-        path: Optional[List[str]] = None,
         time_start: Optional[str] = None,
         time_end: Optional[str] = None,
         time_granularity: Optional[str] = None,
@@ -1402,7 +1239,7 @@ class SemanticTools:
         dry_run: bool = False,
     ) -> FuncToolResult:
         """
-        Query metrics data (requires adapter).
+        Query metrics data (requires runtime).
 
         Return complete metric results by default. Do not pass limit just to
         preview data, reduce output size, or be conservative; the visible tool
@@ -1414,14 +1251,13 @@ class SemanticTools:
 
         Args:
             metrics: List of metric names to query
-            dimensions: Optional list of dimensions to group by (from get_metric).
-                        With Dosi, use reserved `metric_time` for the selected metric's
-                        primary time axis and pass its grain via `time_granularity`.
-            path: Optional subject tree path (from list_subject_tree)
-            time_start: Optional inclusive start of an OSI half-open range (ISO format like '2024-01-01'
-                        or relative like '-7d')
-            time_end: Optional exclusive end of an OSI half-open range (for example, use '2024-02-01'
-                      to include all of January, or a relative value like 'now')
+            dimensions: Optional list of dimensions to group by. Use names from
+                        get_metric.dimensions[].name exactly as returned, including
+                        dataset qualification where present. To group by the
+                        metric's primary time axis, use `metric_time` when available.
+                        Set `time_granularity` when a specific time grain is needed.
+            time_start: Optional inclusive start of a half-open time range (ISO date YYYY-MM-DD)
+            time_end: Optional exclusive end of a half-open time range (ISO date YYYY-MM-DD)
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
             where: Optional SQL WHERE clause (without WHERE keyword)
             limit: Optional maximum number of rows
@@ -1432,19 +1268,18 @@ class SemanticTools:
                       Do NOT use 'asc'/'desc' keywords.
             params: Optional parameter bindings for Dosi parameterized metrics.
                 Values may be scalars or lists and are passed through unchanged.
-            dry_run: If True, compile and return the query plan. Live OSI
-                backends also validate the compiled SQL with a warehouse dry-run.
+            dry_run: If True, return the compiled SQL without executing the query.
+                A configured warehouse dry-run provider also validates that SQL.
 
         Returns:
-            FuncToolResult with query results or explain plan
+            FuncToolResult with query results or compiled SQL
         """
         metrics = _normalize_name_list(metrics)
         dimensions = _normalize_name_list(dimensions)
-        path = _normalize_name_list(path)
         order_by = _normalize_name_list(order_by)
         params = normalize_null(params)
 
-        adapter, error = self._require_adapter("query_metrics")
+        runtime, error = self._require_runtime("query_metrics")
         if error:
             return error
 
@@ -1461,34 +1296,25 @@ class SemanticTools:
                 success=0,
                 error="query_metrics params must be an object of parameter bindings",
             )
-        adapter_name = str(self.adapter_type or getattr(adapter, "service_type", "") or "").strip().lower()
-        if params and adapter_name != "dosi":
-            return FuncToolResult(
-                success=0,
-                error="query_metrics params are supported only by the Dosi semantic adapter",
-            )
-
         # Sanitize optional parameters: LLMs may pass string null placeholders
         # instead of omitting them. In particular, an empty-string limit must not
-        # reach adapters that convert a present limit with ``int(limit)``.
-        path = _normalize_optional_path(path)
+        # reach runtimes that convert a present limit with ``int(limit)``.
         time_start = normalize_null(time_start)
         time_end = normalize_null(time_end)
         time_granularity = normalize_null(time_granularity)
         where = normalize_null(where)
         limit = normalize_null(limit)
         logger.debug(
-            f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
+            f"query_metrics called: metrics={metrics}, dimensions={dimensions}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
             f"limit={limit}, dry_run={dry_run}"
         )
 
         try:
-            # Execute query via adapter
-            adapter_query_kwargs = {
+            # Execute query via runtime
+            runtime_query_kwargs = {
                 "metrics": metrics,
                 "dimensions": dimensions,
-                "path": path or None,
                 "time_start": time_start,
                 "time_end": time_end,
                 "time_granularity": time_granularity,
@@ -1498,21 +1324,11 @@ class SemanticTools:
                 "dry_run": dry_run,
             }
             if params:
-                try:
-                    query_parameters = inspect.signature(adapter.query_metrics).parameters
-                except (TypeError, ValueError):
-                    query_parameters = {}
-                if not _signature_accepts_parameter(query_parameters, "params"):
-                    return FuncToolResult(
-                        success=0,
-                        error="The current Dosi adapter does not support parameterized metrics; upgrade it first",
-                    )
-                adapter_query_kwargs["params"] = params
-            result = _run_async(adapter.query_metrics(**adapter_query_kwargs))
+                runtime_query_kwargs["params"] = params
+            result = _run_async(runtime.query_metrics(**runtime_query_kwargs))
 
-            # Drop non-JSON-serializable metadata entries (MetricFlow puts a
-            # ``DataflowPlan`` object under ``dataflow_plan``). ``str(v)`` on
-            # those yields ``<... object at 0x...>`` which is useless to
+            # Drop non-JSON-serializable metadata entries. ``str(v)`` on
+            # objects yields ``<... object at 0x...>``, which is useless to
             # both LLM callers and humans.
             safe_metadata = {}
             for k, v in (result.metadata or {}).items():
@@ -1534,7 +1350,7 @@ class SemanticTools:
                 if not sql:
                     warehouse_evidence: Mapping[str, Any] = {
                         "status": "failed",
-                        "error": "Semantic adapter dry-run did not return compiled SQL.",
+                        "error": "Semantic runtime dry-run did not return compiled SQL.",
                     }
                 else:
                     try:
@@ -1560,7 +1376,7 @@ class SemanticTools:
                 # outside dry-run publish evidence.
                 safe_metadata = self._drop_compiled_sql(safe_metadata)
 
-            # Column order in the result follows adapter compilation, not the
+            # Column order in the result follows runtime compilation, not the
             # request, so without this the compressor gives up whichever column
             # happens to sit in the middle. The caller named its dimensions and
             # metrics in priority order; honour that and drop from the far end.
@@ -1590,7 +1406,7 @@ class SemanticTools:
 
         except Exception as e:
             # Surface backend validation rejections as structured planner guidance.
-            # Duck-typed so the tool layer stays decoupled from any specific adapter.
+            # Duck-typed so the tool layer stays decoupled from any specific runtime.
             payload = getattr(e, "payload", None)
             if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":
                 data = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
@@ -1606,18 +1422,16 @@ class SemanticTools:
                 error=f"Failed to query metrics: {str(e)}",
             )
 
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def validate_semantic(
         self,
         scope: Literal["all", "semantic_model"] = "all",
         semantic_model_name: str = "",
-        checks: Optional[List[str] | str] = None,
-        baseline_artifact_json: str = "",
     ) -> FuncToolResult:
         """
-        Validate semantic layer configuration (requires adapter).
+        Validate Dosi semantic models (requires runtime).
 
-        After successful validation, the adapter is reloaded to pick up any new
+        After successful validation, the runtime is reloaded to pick up any new
         metrics or semantic model changes. This ensures that subsequent calls to
         query_metrics can find newly created metrics.
 
@@ -1626,12 +1440,8 @@ class SemanticTools:
                 including metrics. Use "semantic_model" when generating semantic
                 models before metric definitions exist; this still fails on real
                 semantic model errors but ignores the expected no-metrics issue.
-            semantic_model_name: Optional target model for scoped Ossie validation.
-                Required when a datasource contains multiple semantic models.
-            checks: Optional adapter-specific validation checks. Adapters that do
-                not support named checks return an error when this is supplied.
-            baseline_artifact_json: Optional JSON-encoded semantic artifact used
-                by adapters that support mutation guard validation.
+            semantic_model_name: Optional OSI model to validate. Required with
+                scope="semantic_model" when a datasource contains multiple models.
 
         Returns:
             FuncToolResult with validation status and issues
@@ -1645,82 +1455,22 @@ class SemanticTools:
                 result=None,
             )
 
-        checks_list = _normalize_validation_checks(checks)
-        baseline_artifact = None
-        baseline_artifact_text = normalize_null(baseline_artifact_json)
-        if baseline_artifact_text:
-            try:
-                baseline_artifact = json.loads(str(baseline_artifact_text))
-            except (TypeError, json.JSONDecodeError) as e:
-                return FuncToolResult(
-                    success=0,
-                    error=f"baseline_artifact_json must be valid JSON: {e}",
-                    result=None,
-                )
-            if not isinstance(baseline_artifact, dict):
-                return FuncToolResult(
-                    success=0,
-                    error="baseline_artifact_json must decode to a JSON object",
-                    result=None,
-                )
-
-        logger.debug(f"validate_semantic called scope={scope} checks={checks_list}")
-        adapter, error = self._require_adapter("validate_semantic")
+        logger.debug(f"validate_semantic called scope={scope} semantic_model_name={semantic_model_name}")
+        runtime, error = self._require_runtime("validate_semantic")
         if error:
             error.result = None
             return error
 
         try:
-            validate_semantic = adapter.validate_semantic
-            validation_kwargs = {}
             validation_metric_names: Optional[List[str]] = None
             if callable(self._semantic_metric_names_provider):
                 validation_metric_names = _normalize_name_list(self._semantic_metric_names_provider())
-            try:
-                signature = inspect.signature(validate_semantic)
-                params = signature.parameters
-                if _signature_accepts_parameter(params, "scope"):
-                    validation_kwargs["scope"] = scope
-                elif scope != "all" and "validation_scope" in params:
-                    validation_kwargs["validation_scope"] = scope
-                if semantic_model_name:
-                    if not _signature_accepts_parameter(params, "semantic_model_name"):
-                        return FuncToolResult(
-                            success=0,
-                            error=(
-                                "Targeted semantic-model validation is not supported by the current semantic adapter"
-                            ),
-                            result=None,
-                        )
-                    validation_kwargs["semantic_model_name"] = semantic_model_name
-                if checks_list is not None:
-                    if not _signature_accepts_parameter(params, "checks"):
-                        return FuncToolResult(
-                            success=0,
-                            error="validate_semantic checks are not supported by the current semantic adapter",
-                            result=None,
-                        )
-                    validation_kwargs["checks"] = checks_list
-                if baseline_artifact is not None:
-                    if not _signature_accepts_parameter(params, "baseline_artifact"):
-                        return FuncToolResult(
-                            success=0,
-                            error="validate_semantic baseline_artifact is not supported by the current semantic adapter",
-                            result=None,
-                        )
-                    validation_kwargs["baseline_artifact"] = baseline_artifact
-                if validation_metric_names is not None and _signature_accepts_parameter(params, "metric_names"):
-                    validation_kwargs["metric_names"] = validation_metric_names
-            except (TypeError, ValueError):
-                if checks_list is not None or baseline_artifact is not None:
-                    return FuncToolResult(
-                        success=0,
-                        error="validate_semantic validation options are not supported by the current semantic adapter",
-                        result=None,
-                    )
-                validation_kwargs = {}
-
-            validation_result = _run_async(validate_semantic(**validation_kwargs))
+            validation_kwargs: Dict[str, Any] = {"scope": scope}
+            if semantic_model_name:
+                validation_kwargs["semantic_model_name"] = semantic_model_name
+            if validation_metric_names is not None:
+                validation_kwargs["metric_names"] = validation_metric_names
+            validation_result = _run_async(runtime.validate_semantic(**validation_kwargs))
             validation_metadata = getattr(validation_result, "metadata", None)
 
             # Serialize ValidationIssue objects to dicts
@@ -1751,10 +1501,10 @@ class SemanticTools:
                     json.dumps(ignored_issues, ensure_ascii=False),
                 )
 
-            # If validation succeeded, reload the adapter to pick up new metrics
+            # If validation succeeded, reload the runtime to pick up new metrics
             if effective_valid:
-                logger.debug("Validation succeeded, reloading adapter to pick up new metrics...")
-                self._reload_adapter()
+                logger.debug("Validation succeeded, reloading runtime to pick up new metrics...")
+                self._reload_runtime()
 
             compact_issues = [
                 issue.model_dump(exclude_none=True) for issue in _compact_validation_issues(effective_issues)
@@ -1766,7 +1516,6 @@ class SemanticTools:
                 "valid": effective_valid,
                 "issues": compact_issues,
                 "scope": scope,
-                "checks": checks_list,
                 "ignored_issues": compact_ignored_issues,
                 "issue_count": len(effective_issues),
                 "ignored_issue_count": len(ignored_issues),
@@ -1806,7 +1555,7 @@ class SemanticTools:
 
     # Dosi parameter names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def attribution_analyze(
         self,
         metric_name: str,
@@ -1818,7 +1567,6 @@ class SemanticTools:
         max_selected_dimensions: int = 3,
         top_n_values: int = 10,
         where: Optional[str] = None,
-        path: Optional[List[str]] = None,
         max_dimension_values: int = 500,
         time_dimension: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
@@ -1841,7 +1589,6 @@ class SemanticTools:
             max_selected_dimensions: Maximum dimensions to select (default 3)
             top_n_values: Number of top dimension values to return (default 10)
             where: Optional SQL boolean expression applied to every attribution query
-            path: Optional subject tree path for metric scoping
             max_dimension_values: Maximum grouped values per dimension (hard-capped at 1000)
             time_dimension: Optional metric time dimension used for both windows
             params: Optional parameter bindings for a parameterized metric
@@ -1856,10 +1603,10 @@ class SemanticTools:
             - total_change: Baseline, current, and delta values
             - per_dimension: Per-dimension contribution details
         """
-        adapter, error = self._require_adapter("attribution_analyze")
+        runtime, error = self._require_runtime("attribution_analyze")
         if error:
             return error
-        assert adapter is not None
+        assert runtime is not None
 
         try:
             request = AttributionRequest(
@@ -1873,22 +1620,14 @@ class SemanticTools:
                 top_n_dimensions=max_selected_dimensions,
                 top_n_values=top_n_values,
                 params=params or {},
-                path=path,
             )
-            result = _run_async(self._attribute(adapter, request))
+            result = _run_async(self._attribute(runtime, request))
 
             return FuncToolResult(
                 success=1,
                 result=result.model_dump(exclude_none=True),
             )
 
-        except AttributionValidationException as e:
-            logger.warning("Attribution result validation failed: %s", e.payload.message)
-            return FuncToolResult(
-                success=0,
-                error=e.payload.message,
-                result=e.payload.model_dump(),
-            )
         except Exception as e:
             payload = getattr(e, "payload", None)
             if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":

@@ -3,7 +3,7 @@ Explorer service for catalog and subject tree management.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from datus.api.models.base_models import Result
 from datus.api.models.explorer_models import (
@@ -41,7 +41,12 @@ class ExplorerService:
     directories, metrics, and reference SQL.
     """
 
-    def __init__(self, agent_config: "AgentConfig", sub_agent_name: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        agent_config: "AgentConfig",
+        sub_agent_name: Optional[str] = None,
+        semantic_model_path_provider: Optional[Callable[[], Optional[str]]] = None,
+    ) -> None:
         """Initialize ExplorerService.
 
         Args:
@@ -55,9 +60,12 @@ class ExplorerService:
                 mapping, so an ``id`` misses, yields ``{}``, and the scope
                 filter degrades to "no filter" — unrestricted results with a
                 200, not an error. Callers resolve id -> key before this point.
+            semantic_model_path_provider: Select a request-local model file for
+                Dosi metric reads and previews, such as a Semantic Hub snapshot.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
+        self._semantic_model_path_provider = semantic_model_path_provider
         self.datasource_id = str(agent_config.current_datasource or "").strip()
         logger.info("ExplorerService initialized")
 
@@ -92,18 +100,22 @@ class ExplorerService:
                 message_args={"error_message": "No datasource is selected; select a datasource first"},
             )
 
-    def _semantic_adapter(self):
-        """Resolve the configured semantic adapter, or None if unavailable.
+    def _semantic_runtime(self):
+        """Resolve the embedded Dosi runtime, or None if unavailable.
 
-        The adapter reads/writes the YAML source of truth (the authoring
+        The runtime reads/writes the YAML source of truth (the authoring
         surface is a backend-only API, not an agent/LLM tool).
         """
         from datus.tools.func_tool.semantic_tools import SemanticTools
 
         try:
-            return SemanticTools(self.agent_config, self.sub_agent_name).adapter
-        except Exception as e:  # noqa: BLE001 - adapter is optional; fall back to KB
-            logger.warning(f"Semantic adapter unavailable: {e}")
+            return SemanticTools(
+                self.agent_config,
+                self.sub_agent_name,
+                semantic_model_path_provider=self._semantic_model_path_provider,
+            ).runtime
+        except Exception as e:  # noqa: BLE001 - report unavailable runtime at the call site
+            logger.warning(f"Dosi runtime unavailable: {e}")
             return None
 
     def _metric_is_in_scope(self, subject_path: List[str]) -> bool:
@@ -112,12 +124,12 @@ class ExplorerService:
         Unscoped services see everything, so this is only a real check when a
         sub-agent is set.
 
-        Needed because the semantic adapter reads the YAML source of truth,
+        Needed because the semantic runtime reads the YAML source of truth,
         which knows nothing about ``scoped_context``. Handing it a metric name
         straight from the request would answer with a metric the caller is not
         scoped to, even though the KB row for it is filtered out everywhere
         else. Resolve the name through the scoped ``MetricRAG`` first, so the
-        adapter is only ever asked about metrics the caller may see.
+        runtime is only ever asked about metrics the caller may see.
         """
         if not self.sub_agent_name:
             return True
@@ -137,22 +149,6 @@ class ExplorerService:
         )
         return bool(rows)
 
-    def _semantic_mutation_rejection(self) -> Optional["Result[dict]"]:
-        """Reject semantic writes for legacy query-only projects."""
-        from datus.agent.node.semantic_authoring import (
-            is_semantic_modeling_available,
-            semantic_authoring_unavailable_message,
-        )
-        from datus.api.models.config_models import ErrorCode
-
-        if is_semantic_modeling_available(self.agent_config):
-            return None
-        return Result[dict](
-            success=False,
-            errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-            errorMessage=semantic_authoring_unavailable_message(self.agent_config),
-        )
-
     def _semantic_agent_required_rejection(self) -> "Result[dict]":
         """Reject KB-only semantic edits that cannot preserve YAML consistency."""
         from datus.agent.node.semantic_authoring import semantic_authoring_unavailable_message
@@ -166,7 +162,7 @@ class ExplorerService:
 
     @staticmethod
     def _metric_name_from_yaml(yaml_text: str) -> Optional[str]:
-        """Extract the metric name from OSI (top-level) or legacy ``{metric:}`` YAML."""
+        """Extract the metric name from an OSI metric YAML node."""
         import yaml
 
         try:
@@ -175,14 +171,12 @@ class ExplorerService:
             return None
         if not isinstance(doc, dict):
             return None
-        if isinstance(doc.get("metric"), dict):
-            return doc["metric"].get("name")
         return doc.get("name")
 
     def _sync_file_to_kb(self, file_path: str) -> dict:
         """Re-index an OSI semantic source file into the Knowledge Base.
 
-        The authoring adapter only writes the YAML file; the KB is a derived
+        The authoring runtime only writes the YAML file; the KB is a derived
         index that must be re-synced through the OSI vectorizer. Authoring is
         Dosi-only, so this always runs the OSI sync.
         """
@@ -195,9 +189,8 @@ class ExplorerService:
         """Whether a delete failure means the metric simply isn't in the source
         file (benign file/KB drift) rather than a real I/O / lock / parse failure.
 
-        Both adapters raise a not-found error whose message contains
-        ``was not found`` (``FileNotFoundError`` for MetricFlow, the OSI error
-        class for OSI). Anything else is a real failure and must not be treated
+        Dosi raises a not-found error whose message contains ``was not found``.
+        Anything else is a real failure and must not be treated
         as "already gone", or we would drop the KB row while the file still
         holds the metric (the file is the source of truth)."""
         return isinstance(exc, FileNotFoundError) or "was not found" in str(exc)
@@ -212,10 +205,10 @@ class ExplorerService:
     ) -> "Result[dict]":
         """Validate + write a metric to its source file, then re-index the KB.
 
-        Shared orchestration for create/edit: the adapter owns file
+        Shared orchestration for create/edit: the runtime owns file
         placement/structure (source of truth), this method handles name
         resolution, the validation gate (jsonschema + profile parse inside the
-        adapter write, before persisting), the KB re-sync, and rollback so the
+        runtime write, before persisting), the KB re-sync, and rollback so the
         file and the KB never drift (a failed create is deleted, a failed edit
         is restored).
 
@@ -224,16 +217,12 @@ class ExplorerService:
         """
         from datus.api.models.config_models import ErrorCode
 
-        rejection = self._semantic_mutation_rejection()
-        if rejection is not None:
-            return rejection
-
-        adapter = self._semantic_adapter()
-        if adapter is None:
+        runtime = self._semantic_runtime()
+        if runtime is None:
             return Result[dict](
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage="Semantic adapter is not available; cannot author this metric.",
+                errorMessage="Dosi runtime is not available; cannot author this metric.",
             )
 
         name = metric_name or self._metric_name_from_yaml(metric_yaml)
@@ -244,22 +233,25 @@ class ExplorerService:
                 errorMessage="No metric name found in YAML content.",
             )
 
-        # Snapshot current content so an edit can be rolled back on later failure
-        # (a create rolls back by deleting).
+        # An edit needs the prior source to recover from a later KB failure.
         previous_source = None
         if not create:
             try:
-                previous_source = adapter.read_metric_source(name, subject_path=parent_path)
-            except Exception as e:  # noqa: BLE001 - restore is best-effort
-                logger.warning(f"Could not snapshot metric before edit; rollback disabled: {e}")
+                previous_source = runtime.read_metric_source(name, subject_path=parent_path)
+            except Exception as e:  # noqa: BLE001
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to read metric source before edit: {e}",
+                )
 
-        # Write the file. The adapter validates fully inside write (raises
+        # Write the file. The runtime validates fully inside write (raises
         # before persisting).
         try:
             # Empty parent_path (root-level metric) means "no categorization" —
-            # pass None so the adapter does not inject an empty subject tag.
-            mutation = adapter.write_metric_source(name, metric_yaml, subject_path=(parent_path or None), create=create)
-        except Exception as e:  # noqa: BLE001 - surface adapter write/validation errors
+            # pass None so the runtime does not inject an empty subject tag.
+            mutation = runtime.write_metric_source(name, metric_yaml, subject_path=(parent_path or None), create=create)
+        except Exception as e:  # noqa: BLE001 - surface runtime write/validation errors
             logger.error(f"Failed to write metric source: {e}")
             return Result[dict](
                 success=False,
@@ -269,9 +261,17 @@ class ExplorerService:
 
         # Re-index the changed file into the KB. On failure, undo the write so
         # the file and the KB stay consistent.
-        sync_result = self._sync_file_to_kb(mutation.file_path)
+        try:
+            sync_result = self._sync_file_to_kb(mutation.file_path)
+        except Exception as e:  # noqa: BLE001
+            self._rollback_metric_write(runtime, name, parent_path, create, previous_source)
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                errorMessage=f"Failed to sync metric to Knowledge Base: {e}",
+            )
         if not sync_result.get("success", False):
-            self._rollback_metric_write(adapter, name, parent_path, create, previous_source)
+            self._rollback_metric_write(runtime, name, parent_path, create, previous_source)
             return Result[dict](
                 success=False,
                 errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
@@ -282,19 +282,32 @@ class ExplorerService:
         return Result[dict](success=True, data={})
 
     @staticmethod
-    def _rollback_metric_write(adapter, name, parent_path, create, previous_source) -> None:
+    def _rollback_metric_write(runtime, name, parent_path, create, previous_source) -> None:
         """Undo a metric write after a failed validation or KB re-sync."""
         try:
             if create:
-                adapter.delete_metric_source(name, subject_path=parent_path)
+                runtime.delete_metric_source(name, subject_path=parent_path)
             elif previous_source is not None:
                 # Restore the exact prior content; subject_path=None so no tag is re-injected.
-                adapter.write_metric_source(name, previous_source.text, subject_path=None, create=False)
+                runtime.write_metric_source(name, previous_source.text, subject_path=None, create=False)
         except Exception as rollback_error:  # noqa: BLE001
             logger.error(f"Rollback of metric '{name}' failed; file and KB may be inconsistent: {rollback_error}")
 
+    @staticmethod
+    def _restore_deleted_metric(runtime, previous_source) -> None:
+        """Restore a metric when the matching KB deletion fails."""
+        if previous_source is None:
+            return
+        try:
+            runtime.restore_metric_source(previous_source)
+        except Exception as rollback_error:  # noqa: BLE001
+            logger.error(
+                f"Rollback of deleted metric '{previous_source.name}' failed; "
+                f"file and KB may be inconsistent: {rollback_error}"
+            )
+
     def _semantic_runtime_db_context(self, request=None) -> dict:
-        """Build runtime DB context for semantic adapter API calls."""
+        """Build runtime DB context for semantic runtime API calls."""
         context = {}
         if self.datasource_id:
             context["datasource"] = self.datasource_id
@@ -597,86 +610,10 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-    @staticmethod
-    def _metric_db_to_yaml(metric_data: dict) -> dict:
-        """Convert metric from DB format to YAML format.
-
-        Reverse of _sync_semantic_to_db metric processing logic.
-
-        Args:
-            metric_data: Metric data from LanceDB
-
-        Returns:
-            Dict in YAML format with 'metric' key
-        """
-        yaml_metric = {
-            "name": metric_data.get("name"),
-            "description": metric_data.get("description", ""),
-            "type": metric_data.get("metric_type", ""),
-        }
-
-        # Rebuild subject_path as locked_metadata.tags
-        subject_path = metric_data.get("subject_path", [])
-        if subject_path:
-            yaml_metric["locked_metadata"] = {"tags": [f"subject_tree: {'/'.join(subject_path)}"]}
-
-        # Rebuild type_params based on metric_type
-        metric_type = metric_data.get("metric_type", "")
-        measure_expr = metric_data.get("measure_expr", "")
-        base_measures = metric_data.get("base_measures", [])
-
-        type_params = {}
-
-        if metric_type == "measure_proxy":
-            if base_measures:
-                if len(base_measures) == 1:
-                    type_params["measure"] = base_measures[0]
-                else:
-                    type_params["measures"] = base_measures
-        elif metric_type == "ratio":
-            if len(base_measures) >= 2:
-                type_params["numerator"] = {"name": base_measures[0]}
-                type_params["denominator"] = {"name": base_measures[1]}
-            elif len(base_measures) == 1:
-                type_params["numerator"] = {"name": base_measures[0]}
-        elif metric_type in ["expr", "cumulative"]:
-            if base_measures:
-                type_params["measures"] = base_measures
-            if measure_expr:
-                type_params["expr"] = measure_expr
-        elif metric_type == "derived":
-            if base_measures:
-                type_params["metrics"] = base_measures
-            if measure_expr:
-                type_params["expr"] = measure_expr
-        elif metric_type == "simple":
-            # Simple metrics reference a single measure
-            if base_measures:
-                if len(base_measures) == 1:
-                    type_params["measure"] = base_measures[0]
-                else:
-                    type_params["measures"] = base_measures
-
-        if type_params:
-            yaml_metric["type_params"] = type_params
-
-        return {"metric": yaml_metric}
-
     async def get_metric(self, subject_path: List[str]) -> Result[MetricInfo]:
-        """Get metric info with YAML.
-
-        Retrieves metric from LanceDB and converts to YAML format.
-
-        Args:
-            subject_path: subject path
-
-        Returns:
-            Result[MetricInfo] with metric name and YAML content
-        """
+        """Read the authored OSI YAML for a metric visible in the Knowledge Base."""
         try:
             self._require_datasource()
-            import yaml
-
             from datus.api.models.config_models import ErrorCode
 
             logger.info(f"Getting metric at path: {subject_path}")
@@ -693,9 +630,8 @@ class ExplorerService:
             metric_name = subject_path[-1]
 
             # The KB row remains the access-control gate: it enforces the full
-            # subject_path match and sub-agent scoping. Only its *content* is
-            # untrustworthy (a lossy, MetricFlow-shaped reconstruction), so we
-            # use it for existence/scoping and the file for the returned YAML.
+            # subject_path match and sub-agent scoping. The file is the source
+            # of truth for the returned YAML.
             metrics_detail = self.metric_rag.get_metrics_detail(parent_path, metric_name)
             if not metrics_detail:
                 return Result[MetricInfo](
@@ -704,46 +640,24 @@ class ExplorerService:
                     errorMessage=f"Metric not found: {metric_name}",
                 )
 
-            # Source of truth is the YAML file: read it back through the semantic
-            # adapter so the returned YAML is in the metric's native format (OSI
-            # or MetricFlow) rather than the KB reconstruction.
-            adapter = self._semantic_adapter()
-            if adapter is not None:
-                from datus_semantic_core.authoring import AuthoringNotSupportedError
-
-                try:
-                    source = await asyncio.to_thread(adapter.read_metric_source, metric_name, subject_path=parent_path)
-                    return Result[MetricInfo](
-                        success=True,
-                        data=MetricInfo(name=metric_name, yaml=source.text),
-                    )
-                except AuthoringNotSupportedError:
-                    pass  # adapter has no file source; fall back to KB reconstruction
-                except Exception as e:  # noqa: BLE001 - fall back on any other read failure
-                    # A metric gone from its source file must not be dressed up
-                    # from its stale KB row as if it still existed.
-                    if self._is_metric_absent_error(e):
-                        return Result[MetricInfo](
-                            success=False,
-                            errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                            errorMessage=f"Metric {metric_name} is no longer in its semantic model file",
-                        )
-                    logger.warning(f"Adapter read_metric_source failed, using KB fallback: {e}")
-
-            # Fallback: reconstruct MetricFlow-shaped YAML from the KB projection.
-            metric_data = metrics_detail[0]
-            yaml_dict = self._metric_db_to_yaml(metric_data)
-            metric_yaml = yaml.dump(
-                yaml_dict,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            )
-
-            return Result[MetricInfo](
-                success=True,
-                data=MetricInfo(name=metric_name, yaml=metric_yaml),
-            )
+            # Source of truth is the OSI YAML file: read it back through the
+            # Dosi runtime so the result reflects the authored metric.
+            runtime = self._semantic_runtime()
+            if runtime is None:
+                return Result[MetricInfo](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage="Dosi runtime is not available; cannot read metric source.",
+                )
+            try:
+                source = await asyncio.to_thread(runtime.read_metric_source, metric_name, subject_path=parent_path)
+            except Exception as e:  # noqa: BLE001 - preserve the source-file error
+                return Result[MetricInfo](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to read metric source: {e}",
+                )
+            return Result[MetricInfo](success=True, data=MetricInfo(name=metric_name, yaml=source.text))
 
         except Exception as e:
             logger.error(f"Failed to get metric: {e}")
@@ -794,16 +708,17 @@ class ExplorerService:
                 self.agent_config,
                 self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
+                semantic_model_path_provider=self._semantic_model_path_provider,
             )
-            adapter = tools.adapter
-            if adapter is None:
+            runtime = tools.runtime
+            if runtime is None:
                 return Result[MetricDimensionsData](
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage="Semantic adapter is not available; cannot load dimensions.",
+                    errorMessage="Dosi runtime is not available; cannot load dimensions.",
                 )
 
-            dimensions = await adapter.get_dimensions(metric_name=metric_name)
+            dimensions = await runtime.get_dimensions(metric_name=metric_name)
             time_capabilities = extract_time_query_capabilities(dimensions)
             items = [
                 MetricDimensionItem(
@@ -858,7 +773,7 @@ class ExplorerService:
             # The registry a direct caller does not have: manifests declare
             # these as ``semantic_tools.query_metrics``.
             category="semantic_tools",
-            # Lazy: reading the metric catalogue costs an adapter round trip,
+            # Lazy: reading the metric catalogue costs a runtime round trip,
             # and a project with no policy plugin has nothing to spend it on.
             context=lambda: {
                 "agent_config": self.agent_config,
@@ -879,23 +794,23 @@ class ExplorerService:
     async def preview_metric(
         self, request: MetricPreviewInput, policy_context: Optional[Dict[str, Any]] = None
     ) -> Result[MetricPreviewData]:
-        """Compile a saved metric into runnable SQL via the semantic adapter.
+        """Compile a saved metric into runnable SQL via the semantic runtime.
 
         Uses dry-run so nothing executes here: the frontend hands the returned
         SQL to the existing SQL-result panel, which runs it and renders the
         table / chart. Only already-saved (registered) metrics are supported.
-        When the adapter rejects the query — unsupported dimensions, or a
+        When the runtime rejects the query — unsupported dimensions, or a
         validation failure such as a grain with no time dimension to hang it on
         — returns a structured ``preflight_error`` instead of SQL.
 
         A metric row policy narrows the query here, before the compile. It has
         to be here and not at execution time: the policy matches on the
-        datasets a metric reads, and once the adapter has compiled there is
+        datasets a metric reads, and once the runtime has compiled there is
         only SQL left, where that dataset is no longer visible. The SQL this
         returns is therefore the query the caller would actually run — which
         matters because it is also the SQL shown in the preview panel.
 
-        Every caller of this method reaches the adapter by a direct Python call
+        Every caller of this method reaches the runtime by a direct Python call
         rather than the agent's tool loop, so the transformer that enforces
         those policies for ``query_metrics`` never wrapped them. ``policy_context``
         falls back to the one on the config for callers that pin it there.
@@ -931,19 +846,20 @@ class ExplorerService:
                 self.agent_config,
                 self.sub_agent_name,
                 runtime_db_context_provider=lambda: runtime_db_context,
+                semantic_model_path_provider=self._semantic_model_path_provider,
             )
-            if tools.adapter is None:
+            if tools.runtime is None:
                 return Result[MetricPreviewData](
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage="Semantic adapter is not available; cannot preview this metric.",
+                    errorMessage="Dosi runtime is not available; cannot preview this metric.",
                 )
 
             try:
                 # Off the loop: building the transformer context reads the
-                # adapter's metric catalogue, and ``metric_datasets`` resolves
+                # runtime's metric catalogue, and ``metric_datasets`` resolves
                 # that synchronously — on the loop thread it would park the
-                # whole API process for the length of an adapter round trip.
+                # whole API process for the length of a runtime round trip.
                 # Same reason the compile below is handed to a thread.
                 where = await asyncio.to_thread(
                     self._narrow_by_metric_policy, tools, metric_name, request.where, policy_context
@@ -958,7 +874,7 @@ class ExplorerService:
                     errorMessage=str(exc),
                 )
 
-            # query_metrics is sync (it wraps an async adapter call); run it off
+            # query_metrics is sync (it wraps an async runtime call); run it off
             # the event loop. dry_run renders SQL and runs the dimension preflight
             # without executing anything.
             func_result = await asyncio.to_thread(
@@ -998,7 +914,7 @@ class ExplorerService:
                     data=MetricPreviewData(metric=metric_name, sql=sql, database=database),
                 )
 
-            # A structured rejection — unsupported dimensions, or the adapter's
+            # A structured rejection — unsupported dimensions, or the runtime's
             # query validation (e.g. a grain with no time dimension in the
             # group-by) — carries fields the UI can act on. Surface them instead
             # of flattening the whole thing into an error string.
@@ -1188,7 +1104,7 @@ class ExplorerService:
             logger.info(f"Creating metric at parent path: {request.subject_path}")
 
             # subject_path is the parent directory; the metric name is taken from
-            # the YAML. Authoring goes through the adapter (the YAML file is
+            # the YAML. Authoring goes through the runtime (the YAML file is
             # the source of truth), then the changed file is re-indexed into
             # the KB.
             parent_path = request.subject_path if request.subject_path else []
@@ -1231,8 +1147,8 @@ class ExplorerService:
                 )
 
             # Extract parent path and metric name, then author in place through
-            # the adapter (source of truth). Both OSI and MetricFlow update the
-            # metric inside its file, preserving datasets and sibling metrics.
+            # the Dosi runtime (source of truth), preserving datasets and
+            # sibling metrics in the same OSI file.
             parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
             metric_name = request.subject_path[-1]
             return await asyncio.to_thread(
@@ -1302,7 +1218,7 @@ class ExplorerService:
         )
 
     async def _delete_metric_source_and_kb(
-        self, adapter: Any, parent_path: List[str], metric_name: str
+        self, runtime: Any, parent_path: List[str], metric_name: str
     ) -> Optional["Result[dict]"]:
         """Delete a metric from its source file, then its KB row.
 
@@ -1310,21 +1226,28 @@ class ExplorerService:
         """
         from datus.api.models.config_models import ErrorCode
 
-        # Remove the metric from its source file first (the file is the
-        # source of truth), then drop the KB row below. The adapter owns
-        # the format-correct file edit; metric_rag.delete_metric's own
-        # file handling is then a no-op since the metric is already gone.
-        if adapter is None:
-            # A KB-only delete would leave the metric in YAML to revive on the
-            # next reconcile, so an unavailable adapter fails the request.
+        # The source file is authoritative. A KB-only delete would allow the
+        # metric to reappear on the next reconcile.
+        if runtime is None:
             return Result[dict](
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage="Semantic adapter is unavailable; cannot remove the metric from its source file",
+                errorMessage="Dosi runtime is not available; cannot remove metric source.",
             )
         touched_files = self._metric_yaml_paths(parent_path, metric_name)
+        previous_source = None
         try:
-            mutation = await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
+            previous_source = await asyncio.to_thread(runtime.read_metric_source, metric_name)
+            touched_files.add(previous_source.file_path)
+        except Exception as e:  # noqa: BLE001
+            if not self._is_metric_absent_error(e):
+                return Result[dict](
+                    success=False,
+                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                    errorMessage=f"Failed to read metric source before deletion: {e}",
+                )
+        try:
+            mutation = await asyncio.to_thread(runtime.delete_metric_source, metric_name, subject_path=parent_path)
             touched_files.update(getattr(mutation, "affected_paths", None) or [])
             if getattr(mutation, "file_path", None):
                 touched_files.add(mutation.file_path)
@@ -1343,21 +1266,25 @@ class ExplorerService:
                 )
             logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
 
-        result = self.metric_rag.delete_metric(parent_path, metric_name)
-        # The KB no longer is the full projection its recorded digest vouches
-        # for; left in place, reverting the file would read as unchanged.
-        self._forget_projection_digests(touched_files)
+        try:
+            result = self.metric_rag.delete_metric(parent_path, metric_name)
+        except Exception:  # noqa: BLE001
+            self._restore_deleted_metric(runtime, previous_source)
+            raise
         if not result.get("success", False):
+            self._restore_deleted_metric(runtime, previous_source)
             return Result[dict](
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                 errorMessage=result.get("message", f"Failed to delete metric: {metric_name}"),
             )
+        # A deleted metric means the KB no longer matches the last projection.
+        self._forget_projection_digests(touched_files)
         return None
 
     def _metric_yaml_paths(self, parent_path: List[str], metric_name: str) -> set:
-        # Scoped like delete_metric; a row outside the scope is covered by the
-        # adapter's own (unscoped) file_path, and no file found means none to forget.
+        # Scoped like delete_metric; the runtime source path covers a row that
+        # has no usable yaml_path in the KB.
         try:
             rows = self.metric_rag.search_all_metrics(
                 subject_path=[*parent_path, metric_name], select_fields=["yaml_path"]
@@ -1391,11 +1318,6 @@ class ExplorerService:
             logger.info(f"Deleting {request.type} at path: {request.subject_path}")
             from datus.api.models.config_models import ErrorCode
             from datus.api.models.explorer_models import SubjectNodeType
-
-            if request.type == SubjectNodeType.METRIC:
-                rejection = self._semantic_mutation_rejection()
-                if rejection is not None:
-                    return rejection
 
             if not request.subject_path:
                 return Result[dict](
@@ -1451,12 +1373,7 @@ class ExplorerService:
 
                 # Metrics live in the YAML source of truth, so each one goes
                 # through the same file-then-KB delete as a single metric.
-                if any(metrics_by_node.values()):
-                    rejection = self._semantic_mutation_rejection()
-                    if rejection is not None:
-                        return rejection
-
-                adapter = self._semantic_adapter() if any(metrics_by_node.values()) else None
+                runtime = self._semantic_runtime() if any(metrics_by_node.values()) else None
 
                 for nid in all_node_ids:
                     node_path = node_paths[nid]
@@ -1467,7 +1384,7 @@ class ExplorerService:
                         metric_name = metric.get("name", "")
                         if not metric_name:
                             continue
-                        failure = await self._delete_metric_source_and_kb(adapter, node_path, metric_name)
+                        failure = await self._delete_metric_source_and_kb(runtime, node_path, metric_name)
                         if failure is not None:
                             return failure
                         logger.info(f"Deleted metric '{metric_name}' from node {nid}")
@@ -1507,7 +1424,7 @@ class ExplorerService:
                 parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
                 metric_name = request.subject_path[-1]
 
-                failure = await self._delete_metric_source_and_kb(self._semantic_adapter(), parent_path, metric_name)
+                failure = await self._delete_metric_source_and_kb(self._semantic_runtime(), parent_path, metric_name)
                 if failure is not None:
                     return failure
 

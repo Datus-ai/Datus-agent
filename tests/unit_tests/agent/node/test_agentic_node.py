@@ -153,7 +153,7 @@ class TestGetNodeName:
 
     def test_node_name_for_specific_class(self):
         """Verify the naming pattern with a well-named subclass."""
-        # GenMetricsAgenticNode -> "gen_metrics" (tested via real class)
+        # Built-in nodes are tested through their registered names.
         # For our concrete class: _ConcreteAgenticNode -> "_concrete"
         node = _make_node()
         name = node.get_node_name()

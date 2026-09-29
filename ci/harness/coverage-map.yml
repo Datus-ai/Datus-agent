@@ -440,20 +440,17 @@ flow_groups:
         gaps: []
 
       - id: data_access.adapter_contracts
-        title: DB, BI, scheduler, and semantic adapter contracts
+        title: DB, BI, and scheduler adapter contracts
         priority: p0
         quality_sensitive: false
         docs:
           - docs/adapters/db_adapters.md
           - docs/adapters/bi_adapters.md
           - docs/adapters/scheduler_adapters.md
-          - docs/adapters/semantic_adapters.md
-          - docs/adapters/dosi_semantic_adapter.md
         entrypoints:
           - DB adapters
           - BI adapters
           - Scheduler adapters
-          - Semantic adapters
         contracts:
           - Adapter packages keep the contract consumed by Datus-agent stable.
           - Datus-agent nightly installs sibling/source adapters where required and exercises real integrations.
@@ -588,10 +585,7 @@ flow_groups:
           - docs/knowledge_base/metrics.md
           - docs/subagent/semantic_modeling.md
           - docs/subagent/ask_metrics.md
-          - docs/configuration/semantic_layer.md
-          - docs/adapters/metricflow_semantic_adapter.md
-          - docs/adapters/osi_semantic_adapter.md
-          - docs/adapters/dosi_semantic_adapter.md
+          - docs/semantic/dosi_engine.md
         entrypoints:
           - CLI bootstrap
           - Semantic modeling subagent
@@ -602,34 +596,30 @@ flow_groups:
           - Bootstrap and agentic generation persist semantic objects that are available to query-time retrieval.
           - Metrics and semantic models remain separable by kind and datasource scope, and extracted knowledge is captured as markdown via the extract-knowledge skill.
           - Existing metrics can be queried through the metric-first AskMetrics subagent without falling back to raw SQL generation.
-          - New semantic authoring is Dosi-only; MetricFlow and OSI projects remain query-only until an OSI project is switched to Dosi.
-          - Runtime database context is propagated into semantic adapter initialization so validation can use the selected catalog/database/schema without a static datasource database.
+          - Semantic authoring uses the built-in Dosi runtime.
+          - Runtime database context is propagated into Dosi so validation can use the selected catalog/database/schema without a static datasource database.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
-              - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
               - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
-              - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
-              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_validate_semantic_initializes_adapter_with_runtime_database
+              - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
+              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
           merge_queue:
             status: covered
             nodeids:
-              - tests/unit_tests/agent/node/test_gen_semantic_model_agentic_node.py
-              - tests/unit_tests/agent/node/test_gen_metrics_agentic_node.py
               - tests/unit_tests/agent/node/test_semantic_modeling_agentic_node.py
               - tests/unit_tests/agent/node/test_ask_metrics_agentic_node.py
               - tests/unit_tests/tools/func_tool/test_context_search.py
-              - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
-              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_validate_semantic_initializes_adapter_with_runtime_database
+              - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
+              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
           nightly:
             status: covered
             nodeids:
-              - tests/unit_tests/configuration/test_agent_config.py::TestAgentConfigServiceSelectors::test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database
-              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_validate_semantic_initializes_adapter_with_runtime_database
+              - tests/unit_tests/configuration/test_agent_config.py::TestDosiDbProfile::test_runtime_context_overlay_uses_generic_aliases
+              - tests/unit_tests/tools/func_tool/test_semantic_tools.py::TestRuntimeDbContext::test_runtime_change_rebuilds_dosi_runtime
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
               - tests/integration/agent/test_semantic_modeling_agentic.py::test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm
               - tests/integration/storage/test_postgresql_semantic_kb.py::test_postgresql_semantic_kb_reconcile_is_idempotent

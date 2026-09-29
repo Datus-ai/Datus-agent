@@ -22,6 +22,7 @@ def test_nightly_preserves_checkout_packages_after_locked_sync():
     assert 'UV_NO_SYNC: "1"' in workflow
     assert "uv sync --locked" in workflow
     assert "uv run --no-sync python ci/verify_nightly_adapter_sources.py" in workflow
+    assert "uv pip check" in workflow
     assert "uv run --no-sync playwright install --with-deps chromium" in workflow
 
 
@@ -42,7 +43,6 @@ def test_nightly_kb_cache_tracks_all_adapter_checkouts():
         "external/datus-db-adapters",
         "external/datus-bi-adapters",
         "external/datus-scheduler-adapters",
-        "external/datus-semantic-adapter",
         "external/datus-storage-adapters",
     ):
         assert repo in workflow

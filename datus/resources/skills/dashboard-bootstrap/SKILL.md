@@ -154,7 +154,7 @@ task(
 
 ## Step 7 — Build semantic-model and metric context
 
-Run this path only when the active semantic adapter supports authoring and each query in the domain has one strong source-identity match equal to the active Datus datasource. Existing MetricFlow and plain OSI projects are query-only; report the Dosi migration requirement rather than writing them.
+Run this path only when each query in the domain has one strong source-identity match equal to the active Datus datasource.
 
 First partition successful SQL mapped to `metric_query_ids` by `matched_datus_datasource`, then group the active-datasource partition by coherent business domain. For each active domain invoke one task:
 
@@ -240,7 +240,6 @@ Say `context built` only for artifacts confirmed by their owning builtin agent. 
 | Query source identity is missing or weak | Stop metrics for that query; reference SQL may continue |
 | Query source has zero or multiple Datus datasource matches | Stop metrics for that query and request explicit resolution |
 | Query uniquely matches a non-active Datus datasource | Defer that metric partition to a later run with that datasource active |
-| Semantic adapter is query-only | Stop metrics and report the migration requirement |
 | A builtin task fails | Preserve its diagnosis and retry only that confirmed item/domain |
 | `create-subagent` is unavailable or refuses to load | Skip subagent persistence; keep confirmed context results |
 | Subagent configuration write or verification fails | Report the failure and retry only Step 8 after correction |

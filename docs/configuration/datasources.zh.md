@@ -20,7 +20,7 @@ agent:
 `datasources` 下的每个 key 都是 datasource 名称，只能包含字母、数字、下划线和连字符。最多为一个条目设置 `default: true`；仅有一个 datasource 时，Datus 会自动选择它。
 
 !!! note
-    配置路径仍然是 `agent.services.datasources`。Semantic adapter 在[适配器](../adapters/semantic_adapters.md)中配置；Airflow 等外部系统优先使用 [Plugin](../plugin/introduction.md)。
+    配置路径仍然是 `agent.services.datasources`。Dosi 模型发现规则见 [Dosi 语义引擎](../semantic/dosi_engine.zh.md)；Airflow 等外部系统优先使用 [Plugin](../plugin/introduction.md)。
 
 ## 选择数据源
 

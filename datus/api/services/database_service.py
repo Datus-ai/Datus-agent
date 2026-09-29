@@ -111,17 +111,6 @@ class DatasourceService:
         self._prefetch_gates: dict[str, threading.BoundedSemaphore] = {}
         self._initialize_connection()
 
-    def _active_semantic_adapter(self) -> str:
-        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
-        if callable(resolver):
-            return str(resolver() or "").strip().lower()
-        return ""
-
-    def _is_osi_semantic_layer(self) -> bool:
-        from datus.agent.node.semantic_authoring import is_osi_semantic_adapter
-
-        return is_osi_semantic_adapter(self._active_semantic_adapter())
-
     @staticmethod
     def _validate_dosi_semantic_yaml(yaml_content: str) -> tuple[bool, List[str]]:
         try:
@@ -130,11 +119,8 @@ class DatasourceService:
             return False, [str(exc)]
         if not isinstance(document, dict):
             return False, ["YAML document must be an object"]
-        try:
-            from datus_semantic_core.exceptions import SemanticCoreException
-            from datus_semantic_dosi.authoring import validate_dosi_document
-        except ImportError as exc:
-            return False, [f"datus-semantic-dosi is required to validate Dosi semantic YAML: {exc}"]
+        from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
+        from datus.tools.semantic_tools.exceptions import SemanticCoreException
 
         try:
             validate_dosi_document(document)
@@ -851,9 +837,9 @@ class DatasourceService:
         """Resolve a save/validate target, refusing another datasource's model.
 
         Reads span the whole tree, but every write-side stage is built around
-        ``current_datasource``: metricflow validation takes it as an argument,
-        the OSI adapter resolves the target inside the active datasource's
-        inventory, and the knowledge-base sync stamps its rows with it. Writing
+        ``current_datasource``: Dosi resolves the target inside the active
+        datasource's inventory, and knowledge-base sync stamps its rows with
+        that datasource. Writing
         another datasource's artifact would therefore file its rows under the
         wrong datasource, so reject it with a message that says what to do.
         Threading a per-request datasource through those stages is the real
@@ -1003,16 +989,6 @@ class DatasourceService:
             )
 
     def _save_semantic_model_sync(self, request: SaveSemanticModelInput) -> Result[SaveSemanticModelData]:
-        # Semantic authoring is Dosi-only: refuse before reading, validating,
-        # or writing anything so no half-saved artifact can exist.
-        if not self._is_osi_semantic_layer():
-            from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
-
-            return Result[SaveSemanticModelData](
-                success=False,
-                errorCode=ErrorCode.INVALID_PARAMETERS,
-                errorMessage=QUERY_ONLY_MIGRATION_MESSAGE,
-            )
         try:
             semantic_model_path = self._resolve_writable_semantic_model_file(request.semantic_model_file)
         except ValueError as exc:
@@ -1172,10 +1148,7 @@ class DatasourceService:
             try:
                 from datus.tools.func_tool.generation_tools import GenerationTools
 
-                sync_result = GenerationTools(
-                    agent_config=self.agent_config,
-                    authoring_format="osi",
-                ).sync_osi_to_db(
+                sync_result = GenerationTools(agent_config=self.agent_config).sync_osi_to_db(
                     str(semantic_model_path),
                     include_semantic_objects=True,
                     include_metrics=True,
@@ -1223,14 +1196,6 @@ class DatasourceService:
     async def validate_semantic_model(self, request: ValidateSemanticModelInput) -> Result[ValidateSemanticModelData]:
         """Validate submitted SemanticModel YAML without changing the live artifact."""
         logger.info("Validating semantic model YAML")
-        if not self._is_osi_semantic_layer():
-            from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
-
-            return Result[ValidateSemanticModelData](
-                success=False,
-                errorCode=ErrorCode.INVALID_PARAMETERS,
-                errorMessage=QUERY_ONLY_MIGRATION_MESSAGE,
-            )
         try:
             # Same addressing rule as save: validating a file you would not be
             # allowed to save is a confusing asymmetry.

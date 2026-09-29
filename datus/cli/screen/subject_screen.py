@@ -220,7 +220,7 @@ class MetricsPanel(Vertical):
         dimensions_str = (
             ", ".join(dimensions_value) if isinstance(dimensions_value, list) else str(dimensions_value or "")
         )
-        # Dimensions are a metricflow-derived view of the metric's available group-by axes,
+        # Dimensions are a Dosi-derived view of the metric's available group-by axes,
         # not a user-editable field — pin it to read-only regardless of the panel's mode.
         dimensions_field = InputWithLabel(
             "Dimensions",

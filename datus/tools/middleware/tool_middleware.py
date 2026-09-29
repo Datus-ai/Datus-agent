@@ -217,7 +217,7 @@ def transform_tool_args(
 
     The same transformers :func:`apply_tool_transformers` wraps a node's tools
     with, for a caller that has no node: the Hub metric endpoints reach the
-    semantic adapter through a direct Python call, so nothing wraps them and a
+    Dosi runtime through a direct Python call, so nothing wraps them and a
     metric policy that filters the agent's ``query_metrics`` did not touch
     them at all.
 

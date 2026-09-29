@@ -1504,15 +1504,6 @@ class TestCreateNode:
         node = manager._create_node(real_agent_config, None, "test-session")
         assert isinstance(node, AgenticNode)
 
-    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_nodes_are_rejected(self, real_agent_config, mock_llm_create, agent_name):
-        """Retired semantic nodes cannot bypass the shared node factory."""
-        from datus.utils.exceptions import DatusException
-
-        manager = ChatTaskManager()
-        with pytest.raises(DatusException, match="semantic_modeling"):
-            manager._create_node(real_agent_config, agent_name, "test-session")
-
     def test_create_gen_report_node(self, real_agent_config, mock_llm_create):
         """gen_report must land on GenReportAgenticNode (regression: previously fell back to GenSQL)."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -1639,15 +1630,6 @@ class TestCreateNodeInput:
         node = manager._create_node(real_agent_config, None, "test")
         result = manager._create_node_input("hello", node, [], [], [])
         assert result.user_message == "hello"
-
-    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_nodes_have_no_input_path(self, real_agent_config, mock_llm_create, agent_name):
-        """Input construction is unreachable for retired semantic nodes."""
-        from datus.utils.exceptions import DatusException
-
-        manager = ChatTaskManager()
-        with pytest.raises(DatusException, match="semantic_modeling"):
-            manager._create_node(real_agent_config, agent_name, "test")
 
     def test_sql_summary_node_input(self, real_agent_config, mock_llm_create):
         """_create_node_input for SqlSummaryAgenticNode returns SqlSummaryNodeInput."""
@@ -2529,16 +2511,16 @@ class TestMatchTableEntry:
     fullName (live introspection) diverges from the metadata-store key."""
 
     FLAT = {
-        "jeff_shop_live.main.raw_stores": {
+        "sample_shop.main.raw_stores": {
             "table_name": "raw_stores",
-            "database_name": "jeff_shop_live",
+            "database_name": "sample_shop",
             "schema_name": "main",
             "definition": "x",
             "identifier": "i",
         },
-        "jeff_shop_live.main.raw_orders": {
+        "sample_shop.main.raw_orders": {
             "table_name": "raw_orders",
-            "database_name": "jeff_shop_live",
+            "database_name": "sample_shop",
             "schema_name": "main",
             "definition": "x",
             "identifier": "i",
@@ -2546,15 +2528,15 @@ class TestMatchTableEntry:
     }
 
     def test_catalog_prefix_mismatch_resolves(self):
-        entry = ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.jeff_shop_live.raw_stores")
+        entry = ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.sample_shop.raw_stores")
         assert entry and entry["table_name"] == "raw_stores"
 
     def test_bare_db_table_resolves(self):
-        entry = ChatTaskManager._match_table_entry(self.FLAT, "jeff_shop_live.raw_stores")
+        entry = ChatTaskManager._match_table_entry(self.FLAT, "sample_shop.raw_stores")
         assert entry and entry["table_name"] == "raw_stores"
 
     def test_unknown_table_returns_none(self):
-        assert ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.jeff_shop_live.nope") is None
+        assert ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.sample_shop.nope") is None
 
     def test_ambiguous_without_db_returns_none(self):
         amb = {
@@ -2584,9 +2566,9 @@ class TestSynthesizeTableEntry:
     def test_three_part_path(self):
         from datus.schemas.node_models import TableSchema
 
-        entry = ChatTaskManager._synthesize_table_entry("default_catalog.jeff_shop_live.raw_orders")
+        entry = ChatTaskManager._synthesize_table_entry("default_catalog.sample_shop.raw_orders")
         assert entry["table_name"] == "raw_orders"
-        assert entry["database_name"] == "jeff_shop_live"
+        assert entry["database_name"] == "sample_shop"
         # Must build a valid TableSchema and render to its own name in the prompt.
         ts = TableSchema.from_dict(entry)
         assert TableSchema.table_names_to_prompt([ts]) == "raw_orders"

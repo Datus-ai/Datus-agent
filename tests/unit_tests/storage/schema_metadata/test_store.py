@@ -1084,7 +1084,7 @@ class TestMetadataFtsRAG:
                 [
                     {
                         "id": "orders_profile",
-                        "format": "metricflow",
+                        "format": "legacy",
                         "physical_table_fq_name": "db.public.orders",
                         "catalog_name": "",
                         "database_name": "db",
@@ -1127,7 +1127,7 @@ class TestMetadataFtsRAG:
         rag.after_init()
         profile = {
             "id": "orders_profile",
-            "format": "metricflow",
+            "format": "legacy",
             "physical_table_fq_name": "db.public.orders",
             "catalog_name": "",
             "database_name": "db",

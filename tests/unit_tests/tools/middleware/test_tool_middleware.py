@@ -604,7 +604,7 @@ class TestApplyToolTransformers:
 
     @pytest.mark.asyncio
     async def test_catalog_found_under_an_aliased_attribute(self):
-        """``gen_semantic_model`` holds its semantic tools as ``semantic_func_tool``."""
+        """Find semantic tools under an aliased attribute."""
         seen = {}
 
         def transformer(tool_name, args, context):
@@ -750,7 +750,7 @@ class TestApplyToolTransformers:
 class TestTransformToolArgsWithoutANode:
     """The same transformers, for a caller that has no agent node.
 
-    The Hub metric endpoints reach the semantic adapter through a direct Python
+    The Hub metric endpoints reach Dosi through a direct Python
     call. Nothing wraps their tools because there are none, so a metric policy
     that filters the agent's ``query_metrics`` did not touch them at all.
     """
@@ -891,7 +891,7 @@ class TestTransformToolArgsWithoutANode:
         # Fail-closed, like the wrapper. The wrapper answers the model with a
         # payload; a direct caller has no model, so it gets an exception.
         def refuse(name, args, ctx):
-            raise RuntimeError("the semantic adapter reports no dataset for them")
+            raise RuntimeError("Dosi reports no dataset for them")
 
         with pytest.raises(ToolTransformDenied, match="no dataset"):
             transform_tool_args(

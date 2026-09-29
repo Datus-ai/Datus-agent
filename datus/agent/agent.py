@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import argparse
-import asyncio
 import csv
 import os
 import shutil
@@ -505,29 +504,18 @@ class Agent:
         requested_semantic_components = [
             component for component in selected_components if component in semantic_components
         ]
-        uses_adapter = bool(getattr(self.args, "from_adapter", None))
         uses_semantic_yaml = bool(getattr(self.args, "semantic_yaml", None))
-        uses_legacy_import = (uses_adapter or uses_semantic_yaml) and "semantic_modeling" not in selected_components
-        if "semantic_modeling" in selected_components and (uses_adapter or uses_semantic_yaml):
+        uses_legacy_import = uses_semantic_yaml and "semantic_modeling" not in selected_components
+        if "semantic_modeling" in selected_components and uses_semantic_yaml:
             return {
                 "status": "failed",
-                "message": (
-                    "semantic_modeling authors from --success_story; --from_adapter and --semantic_yaml are not "
-                    "supported"
-                ),
+                "message": ("semantic_modeling authors from --success_story; --semantic_yaml is not supported"),
             }
         semantic_authoring_requested = (
             bool(requested_semantic_components)
             and not uses_legacy_import
             and (kb_update_strategy not in {"check", "refresh-profile", "sync-yaml"})
         )
-        if semantic_authoring_requested:
-            from datus.agent.node.semantic_authoring import is_semantic_modeling_available
-
-            if not is_semantic_modeling_available(self.global_config):
-                from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
-
-                return {"status": "failed", "message": QUERY_ONLY_MIGRATION_MESSAGE}
         semantic_authoring_scope = (
             "full" if {"semantic_modeling", "metrics"}.intersection(requested_semantic_components) else "datasets"
         )
@@ -781,8 +769,8 @@ class Agent:
                     continue
 
                 if kb_update_strategy == "overwrite":
-                    # Adapter and explicit YAML imports need their source files intact.
-                    if not (uses_adapter or uses_semantic_yaml):
+                    # Explicit YAML imports need their source files intact.
+                    if not uses_semantic_yaml:
                         semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
                             self.global_config.current_datasource
                         )
@@ -798,18 +786,11 @@ class Agent:
                 else:
                     self.global_config.check_init_storage_config("semantic_model")
                 dataset_rag = SemanticDatasetRAG(self.global_config)
-                if kb_update_strategy == "overwrite" and (uses_adapter or uses_semantic_yaml):
+                if kb_update_strategy == "overwrite" and uses_semantic_yaml:
                     dataset_rag.truncate()
 
                 # Initialize semantic model
-                if uses_adapter:
-                    # Pull from semantic adapter
-                    from datus.storage.semantic_model.adapter_init import init_from_adapter
-
-                    successful, error_message = asyncio.run(
-                        init_from_adapter(self.global_config, self.args.from_adapter)
-                    )
-                elif uses_semantic_yaml:
+                if uses_semantic_yaml:
                     successful, error_message = init_semantic_yaml_semantic_model(
                         self.args.semantic_yaml, self.global_config
                     )
@@ -844,19 +825,10 @@ class Agent:
                 else:
                     self.global_config.check_init_storage_config("metric")
                 self.metrics_store = MetricRAG(self.global_config)
-                if kb_update_strategy == "overwrite" and uses_adapter:
-                    self.metrics_store.truncate()
                 self._reset_metrics_stream_state()
 
                 # Initialize metrics
-                if uses_adapter:
-                    # Pull from semantic adapter
-                    from datus.storage.metric.adapter_init import init_from_adapter
-
-                    successful, error_message = asyncio.run(
-                        init_from_adapter(self.global_config, self.args.from_adapter, subject_path=subject_tree)
-                    )
-                elif uses_semantic_yaml:
+                if uses_semantic_yaml:
                     successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:  # pragma: no cover - success-story authoring is routed above
                     successful, error_message, _ = init_success_story_metrics(

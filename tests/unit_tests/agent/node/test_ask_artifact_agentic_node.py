@@ -1546,7 +1546,7 @@ class TestTableSchemasSection:
         return {
             "tables": [
                 {
-                    "name": "jeff_shop.raw_orders",
+                    "name": "sample_shop.raw_orders",
                     "description": "canonical orders fact table",
                     "columns": [
                         {"name": "order_id", "type": "bigint", "comment": "primary key"},
@@ -1560,7 +1560,7 @@ class TestTableSchemasSection:
                     ],
                 },
                 {
-                    "name": "jeff_shop.raw_stores",
+                    "name": "sample_shop.raw_stores",
                     "description": "",
                     "columns": [
                         {"name": "id", "type": "int", "comment": ""},
@@ -1590,8 +1590,8 @@ class TestTableSchemasSection:
         block = node._render_artifact_context_block()
         assert "### Table Schemas (`analysis/key_tables_schema.json`)" in block
         # Both table headers present.
-        assert "#### `jeff_shop.raw_orders`" in block
-        assert "#### `jeff_shop.raw_stores`" in block
+        assert "#### `sample_shop.raw_orders`" in block
+        assert "#### `sample_shop.raw_stores`" in block
         # Description from semantic model only on the first table.
         assert "_(description: canonical orders fact table)_" in block
         # Per-column rendering: type + comment via ``--``.
@@ -2038,7 +2038,7 @@ class TestToolsWhitelist:
         import datus.tools.func_tool.semantic_tools as sem_mod
 
         def _boom(*args, **kwargs):
-            raise RuntimeError("semantic adapter exploded")
+            raise RuntimeError("Dosi runtime exploded")
 
         monkeypatch.setattr(sem_mod, "SemanticTools", _boom)
         node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST, name="ask_sem_fail", slug="sem_fail")
@@ -2282,7 +2282,9 @@ class TestChatDecoupling:
             real_agent_config, "web_tool.*,filesystem_tools.*", name="ask_web", slug="withweb"
         )
         node._get_system_prompt()
-        assert node._web_tool is not None  # gate passed through to the base injector
+        from datus.tools.func_tool.web_tool import WebTool
+
+        assert isinstance(node._web_tool, WebTool)
 
     def test_no_db_boundary_statement_gated_on_db_exposure(self, real_agent_config):
         """A db-less whitelist gets the explicit 'no live database access'

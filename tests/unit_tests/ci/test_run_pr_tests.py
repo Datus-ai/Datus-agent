@@ -71,9 +71,8 @@ def test_select_impacted_unit_tests_maps_db_tools_to_db_tools_tests():
 def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_suite():
     impacted = run_pr_tests.select_impacted_unit_tests(
         [
-            "datus/prompts/prompt_templates/gen_metrics_system_1.2.j2",
-            "datus/resources/skills/gen-metrics/SKILL.md",
-            "datus/resources/skills/metricflow-semantic-authoring/SKILL.md",
+            "datus/prompts/prompt_templates/semantic_modeling_system_1.0.j2",
+            "datus/resources/skills/dosi-semantic-authoring/SKILL.md",
         ]
     )
 

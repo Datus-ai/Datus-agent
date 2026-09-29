@@ -83,10 +83,8 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
         is_subagent: bool = False,
         session_id: Optional[str] = None,
     ):
-        from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
         from datus.utils.exceptions import DatusException, ErrorCode
 
-        ensure_semantic_agent_available(self.NODE_NAME, agent_config)
         if authoring_scope not in {"datasets", "full"}:
             raise DatusException(
                 ErrorCode.COMMON_UNSUPPORTED,
@@ -260,15 +258,11 @@ class SemanticModelingAgenticNode(SemanticAuthoringAgenticNode):
     def _setup_generation_tools(self):
         """Prepare deterministic host-side validation and KB reconciliation."""
         try:
-            from datus.agent.node.semantic_authoring import resolve_authoring_format
-
-            authoring_format = resolve_authoring_format(self.agent_config)
             self.generation_tools = GenerationTools(
                 self.agent_config,
                 generation_evidence=self.generation_evidence,
-                authoring_format=authoring_format,
                 osi_target_state=self.osi_target_state,
-                require_bound_osi_target=authoring_format == "osi",
+                require_bound_osi_target=True,
             )
         except Exception as exc:
             logger.error("Failed to setup semantic-modeling generation tools: %s", exc)

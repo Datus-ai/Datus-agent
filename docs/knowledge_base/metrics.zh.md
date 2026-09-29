@@ -2,7 +2,7 @@
 
 指标是可复用、可执行的业务计算，例如收入、活跃客户数或倒闭银行资产。它为一套计算逻辑提供稳定的名称和定义，让用户无需反复编写聚合 SQL 就能提出业务问题。
 
-指标属于[语义模型](semantic_model.md)。定义保存在模型的 OSI YAML 中；Datus 将其投影到独立的 Knowledge Base store 供检索，再由当前 semantic adapter 编译并执行指标查询。Dosi 是内置的默认 adapter。
+指标属于[语义模型](semantic_model.md)。定义保存在模型的 OSI YAML 中；Datus 将其投影到独立的 Knowledge Base store 供检索，再由内置 Dosi 引擎编译并执行指标查询。
 
 ## 指标定义什么
 
@@ -24,7 +24,7 @@
 
 1. **OSI YAML 是定义。** 表达式、时间行为、描述和 extension 都以它为准。
 2. **`metrics` Knowledge Base store 是检索投影。** 它按当前 datasource 索引指标名、描述、subject path、所属模型、可用维度、源 YAML 等检索信息。
-3. **Semantic adapter 负责执行。** `query_metrics` 把指标名、维度、时间范围、过滤和排序交给当前 adapter，由 adapter 编译并运行查询。
+3. **Dosi 负责执行。** `query_metrics` 把指标名、维度、时间范围、过滤和排序交给 Dosi，由引擎编译并运行查询。
 
 把指标移动到其他 `subject_path` 只会改变分类，不会改变指标身份。因此，同一个 datasource 中的指标名必须保持唯一。
 
@@ -131,13 +131,12 @@ query_metrics(
 | --- | --- |
 | `metrics` | 一个或多个准确的指标名。 |
 | `dimensions` | `get_metric` 返回的字段；在 Dosi 中，`metric_time` 表示指标的主要时间轴。自动选择分组字段时优先使用 `recommended=true`；`recommended=false` 仍可显式查询。 |
-| `path` | 可选 subject-tree 路径，用于消除指标歧义。 |
-| `time_start`、`time_end` | 可选的左闭右开时间范围：start 包含，end 不包含。Adapter 支持 ISO 日期以及 `-7d`、`now` 等相对值。 |
+| `time_start`、`time_end` | 可选的左闭右开时间范围：start 包含，end 不包含。使用 ISO 日期（`YYYY-MM-DD`）。 |
 | `time_granularity` | `day`、`week`、`month`、`quarter` 或 `year`。 |
 | `where` | 可选过滤表达式，不包含 `WHERE` 关键字。 |
 | `order_by` | 排序所用的结果列；名称前加 `-` 表示降序。 |
 | `limit` | 最大行数；只在用户明确要求 Top N、预览或其他行数限制时使用。 |
-| `dry_run` | 编译并校验查询计划，不返回实时指标值。 |
+| `dry_run` | 返回编译后的 SQL，不执行指标查询；配置了数据仓库 dry-run 时还会校验该 SQL。 |
 
 例如，要包含 2024 年 1 月的全部数据，应使用 `time_start="2024-01-01"` 和 `time_end="2024-02-01"`。
 
@@ -191,4 +190,4 @@ datus-agent bootstrap-kb \
 - [AskMetrics](../subagent/ask_metrics.md)：自然语言指标问答和能力边界
 - [语义建模](../subagent/semantic_modeling.md)：完整创作流程与真实生成 YAML
 - [语义模型](semantic_model.md)：dataset、field、relationship 与 Knowledge Base 投影
-- [语义层配置](../configuration/semantic_layer.md)：semantic adapter 配置
+- [Dosi 引擎](../semantic/dosi_engine.zh.md)：模型位置与查询行为

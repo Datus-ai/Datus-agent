@@ -35,7 +35,7 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 
 - **按角色划分的三个入口**：数据工程师在 [Datus-CLI](https://docs.datus.ai/zh/latest/cli/introduction/) 里探索数据、构建资产；分析师通过 [Datus-Chat](https://docs.datus.ai/zh/latest/web_chatbot/introduction/)(Web、Slack/飞书、VS Code)提问，使用中的反馈会回流进 Agent；其他 Agent 和应用经 [Datus-API](https://docs.datus.ai/zh/latest/API/introduction/)(REST、MCP)消费。
 - **Agent 核心**：[Subagent](https://docs.datus.ai/zh/latest/subagent/introduction/) 为单个业务域打包配好的上下文、工具和规则，[Skill](https://docs.datus.ai/zh/latest/skills/introduction/) 提供打包的扩展工具；底座是[上下文引擎](https://docs.datus.ai/zh/latest/knowledge_base/introduction/)：元数据、指标、参考 SQL、知识与本地文件，检索用业务域树加向量召回，[存储](https://docs.datus.ai/zh/latest/configuration/storage/)默认内嵌 LanceDB 和 SQLite，团队共享上下文时可换 PostgreSQL。
-- **连接的系统**：LLM、数据仓库、[Dosi](https://dosi.datus.ai/) 语义层、作业调度、BI 工具与 MCP 服务端/客户端，经适配器接入；[Plugin](https://docs.datus.ai/zh/latest/plugin/introduction/) 则把第三方平台和公司内部工具接进 Agent。
+- **连接的系统**：LLM、数据仓库、作业调度、BI 工具与 MCP 服务端/客户端经适配器接入；[Dosi](https://dosi.datus.ai/) 语义引擎内置于 Agent，[Plugin](https://docs.datus.ai/zh/latest/plugin/introduction/) 则接入第三方平台和公司内部工具。
 
 ## 核心能力
 
@@ -61,7 +61,7 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 
 ## 快速开始
 
-Linux 或 macOS：
+Linux x86_64/aarch64（glibc 2.28+）或 Apple Silicon macOS：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
@@ -73,7 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 2. `/datasource` 添加数据源
 3. `/init`(可选)扫描当前项目
 
-也可以用 `pip install datus-agent` 手动安装(Python 3.12+)，更多安装方式见[快速开始指南](https://docs.datus.ai/zh/latest/getting_started/Quickstart/)。如果 `pip` 因回溯 `litellm` 版本而耗时数分钟(0.3.9 及更早版本会遇到)，改用 uv 几秒即可完成解析：`pip install uv && uv pip install datus-agent --system`。[端到端教程](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/)用示例数据集演示了完整使用流程。配置分两级：全局 `agent.yml` 存放主配置，项目下的 `.datus/config.yml` 保存当前模型、默认数据源等项目级覆盖，详见[配置文档](https://docs.datus.ai/zh/latest/configuration/introduction/)。
+也可以在上述支持的平台用 `pip install datus-agent` 手动安装（Python 3.12+），更多安装方式见[快速开始指南](https://docs.datus.ai/zh/latest/getting_started/Quickstart/)。如果 `pip` 因回溯 `litellm` 版本而耗时数分钟(0.3.9 及更早版本会遇到)，改用 uv 几秒即可完成解析：`pip install uv && uv pip install datus-agent --system`。[端到端教程](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/)用示例数据集演示了完整使用流程。配置分两级：全局 `agent.yml` 存放主配置，项目下的 `.datus/config.yml` 保存当前模型、默认数据源等项目级覆盖，详见[配置文档](https://docs.datus.ai/zh/latest/configuration/introduction/)。
 
 ## 接入方式
 

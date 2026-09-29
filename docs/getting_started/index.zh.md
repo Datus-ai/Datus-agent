@@ -36,4 +36,4 @@ Datus 支持多种工作流，但不需要按顺序完成全部教程。先完�
 - [Knowledge Base](../knowledge_base/introduction.md)：metadata、semantic model、metric 与 Reference SQL
 - [Subagent](../subagent/introduction.md)：使用 scoped context 的内置与自定义 agent
 - [Skills](../skills/introduction.md)：供 agent 和 plugin 使用的可复用工作流
-- [配置](../configuration/introduction.md)：datasource、semantic adapter、storage 与 node
+- [配置](../configuration/introduction.md)：datasource、Dosi、storage 与 node

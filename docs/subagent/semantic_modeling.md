@@ -17,7 +17,7 @@ The YAML file is the source of truth. Knowledge Base records are a searchable in
 
 ## Availability and supported databases
 
-Semantic authoring is available when the active semantic adapter is `dosi`. The directly supported warehouse scope is the intersection of SQL dialects implemented by `osi-engine` and installable products in `datus-db-adapters`:
+Dosi powers semantic authoring. The directly supported warehouse scope is the intersection of SQL dialects implemented by `osi-engine` and installable products in `datus-db-adapters`:
 
 | Database adapter | Dosi SQL dialect |
 | --- | --- |
@@ -50,7 +50,7 @@ agent:
         default: true
 ```
 
-`dosi` is the built-in semantic-layer default, so no `semantic_layer` entry is needed when another semantic adapter is not configured. Start Datus:
+Dosi is built in. Start Datus:
 
 ```bash
 datus --datasource duckdb_demo
@@ -82,7 +82,7 @@ The executed query returned 14 yearly buckets. Selected results are:
 | 2023 | 6 | 572,650.0 |
 | 2024 | 2 | 6,107.8 |
 
-Without dimensions, the two metrics return `545` and approximately `1,695,997.0`. See [Datasource Configuration](../configuration/datasources.md) and [Semantic Layer Configuration](../configuration/semantic_layer.md) for other connection types and selection rules.
+Without dimensions, the two metrics return `545` and approximately `1,695,997.0`. See [Datasource Configuration](../configuration/datasources.md) for other connection types and [Dosi Semantic Engine](../semantic/dosi_engine.md) for model discovery.
 
 ## Use the subagent
 
@@ -259,15 +259,13 @@ The executable extension keys are:
 
 Datus also writes presentation and provenance metadata such as `subject_path`, `unit`, `format`, `metric_kind`, `source_type`, `uid`, and `owner`. These keys help Datus organize and display the model but do not change native metric computation.
 
-Keep the core metric expression as a valid aggregate even when `window` or `derive` is present. Dosi validates the fallback expression against supported extension semantics. For more details, see the [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.md), [Semantic Models](../knowledge_base/semantic_model.md), and [Metrics](../knowledge_base/metrics.md).
+Keep the core metric expression as a valid aggregate even when `window` or `derive` is present. Dosi validates the fallback expression against supported extension semantics. For more details, see the [Dosi Semantic Engine](../semantic/dosi_engine.md), [Semantic Models](../knowledge_base/semantic_model.md), and [Metrics](../knowledge_base/metrics.md).
 
 ## Validation and compatibility
 
 Always validate the whole file after manual edits. Structural validity alone is not enough: dataset and field references, relationship keys, dialect expressions, extension carriers, derived metrics, and windows must also be semantically consistent. `semantic_modeling` performs this final validation and can dry-run metric queries when execution evidence is needed.
 
-Existing MetricFlow and OSI projects remain queryable but are query-only. To author an existing OSI project, change its semantic type to Dosi, then use `semantic_modeling` to repair and validate the YAML in place. MetricFlow YAML migration is not supported.
-
-The retired `gen_semantic_model` and `gen_metrics` names remain reserved only for configuration compatibility. They are hidden from discovery, and direct invocation recommends `semantic_modeling`. A custom agent whose legacy `node_class` or `type` uses either name transparently routes to `semantic_modeling` in a Dosi project.
+Existing OSI YAML can be repaired and validated in place. Models in other formats need conversion to OSI first.
 
 For `bootstrap-kb`, historical component names are compatibility aliases:
 

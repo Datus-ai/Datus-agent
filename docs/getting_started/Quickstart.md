@@ -7,13 +7,13 @@ Get started with Datus Agent in minutes: install → configure → first query.
 
 ## 1. Install
 
-One-liner for Linux / macOS (recommended):
+One-liner for Linux x86_64/aarch64 (glibc 2.28+) or Apple Silicon macOS (recommended):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-The script bootstraps `uv`, creates a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and writes `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-pip`, etc. into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
+The script bootstraps `uv`, creates a dedicated venv at `~/.datus/venv` (Python 3.12 is downloaded automatically if missing), and writes `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-pip`, etc. into `~/.local/bin`. The bundled `dosi-engine` currently has wheels for these platforms only. Open a new shell (or `source ~/.zshrc`) so the new PATH takes effect.
 
 ??? note "Other install methods"
     **Pin a released version** (the variable is passed to the receiving shell, not to `curl`):
@@ -111,4 +111,4 @@ For natural-language turns, Datus streams thinking deltas, tool calls, SQL, and 
 - **[Turn a Dashboard into a Copilot](./dashboard_copilot.md)** — turn an existing Superset dashboard into analysis subagents
 - **[Configuration Guide](../configuration/introduction.md)** — connect your own databases and customize settings
 - **[CLI Reference](../cli/introduction.md)** — all commands and options
-- **[Semantic Adapters](../adapters/semantic_adapters.md)** — Dosi by default, with MetricFlow and OSI query compatibility
+- **[Semantic Engine](../semantic/dosi_engine.md)** — Dosi configuration and Agent integration

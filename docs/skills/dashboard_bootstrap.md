@@ -13,7 +13,7 @@ Use natural language or the compatibility shortcut `/bootstrap-bi`. The shortcut
 - Enable a BI plugin and profile that provide dashboard discovery, stable query candidates, SQL export, and a credential-free source identity for every query.
 - Configure the corresponding physical databases as Datus datasources. No BI-profile-level datasource mapping is used.
 - Before generating metrics for a query batch, select the Datus datasource uniquely matched from those queries' real connection identities.
-- Use Dosi when creating or updating metrics. MetricFlow and plain OSI projects remain query-only.
+- Create or update metrics through the built-in Dosi engine.
 
 ## Workflow
 

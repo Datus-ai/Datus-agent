@@ -17,7 +17,7 @@ YAML 文件是唯一事实来源。Knowledge Base 中的记录是从 YAML 派生
 
 ## 可用范围和支持的数据库
 
-只有当前语义适配器为 `dosi` 时才能进行语义创作。直接支持的数据库范围取 `osi-engine` 已实现 SQL 方言与 `datus-db-adapters` 可安装数据库产品的交集：
+语义创作由内置 Dosi 引擎提供。直接支持的数据库范围取 `osi-engine` 已实现 SQL 方言与 `datus-db-adapters` 可安装数据库产品的交集：
 
 | 数据库适配器 | Dosi SQL 方言 |
 | --- | --- |
@@ -50,7 +50,7 @@ agent:
         default: true
 ```
 
-`dosi` 是内置的默认语义适配器，因此没有配置其他语义适配器时不需要增加 `semantic_layer` 配置。启动 Datus：
+Dosi 是内置语义引擎。启动 Datus：
 
 ```bash
 datus --datasource duckdb_demo
@@ -82,7 +82,7 @@ datus --datasource duckdb_demo
 | 2023 | 6 | 572,650.0 |
 | 2024 | 2 | 6,107.8 |
 
-不带维度查询时，两个指标分别为 `545` 和约 `1,695,997.0`。全部连接字段和 datasource 选择规则见[数据源配置](../configuration/datasources.md)与[语义层配置](../configuration/semantic_layer.md)。
+不带维度查询时，两个指标分别为 `545` 和约 `1,695,997.0`。连接字段见[数据源配置](../configuration/datasources.zh.md)，模型发现规则见 [Dosi 语义引擎](../semantic/dosi_engine.zh.md)。
 
 ## 使用 subagent
 
@@ -259,15 +259,13 @@ custom_extensions:
 
 Datus 还会写入 `subject_path`、`unit`、`format`、`metric_kind`、`source_type`、`uid`、`owner` 等展示和来源元数据。这些 key 用于组织和展示模型，不改变 Dosi 原生指标计算。
 
-即使 metric 使用了 `window` 或 `derive`，core `expression` 也必须保留合法的聚合表达式。Dosi 会检查 fallback expression 与 extension 语义是否一致。更多说明见 [Dosi 语义适配器](../adapters/dosi_semantic_adapter.md)、[语义模型](../knowledge_base/semantic_model.md)和[指标](../knowledge_base/metrics.md)。
+即使 metric 使用了 `window` 或 `derive`，core `expression` 也必须保留合法的聚合表达式。Dosi 会检查 fallback expression 与 extension 语义是否一致。更多说明见 [Dosi 语义引擎](../semantic/dosi_engine.zh.md)、[语义模型](../knowledge_base/semantic_model.md)和[指标](../knowledge_base/metrics.md)。
 
 ## 校验和兼容性
 
 手工修改后应始终校验整个文件。仅通过 YAML 结构校验还不够：dataset 和 field 引用、relationship key、方言表达式、extension 承载对象、派生指标和 window 都必须保持语义一致。`semantic_modeling` 会执行最终校验，并可在需要执行证据时 dry-run 指标查询。
 
-现有 MetricFlow 和 OSI 项目仍可查询，但只提供查询兼容。要创作现有 OSI 项目，请先将 semantic type 改为 Dosi，再使用 `semantic_modeling` 原地修复和校验 YAML。不支持迁移 MetricFlow YAML。
-
-已退役的 `gen_semantic_model` 和 `gen_metrics` 名称只为配置兼容而保留。它们不会出现在发现列表中，直接调用时会推荐 `semantic_modeling`。旧自定义 agent 的 `node_class` 或 `type` 使用其中任一名称时，在 Dosi 项目中会自动路由到 `semantic_modeling`。
+旧的引擎选择配置会被忽略并输出警告。已有 OSI YAML 可以原地修复和校验；旧语义层 YAML 需要先转换为 OSI。
 
 对于 `bootstrap-kb`，历史 component 名称作为兼容别名保留：
 

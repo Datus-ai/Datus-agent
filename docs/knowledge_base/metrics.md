@@ -2,7 +2,7 @@
 
 A metric is a reusable, executable business calculation such as revenue, active customers, or failed-bank assets. It gives a calculation one stable name and definition so users can ask business questions without rewriting its aggregation logic.
 
-Metrics are part of a [semantic model](semantic_model.md). Their definitions live in the model's OSI YAML; Datus projects them into a separate Knowledge Base store for discovery, and the active semantic adapter compiles and executes metric queries. Dosi is the built-in default adapter.
+Metrics are part of a [semantic model](semantic_model.md). Their definitions live in the model's OSI YAML; Datus projects them into a separate Knowledge Base store for discovery, and the built-in Dosi engine compiles and executes metric queries.
 
 ## What a metric defines
 
@@ -24,7 +24,7 @@ Metric data has three distinct roles:
 
 1. **OSI YAML is the definition.** It is the source of truth for expressions, time behavior, descriptions, and extensions.
 2. **The `metrics` Knowledge Base store is the discovery projection.** It indexes the metric name, description, subject path, model, dimensions, source YAML, and other retrieval metadata for the active datasource.
-3. **The semantic adapter executes queries.** `query_metrics` sends metric names, dimensions, time bounds, filters, and ordering to the active adapter, which compiles and runs the query.
+3. **Dosi executes queries.** `query_metrics` sends metric names, dimensions, time bounds, filters, and ordering to Dosi, which compiles and runs the query.
 
 Moving a metric to another `subject_path` changes its classification, not its identity. Metric names must therefore remain unique within one datasource.
 
@@ -131,13 +131,12 @@ query_metrics(
 | --- | --- |
 | `metrics` | One or more exact metric names. |
 | `dimensions` | Fields returned by `get_metric`; with Dosi, `metric_time` selects the primary time axis. Prefer `recommended=true` for automatic grouping, while `recommended=false` remains explicitly queryable. |
-| `path` | Optional subject-tree path used to disambiguate a metric. |
-| `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. ISO dates and relative values such as `-7d` or `now` are supported by the adapter. |
+| `time_start`, `time_end` | Optional half-open time range: start is inclusive and end is exclusive. Use ISO dates (`YYYY-MM-DD`). |
 | `time_granularity` | `day`, `week`, `month`, `quarter`, or `year`. |
 | `where` | Optional filter expression without the `WHERE` keyword. |
 | `order_by` | Result columns to sort; prefix a name with `-` for descending order. |
 | `limit` | Maximum rows, used only when the user asks for Top N, a preview, or another explicit row limit. |
-| `dry_run` | Compile and validate the query plan without returning live metric values. |
+| `dry_run` | Return compiled SQL without executing the metric query; a configured warehouse dry-run provider also validates the SQL. |
 
 For example, to include all of January 2024, use `time_start="2024-01-01"` and `time_end="2024-02-01"`.
 
@@ -191,4 +190,4 @@ datus-agent bootstrap-kb \
 - [AskMetrics](../subagent/ask_metrics.md): natural-language metric questions and capability boundaries
 - [Semantic Modeling](../subagent/semantic_modeling.md): end-to-end authoring and complete generated YAML
 - [Semantic Models](semantic_model.md): datasets, fields, relationships, and Knowledge Base projection
-- [Semantic layer configuration](../configuration/semantic_layer.md): semantic adapter configuration
+- [Dosi engine](../semantic/dosi_engine.md): model location and query behavior

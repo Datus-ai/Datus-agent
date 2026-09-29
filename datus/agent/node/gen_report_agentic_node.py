@@ -224,13 +224,9 @@ class GenReportAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic tools for report analysis."""
         try:
-            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-            adapter_type = resolve_semantic_adapter_type(self.agent_config)
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
                 sub_agent_name=self.get_node_name(),
-                adapter_type=adapter_type,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
             )
             self.tools.extend(self.semantic_tools.available_tools())
@@ -261,13 +257,9 @@ class GenReportAgenticNode(AgenticNode):
         try:
             if tool_type == "semantic_tools":
                 if not self.semantic_tools:
-                    from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-                    adapter_type = resolve_semantic_adapter_type(self.agent_config)
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
                         sub_agent_name=self.get_node_name(),
-                        adapter_type=adapter_type,
                         runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
                 tool_instance = self.semantic_tools

@@ -29,9 +29,8 @@ from datus.configuration.agent_config import (
     NodeConfig,
     ServicesConfig,
     ValidationConfig,
-    _apply_runtime_db_context_to_semantic_adapter_config,
-    _db_config_to_semantic_adapter_config,
-    _merge_semantic_adapter_db_config,
+    _apply_runtime_db_context_to_dosi_profile,
+    _db_config_to_dosi_profile,
     _parse_single_file_db,
     file_stem_from_uri,
     load_model_config,
@@ -214,11 +213,11 @@ class TestDbConfigFilterKwargs:
         assert cfg.extra["custom_option"] == "token-value"
 
 
-class TestSemanticAdapterDbConfig:
+class TestDosiDbProfile:
     def test_db_config_conversion_preserves_catalog(self):
         cfg = DbConfig(type="trino", host="trino-host", catalog="hive", database="college_exam")
 
-        result = _db_config_to_semantic_adapter_config(cfg)
+        result = _db_config_to_dosi_profile(cfg)
 
         assert result["catalog"] == "hive"
         assert result["database"] == "college_exam"
@@ -226,7 +225,7 @@ class TestSemanticAdapterDbConfig:
     def test_runtime_context_overlay_uses_generic_aliases(self):
         db_config = {"type": "mysql", "host": "localhost", "database": "configured_db"}
 
-        result = _apply_runtime_db_context_to_semantic_adapter_config(
+        result = _apply_runtime_db_context_to_dosi_profile(
             db_config,
             {
                 "catalog_name": "runtime_catalog",
@@ -276,59 +275,6 @@ class TestSemanticAdapterDbConfig:
             "schema": "runtime_schema_name",
             "db_schema": "runtime_schema_name",
         }
-
-    def test_merge_semantic_adapter_db_config_ignores_empty_overrides(self):
-        result = _merge_semantic_adapter_db_config(
-            {"type": "mysql", "host": "configured-host"},
-            {
-                "host": "override-host",
-                "database": "runtime_db",
-                "schema": "",
-                "empty": None,
-                "port": 3306,
-            },
-        )
-
-        assert result == {
-            "type": "mysql",
-            "host": "override-host",
-            "database": "runtime_db",
-            "port": "3306",
-        }
-
-    def test_override_by_args_pins_runtime_db_context_for_semantic_adapter(self, tmp_path):
-        cfg = AgentConfig(
-            nodes={"test": NodeConfig(model="test-model", input=None)},
-            home=str(tmp_path / "h"),
-            target="mock",
-            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
-            services={
-                "datasources": {
-                    "starrocks": {
-                        "type": "starrocks",
-                        "host": "127.0.0.1",
-                        "port": "9030",
-                        "username": "admin",
-                    }
-                },
-                "semantic_layer": {"metricflow": {"datasource": "starrocks"}},
-            },
-            skip_init_dirs=True,
-        )
-
-        cfg.override_by_args(
-            action="bootstrap-kb",
-            datasource="starrocks",
-            catalog="default_catalog",
-            database_name="ac_manage",
-            schema_name="public",
-        )
-        adapter_config = cfg.build_semantic_adapter_config(adapter_type="metricflow")
-
-        assert cfg.runtime_db_context()["database"] == "ac_manage"
-        assert adapter_config["db_config"]["database"] == "ac_manage"
-        assert adapter_config["db_config"]["catalog"] == "default_catalog"
-        assert adapter_config["db_config"]["schema"] == "public"
 
 
 # ---------------------------------------------------------------------------
@@ -689,231 +635,11 @@ class TestAgentConfigServiceSelectors:
             skip_init_dirs=True,
         )
 
-    def test_resolve_semantic_adapter_returns_explicit_configured_adapter(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"timeout": 300},
-                },
-            },
-        )
-        assert cfg.resolve_semantic_adapter("metricflow") == "metricflow"
-
-    def test_resolve_semantic_adapter_auto_selects_single_configured_entry(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"timeout": 300},
-                },
-            },
-        )
-        assert cfg.resolve_semantic_adapter() == "metricflow"
-
-    def test_resolve_semantic_adapter_defaults_to_dosi_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-            },
-        )
-        assert cfg.resolve_semantic_adapter() == "dosi"
-
-    def test_explicit_semantic_adapter_wins_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-            },
-        )
-        assert cfg.resolve_semantic_adapter("dbt") == "dbt"
-
-    def test_active_semantic_pin_wins_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-            },
-        )
-        cfg.set_active_semantic("dbt", persist=False)
-        assert cfg.resolve_semantic_adapter() == "dbt"
-
-    def test_build_semantic_adapter_config_defaults_to_dosi_when_no_service_configured(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "demo": {
-                        "type": "duckdb",
-                        "uri": "duckdb:///:memory:",
-                        "default": True,
-                    }
-                },
-            },
-        )
-        config = cfg.build_semantic_adapter_config()
-        assert config["type"] == "dosi"
-        assert config["datasource"] == "demo"
-
-    def test_build_semantic_adapter_config_defaults_osi_execution_backend_to_metricflow(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "demo": {
-                        "type": "duckdb",
-                        "uri": "duckdb:///:memory:",
-                        "default": True,
-                    }
-                },
-                "semantic_layer": {"osi": {}},
-            },
-        )
-
-        config = cfg.build_semantic_adapter_config()
-
-        assert config["type"] == "osi"
-        assert config["execution_backend"] == "metricflow"
-        assert config["datasource"] == "demo"
-
-    def test_build_semantic_adapter_config_keeps_dosi_native(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "demo": {
-                        "type": "duckdb",
-                        "uri": "duckdb:///:memory:",
-                        "default": True,
-                    }
-                },
-                "semantic_layer": {"dosi": {}},
-            },
-        )
-
-        config = cfg.build_semantic_adapter_config()
-
-        assert config["type"] == "dosi"
-        assert "execution_backend" not in config
-        assert config["datasource"] == "demo"
-
-    def test_build_semantic_adapter_config_preserves_snowflake_key_pair_fields(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "sf": {
-                        "type": "snowflake",
-                        "account": "sf_account",
-                        "username": "sf_user",
-                        "role": "ANALYST",
-                        "private_key_file": "/tmp/rsa_key.p8",
-                        "private_key_file_pwd": 1234,
-                        "warehouse": "COMPUTE_WH",
-                        "database": "ANALYTICS",
-                        "default": True,
-                    }
-                },
-                "semantic_layer": {"metricflow": {}},
-            },
-        )
-
-        config = cfg.build_semantic_adapter_config()
-
-        assert config["type"] == "metricflow"
-        assert config["datasource"] == "sf"
-        assert config["db_config"]["type"] == "snowflake"
-        assert config["db_config"]["role"] == "ANALYST"
-        assert config["db_config"]["private_key_file"] == "/tmp/rsa_key.p8"
-        assert config["db_config"]["private_key_file_pwd"] == "1234"
-        assert "default" not in config["db_config"]
-
-    def test_build_semantic_adapter_config_runtime_datasource_overrides_configured_datasource(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "static_ds": {
-                        "type": "mysql",
-                        "host": "mysql-static",
-                        "database": "static_db",
-                    },
-                    "runtime_ds": {
-                        "type": "mysql",
-                        "host": "mysql-runtime",
-                        "database": "runtime_db",
-                    },
-                },
-                "semantic_layer": {"metricflow": {"datasource": "static_ds"}},
-            },
-        )
-
-        config = cfg.build_semantic_adapter_config(adapter_type="metricflow", database_name="runtime_ds")
-
-        assert config["datasource"] == "runtime_ds"
-        assert config["db_config"]["host"] == "mysql-runtime"
-        assert config["db_config"]["database"] == "runtime_db"
-        assert config["semantic_models_path"].endswith("subject/semantic_models/runtime_ds")
-
-    def test_build_semantic_adapter_config_uses_runtime_context_datasource(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "static_ds": {
-                        "type": "mysql",
-                        "host": "mysql-static",
-                        "database": "static_db",
-                    },
-                    "runtime_ds": {
-                        "type": "mysql",
-                        "host": "mysql-runtime",
-                        "database": "runtime_db",
-                    },
-                },
-                "semantic_layer": {"metricflow": {"datasource": "static_ds"}},
-            },
-        )
-
-        config = cfg.build_semantic_adapter_config(
-            adapter_type="metricflow",
-            runtime_db_context={"datasource": "runtime_ds"},
-        )
-
-        assert config["datasource"] == "runtime_ds"
-        assert config["db_config"]["host"] == "mysql-runtime"
-        assert config["db_config"]["database"] == "runtime_db"
-        assert config["semantic_models_path"].endswith("subject/semantic_models/runtime_ds")
-
-    def test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {
-                    "college_exam": {
-                        "type": "mysql",
-                        "host": "mysql",
-                        "username": "user",
-                        "password": "pass",
-                        "default": True,
-                    },
-                },
-                "semantic_layer": {"metricflow": {"datasource": "college_exam"}},
-            },
-        )
-
-        config = cfg.build_semantic_adapter_config(
-            adapter_type="metricflow",
-            runtime_db_context={"database": "college_exam"},
-        )
-
-        assert config["datasource"] == "college_exam"
-        assert config["db_config"]["type"] == "mysql"
-        assert config["db_config"]["host"] == "mysql"
-        assert config["db_config"]["database"] == "college_exam"
+    def test_legacy_semantic_layer_is_ignored_with_warning(self, tmp_path):
+        with patch("datus.configuration.agent_config.logger.warning") as warning:
+            cfg = self._make(tmp_path, services={"datasources": {}, "semantic_layer": {"legacy": None}})
+        assert not hasattr(cfg.services, "semantic_layer")
+        warning.assert_called_once_with("Ignoring `agent.services.semantic_layer`; Dosi is built in.")
 
     def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
         cfg = self._make(
@@ -942,20 +668,6 @@ class TestAgentConfigServiceSelectors:
                 "warehouse": "s3://warehouse/",
             }
         }
-
-    def test_resolve_semantic_adapter_requires_explicit_choice_for_multiple_entries(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"timeout": 300},
-                    "cube": {"timeout": 60},
-                },
-            },
-        )
-        with pytest.raises(DatusException, match="Multiple semantic layers are configured"):
-            cfg.resolve_semantic_adapter()
 
     def test_default_scheduler_service_prefers_single_default(self, tmp_path):
         cfg = self._make(
@@ -1263,89 +975,6 @@ class TestAgentConfigServiceSelectors:
             },
         )
         assert cfg.default_dashboard_service() is None
-
-    # ── default_semantic_adapter ───────────────────────────────────────
-
-    def test_default_semantic_adapter_returns_none_for_empty_section(self, tmp_path):
-        """Empty section now means "nothing configured" — callers must
-        explicitly add an entry. Returning ``None`` here lets the resolver
-        own the user-facing error."""
-        cfg = self._make(tmp_path, services={"datasources": {}})
-        assert cfg.default_semantic_adapter() is None
-
-    def test_default_semantic_adapter_uses_unique_entry(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {"metricflow": {}},
-            },
-        )
-        assert cfg.default_semantic_adapter() == "metricflow"
-
-    def test_default_semantic_adapter_picks_default_flag(self, tmp_path):
-        """When multiple semantic adapters are configured, ``default: true``
-        wins over the unique-entry shortcut (which doesn't apply here)."""
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"default": True},
-                    # Hypothetical second adapter — registry validation is
-                    # deferred so the test can exercise the selection
-                    # logic without registering a real adapter.
-                    "dbt": {},
-                },
-            },
-        )
-        assert cfg.default_semantic_adapter() == "metricflow"
-
-    def test_default_semantic_adapter_rejects_multiple_defaults(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"default": True},
-                    "dbt": {"default": True},
-                },
-            },
-        )
-        with pytest.raises(DatusException, match="Multiple semantic layers are marked"):
-            cfg.default_semantic_adapter()
-
-    # ── active_semantic / set_active_semantic / resolver pin ────────────
-
-    def test_active_semantic_pin_outranks_global_default(self, tmp_path):
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {
-                    "metricflow": {"default": True},
-                    "dbt": {},
-                },
-            },
-        )
-        cfg.set_active_semantic("dbt", persist=False)
-        assert cfg.resolve_semantic_adapter() == "dbt"
-
-    def test_stale_active_semantic_falls_through_to_default(self, tmp_path, caplog):
-        """A pin pointing at a deleted adapter is ignored (with warning);
-        resolution falls through to the global default."""
-        import logging
-
-        cfg = self._make(
-            tmp_path,
-            services={
-                "datasources": {},
-                "semantic_layer": {"metricflow": {}},
-            },
-        )
-        cfg.set_active_semantic("never_configured", persist=False)
-        with caplog.at_level(logging.WARNING):
-            assert cfg.resolve_semantic_adapter() == "metricflow"
 
 
 # ---------------------------------------------------------------------------

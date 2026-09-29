@@ -89,7 +89,7 @@ def test_nightly_feishu_report_separates_blocking_failures_from_diagnostics(tmp_
                         "title": "Unregistered rerun observed",
                         "details": {
                             "nodeid": (
-                                "tests/integration/agent/test_gen_metrics_agentic.py::"
+                                "tests/integration/agent/test_semantic_modeling_agentic.py::"
                                 "TestGenMetricsAgentic::test_execute_stream_generates_metric"
                             )
                         },

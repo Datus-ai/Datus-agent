@@ -68,7 +68,7 @@ class TestMetricFilesystemFuncTool:
     def test_osi_available_tools_include_narrow_dataset_mutations(self, tmp_path):
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
         )
 
         tool_names = {tool.name for tool in tool.available_tools()}
@@ -116,7 +116,7 @@ class TestMetricFilesystemFuncTool:
         state = _bound_state(target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             mutation_guard=state.require_bound_path,
             osi_target_state=state,
         )
@@ -192,7 +192,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
             osi_target_state=state,
@@ -262,7 +262,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
             osi_target_state=state,
@@ -296,7 +296,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
             osi_target_state=state,
@@ -355,7 +355,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
             osi_target_state=state,
@@ -426,7 +426,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
         )
@@ -447,7 +447,7 @@ class TestMetricFilesystemFuncTool:
         state = _planned_state(target)
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
             osi_target_state=state,
@@ -491,7 +491,7 @@ class TestMetricFilesystemFuncTool:
         monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
         )
 
         result = tool.edit_file(
@@ -533,7 +533,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
         )
         conflicting_dataset = {
             **existing_dataset,
@@ -573,7 +573,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
         )
         incoming_dataset = {
             **existing_dataset,
@@ -623,7 +623,7 @@ class TestMetricFilesystemFuncTool:
         evidence = GenerationEvidence()
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             mutation_guard=state.require_planned_path,
             mutation_callback=state.record_planned_write,
             osi_target_state=state,
@@ -671,7 +671,7 @@ class TestMetricFilesystemFuncTool:
         evidence = GenerationEvidence()
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             generation_evidence=evidence,
         )
 
@@ -726,7 +726,7 @@ class TestMetricFilesystemFuncTool:
         evidence = GenerationEvidence()
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
             generation_evidence=evidence,
         )
 
@@ -753,7 +753,7 @@ class TestMetricFilesystemFuncTool:
     def test_query_source_extension_always_serializes_data_as_json(self, tmp_path):
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
         )
 
         extensions = tool._query_source_extensions([{"vendor_name": "DATUS", "data": {"owner": "semantic-authoring"}}])
@@ -785,7 +785,7 @@ class TestMetricFilesystemFuncTool:
         )
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
         )
 
         result = tool.upsert_osi_datasets(
@@ -846,7 +846,7 @@ semantic_model:
         before = yaml.safe_load(target.read_text(encoding="utf-8"))
         tool = MetricFilesystemFuncTool(
             root_path=str(project),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
         )
 
@@ -907,7 +907,7 @@ semantic_model:
         state = _bound_state(target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
             mutation_callback=evidence.invalidate_artifact_evidence,
         )
@@ -955,7 +955,7 @@ semantic_model:
         state = _bound_state(target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
         )
         path = str(target.relative_to(tmp_path))
@@ -984,7 +984,7 @@ semantic_model:
         state = _bound_state(target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
             mutation_callback=mutation_callback,
         )
@@ -1019,7 +1019,7 @@ semantic_model:
         evidence.record_semantic_artifact_validation("sales", target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
             mutation_callback=evidence.invalidate_artifact_evidence,
         )
@@ -1052,7 +1052,7 @@ semantic_model:
         state.planned_dataset_names = ["orders"]
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
         )
 
@@ -1161,13 +1161,12 @@ semantic_model:
         assert not target.exists()
 
     def test_semantic_modeling_stamps_query_source_with_runtime_dosi_version(self, tmp_path):
-        pytest.importorskip("datus_semantic_dosi")
         tool = SemanticModelingFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="semantic_modeling",
         )
 
-        with patch("datus_semantic_dosi.engine.datus_extension_version", return_value="1.3"):
+        with patch("datus.tools.semantic_tools.dosi.engine.datus_extension_version", return_value="1.3"):
             extensions = tool._query_source_extensions([])
 
         assert json.loads(extensions[0]["data"]) == {"source_type": "query", "v": "1.3"}
@@ -1180,7 +1179,7 @@ semantic_model:
         state.record_artifact_snapshot(target, b"\xff")
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
         )
 
@@ -1195,7 +1194,7 @@ semantic_model:
         state.record_artifact_snapshot(target, target.read_bytes())
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
         )
         monkeypatch.setattr(
@@ -1231,7 +1230,7 @@ semantic_model:
         state = _bound_state(target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
             mutation_callback=mutation_callback,
         )
@@ -1260,7 +1259,7 @@ semantic_model:
         target.write_text(original, encoding="utf-8")
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
         )
 
@@ -1285,7 +1284,7 @@ semantic_model:
         target.write_text(original, encoding="utf-8")
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=_bound_state(target),
         )
         osi_schema_validator.return_value = "metric expression is required"
@@ -1316,12 +1315,12 @@ semantic_model:
         tools = [
             MetricFilesystemFuncTool(
                 root_path=str(tmp_path),
-                current_node="gen_metrics",
+                current_node="semantic_modeling",
                 osi_target_state=target_state,
             ),
             MetricFilesystemFuncTool(
                 root_path=str(tmp_path),
-                current_node="gen_metrics",
+                current_node="semantic_modeling",
                 osi_target_state=target_state,
             ),
         ]
@@ -1349,7 +1348,7 @@ semantic_model:
     def test_upsert_osi_metrics_requires_existing_model(self, tmp_path):
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
         )
 
         result = tool.upsert_osi_metrics(
@@ -1369,7 +1368,7 @@ semantic_model:
             path.write_text(f"semantic_model:\n  - name: {name}\n    datasets: []\n", encoding="utf-8")
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=_bound_state(selected, "selected"),
         )
 
@@ -1389,7 +1388,7 @@ semantic_model:
         state = _bound_state(target)
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
-            current_node="gen_metrics",
+            current_node="semantic_modeling",
             osi_target_state=state,
         )
         target.write_text(target.read_text(encoding="utf-8") + "# external edit\n", encoding="utf-8")
@@ -1403,41 +1402,6 @@ semantic_model:
         assert result.result["code"] == "semantic_model_target_invalid"
         assert "changed after selection" in result.error
 
-    def test_osi_authoring_skips_metricflow_merge(self, tmp_path):
-        project = tmp_path / "project"
-        target = project / "subject" / "semantic_models" / "ac_manage" / "orders.yml"
-        target.parent.mkdir(parents=True)
-        target.write_text(
-            """
-semantic_model:
-  - name: ac_manage
-    datasets:
-      - name: orders
-        source:
-          table: orders
-""".lstrip(),
-            encoding="utf-8",
-        )
-        tool = MetricFilesystemFuncTool(
-            root_path=str(project),
-            current_node="gen_metrics",
-        )
-        incoming = """
-semantic_model:
-  - name: ac_manage
-    datasets:
-      - name: orders
-        source:
-          table: orders
-        fields:
-          - name: amount
-""".lstrip()
-
-        result = tool.write_file("subject/semantic_models/ac_manage/orders.yml", incoming)
-
-        assert result.success == 1
-        assert target.read_text(encoding="utf-8") == incoming
-
 
 class TestEditFile:
     """Tests for MetricFilesystemFuncTool.edit_file — covers lines 65-97."""
@@ -1447,7 +1411,7 @@ class TestEditFile:
         target = project / "subject" / "semantic_models" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text("data_source:\n  name: orders\n  description: old\n", encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="gen_metrics")
+        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="semantic_modeling")
         result = tool.edit_file(
             "subject/semantic_models/orders.yml",
             "description: old",
@@ -1461,7 +1425,7 @@ class TestEditFile:
         target = project / "subject" / "semantic_models" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text("data_source:\n  name: orders\n", encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="gen_metrics")
+        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="semantic_modeling")
         result = tool.edit_file(
             "subject/semantic_models/orders.yml",
             "nonexistent string",
@@ -1474,6 +1438,6 @@ class TestEditFile:
         project.mkdir(parents=True)
         target = project / "notes.txt"
         target.write_text("hello world\n", encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="gen_metrics")
+        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="semantic_modeling")
         result = tool.edit_file("notes.txt", "hello", "goodbye")
         assert result.success == 1

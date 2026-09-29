@@ -113,12 +113,6 @@ agent:
     semantic_modeling:
       max_turns: 60
       system_prompt: semantic_modeling
-    gen_semantic_model:
-      max_turns: 40
-      system_prompt: gen_semantic_model
-    gen_metrics:
-      max_turns: 50
-      system_prompt: gen_metrics
     gen_sql_summary:
       max_turns: 30
       system_prompt: gen_sql_summary
@@ -202,7 +196,7 @@ agent:
       duckdb:
         type: duckdb
         name: duck
-        uri: tests/data/datus_metricflow_db/duck.db # absolute path: sqlite:////full/path/to/example.db
+        uri: tests/data/demo_duckdb/duck.db # absolute path: sqlite:////full/path/to/example.db
       local_duckdb:
         type: duckdb
         name: ssb
@@ -230,8 +224,6 @@ agent:
         username: superset
         password: superset
         database: examples
-    semantic_layer:
-      dosi: {}
     bi_platforms:
       superset:
         type: superset

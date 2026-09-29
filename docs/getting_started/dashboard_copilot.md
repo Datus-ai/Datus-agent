@@ -2,7 +2,7 @@
 
 Transform a Superset dashboard into two AI subagents: a main subagent for self-service SQL and an attribution subagent for metric comparison and root-cause analysis.
 
-This tutorial walks through the complete flow with the Superset plugin, the generic `dashboard-bootstrap` skill, and the Dosi semantic adapter. Dashboard discovery and SQL export belong to the plugin; the skill coordinates user selection and routes exported SQL to Datus's builtin context-building agents.
+This tutorial walks through the complete flow with the Superset plugin, the generic `dashboard-bootstrap` skill, and the built-in Dosi engine. Dashboard discovery and SQL export belong to the plugin; the skill coordinates user selection and routes exported SQL to Datus's builtin context-building agents.
 
 !!! info "What this tutorial starts from"
     This guide starts with an existing Superset dashboard. To build a data pipeline and create a new dashboard instead, follow [End-to-End Data Engineering](data_engineering_quickstart.md). If this is your first time using Datus, complete [Install and First Query](Quickstart.md) first.
@@ -81,7 +81,7 @@ Stop following the logs after Superset is ready. The local services are:
 
 Open Superset and confirm that the example **World Bank's Data** dashboard is available.
 
-## Step 2: Install the Superset plugin and Dosi adapter
+## Step 2: Install the Superset plugin
 
 Install the Superset plugin from the Datus Plugins Git repository:
 
@@ -92,13 +92,13 @@ datus plugin info superset
 
 To update an existing Git installation, run `datus plugin upgrade superset`.
 
-Install the Dosi semantic adapter into the same Python environment as Datus:
+The Dosi engine is bundled with Datus Agent. From a source checkout, install the locked environment:
 
 ```bash
-python -m pip install datus-semantic-dosi
+uv sync --locked
 ```
 
-When developing all components from source, follow the editable-install commands in [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.md#install) instead.
+See [Dosi Semantic Engine](../semantic/dosi_engine.md#install) for model discovery details.
 
 ## Step 3: Configure the demo project
 
@@ -130,11 +130,6 @@ agent:
         database: superset_examples
         schema: public
 
-    semantic_layer:
-      dosi:
-        type: dosi
-        default: true
-
   plugins:
     superset:
       local:
@@ -148,7 +143,7 @@ agent:
         timeout: "30"
 ```
 
-The launch command below selects `superset-pg` explicitly. If your existing configuration contains another semantic adapter marked `default: true`, clear that flag before making Dosi the default for this demo.
+The launch command below selects `superset-pg` explicitly. Dosi is built in as the semantic engine.
 
 The Superset plugin returns the credential-free source identity of every selected query, and `dashboard-bootstrap` resolves each identity independently against the configured Datus datasources. This allows one Dashboard to contain queries from multiple physical databases.
 
@@ -490,7 +485,7 @@ The plugin records failures in `manifest.json`. A Chart may have lost its Datase
 
 ### Metrics cannot be authored
 
-Confirm that `datus-semantic-dosi` is installed and that `dosi` is the selected semantic adapter. MetricFlow and plain OSI projects are query-only for this workflow.
+Confirm that the locked `dosi-engine` dependency is installed and that the project contains an OSI model.
 
 ### Subagents are not created
 
@@ -502,7 +497,7 @@ Context construction can succeed even when configuration persistence is unavaila
 - [Choose Your Getting Started Path](index.md) — compare all getting-started guides.
 - [Dashboard Bootstrap](../skills/dashboard_bootstrap.md) — complete generic workflow contract.
 - [Plugins](../plugin/introduction.md) — plugin installation, profiles, activation, and permissions.
-- [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.md) — Dosi installation and semantic behavior.
+- [Dosi Semantic Engine](../semantic/dosi_engine.md) — Dosi installation and semantic behavior.
 - [Subagent Introduction](../subagent/introduction.md) — subagent capabilities and invocation.
 - [Knowledge Base](../knowledge_base/introduction.md) — inspect and extend generated context.
 - [Metrics](../knowledge_base/metrics.md) — manage synchronized metrics.

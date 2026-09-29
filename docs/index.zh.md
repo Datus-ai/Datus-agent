@@ -22,7 +22,7 @@ Datus 可以完成 SQL 编写与验证、语义模型与指标构建，以及数
 
 Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://dosi.datus.ai/) 格式的语义模型与指标定义，校验通过后注册进语义层，不需要手写 YAML。
 
-执行由 [Dosi](https://dosi.datus.ai/) 引擎承担：同一份语义模型编译成 13+ 种数据库方言的 SQL。它是一个独立程序，也可以单独以 CLI、REST 服务或 MCP server 的方式部署，详见 [Dosi 语义适配器](adapters/dosi_semantic_adapter.zh.md)。
+执行由 [Dosi](https://dosi.datus.ai/) 引擎承担：同一份语义模型编译成 13+ 种数据库方言的 SQL。它是一个独立程序，也可以单独以 CLI、REST 服务或 MCP server 的方式部署，详见 [Dosi 语义引擎](semantic/dosi_engine.zh.md)。
 
 ![语义建模：从 schema 与历史 SQL 到已校验的语义模型](assets/semantic_modeling_session.svg)
 
@@ -50,7 +50,7 @@ Agent 读取数据库 schema 和历史 SQL，自动生成 [OSI](https://dosi.dat
 ### Plugin 生态与治理
 
 - [Plugin](plugin/introduction.zh.md) 框架把第三方平台和公司内部工具接入 Agent：一份 `datus-plugin.yml` 清单声明 CLI 命令、Skill 和 prompt 上下文，按项目启用。
-- 适配器覆盖 [21 种数据库](adapters/db_adapters.zh.md)和 10+ LLM 提供商，另有 [MCP](integration/mcp.zh.md) 服务端与客户端；[Skill](skills/introduction.zh.md) 遵循 agentskills.io 约定，支持从 marketplace 安装。
+- 适配器覆盖 [21 种数据库](adapters/db_adapters.zh.md)和 10+ LLM 提供商，Dosi 语义引擎内置于 Agent，另有 [MCP](integration/mcp.zh.md) 服务端与客户端；[Skill](skills/introduction.zh.md) 遵循 agentskills.io 约定，支持从 marketplace 安装。
 - 治理上，权限分级，SQL 按语句类型授权并由 AI 预审，bash 运行在 OS 级沙箱中，[trace](develop/observability.zh.md) 可导出到任意 OTLP 平台。
 
 ![开放生态：安装 plugin，接入现有技术栈](assets/ecosystem_plugins.svg)
@@ -124,7 +124,7 @@ curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.s
 
     语义模型与指标如何生成、存储，并由 Dosi 引擎执行。
 
-    [:octicons-arrow-right-24: 语义适配器](adapters/semantic_adapters.zh.md)
+    [:octicons-arrow-right-24: Dosi 语义引擎](semantic/dosi_engine.zh.md)
 
 -   :material-robot-outline: **Subagent**
 

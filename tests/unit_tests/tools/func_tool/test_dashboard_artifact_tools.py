@@ -605,7 +605,7 @@ class TestSaveQueryTemplate:
         assert "@datus-params" in (result.error or "")
 
     def test_declared_param_never_bound_rejected(self, dashboard_tools: DashboardArtifactTools):
-        # Reproduces the live failure mode from the jeff_shop_business_analysis
+        # Reproduces the live failure mode from the sample_shop_business_analysis
         # ``supply_perishable_pie`` template — header declares ``start_date`` /
         # ``end_date`` but the SQL body ignores both. Without the guard the
         # tool persists a template that silently produces a static snapshot

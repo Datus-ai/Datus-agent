@@ -153,8 +153,8 @@ class TestRuntimeOverrideIntegration:
             system_prompt="x",
             scoped_context=ScopedContext(tables="public.users"),
         )
-        with effective_subagent("gen_metrics", override_cfg):
-            result = _build_sub_agent_filter(config, "gen_metrics", _mock_storage(), "tables")
+        with effective_subagent("semantic_modeling", override_cfg):
+            result = _build_sub_agent_filter(config, "semantic_modeling", _mock_storage(), "tables")
         assert "users" in build_where(result)
 
     @pytest.mark.asyncio

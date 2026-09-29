@@ -224,12 +224,6 @@ class TestConstants:
         """BUILTIN_SUBAGENTS has expected number of agents."""
         assert len(BUILTIN_SUBAGENTS) == len(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
 
-    def test_retired_semantic_agents_remain_reserved_but_hidden(self):
-        for name in ("gen_semantic_model", "gen_metrics"):
-            assert name in SYS_SUB_AGENTS
-            assert name in HIDDEN_SYS_SUB_AGENTS
-            assert name not in BUILTIN_SUBAGENTS
-
     def test_valid_tool_categories_non_empty(self):
         """VALID_TOOL_CATEGORIES is non-empty."""
         assert len(VALID_TOOL_CATEGORIES) >= 4
@@ -571,13 +565,6 @@ class TestListAgents:
         for builtin_name in _available_builtin_subagents(real_agent_config):
             assert builtin_name in agent_names
         assert "semantic_modeling" in agent_names
-        assert {"gen_semantic_model", "gen_metrics"}.isdisjoint(agent_names)
-
-    async def test_list_hides_semantic_modeling_for_metricflow(self, real_agent_config):
-        real_agent_config.resolve_semantic_adapter = lambda requested=None: "metricflow"
-        result = await AgentService().list_agents(real_agent_config)
-
-        assert "semantic_modeling" not in {agent["name"] for agent in result.data["agents"]}
 
     async def test_list_contains_builtin_type_entries(self, real_agent_config):
         """At least some agents in the list have type='builtin'."""
@@ -745,24 +732,6 @@ class TestGetAgent:
         # collection fields are always lists, never None
         for field in ("rules", "catalogs", "subjects"):
             assert isinstance(agent[field], list)
-
-    async def test_get_semantic_modeling_follows_default_dosi(self, real_agent_config):
-        svc = AgentService()
-        visible = await svc.get_agent("semantic_modeling", real_agent_config)
-        assert visible.success is True
-        assert visible.data["agent"]["type"] == "builtin"
-
-        real_agent_config.resolve_semantic_adapter = lambda requested=None: "metricflow"
-        hidden = await svc.get_agent("semantic_modeling", real_agent_config)
-        assert hidden.success is False
-        assert hidden.errorCode == "AGENT_NOT_FOUND"
-
-    @pytest.mark.parametrize("retired_name", ["gen_semantic_model", "gen_metrics"])
-    async def test_get_retired_semantic_agent_is_hidden_even_if_configured(self, real_agent_config, retired_name):
-        real_agent_config.agentic_nodes[retired_name] = {"type": retired_name, "model": "legacy"}
-        result = await AgentService().get_agent(retired_name, real_agent_config)
-        assert result.success is False
-        assert result.errorCode == "AGENT_NOT_FOUND"
 
     async def test_get_custom_agent_parses_tools_string(self, real_agent_config, agent_yml_with_singleton):
         """yaml ``tools: "db_tools.*, ctx.*"`` is returned as a trimmed list."""
@@ -965,19 +934,6 @@ class TestCreateAgent:
         svc = AgentService()
         result = await svc.create_agent(
             CreateAgentInput(name="gen_sql", type="gen_sql"),
-            real_agent_config,
-        )
-        assert result.success is False
-        assert result.errorCode == "AGENT_ALREADY_EXISTS"
-
-    @pytest.mark.parametrize("retired_name", ["gen_semantic_model", "gen_metrics"])
-    async def test_create_agent_retired_name_remains_reserved(
-        self, real_agent_config, agent_yml_with_singleton, retired_name
-    ):
-        from datus.api.models.agent_models import CreateAgentInput
-
-        result = await AgentService().create_agent(
-            CreateAgentInput(name=retired_name, type="gen_sql"),
             real_agent_config,
         )
         assert result.success is False

@@ -47,8 +47,6 @@ _PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
 # We leave room for prefixes/extensions by truncating to 200 chars + md5 suffix.
 _PROJECT_NAME_MAX_LEN = 200
 
-DEFAULT_SEMANTIC_ADAPTER = "dosi"
-
 
 def _normalize_project_name(cwd: str) -> str:
     """Sanitize a CWD path into a flat, filesystem-safe project name.
@@ -351,13 +349,12 @@ class DbConfig:
 
 @dataclass
 class ServicesConfig:
-    """Structured services configuration: datasources, semantic layer, BI tools, schedulers.
+    """Structured services configuration: datasources, BI tools, schedulers.
 
     Each datasource is an independent entry.
     """
 
     datasources: Dict[str, DbConfig] = field(default_factory=dict)
-    semantic_layer: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     bi_platforms: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # MCP servers in the `.mcp.json` shape, keyed by server name. A host that
@@ -379,6 +376,8 @@ class ServicesConfig:
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "ServicesConfig":
         """Parse services config from agent.yml 'services' section."""
+        if "semantic_layer" in raw:
+            logger.warning("Ignoring `agent.services.semantic_layer`; Dosi is built in.")
         if "datasources" not in raw and "databases" in raw:
             raise DatusException(
                 ErrorCode.COMMON_FIELD_INVALID,
@@ -398,7 +397,6 @@ class ServicesConfig:
             bi_platforms_raw = raw["bi_tools"]
         return cls(
             datasources={},  # populated by AgentConfig._init_services_config()
-            semantic_layer=raw.get("semantic_layer", {}),
             bi_platforms=bi_platforms_raw or {},
             schedulers=raw.get("schedulers", {}),
             mcp_servers=raw.get("mcp_servers") or {},
@@ -765,7 +763,6 @@ class AgentConfig:
     _trajectory_dir: str
     services: ServicesConfig
     scheduler_services: Dict[str, Dict[str, Any]]
-    semantic_layer_configs: Dict[str, Dict[str, Any]]
     compact: "CompactConfig"
     # Free-form sidecar metadata for ``agent.models`` entries, keyed by
     # the same name used in ``models``. Lets hosts attach extra context
@@ -863,7 +860,6 @@ class AgentConfig:
         # does not block ``AgentConfig`` construction itself.
         self._active_dashboard: Optional[str] = kwargs.get("active_dashboard") or None
         self._active_scheduler: Optional[str] = kwargs.get("active_scheduler") or None
-        self._active_semantic: Optional[str] = kwargs.get("active_semantic") or None
         # Project-level plugin activation forwarded by ``_apply_project_override``
         # from ``./.datus/config.yml`` ``plugins:``. Maps a plugin name to a
         # :class:`PluginActivation` (enabled + active_profile list).
@@ -990,7 +986,6 @@ class AgentConfig:
         self.dashboard_config: Dict[str, DashboardConfig] = {}
         self.scheduler_services = {}
         self.scheduler_config: Dict[str, Any] = {}
-        self.semantic_layer_configs = {}
         # ``plugins_enabled`` is the master switch for the datus-plugin
         # system. When ``False`` no plugin functionality is active: ``datus
         # <plugin>`` dispatch is refused, plugin-bundled skills are not
@@ -1097,13 +1092,12 @@ class AgentConfig:
             if k != "plan":
                 # Store workflow configuration, supporting both list format and {steps: [], config: {}} format
                 self.custom_workflows[k] = v
-        # Initialize services config (datasources, semantic layer, BI tools, schedulers)
+        # Initialize services config (datasources, BI tools, schedulers)
         services_raw = kwargs.get("services") or {}
         if not isinstance(services_raw, dict):
             services_raw = {}
         self.services = ServicesConfig.from_dict(services_raw)
         self._init_services_config(services_raw.get("datasources", {}))
-        self.init_semantic_layer(self.services.semantic_layer)
         self.init_dashboard(self.services.bi_platforms)
         self.init_scheduler_services(self.services.schedulers)
         self.init_plugin_services(kwargs.get("plugins", {}))
@@ -1922,14 +1916,6 @@ class AgentConfig:
         """
         return self._active_scheduler
 
-    def active_semantic(self) -> Optional[str]:
-        """Return the project-level default semantic adapter, or ``None``.
-
-        Read by :meth:`resolve_semantic_adapter` between the explicit
-        ``adapter_type`` argument and the global ``default: true`` flag.
-        """
-        return self._active_semantic
-
     def set_active_dashboard(self, name: Optional[str], persist: bool = True) -> None:
         """Pin (or clear) the project-level default BI service.
 
@@ -1954,16 +1940,6 @@ class AgentConfig:
         self._active_scheduler = cleaned
         if persist:
             self._persist_project_field("scheduler", cleaned)
-
-    def set_active_semantic(self, name: Optional[str], persist: bool = True) -> None:
-        """Pin (or clear) the project-level default semantic adapter.
-
-        Mirrors :meth:`set_active_dashboard` for the semantic_layer section.
-        """
-        cleaned = (name or "").strip() or None
-        self._active_semantic = cleaned
-        if persist:
-            self._persist_project_field("semantic", cleaned)
 
     def _persist_project_field(self, field_name: str, value: Optional[str]) -> None:
         """Update a single top-level field in ``./.datus/config.yml``.
@@ -2110,127 +2086,6 @@ class AgentConfig:
             )
         self.init_plugin_services(plugins)
         return True
-
-    def default_semantic_adapter(self) -> Optional[str]:
-        """Return the semantic adapter marked as the global default, or ``None``.
-
-        Mirrors :meth:`default_scheduler_service` /
-        :meth:`default_dashboard_service`: at most one entry under
-        ``services.semantic_layer`` may carry ``default: true``; multiple
-        defaults are rejected here so the user fixes the YAML rather than
-        having us silently pick one. Falls back to the single-entry
-        shortcut when no entry is flagged.
-        """
-        defaults = [name for name, cfg in self.semantic_layer_configs.items() if cfg.get("default")]
-        if len(defaults) > 1:
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=(
-                    "Multiple semantic layers are marked with `default: true` in "
-                    "`agent.services.semantic_layer`. Keep at most one default semantic adapter."
-                ),
-            )
-        if defaults:
-            return defaults[0]
-        if len(self.semantic_layer_configs) == 1:
-            return next(iter(self.semantic_layer_configs))
-        return None
-
-    def resolve_semantic_adapter(self, adapter_type: Optional[str] = None) -> Optional[str]:
-        """Resolve the active semantic adapter name.
-
-        Order: explicit ``adapter_type`` argument -> project-level pin
-        (``./.datus/config.yml`` ``semantic:``) -> global ``default: true``
-        flag / single-entry shortcut -> built-in default fallback when
-        no semantic layer is configured. Raises when multiple semantic layers
-        are configured without a clear default.
-        """
-        normalized = str(adapter_type or "").lower().strip()
-        if normalized:
-            if not self.semantic_layer_configs or normalized in self.semantic_layer_configs:
-                return normalized
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=(
-                    f"No semantic layer named `{normalized}` found in `agent.services.semantic_layer`. "
-                    f"Available: {list(self.semantic_layer_configs.keys())}"
-                ),
-            )
-
-        active_override = self._active_semantic
-        if active_override:
-            if not self.semantic_layer_configs or active_override in self.semantic_layer_configs:
-                return active_override
-            logger.warning(
-                "Project override active_semantic=`%s` is not configured under "
-                "`agent.services.semantic_layer`; falling back to global default.",
-                active_override,
-            )
-
-        if not self.semantic_layer_configs:
-            return DEFAULT_SEMANTIC_ADAPTER
-
-        default_adapter = self.default_semantic_adapter()
-        if default_adapter:
-            return default_adapter
-        raise DatusException(
-            ErrorCode.COMMON_CONFIG_ERROR,
-            message=(
-                "Multiple semantic layers are configured in `agent.services.semantic_layer`, "
-                "mark exactly one entry with `default: true`."
-            ),
-        )
-
-    def get_semantic_layer_config(self, adapter_type: Optional[str] = None) -> Dict[str, Any]:
-        resolved_adapter = self.resolve_semantic_adapter(adapter_type)
-        if not resolved_adapter or resolved_adapter not in self.semantic_layer_configs:
-            return {}
-        return dict(self.semantic_layer_configs[resolved_adapter])
-
-    def build_semantic_adapter_config(
-        self,
-        adapter_type: Optional[str] = None,
-        database_name: Optional[str] = None,
-        runtime_db_context: Optional[Mapping[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        resolved_adapter = self.resolve_semantic_adapter(adapter_type)
-        if not resolved_adapter:
-            return None
-
-        config = self.get_semantic_layer_config(resolved_adapter)
-        config.setdefault("type", resolved_adapter)
-        if resolved_adapter == "osi":
-            config.setdefault("execution_backend", "metricflow")
-        effective_runtime_db_context = (
-            runtime_db_context if runtime_db_context is not None else self.runtime_db_context()
-        )
-        runtime_datasource = _runtime_context_value(effective_runtime_db_context, "datasource")
-
-        db_name = (
-            database_name
-            or runtime_datasource
-            or config.get("datasource")
-            or self.current_datasource
-            or self.services.default_datasource
-        )
-        if db_name:
-            config["datasource"] = db_name
-            db_config_obj = self.current_db_config(db_name)
-            db_config = _merge_semantic_adapter_db_config(
-                _db_config_to_semantic_adapter_config(db_config_obj),
-                config.get("db_config"),
-            )
-            config_db_config = _apply_runtime_db_context_to_semantic_adapter_config(
-                db_config,
-                effective_runtime_db_context,
-            )
-            if config_db_config:
-                config["db_config"] = config_db_config
-
-        datasource_name = config.get("datasource", self.current_datasource)
-        config.setdefault("semantic_models_path", str(self.path_manager.semantic_model_path(datasource_name)))
-        config.setdefault("agent_home", self.home)
-        return config
 
     @property
     def output_dir(self) -> str:
@@ -3019,35 +2874,6 @@ class AgentConfig:
                 resolved_profiles[profile_name] = resolved
             self.plugin_services[plugin_name] = resolved_profiles
 
-    def init_semantic_layer(self, param: Dict[str, Any]):
-        if not isinstance(param, dict):
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message=(
-                    "`agent.services.semantic_layer` must be a mapping such as "
-                    "`semantic_layer: {dosi: {}}` or `semantic_layer: {metricflow: {}}`; "
-                    "scalar values like `semantic_layer: osi` are not supported."
-                ),
-            )
-
-        self.semantic_layer_configs = {}
-        for service_name, raw_config in param.items():
-            if not isinstance(raw_config, dict):
-                continue
-            normalized_name = str(service_name).lower().strip()
-            resolved = _resolve_nested_value(raw_config)
-            declared_type = str(resolved.get("type") or normalized_name).lower().strip()
-            if declared_type != normalized_name:
-                raise DatusException(
-                    ErrorCode.COMMON_CONFIG_ERROR,
-                    message=(
-                        f"Semantic layer `{service_name}` must use the adapter type as the key in "
-                        f"`agent.services.semantic_layer`. Got key `{service_name}` with type `{declared_type}`."
-                    ),
-                )
-            resolved["type"] = normalized_name
-            self.semantic_layer_configs[normalized_name] = resolved
-
 
 def resolve_env(value: str) -> str:
     if not value or not isinstance(value, str):
@@ -3067,13 +2893,13 @@ def resolve_env(value: str) -> str:
     return re.sub(pattern, replace_env, value)
 
 
-def _db_config_to_semantic_adapter_config(db_config: Optional[DbConfig]) -> Optional[Dict[str, str]]:
+def _db_config_to_dosi_profile(db_config: Optional[DbConfig]) -> Optional[Dict[str, str]]:
     if not db_config:
         return None
 
     raw = db_config.to_dict()
     extra = raw.get("extra")
-    semantic_db_config = {
+    dosi_db_config = {
         key: str(value)
         for key, value in raw.items()
         if value is not None and value != "" and key not in ("extra", "path_pattern", "default")
@@ -3083,23 +2909,8 @@ def _db_config_to_semantic_adapter_config(db_config: Optional[DbConfig]) -> Opti
         for key, value in extra.items():
             if value is None or value == "":
                 continue
-            semantic_db_config.setdefault(key, str(value))
-    return semantic_db_config
-
-
-def _merge_semantic_adapter_db_config(
-    base_config: Optional[Dict[str, str]],
-    override_config: Any,
-) -> Optional[Dict[str, str]]:
-    if not isinstance(override_config, dict):
-        return base_config
-
-    merged = dict(base_config or {})
-    for key, value in override_config.items():
-        if value is None or value == "":
-            continue
-        merged[str(key)] = str(value)
-    return merged
+            dosi_db_config.setdefault(key, str(value))
+    return dosi_db_config
 
 
 def _runtime_context_value(runtime_db_context: Optional[Mapping[str, Any]], *keys: str) -> str:
@@ -3119,7 +2930,7 @@ _RUNTIME_DB_CONTEXT_ALIASES = {
 }
 
 
-def _apply_runtime_db_context_to_semantic_adapter_config(
+def _apply_runtime_db_context_to_dosi_profile(
     db_config: Optional[Dict[str, str]],
     runtime_db_context: Optional[Mapping[str, Any]],
 ) -> Optional[Dict[str, str]]:

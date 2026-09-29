@@ -36,20 +36,13 @@ def _accept_any_authoring_document(monkeypatch):
     )
 
 
-def _set_adapter(agent_config, adapter: str) -> None:
-    agent_config.resolve_semantic_adapter = MagicMock(return_value=adapter)
-
-
 def _stream_call_count(mock_llm_create) -> int:
     return sum(1 for call in mock_llm_create.call_history if call.get("method") == "generate_with_tools_stream")
 
 
 def test_unified_dosi_node_composes_existing_authoring_surfaces(real_agent_config, mock_llm_create):
-    from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    assert not issubclass(SemanticModelingAgenticNode, GenMetricsAgenticNode)
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Create the order dataset and its revenue metric")
     tool_names = {tool.name for tool in node.tools}
@@ -109,7 +102,6 @@ def test_plan_file_uses_project_root_for_vscode_source(real_agent_config, mock_l
     daemon_cwd.mkdir()
     monkeypatch.chdir(daemon_cwd)
     real_agent_config._client_source = "vscode"
-    _set_adapter(real_agent_config, "dosi")
 
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     assert node._resolve_workspace_root() == "."
@@ -126,7 +118,6 @@ def test_semantic_modeling_db_tools_reject_writes_even_with_mutable_datasource(
 ):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(mutable_real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=mutable_real_agent_config, execution_mode="workflow")
 
     assert node.db_func_tool.read_only is True
@@ -142,7 +133,6 @@ def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.models.session_manager import SessionManager
 
-    _set_adapter(real_agent_config, "dosi")
     monkeypatch.setattr(
         semantic_authoring,
         "authoring_prompt_snapshot_meta",
@@ -174,7 +164,6 @@ def test_resumed_session_rebuilds_legacy_key_policy_and_caches_current_skill(
 def test_datasets_only_scope_hides_metric_mutations_and_updates_prompt(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(
         agent_config=real_agent_config,
         execution_mode="workflow",
@@ -196,7 +185,6 @@ def test_node_factory_applies_datasets_only_scope_before_tool_setup(real_agent_c
     from datus.agent.node import Node
     from datus.configuration.node_type import NodeType
 
-    _set_adapter(real_agent_config, "dosi")
     input_data = SemanticNodeInput(user_message="Create reusable order datasets", authoring_scope="datasets")
 
     node = Node.new_instance(
@@ -217,7 +205,6 @@ def test_invalid_authoring_scope_uses_structured_error(real_agent_config, mock_l
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.utils.exceptions import DatusException, ErrorCode
 
-    _set_adapter(real_agent_config, "dosi")
     with pytest.raises(DatusException) as exc_info:
         SemanticModelingAgenticNode(
             agent_config=real_agent_config,
@@ -237,7 +224,6 @@ def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.stream_run_context import StreamRunContext
 
-    _set_adapter(real_agent_config, "dosi")
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
@@ -287,7 +273,6 @@ def test_datasets_only_scope_rolls_back_metric_changes_made_through_edit_file(
 def test_unified_node_exposes_structured_request_sql_as_discovery_evidence(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(
         user_message="Create reusable order metrics",
@@ -312,7 +297,6 @@ def test_unified_node_exposes_structured_request_sql_as_discovery_evidence(real_
 def test_interactive_prompt_confirms_ambiguous_semantics_and_target(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="interactive")
     node.input = SemanticNodeInput(user_message="Create a revenue metric from SQL")
 
@@ -327,7 +311,6 @@ def test_interactive_prompt_confirms_ambiguous_semantics_and_target(real_agent_c
 def test_dosi_target_selection_requires_existing_model_check(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
     rejected = node.plan_osi_semantic_model_target(semantic_model_name="orders")
@@ -341,24 +324,12 @@ def test_dosi_target_selection_requires_existing_model_check(real_agent_config, 
     assert node.osi_target_state.planned["semantic_model_name"] == "orders"
 
 
-@pytest.mark.parametrize("adapter", ["metricflow", "osi"])
-def test_semantic_modeling_rejects_non_dosi_adapters(real_agent_config, mock_llm_create, adapter):
-    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
-
-    _set_adapter(real_agent_config, adapter)
-    from datus.utils.exceptions import DatusException
-
-    with pytest.raises(DatusException, match="query-only.*migrate it to Dosi.*semantic_modeling"):
-        SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-
-
 def test_unified_dosi_selects_existing_model_once_for_dataset_and_metric_changes(
     real_agent_config,
     mock_llm_create,
 ):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "commerce.yml"
@@ -416,7 +387,6 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
 ):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
     assert node.list_existing_osi_semantic_models().success == 1
@@ -467,7 +437,6 @@ def test_unified_dosi_plans_new_model_once_for_dataset_and_metric_changes(
 def test_unified_dosi_keeps_the_first_successfully_selected_target(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
     assert node.list_existing_osi_semantic_models().success == 1
@@ -484,7 +453,6 @@ def test_factory_creates_unified_semantic_modeling_node(real_agent_config, mock_
     from datus.agent.node.node_factory import create_interactive_node, create_node_input
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     node = create_interactive_node("semantic_modeling", real_agent_config, execution_mode="workflow")
     assert isinstance(node, SemanticModelingAgenticNode)
     node_input = create_node_input("Update orders", node)
@@ -495,7 +463,6 @@ def test_generated_result_uses_selected_artifact_finalizer(real_agent_config, mo
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.stream_run_context import StreamRunContext
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
     node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
@@ -522,7 +489,6 @@ async def test_retries_unsupported_outcome_once_before_finalizing(real_agent_con
             build_simple_response(json.dumps({"status": "generated", "output": "Updated orders"})),
         ]
     )
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
     node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
@@ -568,7 +534,6 @@ async def test_supported_outcome_does_not_retry(
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     mock_llm_create.reset(responses=[build_simple_response(json.dumps(payload))])
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
     node._finalize_selected_osi_artifact = MagicMock(return_value="subject/semantic_models/warehouse/orders.yml")
@@ -594,7 +559,6 @@ async def test_unsupported_outcome_still_fails_after_one_retry(real_agent_config
             build_simple_response("The semantic model remains complete."),
         ]
     )
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Update the orders dataset")
 
@@ -609,7 +573,6 @@ def test_unified_result_can_skip_when_no_semantic_change_is_needed(real_agent_co
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.agent.node.stream_run_context import StreamRunContext
 
-    _set_adapter(real_agent_config, "dosi")
     node = SemanticModelingAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
     node.input = SemanticNodeInput(user_message="Explain the existing metric")
     ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
@@ -650,7 +613,6 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.tools.func_tool.base import FuncToolResult
 
-    _set_adapter(real_agent_config, "dosi")
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"
@@ -729,7 +691,6 @@ def test_host_finalizer_validates_and_reconciles_complete_selected_yaml(
 def test_host_finalizer_reports_unavailable_semantic_validation(real_agent_config, mock_llm_create):
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
-    _set_adapter(real_agent_config, "dosi")
     model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
     model_dir.mkdir(parents=True, exist_ok=True)
     target = model_dir / "orders.yml"

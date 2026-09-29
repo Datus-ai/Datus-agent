@@ -24,7 +24,9 @@ scope are local repository contracts.
 - `Datus-ai/datus-db-adapters`: `ci/required-checks.md`
 - `Datus-ai/datus-bi-adapters`: `ci/required-checks.md`
 - `Datus-ai/datus-scheduler-adapters`: `ci/required-checks.md`
-- `Datus-ai/datus-semantic-adapter`: `ci/required-checks.md`
+
+Agent's semantic runtime is bundled with `dosi-engine` and is covered by
+Agent's locked unit and integration checks. It has no external adapter checkout.
 
 When an adapter workflow job is renamed or a new adapter capability is added,
 update the owning adapter repository's required-check document and GitHub ruleset

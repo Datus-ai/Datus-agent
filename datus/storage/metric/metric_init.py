@@ -10,7 +10,6 @@ import asyncio
 import os
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from datus.agent.node.semantic_authoring import AUTHORING_FORMAT_OSI
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.batch_events import BatchEventEmitter
 from datus.utils.loggings import get_logger
@@ -97,7 +96,7 @@ def init_semantic_yaml_metrics(
 
     from datus.tools.func_tool.generation_tools import GenerationTools
 
-    result = GenerationTools(agent_config=agent_config, authoring_format=AUTHORING_FORMAT_OSI).sync_osi_to_db(
+    result = GenerationTools(agent_config=agent_config).sync_osi_to_db(
         yaml_file_path,
         include_semantic_objects=False,
         include_metrics=True,

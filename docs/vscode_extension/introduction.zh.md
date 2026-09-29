@@ -81,7 +81,7 @@ http://localhost:8501
     - 点击表名 → 在编辑区打开 *Table Info* 标签页，展示 **Columns**（字段类型 / 是否可空 / 默认值 / PK）、**Indexes**、**Sample data**。
     - 顶部支持搜索与刷新，元数据变更后点刷新立即同步。
 - **Context**：上下文知识树，与 Datus-agent 的 `subject/` 目录对齐：
-    - **Metrics**：MetricFlow 指标定义。
+    - **Metrics**：Dosi 指标定义。
     - **Reference**：Reference SQL 与 Reference Template。
     - **Knowledge**：External Knowledge / Platform Documentation。
 
@@ -93,7 +93,7 @@ Catalog 与 Context 中的任意节点都可以作为 Chat 的引用对象（在
 
 1. **Description**：基本信息（名称、描述、面向场景）。
 2. **Tools**：勾选可用工具 / MCP 工具。
-3. **Objects**：选择该 SubAgent 可见的 **Catalog 范围** 与 **Context 范围**——同样使用上一节的两棵树，勾选到 schema / table / 知识节点级别。底部 *Selected* 区会以 `jeff_shop.*`、`Root.*` 等通配符形式回显。
+3. **Objects**：选择该 SubAgent 可见的 **Catalog 范围** 与 **Context 范围**——同样使用上一节的两棵树，勾选到 schema / table / 知识节点级别。底部 *Selected* 区会以 `sample_shop.*`、`Root.*` 等通配符形式回显。
 4. **Rules**：补充行为规则、Few-shot 示例、对话风格等。
 
 ![创建 SubAgent 向导（Objects 步骤）](../assets/vscode-create-subagent.png)

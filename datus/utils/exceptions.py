@@ -197,11 +197,8 @@ class ErrorCode(Enum):
 
     DB_TABLE_NOT_EXISTS = ("500010", "Table {table_name} does not exist.")
 
-    # Semantic adapter errors
-    SEMANTIC_ADAPTER_NOT_FOUND = ("600001", "Semantic adapter '{adapter_type}' not found or not installed")
-    SEMANTIC_ADAPTER_ERROR = ("600002", "Semantic adapter operation failed: {error_message}")
-    SEMANTIC_ADAPTER_CONFIG_ERROR = ("600003", "Semantic adapter configuration error: {error_message}")
-    SEMANTIC_ADAPTER_SYNC_FAILED = ("600004", "Failed to sync from semantic adapter: {error_message}")
+    # Dosi storage synchronization
+    DOSI_SYNC_FAILED = ("600004", "Failed to sync from Dosi: {error_message}")
     SEMANTIC_MODEL_BOOTSTRAP_FAILED = (
         "600005",
         "Failed to create prerequisite OSI semantic model: {error_message}",

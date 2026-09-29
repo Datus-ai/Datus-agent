@@ -38,10 +38,6 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-bi-grafana": "datus-bi-adapters/datus-bi-grafana",
     "datus-scheduler-core": "datus-scheduler-adapters/datus-scheduler-core",
     "datus-scheduler-airflow": "datus-scheduler-adapters/datus-scheduler-airflow",
-    "datus-semantic-core": "datus-semantic-adapter/datus-semantic-core",
-    "datus-semantic-metricflow": "datus-semantic-adapter/datus-semantic-metricflow",
-    "datus-semantic-dosi": "datus-semantic-adapter/datus-semantic-dosi",
-    "datus-semantic-osi": "datus-semantic-adapter/datus-semantic-osi",
     "datus-storage-base": "datus-storage-adapters/datus-storage-base",
     "datus-storage-postgresql": "datus-storage-adapters/datus-storage-postgresql",
 }
@@ -153,30 +149,21 @@ def verify_local_sources(external_repos_root: Path) -> list[str]:
     return errors
 
 
-def verify_semantic_adapter_imports() -> list[str]:
+def verify_dosi_runtime_imports() -> list[str]:
     errors: list[str] = []
     try:
-        core_models = importlib.import_module("datus_semantic_core.models")
+        native = importlib.import_module("dosi_engine")
     except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
-        errors.append(f"datus-semantic-core import failed: {exc}")
+        errors.append(f"dosi-engine import failed: {exc}")
     else:
-        if not hasattr(core_models, "SemanticValidationError"):
-            errors.append("datus-semantic-core is missing SemanticValidationError")
+        for name in ("Engine", "validate", "render_datus_authoring_spec"):
+            if not hasattr(native, name):
+                errors.append(f"dosi-engine is missing {name}")
 
     try:
-        importlib.import_module("datus_semantic_metricflow")
+        importlib.import_module("datus.tools.semantic_tools.dosi")
     except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
-        errors.append(f"datus-semantic-metricflow import failed: {exc}")
-
-    try:
-        importlib.import_module("datus_semantic_dosi")
-    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
-        errors.append(f"datus-semantic-dosi import failed: {exc}")
-
-    try:
-        importlib.import_module("datus_semantic_osi")
-    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
-        errors.append(f"datus-semantic-osi import failed: {exc}")
+        errors.append(f"Agent Dosi runtime import failed: {exc}")
 
     return errors
 
@@ -288,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     errors = verify_local_sources(args.external_repos_root)
     errors.extend(verify_database_adapter_imports())
-    errors.extend(verify_semantic_adapter_imports())
+    errors.extend(verify_dosi_runtime_imports())
     errors.extend(verify_storage_adapter_imports())
     if errors:
         for error in errors:

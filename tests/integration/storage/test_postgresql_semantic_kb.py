@@ -170,7 +170,7 @@ def test_postgresql_semantic_kb_reconcile_is_idempotent(postgresql_agent_config,
     config = postgresql_agent_config
     artifact = tmp_path / "nightly_orders.yml"
     artifact.write_text(_osi_document("Initial orders dataset", "Initial revenue metric"), encoding="utf-8")
-    tools = GenerationTools(config, authoring_format="osi")
+    tools = GenerationTools(config)
 
     first = tools.sync_osi_to_db(str(artifact))
     artifact.write_text(_osi_document("Reconciled orders dataset", "Reconciled revenue metric"), encoding="utf-8")
