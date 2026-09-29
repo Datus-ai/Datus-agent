@@ -32,13 +32,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
     def __init__(
         self,
         *args,
-        semantic_adapter: str = "",
         osi_target_state: Optional["OsiSemanticModelTargetState"] = None,
         generation_evidence: Optional["GenerationEvidence"] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self.semantic_adapter = (semantic_adapter or "osi").strip().lower()
         self.osi_target_state = osi_target_state
         self.generation_evidence = generation_evidence
 
@@ -658,7 +656,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             validate_osi_authoring_document,
         )
 
-        return validate_osi_authoring_document(document, semantic_adapter=self.semantic_adapter)
+        return validate_osi_authoring_document(document)
 
     def _reject_write_policy(self, resolved: ResolvedPath) -> Optional[FuncToolResult]:
         if resolved.zone == PathZone.HIDDEN:
@@ -765,7 +763,7 @@ class SemanticModelingFilesystemFuncTool(OsiSemanticModelFilesystemFuncTool):
     @staticmethod
     def _query_source_extensions(value: Any) -> List[Dict[str, Any]]:
         """Stamp Dosi query-backed datasets with the active extension version."""
-        from datus_semantic_dosi.engine import datus_extension_version
+        from datus.tools.semantic_tools.dosi.engine import datus_extension_version
 
         extensions = MetricFilesystemFuncTool._query_source_extensions(value)
         for extension in extensions:

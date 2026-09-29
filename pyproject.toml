@@ -51,9 +51,11 @@ dependencies = [
     "Pillow>=10.4.0",
     "openai-agents[litellm]==0.18.1",
     "openinference-instrumentation-openai-agents==1.6.2",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "opentelemetry-exporter-otlp>=1.20.0",
+    # Keep the API, SDK, and exporter aligned. BigQuery's google-api-core
+    # requires API >=1.44, and a single API-only overlay breaks SDK 1.42.
+    "opentelemetry-api==1.45.0",
+    "opentelemetry-sdk==1.45.0",
+    "opentelemetry-exporter-otlp==1.45.0",
     "litellm==1.100.1",
     "pydantic>=2.11.7,<3.0",
     "lancedb==0.34.0",
@@ -84,7 +86,8 @@ dependencies = [
     "lxml>=5.0.0",
     "markdown-it-py>=3.0.0",
     "tabulate>=0.9.0",
-    "datus-semantic-core>=0.2.6",
+    # Agent embeds only the Dosi APIs used by its semantic tools and Explorer.
+    "dosi-engine==0.1.12",
     # BI platform adapters (core models & interfaces)
     "datus-bi-core>=0.1.2",
     # Workflow scheduler adapters (core framework)
@@ -218,17 +221,8 @@ dev = [
 ]
 ci = [
     "datus-storage-postgresql>=0.1.5",
-    # A floor, not an exact pin: each adapter release pins the dosi-engine build
-    # validated against its runtime API and authoring contract, so whatever the
-    # resolver picks is an installable pair; the marker keeps platforms
-    # without a dosi-engine wheel resolvable (wheels exist for manylinux
-    # x86_64/aarch64 and macOS arm64). 0.1.14 is the floor because it requires
-    # semantic-core>=0.2.6 and provides the dimension recommendation metadata
-    # consumed by Explorer, while retaining the current Ossie authoring and
-    # relationship-path validation behavior.
-    # Datus-backend pins exactly for its image; being a dependency group, this
-    # line is never inherited by the backend's own resolution.
-    "datus-semantic-dosi>=0.1.14 ; (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'darwin')",
+    # `requirements-test.txt` exports only dev and ci groups.
+    "dosi-engine==0.1.12",
 ]
 
 [tool.coverage.run]

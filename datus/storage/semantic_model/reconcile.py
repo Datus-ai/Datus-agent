@@ -234,7 +234,7 @@ def _reconcile_datasource(
                 continue
             # A metric moved to another subject_path leaves its old directory behind.
             touched_nodes |= stores.metric_node_ids(yaml_path)
-            tools = tools or GenerationTools(agent_config=agent_config, authoring_format="osi")
+            tools = tools or GenerationTools(agent_config=agent_config)
             try:
                 sync = tools.sync_osi_to_db(yaml_path, include_semantic_objects=True, include_metrics=True)
             except Exception as exc:  # noqa: BLE001 - one bad file must not stop the rest

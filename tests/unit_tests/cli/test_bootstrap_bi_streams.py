@@ -52,7 +52,6 @@ def agent_config(tmp_path: Path) -> SimpleNamespace:
             sql_summary_path=lambda: tmp_path / "summaries",
             subject_dir=tmp_path / "subject",
         ),
-        resolve_semantic_adapter=lambda _x: "dosi",
     )
 
 
@@ -232,24 +231,6 @@ async def test_stream_bi_semantic_model_skips_when_no_sqls(agent_config, state) 
     )
     assert actions[0].status == ActionStatus.FAILED.value
     assert state.semantic_ok is False
-
-
-@pytest.mark.asyncio
-async def test_stream_bi_semantic_model_rejects_legacy_project_with_migration_guidance(agent_config, state) -> None:
-    agent_config.resolve_semantic_adapter = lambda _x: "osi"
-    actions = await _consume(
-        stream_bi_semantic_model(
-            agent_config,
-            sqls=[_candidate()],
-            platform="superset",
-            dashboard_name="Sales",
-            state=state,
-        )
-    )
-
-    assert state.semantic_ok is False
-    assert actions[-1].status == ActionStatus.FAILED.value
-    assert "migrate it to Dosi first, then use semantic_modeling" in actions[-1].messages
 
 
 @pytest.mark.asyncio

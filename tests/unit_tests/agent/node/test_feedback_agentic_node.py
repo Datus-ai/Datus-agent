@@ -22,7 +22,6 @@ Design principle: NO mock except LLM.
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -233,7 +232,7 @@ class TestFeedbackAgenticNodeExecution:
 
         async def _raise_interrupted(*args, **kwargs):
             raise ExecutionInterrupted("User pressed ESC")
-            yield  # noqa: makes this an async generator
+            yield  # pragma: no cover - keeps this an async generator
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = FeedbackNodeInput(user_message="Analyze")
@@ -381,7 +380,7 @@ class TestExtractStorageInfo:
                 role=ActionRole.TOOL,
                 action_type="task",
                 messages="Tool call: task",
-                input_data={"arguments": json.dumps({"type": "gen_metrics", "prompt": "test"})},
+                input_data={"arguments": json.dumps({"type": "semantic_modeling", "prompt": "test"})},
                 status=ActionStatus.SUCCESS,
             ),
             ActionHistory.create_action(
@@ -402,7 +401,7 @@ class TestExtractStorageInfo:
 
         items_saved, summary = node._extract_storage_info(actions)
         assert items_saved == 2
-        assert summary == {"metrics": 1, "sql_summary": 1}
+        assert summary == {"semantic_modeling": 1, "sql_summary": 1}
 
     def test_ignores_stale_instance_actions(self, real_agent_config, mock_llm_create):
         """_extract_storage_info must count from the passed-in list, not self.actions,
@@ -416,7 +415,7 @@ class TestExtractStorageInfo:
                 role=ActionRole.TOOL,
                 action_type="task",
                 messages="Previous run task",
-                input_data={"arguments": json.dumps({"type": "gen_metrics", "prompt": "prev"})},
+                input_data={"arguments": json.dumps({"type": "semantic_modeling", "prompt": "prev"})},
                 status=ActionStatus.SUCCESS,
             ),
         ]
@@ -438,7 +437,7 @@ class TestExtractStorageInfo:
 
         async def _stream_with_task_actions(*args, **kwargs):
             ahm = kwargs.get("action_history_manager")
-            for sub_type in ("gen_metrics", "gen_sql_summary"):
+            for sub_type in ("semantic_modeling", "gen_sql_summary"):
                 act = ActionHistory.create_action(
                     role=ActionRole.TOOL,
                     action_type="task",
@@ -465,7 +464,7 @@ class TestExtractStorageInfo:
         assert isinstance(node.result, FeedbackNodeResult)
         assert node.result.success is True
         assert node.result.items_saved == 2
-        assert node.result.storage_summary == {"metrics": 1, "sql_summary": 1}
+        assert node.result.storage_summary == {"semantic_modeling": 1, "sql_summary": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -674,25 +673,14 @@ class TestFeedbackSystemPrompt:
         assert "caller_node_name" not in content
         assert "caller_memory_dir" not in content
 
-    @pytest.mark.parametrize(
-        ("adapter", "semantic_modeling_visible"),
-        [("dosi", True), ("osi", False), ("metricflow", False)],
-    )
-    def test_feedback_system_prompt_gates_semantic_modeling_by_adapter(
-        self,
-        real_agent_config,
-        mock_llm_create,
-        adapter,
-        semantic_modeling_visible,
-    ):
+    def test_feedback_system_prompt_includes_semantic_modeling(self, real_agent_config, mock_llm_create):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
-        real_agent_config.resolve_semantic_adapter = MagicMock(return_value=adapter)
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
 
         prompt = node._get_system_prompt()
 
-        assert ('task(type="semantic_modeling"' in prompt) is semantic_modeling_visible
+        assert 'task(type="semantic_modeling"' in prompt
         assert 'task(type="gen_sql_summary"' in prompt
         assert 'task(type="gen_skill"' in prompt
 

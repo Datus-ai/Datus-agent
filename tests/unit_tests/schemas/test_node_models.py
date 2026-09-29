@@ -47,9 +47,9 @@ class TestNodeModelsSqlTask:
         assert task.subject_path is None
 
     def test_datasource_is_distinct_from_database_name(self):
-        task = SqlTask(task="query", datasource="starrocks", database_name="ac_manage")
+        task = SqlTask(task="query", datasource="starrocks", database_name="analytics")
         assert task.datasource == "starrocks"
-        assert task.database_name == "ac_manage"
+        assert task.database_name == "analytics"
         assert task.to_dict()["datasource"] == "starrocks"
 
     def test_empty_task_raises(self):

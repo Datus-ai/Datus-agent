@@ -452,9 +452,8 @@ def _metric_yaml_files(root: Path) -> List[Path]:
 def _metric_subject_path(doc: Any) -> str:
     """Full subject path of one ``metric:`` document, or ``""`` when untagged.
 
-    ``gen_metrics`` writes the tag under ``metric.locked_metadata.tags``;
-    ``metric.tags`` is accepted too since hand-authored files use the
-    shorter form.
+    Legacy metric documents may store the tag under
+    ``metric.locked_metadata.tags`` or directly under ``metric.tags``.
     """
     metric = doc.get("metric") if isinstance(doc, dict) else None
     if not isinstance(metric, dict):
@@ -1282,9 +1281,6 @@ def _sanitize_agent_tree(data: Dict[str, Any], alloc: _PlaceholderAllocator, war
                         entry, fld, f"{prefix}_{_sanitize_var_component(fld)}", f"{path}.{fld}", alloc
                     )
                 _rewrite_secret_named_keys(entry, prefix, path, alloc)
-        semantic = services.get("semantic_layer")
-        if isinstance(semantic, dict):
-            _rewrite_secret_named_keys(semantic, "DATUS_SEMANTIC", "services.semantic_layer", alloc)
         mcp = services.get("mcp_servers")
         if isinstance(mcp, dict):
             for name, entry in mcp.items():

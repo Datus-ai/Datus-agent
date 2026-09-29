@@ -4,8 +4,8 @@
 
 """CLI service client registry.
 
-Exposes read-only tool methods from ``services.bi_platforms`` /
-``services.schedulers`` / ``services.semantic_layer`` to the CLI via
+Exposes read-only tool methods from ``services.bi_platforms`` and
+``services.schedulers`` to the CLI via
 ``ServiceClientRegistry``. Write methods are never registered here — the CLI
 is a read surface; mutating operations belong to the agent.
 
@@ -51,13 +51,6 @@ READ_METHODS: Dict[str, Set[str]] = {
         "get_run_log",
         "list_scheduler_connections",
     },
-    "semantic_layer": {
-        "list_metrics",
-        "get_metric",
-        "query_metrics",
-        "validate_semantic",
-        "attribution_analyze",
-    },
 }
 
 
@@ -67,12 +60,9 @@ class ServiceClient:
     Exposed methods are the intersection of:
 
     1. The per-service-type ``READ_METHODS`` allow-list (blocks writes).
-    2. The service's own ``available_tools()`` output — adapters like
-       ``BIFuncTool`` and ``SemanticTools`` dynamically omit capability-less
-       methods (e.g. read-only BI adapter hides ``get_chart_data``; semantic
-       tool with no adapter hides ``validate_semantic`` /
-       ``attribution_analyze``). Relying on this prevents the CLI from
-       advertising commands that would always fail at runtime.
+    2. The service's own ``available_tools()`` output — BI and scheduler tools
+       can omit methods that the configured service cannot provide. Relying on
+       this prevents the CLI from advertising commands that would always fail.
 
     If the tool instance does not expose ``available_tools`` (rare), the
     allow-list is treated as authoritative.
@@ -159,21 +149,11 @@ def _build_scheduler_tool(agent_config: "AgentConfig", service_name: str) -> Any
     return SchedulerTools(agent_config, scheduler_service=service_name)
 
 
-def _build_semantic_tool(agent_config: "AgentConfig", service_name: str) -> Any:
-    from datus.tools.func_tool.semantic_tools import SemanticTools
-
-    # The YAML key under ``services.semantic_layer`` is the adapter type
-    # (e.g. ``metricflow``). Passing it as ``adapter_type`` mirrors how
-    # ``SemanticTools`` is used elsewhere.
-    return SemanticTools(agent_config, adapter_type=service_name)
-
-
 # Section-name → (factory, READ_METHODS key). Order is deterministic so
 # ``list_services`` output is stable.
 _FACTORIES: Dict[str, _FactoryFn] = {
     "bi_platforms": _build_bi_tool,
     "schedulers": _build_scheduler_tool,
-    "semantic_layer": _build_semantic_tool,
 }
 
 
@@ -195,7 +175,6 @@ _FACTORIES: Dict[str, _FactoryFn] = {
 TYPE_LABELS: Dict[str, str] = {
     "bi_platforms": "BI platform",
     "schedulers": "scheduler",
-    "semantic_layer": "semantic layer",
 }
 
 
@@ -228,18 +207,6 @@ def _probe_bi_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
         return adapter_registry.get(adapter_type) is not None
     except Exception as exc:
         logger.debug(f"BI adapter probe failed for '{service_name}': {exc}")
-        return False
-
-
-def _probe_semantic_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
-    try:
-        from datus.tools.semantic_tools.registry import semantic_adapter_registry
-    except ImportError:
-        return False
-    try:
-        return semantic_adapter_registry.get_metadata(service_name) is not None
-    except Exception as exc:
-        logger.debug(f"Semantic adapter probe failed for '{service_name}': {exc}")
         return False
 
 
@@ -284,7 +251,6 @@ def _probe_scheduler_adapter(agent_config: "AgentConfig", service_name: str) -> 
 _PROBES: Dict[str, _ProbeFn] = {
     "bi_platforms": _probe_bi_adapter,
     "schedulers": _probe_scheduler_adapter,
-    "semantic_layer": _probe_semantic_adapter,
 }
 
 
@@ -347,14 +313,10 @@ class ServiceClientRegistry:
     def _datasource_fingerprint(self) -> Tuple[Any, ...]:
         """Capture the agent_config state that affects built tool instances.
 
-        ``SemanticTools`` bakes ``current_datasource`` into ``MetricRAG`` /
-        ``SemanticDatasetRAG`` at init time and resolves the adapter against
-        the active datasource. ``BIFuncTool.read_connector`` is similarly
-        pulled via ``db_manager.get_conn(current_datasource)``
-        on first use. If any of those change, cached instances must be
-        rebuilt — a session-scoped cache would otherwise keep executing
-        queries against the pre-switch datasource after ``.database ...`` /
-        ``.datasource ...``.
+        ``BIFuncTool.read_connector`` is pulled via
+        ``db_manager.get_conn(current_datasource)`` on first use. If the
+        datasource changes, cached instances must be rebuilt so CLI reads
+        use the selected connection.
         """
         cfg = self._agent_config
         return (
@@ -380,9 +342,8 @@ class ServiceClientRegistry:
         """Report whether the adapter backing ``service_name`` is installed.
 
         ``ServiceClientRegistry`` discovers from ``agent.yml``; that tells us
-        the service is *configured*, not that its adapter package
-        (``datus-bi-<platform>``, ``datus-scheduler-core``, ``datus-semantic-<type>``)
-        is installed. The result is cached until the datasource fingerprint
+        the service is *configured*, not that its BI or scheduler adapter
+        package or the embedded Dosi binding is installed. The result is cached until the datasource fingerprint
         changes.
         """
         self._invalidate_if_stale()

@@ -2034,7 +2034,7 @@ class TestBuildLoadSkill:
         a = _make(
             input_data={"function_name": "load_skill"},
             output_data={
-                "raw_output": '{"success": 0, "error": "Skill \'gen_metrics\' not found"}',
+                "raw_output": '{"success": 0, "error": "Skill \'missing-skill\' not found"}',
             },
         )
         tc = _build_load_skill(a, verbose=False)
@@ -2047,7 +2047,9 @@ class TestBuildLoadSkill:
         a = _make(
             input_data={"function_name": "load_skill"},
             output_data={
-                "raw_output": ('{"success": 0, "error": "Skill \'gen-metrics\' is not available for agent \'chat\'"}'),
+                "raw_output": (
+                    '{"success": 0, "error": "Skill \'private-skill\' is not available for agent \'chat\'"}'
+                ),
             },
         )
         tc = _build_load_skill(a, verbose=False)

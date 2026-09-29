@@ -32,7 +32,6 @@ def _bind_osi_target(
     )
     state.touched_metric_names = list(touched_metric_names or [])
     state.touched_dataset_names = list(touched_dataset_names or [])
-    generation_tools.authoring_format = "osi"
     generation_tools.osi_target_state = state
     generation_tools.require_bound_osi_target = True
     return state
@@ -51,7 +50,6 @@ def _plan_osi_target(generation_tools, target, *, model_name):
         },
         mode="planned",
     )
-    generation_tools.authoring_format = "osi"
     generation_tools.osi_target_state = state
     return state
 
@@ -82,7 +80,10 @@ def _record_compiled_evidence(generation_tools, target, metric_names):
 
 @pytest.fixture
 def mock_agent_config():
-    return Mock()
+    config = Mock()
+    config.current_datasource = "ns1"
+    config.current_db_config.return_value = None
+    return config
 
 
 @pytest.fixture
@@ -113,23 +114,17 @@ class TestAvailableTools:
 
 
 class TestCompiledMetricCatalog:
-    def test_uses_shared_adapter_catalog_paging(self, generation_tools, tmp_path):
+    def test_dosi_catalog_paging(self, generation_tools, tmp_path):
         calls = []
 
         async def list_metrics(*, limit, offset):
             calls.append((limit, offset))
             return [SimpleNamespace(name="revenue")] if offset == 0 else []
 
-        generation_tools.agent_config.resolve_semantic_adapter.return_value = "dosi"
-        generation_tools.agent_config.build_semantic_adapter_config.return_value = None
-        adapter = SimpleNamespace(list_metrics=list_metrics)
+        runtime = SimpleNamespace(list_metrics=list_metrics)
 
         with (
-            patch("datus.tools.semantic_tools.registry.semantic_adapter_registry.get_metadata", return_value=None),
-            patch(
-                "datus.tools.semantic_tools.registry.semantic_adapter_registry.create_adapter",
-                return_value=adapter,
-            ),
+            patch("datus.tools.semantic_tools.dosi.DosiRuntime", return_value=runtime),
             patch("datus.tools.semantic_tools.paging.metric_catalog_paging", return_value=(5000, 2)),
         ):
             catalog = generation_tools._compiled_metric_catalog(str(tmp_path / "model.yml"))
@@ -302,20 +297,6 @@ class TestCheckSemanticObjectExists:
 
 
 class TestEndSemanticModelGeneration:
-    def test_non_dosi_publish_is_rejected_before_any_sync(self, generation_tools):
-        """Contract: semantic authoring is Dosi-only — publishing from a
-        MetricFlow/plain-OSI project must fail with the query-only message
-        without touching the KB."""
-        generation_tools.authoring_format = "metricflow"
-        generation_tools.generation_evidence.validation_passed = True
-
-        with patch.object(generation_tools, "sync_osi_to_db") as sync_mock:
-            result = generation_tools.publish_semantic_model(["/path/to/model.yaml"])
-
-        assert result.success == 0
-        assert "query-only" in result.error
-        sync_mock.assert_not_called()
-
     def test_osi_accepts_revised_query_backed_source_before_sync(self, generation_tools, tmp_path):
         model_file = tmp_path / "subject" / "semantic_models" / "warehouse" / "daily_sales.yml"
         model_file.parent.mkdir(parents=True)
@@ -418,24 +399,9 @@ class TestEndMetricGeneration:
     def _mark_ready_to_publish(self, generation_tools):
         generation_tools.generation_evidence.validation_passed = True
 
-    def test_non_dosi_metric_publish_is_rejected_before_any_sync(self, generation_tools):
-        """Contract: metric authoring is Dosi-only — publishing from a
-        MetricFlow/plain-OSI project must fail with the query-only message
-        without touching the KB."""
-        generation_tools.authoring_format = "metricflow"
-        self._mark_ready_to_publish(generation_tools)
-
-        with patch.object(generation_tools, "_sync_osi_metric_to_db") as sync_mock:
-            result = generation_tools.publish_metrics(metric_file="/path/semantic_models/metric.yaml")
-
-        assert result.success == 0
-        assert "query-only" in result.error
-        sync_mock.assert_not_called()
-
     def test_osi_rejects_publish_without_bound_target(self, generation_tools):
         from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
-        generation_tools.authoring_format = "osi"
         generation_tools.osi_target_state = OsiSemanticModelTargetState()
         generation_tools.require_bound_osi_target = True
 
@@ -665,7 +631,6 @@ class TestEndMetricGeneration:
 
     def test_osi_publishes_without_bound_target_requirement(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
-        generation_tools.authoring_format = "osi"
         metric_file = tmp_path / "semantic_models" / "starrocks" / "orders_metrics.yml"
         metric_file.parent.mkdir(parents=True)
         metric_file.write_text(
@@ -692,7 +657,6 @@ class TestEndMetricGeneration:
         )
 
     def test_osi_ignores_mutated_semantic_files_to_avoid_duplicate_sync(self, generation_tools, tmp_path):
-        generation_tools.authoring_format = "osi"
         semantic_root = tmp_path / "semantic_models" / "starrocks"
         metric_file = semantic_root / "metrics" / "orders_metrics.yml"
         orders_file = semantic_root / "orders.yml"
@@ -730,6 +694,12 @@ class TestEndMetricGeneration:
 
 
 class TestOsiSync:
+    @pytest.fixture(autouse=True)
+    def mock_compiled_catalog(self, generation_tools):
+        # These tests exercise KB publication using synthetic parsed documents.
+        with patch.object(generation_tools, "_compiled_metric_catalog", return_value=None):
+            yield
+
     def test_native_dosi_window_is_projected_as_window_metric(self, generation_tools):
         metric = SimpleNamespace(
             name="running_revenue",
@@ -752,7 +722,7 @@ class TestOsiSync:
 
         assert row["metric_type"] == "window"
 
-    def test_metric_rows_use_compiled_adapter_semantics(self, generation_tools):
+    def test_metric_rows_use_compiled_dosi_semantics(self, generation_tools):
         metric = SimpleNamespace(
             name="average_order_value",
             description="Average order value",

@@ -20,7 +20,7 @@ agent:
 Each key under `datasources` is the datasource name. Names may contain letters, numbers, underscores, and hyphens. Set `default: true` on at most one entry; when only one datasource exists, Datus selects it automatically.
 
 !!! note
-    The configuration path remains `agent.services.datasources`. Configure semantic adapters under [Adapters](../adapters/semantic_adapters.md), and prefer [plugins](../plugin/introduction.md) for integrations such as Airflow.
+    The configuration path remains `agent.services.datasources`. See [Dosi Semantic Engine](../semantic/dosi_engine.md) for model discovery, and prefer [plugins](../plugin/introduction.md) for integrations such as Airflow.
 
 ## Choose a datasource
 

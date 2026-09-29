@@ -241,12 +241,10 @@ async def create_semantic_model_for_table(
     Returns:
         (success, error_message)
     """
-    from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
     from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
     try:
-        ensure_semantic_agent_available("semantic_modeling", agent_config)
         current_db_config = agent_config.current_db_config()
         target = _resolved_table_target(table, agent_config, current_db_config)
         user_message = (

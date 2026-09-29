@@ -1131,13 +1131,12 @@ class TestFilesystemZoneProfileMatrix:
         tool_names = {t.name for t in fs_tool.available_tools()}
         osi_metric_tool = MetricFilesystemFuncTool(
             root_path="/tmp",
-            current_node="gen_metrics",
-            authoring_format="osi",
+            current_node="semantic_modeling",
         )
         osi_metric_tool_names = {t.name for t in osi_metric_tool.available_tools()}
         osi_semantic_tool = OsiSemanticModelFilesystemFuncTool(
             root_path="/tmp",
-            current_node="gen_semantic_model",
+            current_node="semantic_modeling",
         )
         osi_semantic_tool_names = {t.name for t in osi_semantic_tool.available_tools()}
         # Every tool the filesystem surface advertises as a mutation must be

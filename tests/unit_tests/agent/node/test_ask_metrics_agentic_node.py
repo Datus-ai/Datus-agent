@@ -17,11 +17,8 @@ def _fake_function_tool(method):
     return tool
 
 
-def _semantic_tools(adapter=True):
+def _semantic_tools():
     tools = Mock()
-    tools.adapter = Mock() if adapter else None
-    tools._adapter_unavailable_message.return_value = "semantic adapter missing"
-    tools._configured_adapter_type.return_value = "metricflow" if adapter else None
     for name in (
         "list_metrics",
         "get_metric",
@@ -30,17 +27,13 @@ def _semantic_tools(adapter=True):
         "attribution_analyze",
     ):
         setattr(tools, name, Mock(name=name))
-    tools.available_tools.return_value = (
-        [
-            _fake_function_tool(tools.list_metrics),
-            _fake_function_tool(tools.get_metric),
-            _fake_function_tool(tools.query_metrics),
-            _fake_function_tool(tools.validate_semantic),
-            _fake_function_tool(tools.attribution_analyze),
-        ]
-        if adapter
-        else []
-    )
+    tools.available_tools.return_value = [
+        _fake_function_tool(tools.list_metrics),
+        _fake_function_tool(tools.get_metric),
+        _fake_function_tool(tools.query_metrics),
+        _fake_function_tool(tools.validate_semantic),
+        _fake_function_tool(tools.attribution_analyze),
+    ]
     return tools
 
 
@@ -52,13 +45,13 @@ def _context_tools(tree):
     return tools
 
 
-def _make_node(real_agent_config, *, tree, adapter=True, node_config=None, node_name="ask_metrics", input_data=None):
+def _make_node(real_agent_config, *, tree, node_config=None, node_name="ask_metrics", input_data=None):
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 
     if node_config is not None:
         real_agent_config.agentic_nodes[node_name] = node_config
 
-    semantic_tools = _semantic_tools(adapter=adapter)
+    semantic_tools = _semantic_tools()
     context_tools = _context_tools(tree)
     with (
         patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", return_value=semantic_tools),
@@ -106,10 +99,10 @@ class TestAskMetricsAgenticNode:
         from datus.tools.semantic_tools.models import QueryResult
 
         real_agent_config.agentic_nodes["ask_metrics"] = {"tools": tool_patterns}
-        semantic_tools = SemanticTools(real_agent_config, adapter_type="dosi")
-        adapter = Mock()
-        adapter.query_metrics = AsyncMock(return_value=QueryResult(columns=["revenue"], data=[{"revenue": 100}]))
-        semantic_tools._adapter = adapter
+        semantic_tools = SemanticTools(real_agent_config)
+        runtime = Mock()
+        runtime.query_metrics = AsyncMock(return_value=QueryResult(columns=["revenue"], data=[{"revenue": 100}]))
+        semantic_tools._runtime = runtime
         with (
             patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", return_value=semantic_tools),
             patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", return_value=_context_tools({})),
@@ -135,9 +128,9 @@ class TestAskMetricsAgenticNode:
         assert result["success"] == 1
         assert result["result"]["columns"] == ["revenue"]
         assert result["result"]["data"]["original_rows"] == 1
-        assert adapter.query_metrics.await_count == 1
-        assert adapter.query_metrics.call_args.kwargs["metrics"] == ["revenue"]
-        assert adapter.query_metrics.call_args.kwargs.get("params") == params
+        assert runtime.query_metrics.await_count == 1
+        assert runtime.query_metrics.call_args.kwargs["metrics"] == ["revenue"]
+        assert runtime.query_metrics.call_args.kwargs.get("params") == params
 
     def test_small_subject_tree_in_prompt_and_no_list_subject_tree_tool(self, real_agent_config, mock_llm_create):
         tree = {
@@ -208,7 +201,7 @@ class TestAskMetricsAgenticNode:
         assert "extra.time_granularities" not in prompt
         assert "Pass every name in `required_dimensions` to" in prompt
         assert "advisory defaults, not an exhaustive allowlist" in prompt
-        assert "let the semantic adapter validate it" in prompt
+        assert "for Dosi validation" in prompt
         assert node.subject_tree_prompt_limit == 100
 
     def test_reference_date_is_injected_into_runtime_context(self, real_agent_config, mock_llm_create):
@@ -231,7 +224,6 @@ class TestAskMetricsAgenticNode:
         assert "Current sql files root directory:" not in prompt
 
     def test_dosi_prompt_uses_metric_time_as_input_not_suffixed_output_alias(self, real_agent_config, mock_llm_create):
-        real_agent_config.resolve_semantic_adapter = MagicMock(return_value="dosi")
         node, _, _ = _make_node(
             real_agent_config,
             tree={"Sales": {"Orders": {"metrics": ["running_revenue"]}}},
@@ -652,7 +644,7 @@ class TestAskMetricsAgenticNode:
     def test_setup_tools_handles_context_search_failure(self, real_agent_config, mock_llm_create):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 
-        semantic_tools = _semantic_tools(adapter=True)
+        semantic_tools = _semantic_tools()
         with (
             patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", side_effect=RuntimeError("rag down")),
             patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", return_value=semantic_tools),
@@ -681,7 +673,7 @@ class TestAskMetricsAgenticNode:
         context_tools = _context_tools({"Sales": {"Orders": {"metrics": ["revenue"]}}})
         with (
             patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", return_value=context_tools),
-            patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", side_effect=RuntimeError("bad adapter")),
+            patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", side_effect=RuntimeError("bad runtime")),
             patch("datus.agent.node.ask_metrics_agentic_node.trans_to_function_tool", side_effect=_fake_function_tool),
         ):
             node = AskMetricsAgenticNode(
@@ -692,7 +684,7 @@ class TestAskMetricsAgenticNode:
                 node_name="ask_metrics",
             )
 
-        assert node.startup_error == "Semantic adapter unavailable: bad adapter"
+        assert node.startup_error == "Dosi runtime unavailable: bad runtime"
         assert node.tools == []
 
     def test_configured_list_subject_tree_only_exposed_for_partial_tree(self, real_agent_config, mock_llm_create):
@@ -754,18 +746,6 @@ class TestAskMetricsAgenticNode:
         assert prompt_manager.render_template.call_args_list[0].kwargs["template_name"] == "custom_metric_agent_system"
         assert prompt_manager.render_template.call_args_list[1].kwargs["template_name"] == "ask_metrics_system"
         assert prompt_manager.render_template.call_args_list[1].kwargs["version"] == "2.0"
-
-    @pytest.mark.asyncio
-    async def test_adapter_unavailable_fails_before_llm(self, real_agent_config, mock_llm_create):
-        from datus.utils.exceptions import DatusException, ErrorCode
-
-        node, _, _ = _make_node(real_agent_config, tree={}, adapter=False)
-
-        assert node.tools == []
-        assert node.startup_error == "semantic adapter missing"
-        with pytest.raises(DatusException, match="ask_metrics is unavailable") as exc_info:
-            await node._before_stream(Mock())
-        assert exc_info.value.code == ErrorCode.COMMON_CONFIG_ERROR
 
     def test_success_result_reports_sorted_tools_used(self, real_agent_config, mock_llm_create):
         from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus

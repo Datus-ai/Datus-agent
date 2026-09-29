@@ -2401,8 +2401,8 @@ class TestGenSQLParseNodeConfig:
             system_prompt="builtin",
             scoped_context=ScopedContext(tables="parent_tables"),
         )
-        with effective_subagent("gen_metrics", override):
-            result = node._parse_node_config(mock_config, "gen_metrics")
+        with effective_subagent("semantic_modeling", override):
+            result = node._parse_node_config(mock_config, "semantic_modeling")
         assert result != {}
         sc = result.get("scoped_context")
         tables = sc.get("tables") if isinstance(sc, dict) else sc.tables

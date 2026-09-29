@@ -31,12 +31,12 @@ scoped_context.sqls
 - Require at least one of `tables`, `metrics`, or `sqls`. Keep `datasource` equal to the active datasource that owns those artifacts.
 - Put fully qualified physical table references in `tables`.
 - Put canonical dotted subject references in `metrics` and `sqls`. For one exact item, join its stored `subject_path` and item `name` as `<subject-path>.<name>`. A bare subject path intentionally selects its whole subtree and must not be used when the caller requested exact items.
-- Never put a metric storage ID, semantic-adapter metric name by itself, SQL summary ID, YAML path, checksum, or plugin query ID in `metrics` or `sqls`.
+- Never put a metric storage ID, metric name by itself, SQL summary ID, YAML path, checksum, or plugin query ID in `metrics` or `sqls`.
 - Use only scope references derived from successfully built and synchronized artifacts. Never invent a subject path or create missing context here.
 
 ## Step 1 — Validate names and scope
 
-1. Reject names reserved for builtin system agents: `semantic_modeling`, `gen_semantic_model`, `gen_metrics`, `gen_sql_summary`, `gen_sql`, `ask_metrics`, `gen_report`, `gen_visual_report`, `gen_visual_dashboard`, `gen_table`, `gen_job`, `gen_skill`, `gen_dashboard`, `scheduler`, and `feedback`.
+1. Reject names reserved for builtin system agents: `semantic_modeling`, `gen_sql_summary`, `gen_sql`, `ask_metrics`, `gen_report`, `gen_visual_report`, `gen_visual_dashboard`, `gen_table`, `gen_job`, `gen_skill`, `gen_dashboard`, `scheduler`, and `feedback`.
 2. Normalize metric and reference-SQL entries with Datus reference-path semantics: join subject-path segments with `.`, double-quote segments that require quoting, then append the item name for exact-item scope.
 3. Resolve every metric and reference-SQL entry against the corresponding post-sync shared Knowledge Base subject tree. Refuse unresolved or ambiguous entries; never silently omit an invalid scope token.
 4. Deduplicate every comma-separated scope while preserving its first-seen order.

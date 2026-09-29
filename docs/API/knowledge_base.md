@@ -31,12 +31,12 @@ YAML into storage without any LLM call; omit `semantic_yaml` to sync every file 
 
 `strategy=refresh-profile` is only valid when `components` is exactly `["semantic_model"]`. It requires both
 `semantic_yaml` and `success_story`, refreshes generated `Observed profile:` description suffixes in the existing
-MetricFlow or OSI YAML using bounded read-only data profiling, and syncs the updated YAML back to semantic model storage.
+OSI YAML using bounded read-only data profiling, and syncs the updated YAML back to semantic model storage.
 It does not run full semantic-model generation or truncate the semantic model store.
 
 For authoring strategies, `semantic_model` maps to datasets-only `semantic_modeling`; `metrics` and
 `semantic_modeling` map to full authoring. Multiple semantic components are normalized to one execution, with full
-scope taking precedence. MetricFlow and OSI projects return the query-only migration error for authoring requests.
+scope taking precedence.
 
 **Example**:
 

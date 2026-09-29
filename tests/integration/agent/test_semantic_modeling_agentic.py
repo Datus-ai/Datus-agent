@@ -13,6 +13,7 @@ import os
 import sqlite3
 
 import pytest
+import yaml
 from lancedb.embeddings import register
 from lancedb.embeddings.base import TextEmbeddingFunction
 
@@ -31,7 +32,6 @@ pytestmark = [pytest.mark.nightly, pytest.mark.product_e2e]
 
 
 def _use_dosi(agent_config, project_root):
-    agent_config.semantic_layer_configs = {"dosi": {}}
     agent_config._project_root = project_root.resolve()
     agent_config.path_manager = DatusPathManager(
         agent_config.home,
@@ -131,7 +131,6 @@ def _deterministic_dosi_config(tmp_path, monkeypatch) -> AgentConfig:
                     "default": True,
                 }
             },
-            "semantic_layer": {"dosi": {"type": "dosi", "default": True}},
         },
     )
     config.current_datasource = "orders"
@@ -221,7 +220,6 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     live = node.semantic_tools.query_metrics(metrics=["revenue"])
     assert live.success == 1, live.error
     cached = node.semantic_tools.get_cached_query_metrics_result(live.result["result_id"])
-    assert cached is not None
     assert cached["columns"] == ["revenue"]
     rows = list(csv.DictReader(io.StringIO(cached["csv"])))
     assert len(rows) == 1
@@ -237,6 +235,20 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     }
     assert metric_rag.get_metrics_size() == 1
     assert [item["name"] for item in metric_rag.search_all_metrics()] == ["revenue"]
+
+    runtime = node.semantic_tools.runtime
+    source = runtime.read_metric_source("revenue")
+    assert source.semantic_model == "orders_model"
+    edited = yaml.safe_load(source.text)
+    edited["description"] = "Edited order revenue"
+    mutation = runtime.write_metric_source("revenue", yaml.safe_dump(edited, sort_keys=False))
+    assert mutation.affected_paths == [source.file_path]
+    assert runtime.read_metric_source("revenue").text.find("Edited order revenue") >= 0
+
+    deletion = runtime.delete_metric_source("revenue")
+    assert deletion.deleted is True
+    assert deletion.affected_paths == [source.file_path]
+    assert "revenue" not in config.path_manager.project_root.joinpath(public_path).read_text()
 
 
 def test_semantic_modeling_scopes_share_one_real_project_workspace(nightly_agent_config, tmp_path):
@@ -279,7 +291,6 @@ async def test_semantic_modeling_authors_one_queryable_dosi_model_with_real_llm(
     _use_deterministic_embeddings(monkeypatch)
     nightly_agent_config.home = str(tmp_path / "home")
     config = _use_dosi(nightly_agent_config, tmp_path / "workspace")
-    config.semantic_layer_configs = {"dosi": {"type": "dosi", "default": True}}
 
     node = SemanticModelingAgenticNode(agent_config=config, execution_mode="workflow")
     node.input = SemanticNodeInput(

@@ -36,4 +36,4 @@ The two scenario tutorials use Superset for different purposes:
 - [Knowledge Base](../knowledge_base/introduction.md): metadata, semantic models, metrics, and Reference SQL
 - [Subagents](../subagent/introduction.md): built-in and customized agents with scoped context
 - [Skills](../skills/introduction.md): reusable workflows used by agents and plugins
-- [Configuration](../configuration/introduction.md): datasources, semantic adapters, storage, and nodes
+- [Configuration](../configuration/introduction.md): datasources, Dosi, storage, and nodes

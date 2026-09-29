@@ -6,8 +6,7 @@
 
 Runs once per interactive REPL launch, **before** the prompt loop opens, to:
 
-1. **Pin defaults to the project**: for each ``services.<section>`` (BI,
-   Scheduler, Semantic), if no project pin is already set in
+1. **Pin defaults to the project**: for BI and Scheduler services, if no project pin is already set in
    ``./.datus/config.yml`` and the YAML resolves a deterministic default
    (single entry, or one entry flagged ``default: true``), write that
    choice back as the project pin so subsequent runs are explicit. When
@@ -15,9 +14,8 @@ Runs once per interactive REPL launch, **before** the prompt loop opens, to:
    pick one synchronously.
 
 2. **Install missing adapter packages in the background**: every
-   configured service whose adapter Python package is not importable, plus the
-   built-in semantic default when no semantic service is configured,
-   (``datus-bi-<x>``, ``datus-scheduler-<x>``, ``datus-semantic-<x>``)
+   configured BI or scheduler service whose adapter Python package is not importable
+   (``datus-bi-<x>``, ``datus-scheduler-<x>``)
    gets a ``pip install`` kicked off on a daemon thread, then a
    ``hot_reload_adapter`` so it becomes usable without a restart.
 
@@ -63,7 +61,6 @@ _SECTION_SPECS: Tuple[Tuple[str, str, str, str, str], ...] = (
     # (section,            services_attr,            active_getter,       active_setter,         default_resolver)
     ("bi_platforms", "dashboard_config", "active_dashboard", "set_active_dashboard", "default_dashboard_service"),
     ("schedulers", "scheduler_services", "active_scheduler", "set_active_scheduler", "default_scheduler_service"),
-    ("semantic_layer", "semantic_layer_configs", "active_semantic", "set_active_semantic", "default_semantic_adapter"),
 )
 
 
@@ -218,9 +215,7 @@ def _missing_install_targets(agent_config: Any) -> List[Tuple[str, str]]:
 
     The adapter type is read from the section-specific config object;
     BI uses ``DashboardConfig.adapter_type`` (alias may differ), while
-    Scheduler / Semantic store the type as a dict key or ``type`` field. An
-    empty Semantic section contributes the built-in default resolved by
-    :meth:`AgentConfig.resolve_semantic_adapter`.
+    Scheduler stores the type as a dict key or ``type`` field.
     """
     targets: List[Tuple[str, str]] = []
     bi = getattr(agent_config, "dashboard_config", {}) or {}
@@ -236,20 +231,6 @@ def _missing_install_targets(agent_config: Any) -> List[Tuple[str, str]]:
         adapter_type = str(cfg.get("type") or name).strip().lower()
         if adapter_type and not is_adapter_installed("schedulers", adapter_type):
             targets.append(("schedulers", adapter_type))
-
-    semantic = getattr(agent_config, "semantic_layer_configs", {}) or {}
-    if semantic:
-        semantic_types = semantic.keys()
-    else:
-        resolver = getattr(agent_config, "resolve_semantic_adapter", None)
-        resolved_default = resolver(None) if callable(resolver) else None
-        semantic_types = (resolved_default,) if resolved_default else ()
-    for name in semantic_types:
-        # ``init_semantic_layer`` already enforces ``key == type``. When the
-        # section is empty, ``name`` is the built-in default from the resolver.
-        adapter_type = str(name or "").strip().lower()
-        if adapter_type and not is_adapter_installed("semantic_layer", adapter_type):
-            targets.append(("semantic_layer", adapter_type))
 
     # Deduplicate — multiple BI aliases of the same adapter type would
     # otherwise trigger ``pip install`` once per alias.

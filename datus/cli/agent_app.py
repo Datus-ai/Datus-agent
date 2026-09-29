@@ -257,11 +257,7 @@ class AgentApp:
     # ─────────────────────────────────────────────────────────────────
 
     def _load_builtin_names(self) -> List[str]:
-        from datus.agent.node.semantic_authoring import is_semantic_modeling_available
-
         names = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
-        if not is_semantic_modeling_available(self._cfg):
-            names.discard("semantic_modeling")
         # ``chat`` is the pseudo-default every session starts with. Pin it to
         # the top so users can reset the default from the Built-in tab.
         return ["chat"] + sorted(names)

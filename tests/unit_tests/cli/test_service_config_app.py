@@ -27,12 +27,11 @@ from datus.cli.service_config_app import (
 )
 
 
-def _stub_agent_config(*, dashboards=None, schedulers=None, semantic=None, active_dash=None, active_sched=None):
+def _stub_agent_config(*, dashboards=None, schedulers=None, active_dash=None, active_sched=None):
     """Minimal in-memory ``AgentConfig`` shim sufficient for the App."""
     cfg = SimpleNamespace()
     cfg.dashboard_config = dashboards or {}
     cfg.scheduler_services = schedulers or {}
-    cfg.semantic_layer_configs = semantic or {}
     cfg.active_dashboard = MagicMock(return_value=active_dash)
     cfg.active_scheduler = MagicMock(return_value=active_sched)
     return cfg
@@ -81,15 +80,7 @@ class TestTabCycle:
         app._cycle_tab(+1)
         assert app._tab == _Tab.SCHEDULER
         app._cycle_tab(+1)
-        assert app._tab == _Tab.SEMANTIC
-        app._cycle_tab(+1)
         assert app._tab == _Tab.DASHBOARD
-
-    def test_initial_tab_semantic_when_requested(self):
-        cfg = _stub_agent_config()
-        with patch("datus.cli.service_config_app.ServiceConfigApp._is_installed", return_value=True):
-            app = ServiceConfigApp(cfg, Console(file=io.StringIO()), initial_tab="semantic")
-        assert app._tab == _Tab.SEMANTIC
 
 
 class TestListEntries:
@@ -277,22 +268,6 @@ class TestSetGlobalDefault:
         assert result.action == "set_default"
         assert result.section == "schedulers"
 
-    def test_d_emits_set_default_on_semantic_tab(self):
-        app = _build_app(
-            semantic={
-                "metricflow": {"type": "metricflow"},
-                "dbt": {"type": "dbt"},
-            }
-        )
-        app._tab = _Tab.SEMANTIC
-        app._list_cursor = 0  # dbt sorts before metricflow
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_set_default()
-        result = mock_exit.call_args.args[0]
-        assert result.action == "set_default"
-        assert result.section == "semantic_layer"
-        assert result.name == "dbt"
-
 
 class TestSetProjectDefault:
     def test_p_pins_when_not_currently_default(self):
@@ -366,9 +341,6 @@ class TestCursor:
         ("bi_platforms", "superset"),
         ("bi_platforms", "grafana"),
         ("schedulers", "airflow"),
-        ("semantic_layer", "osi"),
-        ("semantic_layer", "dosi"),
-        ("semantic_layer", "metricflow"),
     ],
 )
 def test_builtin_types_present(section, type_name):
@@ -384,133 +356,6 @@ def test_schedulers_currently_only_airflow():
     from datus.cli.service_config_app import _BUILTIN_TYPES
 
     assert _BUILTIN_TYPES["schedulers"] == ("airflow",)
-
-
-def test_semantic_layer_lists_supported_builtin_adapters():
-    from datus.cli.service_config_app import _BUILTIN_TYPES
-
-    assert _BUILTIN_TYPES["semantic_layer"] == ("dosi", "metricflow", "osi")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Semantic tab — list, type-picker, save, delete
-# ─────────────────────────────────────────────────────────────────────
-
-
-class TestSemanticTab:
-    def test_build_semantic_entries_from_configs(self):
-        """``is_default`` reflects only the explicit YAML ``default: true``
-        flag — the single-entry shortcut is an implicit fallback handled
-        by the resolver, not a label we display."""
-        app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
-        entries = app._entries_for(_Tab.SEMANTIC)
-        assert len(entries) == 1
-        entry = entries[0]
-        assert entry.name == "metricflow"
-        assert entry.adapter_type == "metricflow"
-        assert entry.is_default is False  # no ``default: true`` in YAML
-        assert entry.is_project_default is False
-
-    def test_build_semantic_entries_marks_yaml_default_flag(self):
-        app = _build_app(semantic={"metricflow": {"type": "metricflow", "default": True}})
-        entry = app._entries_for(_Tab.SEMANTIC)[0]
-        assert entry.is_default is True
-
-    def test_render_list_shows_add_new_semantic_row(self):
-        app = _build_app()
-        app._tab = _Tab.SEMANTIC
-        rendered = app._render_list()
-        flat = "".join(text for _, text in rendered)
-        assert "Add new semantic" in flat
-
-    def test_type_picker_for_semantic_lists_supported_adapters(self):
-        app = _build_app()
-        app._tab = _Tab.SEMANTIC
-        app._enter_type_picker()
-        assert app._type_choices == ["dosi", "metricflow", "osi"]
-
-    def test_type_picker_enter_emits_save_without_form(self):
-        app = _build_app()
-        app._tab = _Tab.SEMANTIC
-        app._enter_type_picker()
-        app._type_cursor = 0  # dosi, the built-in default
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_type_picker_enter()
-        # FORM view is skipped — selection is emitted straight from the picker.
-        assert app._view != _View.FORM
-        result = mock_exit.call_args.args[0]
-        assert isinstance(result, ServiceConfigSelection)
-        assert result.action == "save"
-        assert result.section == "semantic_layer"
-        assert result.name == "dosi"
-        assert result.payload == {"type": "dosi"}
-
-    def test_enter_on_existing_entry_is_noop(self):
-        app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
-        app._tab = _Tab.SEMANTIC
-        app._list_cursor = 0  # existing metricflow row
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_list_enter()
-        # No FORM, no exit — semantic entries have nothing editable yet.
-        assert app._view == _View.LIST
-        mock_exit.assert_not_called()
-
-    def test_e_key_ignored_on_semantic_tab(self):
-        app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
-        app._tab = _Tab.SEMANTIC
-        app._list_cursor = 0
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_edit()
-        assert app._view == _View.LIST
-        mock_exit.assert_not_called()
-
-    def test_p_emits_set_project_default_for_semantic(self):
-        """Semantic now supports project-level pinning (``set_active_semantic``)
-        on par with Dashboard / Scheduler."""
-        app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
-        app._tab = _Tab.SEMANTIC
-        app._list_cursor = 0
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_set_project_default()
-        result = mock_exit.call_args.args[0]
-        assert result.action == "set_project_default"
-        assert result.section == "semantic_layer"
-        assert result.name == "metricflow"
-
-    def test_x_emits_delete_for_semantic(self):
-        app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
-        app._tab = _Tab.SEMANTIC
-        app._list_cursor = 0
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_delete()
-        result = mock_exit.call_args.args[0]
-        assert result.action == "delete"
-        assert result.section == "semantic_layer"
-        assert result.name == "metricflow"
-
-    def test_t_emits_test_for_semantic(self):
-        app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
-        app._tab = _Tab.SEMANTIC
-        app._list_cursor = 0
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_test()
-        result = mock_exit.call_args.args[0]
-        assert result.action == "test"
-        assert result.section == "semantic_layer"
-
-    def test_footer_hint_includes_default_keys_but_omits_edit(self):
-        """``e edit`` is hidden because metricflow has no editable fields,
-        but ``d global default`` and ``p project default`` are now shown
-        on every tab — Semantic included."""
-        app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
-        app._tab = _Tab.SEMANTIC
-        rendered = app._render_footer_hint()
-        flat = "".join(text for _, text in rendered)
-        assert "edit" not in flat
-        assert "global default" in flat
-        assert "project default" in flat
-        assert "delete" in flat
-        assert "test" in flat
 
 
 # ─────────────────────────────────────────────────────────────────────

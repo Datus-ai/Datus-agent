@@ -27,7 +27,6 @@ from packaging.version import InvalidVersion, Version
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_CORE_PACKAGES = (
     "datus-db-core",
-    "datus-semantic-core",
     "datus-bi-core",
     "datus-scheduler-core",
 )
@@ -170,7 +169,7 @@ def check_requirements_match_pyproject(repo_root: Path) -> list[str]:
     0.13.4, and how ``jsonschema``/``jinja2`` — required by the plugin manifest
     loader — were missing from this file entirely.
 
-    ``check_adapter_dependency_consistency`` below covers only the four adapter
+    ``check_adapter_dependency_consistency`` below covers only the three adapter
     packages, and only their lower bounds, which is why none of that was caught.
     """
     pyproject_deps = read_pyproject_dependencies(repo_root)

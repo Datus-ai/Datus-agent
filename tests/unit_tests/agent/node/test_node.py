@@ -1,5 +1,4 @@
 import copy
-import glob
 import json
 import time
 from pathlib import Path
@@ -75,12 +74,12 @@ def isolated_bird_sqlite_root(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="module")
-def isolated_metricflow_duckdb_path(tmp_path_factory) -> Path:
-    return init_metricflow_db(tmp_path_factory.mktemp("metricflow_duckdb") / "duck.db")
+def isolated_demo_duckdb_path(tmp_path_factory) -> Path:
+    return init_demo_db(tmp_path_factory.mktemp("demo_duckdb") / "duck.db")
 
 
 @pytest.fixture
-def agent_config(isolated_bird_sqlite_root, isolated_metricflow_duckdb_path) -> AgentConfig:
+def agent_config(isolated_bird_sqlite_root, isolated_demo_duckdb_path) -> AgentConfig:
     # Post-refactor (PR #542) legacy configs with `path_pattern` expand into
     # one database per matched file (keyed by logic name). The old "bird_sqlite" key is no
     # longer valid, so the loader drops it; individual tests override `current_datasource` as
@@ -94,7 +93,7 @@ def agent_config(isolated_bird_sqlite_root, isolated_metricflow_duckdb_path) -> 
         reuse_existing=True,
     )
     if "duckdb" in agent_config.services.datasources:
-        agent_config.services.datasources["duckdb"].uri = str(isolated_metricflow_duckdb_path)
+        agent_config.services.datasources["duckdb"].uri = str(isolated_demo_duckdb_path)
     agent_config.agentic_nodes = copy.deepcopy(agent_config.agentic_nodes)
     if not agent_config.current_datasource and agent_config.services.datasources:
         agent_config.current_datasource = "bird_school"
@@ -113,22 +112,13 @@ def function_tools(agent_config: AgentConfig) -> List[Tool]:
     return db_function_tools(agent_config)
 
 
-def init_metricflow_db(db_path: Path) -> Path:
+def init_demo_db(db_path: Path) -> Path:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if db_path.exists():
         db_path.unlink()
-    csv_path: Path = Path(__file__).parent / "data/metricflow_csv" / "*.csv"
     conn = duckdb.connect(db_path)
     try:
-        conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
-        csv_files = glob.glob(str(csv_path))
-        for csv_file in csv_files:
-            full_file_name = Path(csv_file).name
-            file_name = full_file_name.split(".")[0]
-            table_name = f"mf_demo.{file_name}"
-            conn.execute(
-                f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)"
-            )
+        conn.execute("CREATE SCHEMA IF NOT EXISTS demo;")
     finally:
         conn.close()
     return db_path

@@ -56,7 +56,7 @@ def extract_ddl_target(
             :attr:`TableTarget.datasource` so Layer A routes ``describe_table``
             back to the same connector.
         active_database: Physical database currently selected on the
-            connector (e.g. ``ac_manage`` on StarRocks, the DuckDB file
+            connector (e.g. ``analytics`` on StarRocks, the DuckDB file
             stem). Used to populate :attr:`TableTarget.database` when the
             SQL does not qualify the table with an explicit database.
             Falls back to ``datasource`` when empty — keeps backward

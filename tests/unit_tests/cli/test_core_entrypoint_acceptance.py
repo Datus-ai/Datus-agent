@@ -224,7 +224,6 @@ async def test_bootstrap_semantic_modeling_stream_orchestrates_unified_helper() 
     agent_config = SimpleNamespace(
         current_datasource="",
         project_name="acceptance-project",
-        resolve_semantic_adapter=lambda _value: "dosi",
     )
     calls: list[tuple] = []
 
@@ -275,7 +274,6 @@ async def test_bootstrap_semantic_modeling_stream_propagates_expected_failure() 
     agent_config = SimpleNamespace(
         current_datasource="",
         project_name="acceptance-project",
-        resolve_semantic_adapter=lambda _value: "dosi",
     )
 
     async def fake_semantic_modeling(
@@ -312,7 +310,6 @@ async def test_bootstrap_bi_extracts_context_and_hands_it_to_save_stream() -> No
         db_type="duckdb",
         agentic_nodes={},
         path_manager=SimpleNamespace(),
-        resolve_semantic_adapter=lambda value: value,
         current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="public"),
     )
     plan = BootstrapBiPlan(
@@ -389,7 +386,6 @@ async def test_bootstrap_bi_missing_table_context_fails_before_subagent_save() -
         db_type="duckdb",
         agentic_nodes={},
         path_manager=SimpleNamespace(),
-        resolve_semantic_adapter=lambda value: value,
         current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="public"),
     )
     plan = BootstrapBiPlan(

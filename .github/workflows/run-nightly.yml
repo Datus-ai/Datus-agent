@@ -52,8 +52,8 @@ jobs:
       DATUS_AGENT_REF: ${{ inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ inputs.nightly_group_filter || '' }}
       DATUS_TEST_RUN_ID: datus-agent-${{ github.run_id }}-${{ github.run_attempt }}
-      # The job deliberately overlays packages from the adapter checkouts after
-      # the locked project sync. Do not let later `uv run` commands restore the
+      # DB, BI, scheduler, and storage adapter checkouts are installed after
+      # the locked sync. Do not let later `uv run` commands restore their
       # registry builds from uv.lock over those checkout packages.
       UV_NO_SYNC: "1"
     steps:
@@ -91,14 +91,6 @@ jobs:
           repository: Datus-ai/datus-scheduler-adapters
           ref: main
           path: external/datus-scheduler-adapters
-          persist-credentials: false
-
-      - name: Checkout datus-semantic-adapter main
-        uses: actions/checkout@v4
-        with:
-          repository: Datus-ai/datus-semantic-adapter
-          ref: main
-          path: external/datus-semantic-adapter
           persist-credentials: false
 
       - name: Checkout datus-storage-adapters main
@@ -187,7 +179,6 @@ jobs:
                 external/datus-db-adapters \
                 external/datus-bi-adapters \
                 external/datus-scheduler-adapters \
-                external/datus-semantic-adapter \
                 external/datus-storage-adapters; do
                 git -C "$repo" rev-parse HEAD
               done
@@ -214,10 +205,6 @@ jobs:
           # No --upgrade: keep the locked framework packages; adapters only add
           # their own missing deps instead of bumping fastapi/starlette/etc.
           uv pip install --no-cache-dir \
-            --reinstall-package datus-semantic-core \
-            --reinstall-package datus-semantic-metricflow \
-            --reinstall-package datus-semantic-dosi \
-            --reinstall-package datus-semantic-osi \
             --reinstall-package datus-snowflake \
             --reinstall-package datus-bigquery \
             --reinstall-package datus-doris \
@@ -232,10 +219,6 @@ jobs:
             pytest-playwright \
             ./external/datus-storage-adapters/datus-storage-base \
             "./external/datus-storage-adapters/datus-storage-postgresql[dev]" \
-            ./external/datus-semantic-adapter/datus-semantic-core \
-            ./external/datus-semantic-adapter/datus-semantic-metricflow \
-            ./external/datus-semantic-adapter/datus-semantic-dosi \
-            "./external/datus-semantic-adapter/datus-semantic-osi[metricflow]" \
             ./external/datus-db-adapters/datus-db-core \
             ./external/datus-db-adapters/datus-sqlalchemy \
             ./external/datus-db-adapters/datus-snowflake \
@@ -262,6 +245,7 @@ jobs:
             ./external/datus-scheduler-adapters/datus-scheduler-airflow
           uv run --no-sync python ci/verify_nightly_adapter_sources.py \
             --external-repos-root "$GITHUB_WORKSPACE/external"
+          uv pip check
           uv run --no-sync playwright install --with-deps chromium
 
       - name: Ensure Docker runtime

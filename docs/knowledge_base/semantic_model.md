@@ -216,4 +216,4 @@ This search does not return metrics; use `search_metrics` for those. Physical-ta
 - [Semantic Modeling](../subagent/semantic_modeling.md): end-to-end authoring, configuration, supported databases, and complete generated YAML
 - [Metrics](metrics.md): metric definitions, Knowledge Base projection, and query parameters
 - [AskMetrics](../subagent/ask_metrics.md): natural-language metric questions
-- [Semantic layer configuration](../configuration/semantic_layer.md): semantic adapter configuration
+- [Dosi Semantic Engine](../semantic/dosi_engine.md): model discovery and query behavior

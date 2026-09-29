@@ -994,8 +994,8 @@ class TestVerboseToggleKeepsRunningTool:
             depth=0,
             action_id="grp-1",
             action_type="task",
-            messages="task(gen_metrics)",
-            input_data={"type": "gen_metrics", "prompt": "compute base metrics"},
+            messages="task(semantic_modeling)",
+            input_data={"type": "semantic_modeling", "prompt": "compute base metrics"},
         )
         inner_running = _make_action(
             ActionRole.TOOL,
@@ -1016,7 +1016,7 @@ class TestVerboseToggleKeepsRunningTool:
         ctx._apply_verbose_toggle()
 
         output = buf.getvalue()
-        assert "gen_metrics" in output
+        assert "semantic_modeling" in output
         assert "profile_table" in output
         assert "in progress" in output
 
@@ -1311,8 +1311,8 @@ class TestTuiPath:
             depth=0,
             action_id=parent_id,
             action_type="task",
-            messages="task(gen_metrics)",
-            input_data={"type": "gen_metrics", "prompt": "compute base metrics"},
+            messages="task(semantic_modeling)",
+            input_data={"type": "semantic_modeling", "prompt": "compute base metrics"},
         )
         ctx._start_subagent_group(first, group_key=parent_id)
 
@@ -1331,7 +1331,7 @@ class TestTuiPath:
         styles = [style for style, _ in header_segments]
         assert "class:subagent-header-live" in styles
         name_text = "".join(txt for style, txt in header_segments if style == "class:subagent-header-live")
-        assert "gen_metrics" in name_text
+        assert "semantic_modeling" in name_text
         # Tool tail comes after the header and shows the most-recent tools.
         last_line_text = "".join(seg for _, seg in snap[-1].segments)
         assert "tool_3" in last_line_text
@@ -1397,7 +1397,7 @@ class TestTuiPath:
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             messages="task",
             parent_action_id=parent_id,
         )
@@ -1507,7 +1507,7 @@ class TestToolProcessingLifecycle:
             ActionRole.TOOL,
             ActionStatus.SUCCESS,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             messages="task",
             input_data={"function_name": "db_sample"},
             parent_action_id=parent_id,
@@ -1522,7 +1522,7 @@ class TestToolProcessingLifecycle:
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             action_id=call_id,
             messages="db_describe",
             input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
@@ -1547,7 +1547,7 @@ class TestToolProcessingLifecycle:
             ActionRole.TOOL,
             ActionStatus.SUCCESS,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             action_id=call_id,
             messages="db_describe",
             input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
@@ -1581,7 +1581,7 @@ class TestToolProcessingLifecycle:
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             parent_action_id=parent_id,
         )
         ctx._start_subagent_group(first, group_key=parent_id)
@@ -1591,7 +1591,7 @@ class TestToolProcessingLifecycle:
                     ActionRole.TOOL,
                     ActionStatus.SUCCESS,
                     depth=1,
-                    action_type="gen_metrics",
+                    action_type="semantic_modeling",
                     input_data={"function_name": f"tool_{i}"},
                     parent_action_id=parent_id,
                     end_time=datetime.now(),
@@ -1602,7 +1602,7 @@ class TestToolProcessingLifecycle:
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
             parent_action_id=parent_id,
         )
@@ -1648,7 +1648,7 @@ class TestToolProcessingLifecycle:
             ActionRole.TOOL,
             ActionStatus.SUCCESS,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             input_data={"function_name": "list_tables"},
             parent_action_id=parent_id,
             end_time=datetime.now(),
@@ -1659,7 +1659,7 @@ class TestToolProcessingLifecycle:
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             input_data={"function_name": "db_describe", "arguments": {"table": "orders"}},
             parent_action_id=parent_id,
         )
@@ -1862,7 +1862,7 @@ class TestStreamingMarkdown:
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
             depth=1,
-            action_type="gen_metrics",
+            action_type="semantic_modeling",
             messages="task",
             parent_action_id=parent_id,
         )

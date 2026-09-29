@@ -2,12 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Semantic authoring compatibility and Dosi availability helpers.
-
-New authoring is exposed only through ``semantic_modeling`` on a Dosi project.
-MetricFlow and OSI format resolution remains here for query and import
-compatibility, while all user-facing factories reject the retired agent names.
-"""
+"""Dosi semantic authoring and Agent API helpers."""
 
 from __future__ import annotations
 
@@ -22,108 +17,13 @@ from typing import Any, Dict, Iterable, Optional
 
 import yaml
 
-AUTHORING_FORMAT_METRICFLOW = "metricflow"
-AUTHORING_FORMAT_OSI = "osi"
-# Semantic authoring (generation) is Dosi-only. Plain-OSI and MetricFlow
-# projects remain queryable but every authoring entry point returns
-# ``QUERY_ONLY_MIGRATION_MESSAGE``.
-OSI_AUTHORING_ADAPTERS: frozenset[str] = frozenset({"dosi"})
-QUERY_ONLY_MIGRATION_MESSAGE = (
-    "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
-)
-
 _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _DATUS_EXTENSION_VERSION_TOKEN = "<datus_extension_version>"
 
-# Dosi consumes the OSI core document shape but has its own native DATUS
-# extension contract. Keep adapter-specific execution semantics out of the
-# shared authoring-format switch so the Python OSI and Rust Dosi backends do
-# not receive contradictory window instructions.
-_REQUIRED_ADAPTER_SKILLS: Dict[str, Dict[str, str]] = {
-    "semantic_modeling": {
-        "dosi": "dosi-semantic-authoring",
-    },
-}
-
-
-def _resolve_semantic_adapter(agent_config: Any = None) -> Optional[str]:
-    resolver = getattr(agent_config, "resolve_semantic_adapter", None)
-    if not callable(resolver):
-        return None
-    return resolver(None)
-
-
-def is_osi_semantic_adapter(adapter_type: Any) -> bool:
-    """Return whether an adapter consumes the shared OSI authoring format."""
-    return str(adapter_type or "").strip().lower() in OSI_AUTHORING_ADAPTERS
-
-
-def resolve_authoring_format(
-    agent_config: Any = None,
-    node_config: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Resolve the semantic authoring format from the global semantic adapter."""
-    del node_config
-
-    adapter = resolve_semantic_adapter_type(agent_config)
-
-    if is_osi_semantic_adapter(adapter):
-        return AUTHORING_FORMAT_OSI
-    return AUTHORING_FORMAT_METRICFLOW
-
-
-def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
-    """Resolve the active semantic adapter, using the configured built-in default."""
-    adapter = _resolve_semantic_adapter(agent_config)
-    normalized = str(adapter or "").strip().lower()
-    if normalized:
-        return normalized
-    from datus.configuration.agent_config import DEFAULT_SEMANTIC_ADAPTER
-
-    return DEFAULT_SEMANTIC_ADAPTER
-
-
-def is_semantic_modeling_available(agent_config: Any = None) -> bool:
-    """Return whether the unified semantic-modeling agent can be instantiated."""
-    return resolve_semantic_adapter_type(agent_config) == "dosi"
-
 
 def semantic_authoring_unavailable_message(agent_config: Any = None) -> str:
-    """Return the actionable message for a project that cannot author semantics."""
-    if is_semantic_modeling_available(agent_config):
-        return "semantic_model and metrics authoring are retired; use semantic_modeling instead."
-    return QUERY_ONLY_MIGRATION_MESSAGE
-
-
-def retired_semantic_agent_message(agent_name: str, agent_config: Any = None) -> str:
-    """Return the actionable user-facing error for a retired authoring agent."""
-    from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
-
-    if agent_name not in RETIRED_SYS_SUB_AGENTS:
-        return ""
-    if is_semantic_modeling_available(agent_config):
-        return f"{agent_name} is retired. Use semantic_modeling instead."
-    return QUERY_ONLY_MIGRATION_MESSAGE
-
-
-def ensure_semantic_agent_available(agent_name: str, agent_config: Any = None) -> None:
-    """Reject retired or adapter-incompatible semantic authoring agents."""
-    from datus.utils.exceptions import DatusException, ErrorCode
-
-    message = retired_semantic_agent_message(agent_name, agent_config)
-    if not message and agent_name == "semantic_modeling" and not is_semantic_modeling_available(agent_config):
-        message = QUERY_ONLY_MIGRATION_MESSAGE
-    if message:
-        raise DatusException(
-            ErrorCode.COMMON_CONFIG_ERROR,
-            message_args={"config_error": message},
-        )
-
-
-def is_osi_authoring(agent_config: Any = None, node_config: Optional[Dict[str, Any]] = None) -> bool:
-    """Return ``True`` when this node should author OSI instead of MetricFlow."""
-    del node_config
-    return resolve_authoring_format(agent_config) == AUTHORING_FORMAT_OSI
+    """Return guidance for KB-only edits that cannot preserve Dosi YAML."""
+    return "Use semantic_modeling to edit the Dosi source model."
 
 
 def _normalize_model_name(value: Any) -> str:
@@ -253,23 +153,12 @@ def _dataset_table_references(agent_config: Any, dataset: Dict[str, Any], datase
     return references if not parse_errors else []
 
 
-def validate_osi_authoring_document(document: Any, *, semantic_adapter: str) -> Optional[str]:
-    """Validate an OSI-shaped authoring document with its selected adapter.
-
-    Dosi is the only adapter that authors. Anything else is query-only, so
-    there is no validator to fall back to — saying so is more useful than
-    validating a document that will never be written.
-    """
-
-    if str(semantic_adapter or "").strip().lower() != "dosi":
-        return QUERY_ONLY_MIGRATION_MESSAGE
+def validate_osi_authoring_document(document: Any) -> Optional[str]:
+    """Validate a Dosi semantic-model document."""
     if not isinstance(document, dict):
         return "YAML document must be an object"
-    try:
-        from datus_semantic_core.exceptions import SemanticCoreException
-        from datus_semantic_dosi.authoring import validate_dosi_document
-    except ImportError as exc:
-        return f"Dosi validator is unavailable: {exc}"
+    from datus.tools.semantic_tools.dosi.authoring import validate_dosi_document
+    from datus.tools.semantic_tools.exceptions import SemanticCoreException
 
     try:
         validate_dosi_document(document)
@@ -287,7 +176,6 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
     without weakening metric binding.
     """
     model_dir = _osi_semantic_model_dir(agent_config)
-    semantic_adapter = resolve_semantic_adapter_type(agent_config)
     if model_dir is None or not model_dir.is_dir():
         return {
             "models": [],
@@ -389,20 +277,13 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             "absolute_path": str(absolute_path),
             "artifact_sha256": hashlib.sha256(content).hexdigest(),
         }
-        schema_error = validate_osi_authoring_document(document, semantic_adapter=semantic_adapter)
+        schema_error = validate_osi_authoring_document(document)
         if schema_error:
-            if semantic_adapter == "dosi":
-                issue_code = (
-                    "dosi_validator_unavailable"
-                    if schema_error.startswith("Dosi validator is unavailable:")
-                    else "invalid_dosi_model"
-                )
-            else:
-                issue_code = (
-                    "osi_schema_validator_unavailable"
-                    if schema_error.startswith("OSI schema validator is unavailable:")
-                    else "invalid_osi_core_schema"
-                )
+            issue_code = (
+                "dosi_validator_unavailable"
+                if schema_error.startswith("Dosi validator is unavailable:")
+                else "invalid_dosi_model"
+            )
             issues.append(
                 {
                     "code": issue_code,
@@ -814,9 +695,6 @@ def osi_semantic_model_turn_context(agent_config: Any, user_input: Any) -> str:
     Semantic-model intent can change between turns in one persisted session, so
     these values must never be frozen into the session system-prompt snapshot.
     """
-    if resolve_authoring_format(agent_config) != AUTHORING_FORMAT_OSI:
-        return ""
-
     requested_name = str(getattr(user_input, "semantic_model_name", "") or "").strip()
     business_domain = str(getattr(user_input, "business_domain", "") or "").strip()
     fact_tables = [
@@ -871,16 +749,9 @@ async def semantic_authoring_guard(agent_config: Any = None):
 
 
 def required_authoring_skills(agent_config: Any, node_name: str) -> str:
-    """Return the host-injected authoring spec skill(s) for a generation node.
-
-    The result is a comma-separated pattern string in the same shape as
-    ``AgenticNode.REQUIRED_SKILLS``, derived from the active authoring format.
-    """
-    adapter = resolve_semantic_adapter_type(agent_config)
-    adapter_skills = _REQUIRED_ADAPTER_SKILLS.get(node_name, {}).get(adapter)
-    if adapter_skills is not None:
-        return adapter_skills
-    return ""
+    """Return the host-injected Dosi authoring skill for semantic modeling."""
+    del agent_config
+    return "dosi-semantic-authoring" if node_name == "semantic_modeling" else ""
 
 
 def render_required_authoring_skill(
@@ -893,24 +764,13 @@ def render_required_authoring_skill(
     if skill_name != "dosi-semantic-authoring":
         return content
 
-    try:
-        from datus_semantic_dosi.authoring_spec import (
-            authoring_spec_text,
-            datus_extension_authoring_spec_text,
-        )
-        from datus_semantic_dosi.engine import datus_extension_version
-    except ImportError as exc:
-        from datus.utils.exceptions import DatusException, ErrorCode
-
-        raise DatusException(
-            ErrorCode.COMMON_CONFIG_ERROR,
-            message_args={"config_error": "semantic_adapter=dosi requires the datus-semantic-dosi package"},
-        ) from exc
+    from datus.tools.semantic_tools.dosi.authoring_spec import (
+        authoring_spec_text,
+        datus_extension_authoring_spec_text,
+    )
+    from datus.tools.semantic_tools.dosi.engine import datus_extension_version
 
     rendered_skill = content.replace(_DATUS_EXTENSION_VERSION_TOKEN, datus_extension_version())
-    # Keep the placeholder argument while older adapter releases remain in
-    # supported environments. Current adapters accept it for compatibility
-    # but return the engine-owned dialect-neutral contract unchanged.
     extension_spec = datus_extension_authoring_spec_text("<osi_dialect>")
     sections = [rendered_skill]
     if include_osi_core:
@@ -926,25 +786,10 @@ def authoring_prompt_snapshot_meta(agent_config: Any, node_name: str) -> Dict[st
     if "dosi-semantic-authoring" not in skills:
         return {}
 
-    try:
-        from datus_semantic_dosi import authoring_spec
-        from datus_semantic_dosi.engine import datus_extension_version
-    except ImportError as exc:
-        from datus.utils.exceptions import DatusException, ErrorCode
+    from datus.tools.semantic_tools.dosi import authoring_spec
+    from datus.tools.semantic_tools.dosi.engine import datus_extension_version
 
-        raise DatusException(
-            ErrorCode.COMMON_CONFIG_ERROR,
-            message_args={"config_error": "semantic_adapter=dosi requires the datus-semantic-dosi package"},
-        ) from exc
-
-    digest_reader = getattr(authoring_spec, "datus_extension_authoring_spec_digest", None)
-    if callable(digest_reader):
-        contract_digest = digest_reader()
-    else:
-        # Compatibility with adapters that predate the digest API. This path
-        # disappears naturally once the new adapter is the minimum version.
-        contract_text = authoring_spec.datus_extension_authoring_spec_text("<osi_dialect>")
-        contract_digest = f"sha256:{hashlib.sha256(contract_text.encode('utf-8')).hexdigest()}"
+    contract_digest = authoring_spec.datus_extension_authoring_spec_digest()
 
     core_spec = authoring_spec.authoring_spec_text("<osi_dialect>")
     core_spec_digest = f"sha256:{hashlib.sha256(core_spec.encode('utf-8')).hexdigest()}"
@@ -954,14 +799,3 @@ def authoring_prompt_snapshot_meta(agent_config: Any, node_name: str) -> Dict[st
         "datus_authoring_contract_digest": contract_digest,
         "osi_core_authoring_spec_digest": core_spec_digest,
     }
-
-
-def default_optional_skills(agent_config: Any, node_name: str) -> str:
-    """Return the default ``<available_skills>`` pattern for a generation node.
-
-    These skills stay LLM-loadable because their workflows are conditional; the
-    active authoring format decides which variants are visible. Users can still
-    override with an explicit ``skills:`` entry in node configuration.
-    """
-    del agent_config, node_name
-    return ""

@@ -4,7 +4,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 """
-Manage command for Services (datasources, semantic layer, BI tools, schedulers).
+Manage command for Services (datasources, BI tools, schedulers).
 
 Replaces the legacy DatasourceManager. Works with the new services.datasources
 config structure where each datasource is an independent entry.
@@ -51,7 +51,7 @@ def _validate_port(port_str: str) -> tuple[bool, str]:
 
 
 class ServiceManager:
-    """Manage services (databases, semantic layer, BI tools, schedulers) in agent.yml."""
+    """Manage services (databases, BI tools, schedulers) in agent.yml."""
 
     def __init__(self, config_path: str):
         self.config_path = config_path
@@ -109,12 +109,6 @@ class ServiceManager:
             table.add_row(db_name, db_config.type, connection, is_default)
 
         console.print(table)
-
-        semantic_layer = self.agent_config.services.semantic_layer
-        if semantic_layer:
-            console.print("\n[bold yellow]Semantic Layer:[/bold yellow]")
-            for name, cfg in semantic_layer.items():
-                console.print(f"  {name}: {cfg}")
 
         bi_platforms = self.agent_config.services.bi_platforms
         if bi_platforms:
@@ -298,7 +292,6 @@ class ServiceManager:
 
             services_section = {
                 "datasources": datasources_section,
-                "semantic_layer": dict(self.agent_config.services.semantic_layer),
                 "bi_platforms": dict(self.agent_config.services.bi_platforms),
                 "schedulers": dict(self.agent_config.services.schedulers),
             }

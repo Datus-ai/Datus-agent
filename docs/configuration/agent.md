@@ -355,7 +355,7 @@ The runtime currently reads these commonly used fields from `agentic_nodes` entr
 - `bi_platform` for dashboard agents
 - `scheduler_service` for scheduler agents
 
-Semantic adapter selection is global under `agent.services.semantic_layer`. Legacy node-level `semantic_adapter` and `authoring_format` fields are ignored.
+Dosi is the built-in semantic engine and needs no engine selection. An old `agent.services.semantic_layer` entry is ignored with a warning.
 
 `scoped_kb_path` is deprecated. New configs use shared global storage with query-time filters instead of per-subagent scoped KB directories.
 

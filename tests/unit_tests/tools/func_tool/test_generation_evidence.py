@@ -206,26 +206,6 @@ class TestGenerationEvidence:
         assert ev.semantic_artifact_validation_passed("sales", artifact, required_scope="all")
         assert ev.semantic_artifact_validation_passed("sales", artifact, required_scope="semantic_model")
 
-    def test_explicit_validation_checks_do_not_satisfy_publish_gate(self, tmp_path):
-        artifact = tmp_path / "sales.yml"
-        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
-        ev = GenerationEvidence()
-
-        ev.record_validation_result(
-            {
-                "success": 1,
-                "result": {
-                    "valid": True,
-                    "checks": ["authoring_quality"],
-                    "semantic_model_name": "sales",
-                    "semantic_model_file": str(artifact),
-                },
-            }
-        )
-
-        assert ev.validation_passed is False
-        assert not ev.semantic_artifact_validation_passed("sales", artifact)
-
     def test_compiled_validation_is_bound_to_artifact_contract_and_metric_set(self, tmp_path):
         artifact = tmp_path / "sales.yml"
         artifact.write_text("semantic_model: sales\n", encoding="utf-8")

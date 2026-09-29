@@ -216,4 +216,4 @@ search_semantic_objects(
 - [语义建模](../subagent/semantic_modeling.md)：完整创作流程、配置、支持的数据库和真实生成 YAML
 - [指标](metrics.md)：指标定义、Knowledge Base 投影和查询参数
 - [AskMetrics](../subagent/ask_metrics.md)：自然语言指标问答
-- [语义层配置](../configuration/semantic_layer.md)：semantic adapter 配置
+- [Dosi 语义引擎](../semantic/dosi_engine.zh.md)：模型发现与查询行为

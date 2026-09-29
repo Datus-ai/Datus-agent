@@ -58,7 +58,6 @@ logger = get_logger(__name__)
 _BUILTIN_TYPES: Dict[str, Tuple[str, ...]] = {
     "bi_platforms": ("superset", "grafana"),
     "schedulers": ("airflow",),
-    "semantic_layer": ("dosi", "metricflow", "osi"),
 }
 
 
@@ -68,16 +67,14 @@ _MASKED_PLACEHOLDER = "••••••••"
 class _Tab(Enum):
     DASHBOARD = "dashboard"
     SCHEDULER = "scheduler"
-    SEMANTIC = "semantic"
 
 
-_TAB_CYCLE: Tuple[_Tab, ...] = (_Tab.DASHBOARD, _Tab.SCHEDULER, _Tab.SEMANTIC)
+_TAB_CYCLE: Tuple[_Tab, ...] = (_Tab.DASHBOARD, _Tab.SCHEDULER)
 
 
 _SECTION_OF: Dict[_Tab, str] = {
     _Tab.DASHBOARD: "bi_platforms",
     _Tab.SCHEDULER: "schedulers",
-    _Tab.SEMANTIC: "semantic_layer",
 }
 
 
@@ -151,8 +148,6 @@ class ServiceConfigApp:
         self._extra_types = extra_types or {}
         if initial_tab == "scheduler":
             self._tab: _Tab = _Tab.SCHEDULER
-        elif initial_tab == "semantic":
-            self._tab = _Tab.SEMANTIC
         else:
             self._tab = _Tab.DASHBOARD
         self._view: _View = _View.LIST
@@ -178,7 +173,6 @@ class ServiceConfigApp:
         # recomputing on every render.
         self._dashboard_entries: List[_Entry] = []
         self._scheduler_entries: List[_Entry] = []
-        self._semantic_entries: List[_Entry] = []
         self._reload_entries()
 
         # Form widgets — built up-front so key bindings can reference
@@ -283,7 +277,6 @@ class ServiceConfigApp:
     def _reload_entries(self) -> None:
         self._dashboard_entries = self._build_dashboard_entries()
         self._scheduler_entries = self._build_scheduler_entries()
-        self._semantic_entries = self._build_semantic_entries()
 
     def _build_dashboard_entries(self) -> List[_Entry]:
         dashboards = getattr(self._cfg, "dashboard_config", {}) or {}
@@ -340,35 +333,12 @@ class ServiceConfigApp:
             )
         return out
 
-    def _build_semantic_entries(self) -> List[_Entry]:
-        # ``init_semantic_layer`` already enforces ``key == type`` and
-        # resolves env vars, so iterating ``semantic_layer_configs`` is
-        # safe — every entry maps a YAML key (e.g. ``metricflow``) to a
-        # dict whose ``type`` field equals that key.
-        services = getattr(self._cfg, "semantic_layer_configs", {}) or {}
-        active_fn = getattr(self._cfg, "active_semantic", None)
-        active = active_fn() if callable(active_fn) else None
-        out: List[_Entry] = []
-        for name in sorted(services.keys()):
-            cfg = dict(services[name])
-            adapter_type = str(cfg.get("type") or name).strip().lower()
-            out.append(
-                _Entry(
-                    name=name,
-                    adapter_type=adapter_type,
-                    is_default=bool(cfg.get("default")),
-                    is_project_default=(name == active),
-                    raw=cfg,
-                )
-            )
-        return out
-
     def _entries_for(self, tab: _Tab) -> List[_Entry]:
         if tab == _Tab.DASHBOARD:
             return self._dashboard_entries
         if tab == _Tab.SCHEDULER:
             return self._scheduler_entries
-        return self._semantic_entries
+        raise ValueError(f"Unknown service tab: {tab}")
 
     # ─────────────────────────────────────────────────────────────────
     # Layout construction
@@ -467,7 +437,6 @@ class ServiceConfigApp:
         for tab, label in (
             (_Tab.DASHBOARD, " Dashboard "),
             (_Tab.SCHEDULER, " Scheduler "),
-            (_Tab.SEMANTIC, " Semantic "),
         ):
             style = "reverse bold" if tab == self._tab else ""
             parts.append((style, label))
@@ -477,19 +446,10 @@ class ServiceConfigApp:
 
     def _render_footer_hint(self) -> List[Tuple[str, str]]:
         if self._view == _View.LIST:
-            if self._tab == _Tab.SEMANTIC:
-                # ``e edit`` is hidden on this tab — semantic adapters have no
-                # editable fields. ``d`` / ``p`` work the same as on the
-                # other tabs.
-                base = (
-                    "  \u2191\u2193 navigate   \u21b5 open   x delete   t test   "
-                    "d global default   p project default   Tab switch   Esc cancel"
-                )
-            else:
-                base = (
-                    "  \u2191\u2193 navigate   \u21b5 open   e edit   x delete   t test   "
-                    "d global default   p project default   Tab switch   Esc cancel"
-                )
+            base = (
+                "  \u2191\u2193 navigate   \u21b5 open   e edit   x delete   t test   "
+                "d global default   p project default   Tab switch   Esc cancel"
+            )
         elif self._view == _View.TYPE_PICKER:
             base = "  \u2191\u2193 navigate   \u21b5 select   Esc back"
         else:
@@ -527,8 +487,6 @@ class ServiceConfigApp:
             section_label = "BI dashboard"
         elif self._tab == _Tab.SCHEDULER:
             section_label = "scheduler"
-        else:
-            section_label = "semantic layer"
         lines: List[Tuple[str, str]] = [
             ("bold", f"  Pick adapter type for new {section_label}:\n"),
         ]
@@ -612,20 +570,6 @@ class ServiceConfigApp:
 
     def _enter_form_for_new(self, adapter_type: str) -> None:
         section = self._tab_section()
-        # Semantic adapters currently have no user-editable parameters;
-        # creating one is a single decision (``which type?``) so we skip
-        # the FORM view entirely and emit ``save`` straight from the
-        # type-picker. The on-disk shape is just ``{type: <type>}`` —
-        # ``init_semantic_layer`` requires the YAML key to equal ``type``.
-        if section == "semantic_layer":
-            self._result = ServiceConfigSelection(
-                action="save",
-                section=section,
-                name=adapter_type,
-                payload={"type": adapter_type},
-            )
-            self._finish(self._result)
-            return
         self._form_section = section
         self._form_type = adapter_type
         self._form_name = ""
@@ -796,16 +740,9 @@ class ServiceConfigApp:
         if self._list_cursor >= len(entries):
             self._enter_type_picker()
             return
-        # Semantic entries have no editable fields — keep ENTER on the
-        # "Add new" row as the only way into the type picker, and ignore
-        # it on existing rows.
-        if self._tab == _Tab.SEMANTIC:
-            return
         self._enter_form_for_edit(entries[self._list_cursor])
 
     def _on_edit(self) -> None:
-        if self._tab == _Tab.SEMANTIC:
-            return
         entries = self._entries_for(self._tab)
         if 0 <= self._list_cursor < len(entries):
             self._enter_form_for_edit(entries[self._list_cursor])

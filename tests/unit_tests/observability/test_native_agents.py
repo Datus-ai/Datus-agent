@@ -100,8 +100,8 @@ async def test_native_agent_stream_exports_agent_generation_tool_tree(monkeypatc
         yield "done"
 
     ctx = TraceContext(
-        name="agent/gen_metrics",
-        session_id="gen_metrics_session_test",
+        name="agent/semantic_modeling",
+        session_id="semantic_modeling_session_test",
         user_id="user-1",
     )
     try:
@@ -112,7 +112,7 @@ async def test_native_agent_stream_exports_agent_generation_tool_tree(monkeypatc
                     object(),
                     "build metrics",
                     func_tools=[SimpleNamespace(name="sync_semantic")],
-                    agent_name="gen_metrics",
+                    agent_name="semantic_modeling",
                 )
             ]
         assert items == ["done"]
@@ -127,17 +127,17 @@ async def test_native_agent_stream_exports_agent_generation_tool_tree(monkeypatc
     span_by_name = {span.name: span for span in spans}
 
     assert sorted(span_by_name) == [
-        "agent/gen_metrics",
+        "agent/semantic_modeling",
         "generation",
         "publish_semantic_model",
         "sync_semantic",
     ]
-    root = span_by_name["agent/gen_metrics"]
+    root = span_by_name["agent/semantic_modeling"]
     generation = span_by_name["generation"]
     tool = span_by_name["sync_semantic"]
 
     assert root.attributes["openinference.span.kind"] == "AGENT"
-    assert root.attributes["langfuse.session.id"] == "gen_metrics_session_test"
+    assert root.attributes["langfuse.session.id"] == "semantic_modeling_session_test"
     assert generation.parent.span_id == root.context.span_id
     assert generation.attributes["openinference.span.kind"] == "LLM"
     assert generation.attributes["llm.model_name"] == "custom/sonnet"

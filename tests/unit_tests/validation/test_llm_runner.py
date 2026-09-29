@@ -152,19 +152,19 @@ class TestBuildPrompt:
         assert "Table: users" in prompt
 
     def test_table_target_with_catalog_renders_catalog_line(self):
-        t = TableTarget(catalog="default_catalog", database="ac_manage", table="stats")
+        t = TableTarget(catalog="default_catalog", database="analytics", table="stats")
         prompt = _build_prompt(t, precheck=None)
         assert "Catalog: default_catalog" in prompt
-        assert "Database: ac_manage" in prompt
+        assert "Database: analytics" in prompt
         assert "Table: stats" in prompt
 
     def test_transfer_target_renders_catalog_when_set(self):
         t = TransferTarget(
             source=DBRef(name="pg"),
-            target=TableTarget(catalog="default_catalog", database="ac_manage", table="stats"),
+            target=TableTarget(catalog="default_catalog", database="analytics", table="stats"),
         )
         prompt = _build_prompt(t, precheck=None)
-        assert "default_catalog.ac_manage.stats" in prompt
+        assert "default_catalog.analytics.stats" in prompt
 
 
 class TestValidatorMaxTurns:

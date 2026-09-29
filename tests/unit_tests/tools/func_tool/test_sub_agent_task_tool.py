@@ -49,7 +49,6 @@ def mock_agent_config():
         },
     }
     config.sub_agent_config.side_effect = lambda name: config.agentic_nodes.get(name)
-    config.resolve_semantic_adapter.return_value = "dosi"
     return config
 
 
@@ -225,14 +224,8 @@ class TestGetAvailableTypes:
         types = task_tool._get_available_types()
         assert "gen_sql" in types
 
-    def test_semantic_modeling_is_available_for_dosi(self, task_tool):
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
+    def test_semantic_modeling_is_available(self, task_tool):
         assert "semantic_modeling" in task_tool._get_available_types()
-
-    @pytest.mark.parametrize("adapter", ["metricflow", "osi"])
-    def test_semantic_modeling_is_hidden_for_other_adapters(self, task_tool, adapter):
-        task_tool.agent_config.resolve_semantic_adapter.return_value = adapter
-        assert "semantic_modeling" not in task_tool._get_available_types()
 
     def test_includes_custom_subagent(self, task_tool):
         types = task_tool._get_available_types()
@@ -482,8 +475,6 @@ class TestResolveNodeType:
         assert "SQL file path" in semantic_description
         assembled_description = task_tool.available_tools()[0].description
         assert semantic_description in assembled_description
-        assert "gen_semantic_model" not in assembled_description
-        assert "gen_metrics" not in assembled_description
 
     def test_gen_visual_report_constructs_and_builds_input(self, task_tool, tmp_path):
         """Mirror of ``test_gen_visual_dashboard_constructs_and_builds_input``
@@ -963,7 +954,7 @@ class TestConvertToFuncResult:
         assert result.success == 1
         assert result.result["response"] == "Some content"
 
-    def test_gen_metrics_failure_preserves_blocker_contract(self, task_tool):
+    def test_semantic_modeling_failure_preserves_blocker_contract(self, task_tool):
         output = {
             "success": False,
             "error": "Multiple semantic models remain plausible.",
@@ -976,7 +967,7 @@ class TestConvertToFuncResult:
 
         result = task_tool._convert_to_func_result(
             output,
-            session_id="gen_metrics_session_blocked01",
+            session_id="semantic_modeling_session_blocked01",
         )
 
         assert result.success == 0
@@ -987,7 +978,7 @@ class TestConvertToFuncResult:
             "response": "Choose the intended semantic model.",
             "semantic_models": [],
             "tokens_used": 73,
-            "session_id": "gen_metrics_session_blocked01",
+            "session_id": "semantic_modeling_session_blocked01",
         }
 
     def test_markdown_report_result(self, task_tool):
@@ -1137,18 +1128,6 @@ class TestSubAgentTaskAcceptance:
 
 @pytest.mark.ci
 class TestTaskExecution:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
-    async def test_retired_semantic_agent_recommends_migration_for_osi(self, task_tool, tmp_path, retired_type):
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
-        task_tool.agent_config.current_datasource = "test_db"
-        task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
-        result = await task_tool.task(type=retired_type, prompt="Create order metrics")
-        assert result.success == 0
-        assert result.error == (
-            "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
-        )
-
     @pytest.mark.asyncio
     async def test_execute_gen_sql_success(self, task_tool):
         """Successful gen_sql execution through node."""
@@ -1797,7 +1776,6 @@ class TestBuildTaskDescriptionFileStorage:
 class TestGetAvailableTypesBuiltIn:
     def test_includes_all_builtin_types(self, task_tool):
         """Only visible built-ins appear for Dosi."""
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         types = task_tool._get_available_types()
         assert HIDDEN_SYS_SUB_AGENTS.isdisjoint(types)
         for name in SYS_SUB_AGENTS:
@@ -1824,7 +1802,6 @@ class TestGetAvailableTypesBuiltIn:
     def test_builtin_types_sorted(self, task_tool):
         """Built-in types appear in sorted order after gen_sql (excluding 'feedback',
         which is not task()-delegatable)."""
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         types = task_tool._get_available_types()
         builtin_in_list = [t for t in types if t in SYS_SUB_AGENTS]
         expected = sorted(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
@@ -1836,17 +1813,6 @@ class TestGetAvailableTypesBuiltIn:
 
 @pytest.mark.ci
 class TestResolveNodeTypeBuiltIn:
-    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_types_do_not_resolve(self, task_tool, retired_type):
-        with pytest.raises(ValueError, match="Unknown subagent type"):
-            task_tool._resolve_node_type(retired_type)
-
-    @pytest.mark.parametrize("config_key", ["node_class", "type"])
-    @pytest.mark.parametrize("node_class", ["gen_semantic_model", "gen_metrics"])
-    def test_custom_alias_with_retired_semantic_node_class_falls_back(self, task_tool, config_key, node_class):
-        task_tool.agent_config.agentic_nodes["legacy_alias"] = {config_key: node_class}
-        assert task_tool._resolve_node_type("legacy_alias") == (NodeType.TYPE_SEMANTIC, "semantic_modeling")
-
     def test_gen_sql_summary(self, task_tool):
         node_type, node_name = task_tool._resolve_node_type("gen_sql_summary")
         assert node_type == NodeType.TYPE_SQL_SUMMARY
@@ -1868,14 +1834,6 @@ class TestResolveNodeTypeBuiltIn:
 
 @pytest.mark.ci
 class TestCreateBuiltinNode:
-    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_nodes_fail_before_construction(self, task_tool, retired_type):
-        from datus.utils.exceptions import DatusException
-
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
-        with pytest.raises(DatusException, match="Use semantic_modeling instead"):
-            task_tool._create_builtin_node(retired_type)
-
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
     def test_gen_sql_summary(self, mock_init, task_tool):
         task_tool._create_builtin_node("gen_sql_summary")
@@ -2084,7 +2042,6 @@ class TestBuildNodeInputBuiltIn:
 @pytest.mark.ci
 class TestBuildTaskDescriptionBuiltIn:
     def test_contains_all_builtin_types(self, task_tool):
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         desc = task_tool._build_task_description()
         for name in HIDDEN_SYS_SUB_AGENTS:
             assert name not in desc
@@ -2094,7 +2051,6 @@ class TestBuildTaskDescriptionBuiltIn:
             assert name in desc, f"{name} not found in task description"
 
     def test_contains_builtin_descriptions(self, task_tool):
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         desc = task_tool._build_task_description()
         for name, builtin_desc in BUILTIN_SUBAGENT_DESCRIPTIONS.items():
             assert builtin_desc in desc, f"Description for {name} not found"
@@ -2141,7 +2097,7 @@ class TestConvertToFuncResultBuiltIn:
         assert result.success == 1
         assert result.result["semantic_models"] == []
 
-    def test_gen_metrics_success_preserves_outcome(self, task_tool):
+    def test_semantic_modeling_success_preserves_outcome(self, task_tool):
         output = {
             "response": "The request is not a metric.",
             "semantic_models": [],
@@ -2188,7 +2144,6 @@ class TestConvertToFuncResultBuiltIn:
 class TestTaskExecutionBuiltIn:
     @pytest.mark.asyncio
     async def test_execute_semantic_modeling(self, task_tool):
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
         mock_action = Mock(spec=ActionHistory)
         mock_action.status = ActionStatus.SUCCESS
         mock_action.role = ActionRole.ASSISTANT
@@ -2212,14 +2167,6 @@ class TestTaskExecutionBuiltIn:
         assert result.success == 1
         assert result.result["semantic_models"] == ["models/orders.yml"]
         assert result.result["tokens_used"] == 400
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
-    async def test_execute_retired_semantic_agents_returns_actionable_error(self, task_tool, retired_type):
-        task_tool.agent_config.resolve_semantic_adapter.return_value = "dosi"
-        result = await task_tool.task(type=retired_type, prompt="Create order metrics")
-        assert result.success == 0
-        assert result.error == f"{retired_type} is retired. Use semantic_modeling instead."
 
     @pytest.mark.asyncio
     async def test_execute_gen_sql_summary(self, task_tool):

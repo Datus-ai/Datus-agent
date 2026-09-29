@@ -262,7 +262,6 @@ class TestAllowedKeys:
                 "default_datasource",
                 "dashboard",
                 "scheduler",
-                "semantic",
                 "plugins",
                 "project_name",
                 "language",
@@ -285,7 +284,6 @@ class TestProjectOverrideDataclass:
             ("default_datasource", "y"),
             ("dashboard", "superset"),
             ("scheduler", "airflow"),
-            ("semantic", "metricflow"),
             ("plugins", {"hello": "prod"}),
             ("project_name", "z"),
             ("language", "zh"),
@@ -303,23 +301,10 @@ class TestProjectOverrideDataclass:
 
 
 class TestServiceDefaultFields:
-    """``dashboard`` / ``scheduler`` / ``semantic`` overrides — project-level
-    pins for the three service sections. Loaded by
+    """``dashboard`` and ``scheduler`` overrides — project-level
+    pins for the two service sections. Loaded by
     ``_apply_project_override`` and surfaced via
-    ``AgentConfig.active_dashboard()`` / ``active_scheduler()`` /
-    ``active_semantic()``."""
-
-    def test_load_all_three_service_pins(self, tmp_path):
-        path = tmp_path / PROJECT_CONFIG_REL
-        path.parent.mkdir(parents=True)
-        path.write_text(
-            yaml.safe_dump({"dashboard": "superset_prod", "scheduler": "airflow", "semantic": "metricflow"})
-        )
-        result = load_project_override(str(tmp_path))
-        assert result.dashboard == "superset_prod"
-        assert result.scheduler == "airflow"
-        assert result.semantic == "metricflow"
-        assert not result.is_empty()
+    ``AgentConfig.active_dashboard()`` / ``active_scheduler()``."""
 
     def test_load_dashboard_and_scheduler(self, tmp_path):
         path = tmp_path / PROJECT_CONFIG_REL
@@ -328,31 +313,7 @@ class TestServiceDefaultFields:
         result = load_project_override(str(tmp_path))
         assert result.dashboard == "superset_prod"
         assert result.scheduler == "airflow"
-        assert result.semantic is None
         assert not result.is_empty()
-
-    def test_blank_semantic_collapses_to_none(self, tmp_path):
-        path = tmp_path / PROJECT_CONFIG_REL
-        path.parent.mkdir(parents=True)
-        path.write_text(yaml.safe_dump({"semantic": "   "}))
-        result = load_project_override(str(tmp_path))
-        assert result.semantic is None
-
-    def test_non_string_semantic_dropped(self, tmp_path, caplog):
-        path = tmp_path / PROJECT_CONFIG_REL
-        path.parent.mkdir(parents=True)
-        path.write_text(yaml.safe_dump({"semantic": 42}))
-        with caplog.at_level(logging.WARNING):
-            result = load_project_override(str(tmp_path))
-        assert result.semantic is None
-        warning_text = " ".join(r.message for r in caplog.records)
-        assert "semantic" in warning_text
-
-    def test_save_round_trip_with_semantic(self, tmp_path):
-        original = ProjectOverride(dashboard="superset", scheduler="airflow", semantic="metricflow")
-        save_project_override(original, cwd=str(tmp_path))
-        loaded = load_project_override(str(tmp_path))
-        assert loaded == original
 
     def test_blank_dashboard_collapses_to_none(self, tmp_path):
         path = tmp_path / PROJECT_CONFIG_REL

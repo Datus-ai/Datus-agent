@@ -27,7 +27,7 @@ from datus.api.hooks.turn_stats_hooks import (
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.tools.registry.tool_registry import known_tool_category
-from datus.utils.constants import RETIRED_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+from datus.utils.constants import SYS_SUB_AGENTS
 
 TASK_TOOL_NAME = "task"
 _COMPLETE_PREFIX = "complete_"
@@ -44,15 +44,11 @@ def resolve_subagent(agent_config: Any, name_or_id: str) -> Tuple[str, SubagentK
     ``node_class`` it derives from, so statistics never fan out by user-chosen
     names. Unknown names fall back to ``gen_sql`` — the node factory's default.
     """
-    if name_or_id in RETIRED_SYS_SUB_AGENTS:
-        return "semantic_modeling", "builtin"
     if name_or_id in SYS_SUB_AGENTS or name_or_id in _EXTRA_BUILTIN_AGENTS:
         return name_or_id, "builtin"
 
     entry = _find_agentic_node(agent_config, name_or_id)
     node_class = _entry_field(entry, "node_class") or _entry_field(entry, "type")
-    if node_class in RETIRED_SYS_SUB_AGENTS:
-        return "semantic_modeling", "custom"
     return (node_class or "gen_sql"), "custom"
 
 

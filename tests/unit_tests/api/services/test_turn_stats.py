@@ -176,7 +176,7 @@ class TestResolveSubagent:
                 "gen_sql": {"id": None},
                 "sales_bot": {"id": "sa-1", "node_class": "ask_metrics"},
                 "legacy_bot": {"id": "sa-2", "type": "gen_sql"},
-                "semantic_bot": {"id": "sa-3", "node_class": "gen_metrics"},
+                "semantic_bot": {"id": "sa-3", "node_class": "semantic_modeling"},
                 "bare_bot": {"id": "sa-4"},
             }
         )
@@ -186,9 +186,6 @@ class TestResolveSubagent:
         assert resolve_subagent(config, "gen_sql") == ("gen_sql", "builtin")
         assert resolve_subagent(config, "gen_visual_report") == ("gen_visual_report", "builtin")
         assert resolve_subagent(config, "explore") == ("explore", "builtin")
-
-    def test_retired_builtin_maps_to_semantic_modeling(self):
-        assert resolve_subagent(self._config(), "gen_metrics") == ("semantic_modeling", "builtin")
 
     def test_custom_by_name_or_id_reports_root_type(self):
         config = self._config()

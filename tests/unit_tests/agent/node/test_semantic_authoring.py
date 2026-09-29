@@ -1,27 +1,19 @@
-"""Unit tests for semantic authoring format resolution."""
+"""Unit tests for Dosi semantic authoring."""
 
 import hashlib
-import sys
 from contextlib import asynccontextmanager
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from datus.agent.node import semantic_authoring
 from datus.agent.node.semantic_authoring import (
-    AUTHORING_FORMAT_METRICFLOW,
-    AUTHORING_FORMAT_OSI,
-    default_optional_skills,
     discover_osi_semantic_models,
-    is_osi_semantic_adapter,
     plan_osi_semantic_model_target,
     required_authoring_skills,
-    resolve_authoring_format,
-    resolve_semantic_adapter_type,
     validate_osi_authoring_document,
 )
-from datus.utils.exceptions import DatusException, ErrorCode
 
 
 @pytest.fixture(autouse=True)
@@ -30,8 +22,8 @@ def _accept_any_authoring_document(monkeypatch):
     monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", lambda document, **kwargs: None)
 
 
-def _agent_config(adapter):
-    return SimpleNamespace(resolve_semantic_adapter=lambda requested=None: requested or adapter)
+def _agent_config():
+    return SimpleNamespace()
 
 
 def _osi_config(tmp_path):
@@ -59,136 +51,42 @@ def _write_osi_model(tmp_path, filename, model_name, datasets):
     return target
 
 
-def test_validate_authoring_document_refuses_a_query_only_project(monkeypatch):
-    """Dosi is the only adapter that authors, so there is no validator to fall
-    back to — validating a document that will never be written misleads."""
-    monkeypatch.undo()
-
-    message = semantic_authoring.validate_osi_authoring_document({"version": "x"}, semantic_adapter="metricflow")
-
-    assert message == semantic_authoring.QUERY_ONLY_MIGRATION_MESSAGE
-
-
 def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
-    calls = []
-    package_module = ModuleType("datus_semantic_dosi")
-    package_module.__path__ = []
-    authoring_module = ModuleType("datus_semantic_dosi.authoring")
-    authoring_module.validate_dosi_document = calls.append
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring", authoring_module)
+    from datus.tools.semantic_tools.dosi import authoring
 
+    calls = []
+    monkeypatch.setattr(authoring, "validate_dosi_document", calls.append)
     document = {"version": "0.2.0.dev0"}
-    assert validate_osi_authoring_document(document, semantic_adapter="dosi") is None
+    assert validate_osi_authoring_document(document) is None
     assert calls == [document]
 
 
-def test_dosi_prompt_rendering_reports_missing_adapter_package(monkeypatch):
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", None)
+def test_dosi_prompt_uses_engine_owned_contract(monkeypatch):
+    from datus.tools.semantic_tools.dosi import authoring_spec, engine
 
-    with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
-        semantic_authoring.render_required_authoring_skill("dosi-semantic-authoring", "authoring")
-
-
-def test_dosi_prompt_uses_engine_owned_d_format_contract(monkeypatch):
-    package_module = ModuleType("datus_semantic_dosi")
-    package_module.__path__ = []
-    authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
-    authoring_module.authoring_spec_text = lambda dialect: f"core dialect: {dialect}"
-    authoring_module.datus_extension_authoring_spec_text = lambda _dialect: "engine D-FORMAT contract"
-    engine_module = ModuleType("datus_semantic_dosi.engine")
-    engine_module.datus_extension_version = lambda: "1.6"
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
-
+    monkeypatch.setattr(authoring_spec, "authoring_spec_text", lambda dialect: f"core dialect: {dialect}")
+    monkeypatch.setattr(authoring_spec, "datus_extension_authoring_spec_text", lambda dialect: "engine contract")
+    monkeypatch.setattr(engine, "datus_extension_version", lambda: "1.8")
     rendered = semantic_authoring.render_required_authoring_skill(
-        "dosi-semantic-authoring",
-        'extension version: "<datus_extension_version>"',
-        include_osi_core=True,
+        "dosi-semantic-authoring", 'extension version: "<datus_extension_version>"', include_osi_core=True
     )
-
-    assert 'extension version: "1.6"' in rendered
+    assert 'extension version: "1.8"' in rendered
     assert "core dialect: <osi_dialect>" in rendered
-    assert "engine D-FORMAT contract" in rendered
-
-
-def test_dosi_prompt_snapshot_reports_missing_adapter_package(monkeypatch):
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", None)
-
-    with pytest.raises(DatusException, match="requires the datus-semantic-dosi package"):
-        semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
+    assert "engine contract" in rendered
 
 
 def test_dosi_prompt_snapshot_includes_engine_and_core_contract_digests(monkeypatch):
-    package_module = ModuleType("datus_semantic_dosi")
-    package_module.__path__ = []
-    authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
-    authoring_module.authoring_spec_text = lambda dialect: f"core {dialect}"
-    authoring_module.datus_extension_authoring_spec_digest = lambda: "sha256:contract"
-    engine_module = ModuleType("datus_semantic_dosi.engine")
-    engine_module.datus_extension_version = lambda: "1.6"
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
+    from datus.tools.semantic_tools.dosi import authoring_spec, engine
 
+    monkeypatch.setattr(authoring_spec, "authoring_spec_text", lambda dialect: f"core {dialect}")
+    monkeypatch.setattr(authoring_spec, "datus_extension_authoring_spec_digest", lambda: "sha256:contract")
+    monkeypatch.setattr(engine, "datus_extension_version", lambda: "1.8")
     core_digest = hashlib.sha256(b"core <osi_dialect>").hexdigest()
-    assert semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling") == {
-        "datus_extension_version": "1.6",
+    assert semantic_authoring.authoring_prompt_snapshot_meta(_agent_config(), "semantic_modeling") == {
+        "datus_extension_version": "1.8",
         "datus_authoring_contract_digest": "sha256:contract",
         "osi_core_authoring_spec_digest": f"sha256:{core_digest}",
     }
-
-
-def test_dosi_prompt_snapshot_hashes_legacy_adapter_spec(monkeypatch):
-    package_module = ModuleType("datus_semantic_dosi")
-    package_module.__path__ = []
-    authoring_module = ModuleType("datus_semantic_dosi.authoring_spec")
-    authoring_module.authoring_spec_text = lambda dialect: f"core {dialect}"
-    authoring_module.datus_extension_authoring_spec_text = lambda dialect: f"legacy {dialect}"
-    package_module.authoring_spec = authoring_module
-    engine_module = ModuleType("datus_semantic_dosi.engine")
-    engine_module.datus_extension_version = lambda: "1.4"
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring_spec", authoring_module)
-    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.engine", engine_module)
-
-    meta = semantic_authoring.authoring_prompt_snapshot_meta(_agent_config("dosi"), "semantic_modeling")
-
-    assert meta["datus_extension_version"] == "1.4"
-    expected_digest = hashlib.sha256(b"legacy <osi_dialect>").hexdigest()
-    assert meta["datus_authoring_contract_digest"] == f"sha256:{expected_digest}"
-    core_digest = hashlib.sha256(b"core <osi_dialect>").hexdigest()
-    assert meta["osi_core_authoring_spec_digest"] == f"sha256:{core_digest}"
-
-
-def test_legacy_node_config_fields_are_ignored():
-    assert (
-        resolve_authoring_format(_agent_config("metricflow"), {"authoring_format": "osi"})
-        == AUTHORING_FORMAT_METRICFLOW
-    )
-    assert resolve_authoring_format(_agent_config("dosi"), {"authoring_format": "metricflow"}) == AUTHORING_FORMAT_OSI
-
-
-def test_derives_from_active_semantic_adapter():
-    # Plain-OSI projects are query-only: only Dosi resolves to the OSI
-    # authoring format.
-    assert resolve_authoring_format(_agent_config("osi"), None) == AUTHORING_FORMAT_METRICFLOW
-    assert resolve_authoring_format(_agent_config("dosi"), None) == AUTHORING_FORMAT_OSI
-    assert resolve_authoring_format(_agent_config("metricflow"), None) == AUTHORING_FORMAT_METRICFLOW
-
-
-def test_osi_authoring_adapter_classification():
-    assert is_osi_semantic_adapter("osi") is False
-    assert is_osi_semantic_adapter(" DOSI ") is True
-    assert is_osi_semantic_adapter("metricflow") is False
-
-
-def test_legacy_node_semantic_adapter_is_ignored():
-    assert (
-        resolve_authoring_format(_agent_config("metricflow"), {"semantic_adapter": "osi"})
-        == AUTHORING_FORMAT_METRICFLOW
-    )
 
 
 def test_osi_target_explicit_name_wins_over_domain_and_existing_fact(tmp_path):
@@ -391,106 +289,13 @@ def test_osi_target_refuses_to_reuse_an_occupied_filename_with_a_different_model
     assert "already occupied" in target["reason"]
 
 
-def test_defaults_to_dosi_when_unknown():
-    assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_OSI
-    assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_OSI
-
-
-def test_resolution_propagates_agent_config_errors():
-    def _boom(_requested=None):
-        raise RuntimeError("no semantic layer")
-
-    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    with pytest.raises(RuntimeError, match="no semantic layer"):
-        resolve_authoring_format(bad, None)
-
-
-def test_resolution_propagates_semantic_layer_config_errors():
-    def _boom(_requested=None):
-        raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="multiple semantic layers")
-
-    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    with pytest.raises(DatusException, match="multiple semantic layers"):
-        resolve_authoring_format(bad, None)
-
-
-def test_adapter_type_resolution_propagates_agent_config_errors():
-    def _boom(_requested=None):
-        raise RuntimeError("resolver unavailable")
-
-    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    with pytest.raises(RuntimeError, match="resolver unavailable"):
-        resolve_semantic_adapter_type(bad)
-
-
-@pytest.mark.parametrize(
-    "node_name, adapter, expected",
-    [
-        ("semantic_modeling", "metricflow", ""),
-        ("semantic_modeling", "osi", ""),
-        ("semantic_modeling", "dosi", "dosi-semantic-authoring"),
-        ("gen_semantic_model", "dosi", ""),
-        ("gen_metrics", "dosi", ""),
-        ("unknown_node", "metricflow", ""),
-    ],
-)
-def test_required_authoring_skills_derive_from_format(node_name, adapter, expected):
-    assert required_authoring_skills(_agent_config(adapter), node_name) == expected
-
-
-@pytest.mark.parametrize(
-    "node_name, adapter, expected",
-    [
-        ("semantic_modeling", "metricflow", ""),
-        ("semantic_modeling", "osi", ""),
-        ("semantic_modeling", "dosi", ""),
-        ("gen_semantic_model", "metricflow", ""),
-        ("gen_metrics", "metricflow", ""),
-        ("unknown_node", "osi", ""),
-    ],
-)
-def test_default_optional_skills_derive_from_format(node_name, adapter, expected):
-    assert default_optional_skills(_agent_config(adapter), node_name) == expected
-
-
-def test_semantic_modeling_skill_defaults_follow_dosi_adapter(monkeypatch):
-    """The unified node defers optional-skill setup to the shared runtime."""
-    from datus.agent.node.agentic_node import AgenticNode
-    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
-
-    parent_calls = []
-    monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", lambda self: parent_calls.append(type(self).__name__))
-
-    semantic_node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
-    semantic_node.agent_config = _agent_config("dosi")
-    semantic_node.node_config = {}
-    semantic_node._setup_skill_func_tools()
-
-    assert parent_calls == ["SemanticModelingAgenticNode"]
-    assert semantic_node.node_config["skills"] == ""
-
-
-def test_node_skill_defaults_respect_explicit_config(monkeypatch):
-    """An explicit skills entry (including opt-out '') is never overwritten."""
-    from datus.agent.node.agentic_node import AgenticNode
-    from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
-
-    monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", lambda self: None)
-
-    node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
-    node.agent_config = _agent_config("dosi")
-    node.node_config = {"skills": ""}
-    node._setup_skill_func_tools()
-
-    assert node.node_config["skills"] == ""
-
-
 def test_semantic_modeling_required_skills_are_dosi_native():
     from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
     node = SemanticModelingAgenticNode.__new__(SemanticModelingAgenticNode)
-    node.agent_config = _agent_config("dosi")
+    node.agent_config = _agent_config()
     assert node._get_required_skills() == ["dosi-semantic-authoring"]
+    assert required_authoring_skills(None, "semantic_modeling") == "dosi-semantic-authoring"
 
 
 def test_semantic_authoring_base_configuration_is_neutral():
@@ -543,7 +348,7 @@ async def test_semantic_authoring_base_rolls_back_terminal_failure(monkeypatch):
     monkeypatch.setattr(semantic_authoring, "semantic_authoring_guard", _guard)
     monkeypatch.setattr(AgenticNode, "execute_stream", _parent_execute_stream)
     node = SemanticAuthoringAgenticNode.__new__(SemanticAuthoringAgenticNode)
-    node.agent_config = _agent_config("dosi")
+    node.agent_config = _agent_config()
     node.result = SimpleNamespace(success=False)
     node.filesystem_func_tool = SimpleNamespace(
         rollback_failed_authoring=lambda: rolled_back.append(True) or True,

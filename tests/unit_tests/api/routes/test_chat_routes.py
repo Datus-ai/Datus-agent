@@ -172,7 +172,6 @@ class TestSubmitUserInteractionConversion:
 def _mock_svc_with_nodes(agentic_nodes=None):
     svc = MagicMock()
     svc.agent_config.agentic_nodes = agentic_nodes or {}
-    svc.agent_config.resolve_semantic_adapter.return_value = "metricflow"
     return svc
 
 
@@ -188,12 +187,8 @@ class TestIsValidSubagentId:
         svc = _mock_svc_with_nodes()
         assert _is_valid_subagent_id(svc, "feedback") is True
 
-    def test_semantic_modeling_exists_on_every_dialect(self):
-        """The Dosi-only gate lives in the 400 branch, not in this existence check."""
+    def test_semantic_modeling_is_builtin(self):
         svc = _mock_svc_with_nodes()
-        assert _is_valid_subagent_id(svc, "semantic_modeling") is True
-
-        svc.agent_config.resolve_semantic_adapter.return_value = "dosi"
         assert _is_valid_subagent_id(svc, "semantic_modeling") is True
 
     def test_custom_node_by_name(self):
@@ -237,53 +232,8 @@ class TestStreamChat404Gate:
         assert "nonexistent_xyz" in exc_info.value.detail
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
-    async def test_retired_semantic_agent_on_legacy_project_recommends_migration(self, retired_type):
+    async def test_semantic_modeling_streams(self):
         svc = _mock_svc_with_nodes()
-        ctx = MagicMock()
-        request = StreamChatInput(message="update metrics", subagent_id=retired_type)
-
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_chat(request, svc, ctx, MagicMock())
-
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == (
-            "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
-        )
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("retired_type", ["gen_semantic_model", "gen_metrics"])
-    async def test_retired_semantic_agent_on_dosi_project_recommends_semantic_modeling(self, retired_type):
-        svc = _mock_svc_with_nodes()
-        svc.agent_config.resolve_semantic_adapter.return_value = "dosi"
-        ctx = MagicMock()
-        request = StreamChatInput(message="update metrics", subagent_id=retired_type)
-
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_chat(request, svc, ctx, MagicMock())
-
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == f"{retired_type} is retired. Use semantic_modeling instead."
-
-    @pytest.mark.asyncio
-    async def test_semantic_modeling_on_legacy_project_is_400_not_404(self):
-        """A query-only project must say so — the old 404 read as "agent missing"."""
-        svc = _mock_svc_with_nodes()
-        ctx = MagicMock()
-        request = StreamChatInput(message="/build-kb", subagent_id="semantic_modeling")
-
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_chat(request, svc, ctx, MagicMock())
-
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == (
-            "This project is query-only. To make changes, migrate it to Dosi first, then use semantic_modeling."
-        )
-
-    @pytest.mark.asyncio
-    async def test_semantic_modeling_on_dosi_project_streams(self):
-        svc = _mock_svc_with_nodes()
-        svc.agent_config.resolve_semantic_adapter.return_value = "dosi"
         svc.chat.stream_chat = MagicMock(return_value=AsyncMock().__aiter__())
         ctx = MagicMock(user_id="u1")
         request = StreamChatInput(message="/build-kb", subagent_id="semantic_modeling")

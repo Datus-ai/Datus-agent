@@ -54,7 +54,7 @@ def create_parser() -> argparse.ArgumentParser:
     # service command
     service_parser = subparsers.add_parser(
         "service",
-        help="Manage services (databases, semantic layer, BI tools, schedulers)",
+        help="Manage services (databases, BI tools, schedulers)",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -256,11 +256,6 @@ def create_parser() -> argparse.ArgumentParser:
         "--semantic_yaml",
         type=str,
         help="Path to semantic model YAML file",
-    )
-    bootstrap_parser.add_argument(
-        "--from_adapter",
-        type=str,
-        help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
     )
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
     bootstrap_parser.add_argument(

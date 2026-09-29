@@ -292,13 +292,6 @@ class KbService:
                 }
                 and authoring_scope is not None
             ):
-                from datus.agent.node.semantic_authoring import (
-                    QUERY_ONLY_MIGRATION_MESSAGE,
-                    is_semantic_modeling_available,
-                )
-
-                if not is_semantic_modeling_available(config):
-                    return {"status": "failed", "message": QUERY_ONLY_MIGRATION_MESSAGE}
                 return self._init_semantic_modeling(
                     config,
                     strategy,

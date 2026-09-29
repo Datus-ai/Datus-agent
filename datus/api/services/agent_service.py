@@ -49,13 +49,8 @@ BUILTIN_SUBAGENTS = SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS
 
 
 def _available_builtin_subagents(agent_config: AgentConfig) -> set[str]:
-    """Return user-visible builtins supported by the active semantic adapter."""
-    from datus.agent.node.semantic_authoring import is_semantic_modeling_available
-
-    available = set(BUILTIN_SUBAGENTS)
-    if not is_semantic_modeling_available(agent_config):
-        available.discard("semantic_modeling")
-    return available
+    """Return user-visible builtins."""
+    return set(BUILTIN_SUBAGENTS)
 
 
 # Curated list of categories surfaced through GET /agent/use_tools' ``tool_types``

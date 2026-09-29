@@ -12,7 +12,7 @@ The diagram reads top to bottom: who uses Datus, what the agent is made of, and 
 
 - **Three entry points, by role**: data engineers work in [Datus-CLI](cli/introduction.md) to explore data and build assets; analysts ask through [Datus-Chat](web_chatbot/introduction.md) on the web, in Slack/Feishu, or in VS Code, and their feedback flows back into the agent; other agents and applications consume [Datus-API](API/introduction.md) over REST and MCP.
 - **The agent core**: [subagents](subagent/introduction.md) package curated context, tools, and rules for one business domain, and [skills](skills/introduction.md) add packaged tools. Underneath sits the [context engine](knowledge_base/introduction.md): metadata, metrics, reference SQL, knowledge, and local files, retrieved through business-domain trees plus vector search, with [storage](configuration/storage.md) on embedded LanceDB and SQLite and PostgreSQL for teams that share context.
-- **Connected systems**: LLM providers, data warehouses, the [Dosi](https://dosi.datus.ai/) semantic layer, job schedulers, BI tools, and MCP servers and clients, reached through adapters and through [plugins](plugin/introduction.md) that bring third-party and in-house tools into the agent.
+- **Connected systems**: LLM providers, data warehouses, job schedulers, BI tools, and MCP servers and clients connect through adapters and [plugins](plugin/introduction.md). The [Dosi](https://dosi.datus.ai/) semantic engine is built into the agent.
 
 ## Features
 
@@ -22,7 +22,7 @@ Accuracy comes from two places: the semantic layer turns business definitions in
 
 The agent reads your database schema and SQL history, generates [OSI](https://dosi.datus.ai/) semantic models and metric definitions, validates them, and registers them in the semantic layer, with no hand-written YAML.
 
-Execution belongs to the [Dosi](https://dosi.datus.ai/) engine: one semantic model compiles into SQL for 13+ database dialects. Dosi is an independent program you can also run as a CLI, REST server, or MCP server; see the [Dosi semantic adapter](adapters/dosi_semantic_adapter.md).
+Execution belongs to the [Dosi](https://dosi.datus.ai/) engine: one semantic model compiles into SQL for 13+ database dialects. Dosi is an independent program you can also run as a CLI, REST server, or MCP server; see the [Dosi semantic engine](semantic/dosi_engine.md).
 
 ![Semantic modeling: from schema and SQL history to a validated semantic model](assets/semantic_modeling_session.svg)
 
@@ -124,7 +124,7 @@ All six entry points share one agent backend and one body of context: assets bui
 
     How semantic models and metrics are generated, stored, and executed by the Dosi engine.
 
-    [:octicons-arrow-right-24: Semantic adapters](adapters/semantic_adapters.md)
+    [:octicons-arrow-right-24: Dosi semantic engine](semantic/dosi_engine.md)
 
 -   :material-robot-outline: **Subagents**
 

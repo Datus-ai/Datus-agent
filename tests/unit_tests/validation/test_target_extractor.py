@@ -86,20 +86,20 @@ class TestExtractDDLTarget:
         assert t == TableTarget(catalog="mydb", datasource="default_db", database="myschema", table="mytable")
 
     def test_three_part_identifier_starrocks_has_catalog(self):
-        """On StarRocks ``default_catalog.ac_manage.stats`` is
+        """On StarRocks ``default_catalog.analytics.stats`` is
         ``catalog.database.table`` (no schema tier). The middle component
         must land on ``database``, not on ``schema`` — otherwise builtin
         ``describe_table`` would query the wrong namespace and report the
         table as missing (reviewer P2-A)."""
         t = extract_ddl_target(
-            "CREATE TABLE default_catalog.ac_manage.stats (id INT)",
+            "CREATE TABLE default_catalog.analytics.stats (id INT)",
             "default_db",
             dialect="starrocks",
         )
         assert t == TableTarget(
             catalog="default_catalog",
             datasource="default_db",
-            database="ac_manage",
+            database="analytics",
             table="stats",
         )
 

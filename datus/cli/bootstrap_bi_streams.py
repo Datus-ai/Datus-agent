@@ -262,13 +262,9 @@ def _validate_semantic_model_sync(agent_config: AgentConfig, *, scope: str = "al
         return False, f"semantic_tools unavailable: {exc}"
 
     try:
-        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-        adapter_type = resolve_semantic_adapter_type(agent_config)
-
-        tools = SemanticTools(agent_config=agent_config, adapter_type=adapter_type)
+        tools = SemanticTools(agent_config=agent_config)
         if not tools.adapter:
-            return False, f"Semantic adapter not available. Install with: pip install datus-semantic-{adapter_type}"
+            return False, "Dosi runtime unavailable; reinstall datus-agent from its lockfile"
         result = tools.validate_semantic(scope=scope)
         if not result.success:
             return False, result.error or "Semantic validation failed"
@@ -298,15 +294,7 @@ async def stream_bi_semantic_model(
         agent_config=agent_config,
     )
 
-    from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
     from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling_async
-
-    try:
-        ensure_semantic_agent_available("semantic_modeling", agent_config)
-    except Exception as exc:
-        state.semantic_ok = False
-        yield message_action(str(exc), status=ActionStatus.FAILED)
-        return
 
     subject_tree_hint = [
         platform,

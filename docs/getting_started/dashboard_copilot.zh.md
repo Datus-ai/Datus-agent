@@ -2,7 +2,7 @@
 
 将 Superset 仪表盘转换成两个 AI 子代理：一个用于自助取数和生成 SQL 的主子代理，以及一个用于指标对比和根因分析的归因子代理。
 
-本教程使用 Superset plugin、通用 `dashboard-bootstrap` skill 和 Dosi semantic adapter 完成整个流程。Dashboard 发现和 SQL 导出由 plugin 负责；skill 负责用户选择和流程编排，并将导出的 SQL 路由给 Datus 的内置 context 构建 agent。
+本教程使用 Superset plugin、通用 `dashboard-bootstrap` skill 和内置 Dosi 引擎完成整个流程。Dashboard 发现和 SQL 导出由 plugin 负责；skill 负责用户选择和流程编排，并将导出的 SQL 路由给 Datus 的内置 context 构建 agent。
 
 !!! info "本教程从哪里开始"
     本教程从已有 Superset Dashboard 开始。如果你希望从源数据构建数据管道并创建新的 Dashboard，请阅读[端到端数据工程](data_engineering_quickstart.zh.md)。第一次使用 Datus 时，建议先完成[安装并完成第一次提问](Quickstart.zh.md)。
@@ -81,7 +81,7 @@ Superset 就绪后停止跟随日志。本地服务信息如下：
 
 打开 Superset，确认示例 Dashboard **World Bank's Data** 已存在。
 
-## 步骤 2：安装 Superset plugin 和 Dosi adapter
+## 步骤 2：安装 Superset plugin
 
 从 Datus Plugins Git 仓库安装 Superset plugin：
 
@@ -92,13 +92,13 @@ datus plugin info superset
 
 如需更新已有的 Git 安装，运行 `datus plugin upgrade superset`。
 
-将 Dosi semantic adapter 安装到 Datus 所在的同一个 Python 环境：
+Agent 已内置 Dosi 引擎。从源码 checkout 安装锁定环境：
 
 ```bash
-python -m pip install datus-semantic-dosi
+uv sync --locked
 ```
 
-如果所有组件都使用源码开发，请按照 [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.zh.md) 中的 editable install 命令安装。
+配置说明见 [Dosi 语义引擎](../semantic/dosi_engine.zh.md#安装)。
 
 ## 步骤 3：配置演示项目
 
@@ -130,11 +130,6 @@ agent:
         database: superset_examples
         schema: public
 
-    semantic_layer:
-      dosi:
-        type: dosi
-        default: true
-
   plugins:
     superset:
       local:
@@ -148,7 +143,7 @@ agent:
         timeout: "30"
 ```
 
-后面的启动命令会显式选择 `superset-pg`。如果现有配置中已有其他 semantic adapter 被标记为 `default: true`，请先清除该标记，再将 Dosi 设置为本演示的默认 adapter。
+后面的启动命令会显式选择 `superset-pg`。Dosi 已是默认语义引擎；旧的引擎选择配置会被忽略并输出警告。
 
 Superset plugin 会返回每条已选择查询的脱敏 source identity，`dashboard-bootstrap` 会分别将每个 identity 与已配置的 Datus datasources 匹配，因此一个 Dashboard 可以包含来自多个物理数据库的查询。
 
@@ -489,7 +484,7 @@ Plugin 会在 `manifest.json` 中记录失败。Chart 可能丢失了 Dataset、
 
 ### 无法生成 Metrics
 
-确认已经安装 `datus-semantic-dosi`，并且当前选择的 semantic adapter 是 `dosi`。MetricFlow 和普通 OSI project 在该 workflow 中只支持查询。
+确认锁定环境中已安装 `dosi-engine`。旧的引擎选择配置会被忽略并输出警告。
 
 ### 没有创建 Subagents
 
@@ -501,7 +496,7 @@ Plugin 会在 `manifest.json` 中记录失败。Chart 可能丢失了 Dataset、
 - [选择上手路径](index.md) —— 对比所有入门指南。
 - [Dashboard Bootstrap](../skills/dashboard_bootstrap.zh.md) — 完整通用 workflow contract。
 - [Plugins](../plugin/introduction.zh.md) — plugin 安装、profiles、启用和权限。
-- [Dosi Semantic Adapter](../adapters/dosi_semantic_adapter.zh.md) — Dosi 安装和语义行为。
+- [Dosi 语义引擎](../semantic/dosi_engine.zh.md) — Dosi 安装和语义行为。
 - [Subagent 简介](../subagent/introduction.zh.md) — subagent 能力和调用方式。
 - [Knowledge Base](../knowledge_base/introduction.zh.md) — 检查和扩展生成的 context。
 - [Metrics](../knowledge_base/metrics.zh.md) — 管理已同步的 metrics。

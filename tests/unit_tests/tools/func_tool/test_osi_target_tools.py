@@ -30,7 +30,6 @@ def _config(tmp_path: Path):
             semantic_model_path=lambda datasource: model_root / datasource,
         ),
         project_root=tmp_path,
-        resolve_semantic_adapter=lambda _: "dosi",
     ), model_dir
 
 
@@ -111,7 +110,6 @@ def test_list_scans_live_yaml_inventory_without_mutating_binding(tmp_path):
     tools = OsiSemanticModelTargetTools(config, target_state=state)
     result = tools.list_existing_osi_semantic_models()
 
-    assert result.success
     assert result.result["status"] == "partial"
     assert result.result["count"] == 2
     assert {item["semantic_model_name"] for item in result.result["semantic_models"]} == {
@@ -180,7 +178,6 @@ def test_list_and_bind_reuse_inventory_and_return_compact_authoring_outline(tmp_
     candidate = inventory.result["semantic_models"][0]
     assert candidate["relationships"] == [{"name": "orders_customer", "from": "orders", "to": "customers"}]
     assert candidate["metrics"] == ["order_count"]
-    assert bound.success
     assert bound.result["authoring_outline"] == {
         "datasets": [
             {
@@ -225,9 +222,9 @@ def test_inventory_cache_refreshes_when_selected_artifact_revision_changes(tmp_p
     state = OsiSemanticModelTargetState()
     tools = OsiSemanticModelTargetTools(config, target_state=state)
 
-    assert tools.list_existing_osi_semantic_models().success
+    assert tools.list_existing_osi_semantic_models().result["count"] == 1
     state.artifact_sha256 = "new-revision"
-    assert tools.list_existing_osi_semantic_models().success
+    assert tools.list_existing_osi_semantic_models().result["count"] == 1
 
     assert calls == 2
 
@@ -237,7 +234,7 @@ def test_bind_rejects_inventory_revision_changed_after_list(tmp_path):
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.list_existing_osi_semantic_models().success
+    assert tools.list_existing_osi_semantic_models().result["count"] == 1
 
     target.write_text(target.read_text(encoding="utf-8") + "\n# external edit\n", encoding="utf-8")
     result = tools.bind_osi_semantic_model_target(semantic_model_name="orders_model")
@@ -261,7 +258,6 @@ def test_bind_exact_selector_records_canonical_target_and_revision(tmp_path, sel
     }[selector_kind]
     result = tools.bind_osi_semantic_model_target(**kwargs)
 
-    assert result.success
     assert result.result["status"] == "bound"
     assert tools.target_state.bound["absolute_path"] == str(target.resolve())
     assert tools.target_state.artifact_sha256 == hashlib.sha256(target.read_bytes()).hexdigest()
@@ -357,7 +353,6 @@ def test_semantic_plan_can_recover_unique_core_schema_invalid_model(tmp_path, mo
 
     result = tools.plan_osi_semantic_model_target(semantic_model_name="orders_model")
 
-    assert result.success
     assert result.result["repair_required"] is True
     assert tools.target_state.planned["absolute_path"] == str(target.resolve())
     assert tools.target_state.artifact_sha256 == hashlib.sha256(target.read_bytes()).hexdigest()
@@ -366,15 +361,13 @@ def test_semantic_plan_can_recover_unique_core_schema_invalid_model(tmp_path, mo
 
 def test_dosi_plan_can_repair_legacy_osi_yaml_after_project_switch(tmp_path, monkeypatch):
     config, model_dir = _config(tmp_path)
-    config.resolve_semantic_adapter = lambda _: "dosi"
     target = model_dir / "legacy_osi.yml"
     _write_model(target, name="orders_model")
 
-    def validate_for_active_adapter(document, *, semantic_adapter):
-        assert semantic_adapter == "dosi"
+    def validate_with_dosi(document):
         return "legacy OSI document requires Dosi repair"
 
-    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", validate_for_active_adapter)
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", validate_with_dosi)
     tools = OsiSemanticModelTargetTools(config)
 
     inventory = tools.list_existing_osi_semantic_models()
@@ -382,7 +375,6 @@ def test_dosi_plan_can_repair_legacy_osi_yaml_after_project_switch(tmp_path, mon
 
     assert inventory.result["status"] == "repairable"
     assert inventory.result["issues"][0]["code"] == "invalid_dosi_model"
-    assert result.success
     assert result.result["repair_required"] is True
     assert tools.target_state.planned["absolute_path"] == str(target.resolve())
 
@@ -392,7 +384,10 @@ def test_planned_existing_target_rejects_external_revision_change(tmp_path):
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.plan_osi_semantic_model_target(semantic_model_name="orders_model").success
+    assert (
+        tools.plan_osi_semantic_model_target(semantic_model_name="orders_model").result["semantic_model_name"]
+        == "orders_model"
+    )
 
     target.write_text(target.read_text(encoding="utf-8") + "# external edit\n", encoding="utf-8")
 
@@ -404,7 +399,7 @@ def test_planned_new_target_rejects_path_created_after_planning(tmp_path):
     config, model_dir = _config(tmp_path)
     target = model_dir / "orders.yml"
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.plan_osi_semantic_model_target(semantic_model_name="orders").success
+    assert tools.plan_osi_semantic_model_target(semantic_model_name="orders").result["semantic_model_name"] == "orders"
 
     _write_model(target, name="orders")
 
@@ -451,7 +446,7 @@ def test_failed_rebind_clears_previous_unwritten_target(tmp_path):
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
+    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).result["status"] == "bound"
 
     result = tools.bind_osi_semantic_model_target(semantic_model_file="missing.yml")
 
@@ -466,13 +461,13 @@ def test_failed_rebind_after_touch_keeps_bound_target_poisoned(tmp_path):
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
+    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).result["status"] == "bound"
     tools.target_state.touched_metric_names = ["order_count"]
 
     result = tools.bind_osi_semantic_model_target(semantic_model_file="missing.yml")
 
     assert not result.success
-    assert tools.target_state.bound is not None
+    assert tools.target_state.bound["semantic_model_name"] == "orders_model"
     assert tools.target_state.last_error_code == "semantic_model_target_invalid"
 
 
@@ -481,13 +476,13 @@ def test_failed_rebind_after_another_touch_keeps_bound_target_poisoned(tmp_path)
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
+    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).result["status"] == "bound"
     tools.target_state.touched_metric_names = ["order_count"]
 
     result = tools.bind_osi_semantic_model_target(semantic_model_file="missing.yml")
 
     assert not result.success
-    assert tools.target_state.bound is not None
+    assert tools.target_state.bound["semantic_model_name"] == "orders_model"
     assert tools.target_state.last_error_code == "semantic_model_target_invalid"
 
 
@@ -496,7 +491,7 @@ def test_touched_target_cannot_rebind_to_a_different_revision_or_model(tmp_path)
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
+    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).result["status"] == "bound"
     tools.target_state.touched_metric_names = ["order_count"]
 
     _write_model(target, name="replacement_model")
@@ -511,7 +506,7 @@ def test_touched_target_cannot_rebind_to_a_different_revision_or_model(tmp_path)
 def test_failed_replan_clears_previous_plan(tmp_path):
     config, _ = _config(tmp_path)
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.plan_osi_semantic_model_target(semantic_model_name="orders").success
+    assert tools.plan_osi_semantic_model_target(semantic_model_name="orders").result["semantic_model_name"] == "orders"
 
     result = tools.plan_osi_semantic_model_target()
 
@@ -528,7 +523,7 @@ def test_plan_only_blocks_duplicate_names_relevant_to_the_target(tmp_path):
     unrelated = tools.plan_osi_semantic_model_target(semantic_model_name="new_model")
     duplicate = tools.plan_osi_semantic_model_target(semantic_model_name="shared")
 
-    assert unrelated.success
+    assert unrelated.result["semantic_model_name"] == "new_model"
     assert not duplicate.success
     assert len(duplicate.result["candidates"]) == 2
     assert tools.target_state.planned is None
@@ -587,7 +582,7 @@ def test_query_backed_parse_warning_does_not_make_exact_target_unbindable(tmp_pa
     candidate = inventory.result["semantic_models"][0]
     assert "table_references" not in candidate
     assert "source" not in candidate["datasets"][0]
-    assert bound.success
+    assert bound.result["status"] == "bound"
 
 
 def test_bound_revision_must_match_live_file(tmp_path):
@@ -595,7 +590,7 @@ def test_bound_revision_must_match_live_file(tmp_path):
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
-    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
+    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).result["status"] == "bound"
 
     target.write_text(target.read_text(encoding="utf-8") + "\n# external edit\n", encoding="utf-8")
 

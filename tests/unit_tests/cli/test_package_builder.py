@@ -155,13 +155,13 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
     (template_dir / "sales_helper_system_1.0.j2").write_text("prompt {{x}}", encoding="utf-8")
 
     # Metrics for two datasources. Metric docs carry their subject as a
-    # ``subject_tree:`` tag — the same shape gen-metrics writes.
+    # ``subject_tree:`` tag in the legacy metric document shape.
     for ds, subject in (("sales_db", "sales"), ("pg_main", "ops")):
         ds_dir = root / "subject" / "semantic_models" / ds
         (ds_dir / "metrics").mkdir(parents=True)
         (ds_dir / "orders.yml").write_text("data_source:\n  name: orders\n", encoding="utf-8")
         # Two docs per file, in different subject areas, with the tag under
-        # ``locked_metadata`` — the shape gen_metrics actually writes.
+        # ``locked_metadata`` in the legacy metric document shape.
         (ds_dir / "metrics" / "orders_metrics.yml").write_text(
             f"metric:\n  name: gmv_{ds}\n  locked_metadata:\n    tags:\n"
             f"    - 'subject_tree: {subject}/revenue'\n"
@@ -553,9 +553,8 @@ class TestSelectors:
         assert "subject/semantic_models/pg_main/metrics/orders_metrics.yml" not in _namelist(result)
 
     def test_metric_tag_read_from_locked_metadata(self, project):
-        """gen_metrics writes the tag under metric.locked_metadata.tags; reading
-        only metric.tags made every generated metric look untagged, which
-        disabled subject filtering entirely."""
+        """Legacy metric tags under metric.locked_metadata.tags must remain
+        visible to subject filtering."""
         path = project / "subject" / "semantic_models" / "sales_db" / "metrics" / "orders_metrics.yml"
         assert set(pb._metric_doc_subjects(path)) == {"sales/revenue", "shared/misc"}
 

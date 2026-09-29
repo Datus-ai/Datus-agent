@@ -125,7 +125,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     # -- Retrieval Fields --
                     pa.field("description", pa.string()),  # For LLM reading (RAG) and vector search
                     pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
-                    # -- MetricFlow Specific Fields --
+                    # -- Metric metadata projected from Dosi for retrieval --
                     pa.field("metric_type", pa.string()),  # "simple" | "derived" | "ratio" | "cumulative"
                     pa.field("measure_expr", pa.string()),  # Underlying aggregation: "COUNT(DISTINCT user_id)"
                     pa.field("base_measures", pa.list_(pa.string())),  # Dependency measures: ["revenue", "orders"]

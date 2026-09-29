@@ -11,13 +11,12 @@ from unittest.mock import MagicMock, patch
 from datus.cli.service_client import READ_METHODS, ServiceClient, ServiceClientRegistry
 
 
-def _fake_agent_config(bi_platforms=None, schedulers=None, semantic_layer=None):
+def _fake_agent_config(bi_platforms=None, schedulers=None):
     """Build a minimal ``agent_config``-like object for registry tests."""
     return SimpleNamespace(
         services=SimpleNamespace(
             bi_platforms=bi_platforms or {},
             schedulers=schedulers or {},
-            semantic_layer=semantic_layer or {},
         ),
     )
 
@@ -39,8 +38,8 @@ class _FakeBITool:
 
 
 class TestReadMethodsAllowList:
-    def test_allowlist_covers_three_service_types(self):
-        assert set(READ_METHODS.keys()) == {"bi_platforms", "schedulers", "semantic_layer"}
+    def test_allowlist_covers_service_types(self):
+        assert set(READ_METHODS.keys()) == {"bi_platforms", "schedulers"}
 
     def test_no_write_methods_leak(self):
         write_prefixes = ("create_", "update_", "delete_", "write_", "submit_", "add_")
@@ -203,18 +202,16 @@ class TestServiceClientRegistry:
         cfg = _fake_agent_config(
             bi_platforms={"superset": {"api_base_url": "x"}, "grafana": {"api_base_url": "y"}},
             schedulers={"airflow": {"type": "airflow"}},
-            semantic_layer={"metricflow": {"datasource": "x"}},
         )
-        always_available = {k: (lambda c, n: True) for k in ("bi_platforms", "schedulers", "semantic_layer")}
+        always_available = {k: (lambda c, n: True) for k in ("bi_platforms", "schedulers")}
         with patch.dict("datus.cli.service_client._PROBES", always_available):
             registry = ServiceClientRegistry(cfg)
             rows = registry.list_services()
         names = {r[0] for r in rows}
         types = {r[0]: r[1] for r in rows}
-        assert names == {"superset", "grafana", "airflow", "metricflow"}
+        assert names == {"superset", "grafana", "airflow"}
         assert types["superset"] == "bi_platforms"
         assert types["airflow"] == "schedulers"
-        assert types["metricflow"] == "semantic_layer"
         # All "configured" at list time — adapter available, client not yet built.
         assert all(r[2] == "configured" for r in rows)
 
@@ -270,16 +267,6 @@ class TestServiceClientRegistry:
             assert client.service_type == "schedulers"
             factory.assert_called_once_with(cfg, "airflow")
 
-    def test_semantic_factory_wired(self):
-        cfg = _fake_agent_config(semantic_layer={"metricflow": {}})
-        factory = MagicMock(return_value=_FakeSemanticTool())
-        with patch.dict("datus.cli.service_client._FACTORIES", {"semantic_layer": factory}):
-            registry = ServiceClientRegistry(cfg)
-            client = registry.get("metricflow")
-            assert isinstance(client, ServiceClient)
-            assert client.service_type == "semantic_layer"
-            factory.assert_called_once_with(cfg, "metricflow")
-
     def test_none_services_attribute_tolerated(self):
         """Agent configs that omit ``services`` entirely should not crash."""
         cfg = SimpleNamespace()  # no `services`
@@ -290,11 +277,11 @@ class TestServiceClientRegistry:
         """After ``.database`` / ``.datasource`` switch, cached ``ServiceClient``s
         must be dropped — ``SemanticTools`` / ``BIFuncTool`` internalise the
         active datasource at construction time (MetricRAG, read_connector,
-        adapter config resolution) and continuing to reuse them would run
+        runtime configuration) and continuing to reuse them would run
         queries against the old datasource.
         """
         cfg = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}),
             current_datasource="datasource_a",
         )
         factory = MagicMock(side_effect=lambda *_: _FakeBITool())
@@ -323,7 +310,7 @@ class TestServiceClientRegistry:
     def test_datasource_field_also_triggers_invalidation(self):
         """The ``datasource`` attribute is also part of the fingerprint."""
         cfg = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}),
             current_datasource="shared",
             datasource="tenant_a",
         )
@@ -340,7 +327,7 @@ class TestServiceClientRegistry:
 
     def test_list_services_drops_to_configured_after_invalidation(self):
         cfg = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}),
             current_datasource="a",
         )
         with (
@@ -391,7 +378,7 @@ class TestServiceClientRegistry:
 
     def test_adapter_available_is_cached_until_fingerprint_change(self):
         cfg = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}),
             current_datasource="a",
         )
         probe = MagicMock(return_value=True)
@@ -506,19 +493,15 @@ class TestRegistryFactoriesWired:
         cfg = _fake_agent_config(
             bi_platforms={"s1": {}},
             schedulers={"s2": {}},
-            semantic_layer={"s3": {}},
         )
         bi_factory = MagicMock(return_value=MagicMock(spec=[]))
         sched_factory = MagicMock(return_value=MagicMock(spec=[]))
-        sem_factory = MagicMock(return_value=MagicMock(spec=[]))
         with patch.dict(
             "datus.cli.service_client._FACTORIES",
-            {"bi_platforms": bi_factory, "schedulers": sched_factory, "semantic_layer": sem_factory},
+            {"bi_platforms": bi_factory, "schedulers": sched_factory},
         ):
             registry = ServiceClientRegistry(cfg)
             registry.get("s1")
             registry.get("s2")
-            registry.get("s3")
             bi_factory.assert_called_once()
             sched_factory.assert_called_once()
-            sem_factory.assert_called_once()

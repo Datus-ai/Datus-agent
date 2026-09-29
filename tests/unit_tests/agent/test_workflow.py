@@ -142,7 +142,7 @@ class TestWorkflow:
         monkeypatch.setattr("datus.tools.func_tool.db_function_tools", fake_db_function_tools)
         Workflow(
             name="test_workflow",
-            task=SqlTask(task="query", datasource="starrocks", database_name="ac_manage"),
+            task=SqlTask(task="query", datasource="starrocks", database_name="analytics"),
             agent_config=real_agent_config,
         )
 

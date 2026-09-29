@@ -45,13 +45,9 @@ def create_interactive_node(
             ``__init__``.
     """
     if subagent_name:
-        from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
-
-        ensure_semantic_agent_available(subagent_name, agent_config)
         node_class_type = _resolve_node_class_type(subagent_name, agent_config)
-        from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
 
-        if subagent_name == "semantic_modeling" or node_class_type in RETIRED_SYS_SUB_AGENTS:
+        if subagent_name == "semantic_modeling":
             from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
             return SemanticModelingAgenticNode(

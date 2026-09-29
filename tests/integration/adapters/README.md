@@ -104,66 +104,17 @@ that the agent actually calls:
 
 ---
 
-## MetricFlow Semantic Adapter Tests
+## Dosi runtime coverage
 
-These suites exercise `MetricFlowAdapter` against real databases:
-`validate_semantic`, `list_metrics`, `get_dimensions`, `query_metrics(dry_run=True)`,
-and live `query_metrics(...)` behavior including time filters, multi-metric queries,
-and `where`-clause SQL generation.
-
-Each suite seeds a minimal `mf_orders` fact table plus `mf_time_spine` (required
-by MetricFlow) and cleans up on teardown.
-
-### DuckDB (no Docker)
+Dosi is an Agent dependency rather than an adapter package. Its deterministic
+Agent integration tests live in `tests/integration/tools/test_dosi_attribution.py`
+and `tests/integration/agent/test_semantic_modeling_agentic.py`. The latter covers
+model authoring, validation, Knowledge Base sync, SQL compilation, and live
+SQLite query execution without an LLM or external service.
 
 ```bash
-ADAPTERS_METRICFLOW_DUCKDB=1 uv run pytest tests/integration/adapters/test_semantic_metricflow_duckdb.py -v
+uv sync --locked --group ci
+uv run --locked pytest -q \
+  tests/integration/tools/test_dosi_attribution.py \
+  tests/integration/agent/test_semantic_modeling_agentic.py::test_dosi_authoring_validates_reconciles_and_queries_without_llm
 ```
-
-No container needed. The database file is created in a pytest tmp directory.
-
-### MySQL (shares container with MySQL Adapter Tests)
-
-```bash
-cd /path/to/datus-db-adapters/datus-mysql && docker compose up -d
-cd /path/to/Datus-agent
-ADAPTERS_METRICFLOW_MYSQL=1 uv run pytest tests/integration/adapters/test_semantic_metricflow_mysql.py -v
-```
-
-MetricFlow tables (`mf_orders`, `mf_time_spine`) are created inside the existing
-`test` database used by the MySQL Adapter Tests and dropped on teardown.
-
-### PostgreSQL (shares container with PostgreSQL Adapter Tests)
-
-```bash
-cd /path/to/datus-db-adapters/datus-postgresql && docker compose up -d
-cd /path/to/Datus-agent
-ADAPTERS_METRICFLOW_PG=1 uv run pytest tests/integration/adapters/test_semantic_metricflow_postgresql.py -v
-```
-
-MetricFlow tables are created in the `mf_nightly` schema within the existing
-`test` database and dropped on teardown.
-
-### MetricFlow env vars
-
-| Suite | Opt-in flag | Connection env | Notes |
-|---|---|---|---|
-| DuckDB | `ADAPTERS_METRICFLOW_DUCKDB=1` | none | DB file auto-generated in tmp dir |
-| MySQL | `ADAPTERS_METRICFLOW_MYSQL=1` | same as `ADAPTERS_MYSQL` vars | tables in `test` DB |
-| PostgreSQL | `ADAPTERS_METRICFLOW_PG=1` | same as `ADAPTERS_PG` vars | tables in `mf_nightly` schema |
-
----
-
-## OSI Query Compatibility Tests
-
-OSI remains available as an explicitly configured, query-only adapter. Its
-nightly smoke test installs `datus-semantic-osi[metricflow]` and verifies model
-validation, discovery, SQL dry-run, and live query execution through the
-MetricFlow backend using DuckDB.
-
-```bash
-ADAPTERS_OSI_DUCKDB=1 uv run pytest tests/integration/adapters/test_semantic_osi_duckdb.py -v
-```
-
-No container or connection environment variables are required; the database
-file is created in a pytest tmp directory.

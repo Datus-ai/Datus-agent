@@ -12,8 +12,6 @@ Mocks get_prompt_manager().render_template / get_raw_template to avoid template 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # TestCompareSqlWithMcp
 # ---------------------------------------------------------------------------
@@ -276,132 +274,6 @@ class TestCreateSelectionPrompt:
         assert call_kwargs["version"] == "v2"
 
 
-# ---------------------------------------------------------------------------
-# TestGenMetricsV12TemplateSmokeTest
-# ---------------------------------------------------------------------------
-
-
-class TestGenMetricsV12Template:
-    """Smoke tests for gen_metrics_system_1.2.j2 template."""
-
-    def test_v12_template_renders_without_error(self):
-        """v1.2 template renders with minimal context and produces non-empty output."""
-        from jinja2 import FileSystemLoader
-        from jinja2.sandbox import SandboxedEnvironment
-
-        from datus.prompts.prompt_manager import PromptManager
-
-        # Use only the default_templates_dir (no user templates needed)
-        pm = PromptManager()
-
-        # Mirrors PromptManager._get_env: production renders these templates in a
-        # sandbox, so a bare Environment here would stop being representative.
-        env = SandboxedEnvironment(
-            loader=FileSystemLoader([str(pm.default_templates_dir)]),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-        template = env.get_template("gen_metrics_system_1.2.j2")
-
-        result = template.render(
-            native_tools=["read_file", "write_file", "publish_metrics"],
-            mcp_tools=[],
-            has_ask_user_tool=True,
-            semantic_model_dir="/tmp/test_models",
-            has_subject_tree=False,
-            subject_tree=[],
-            existing_subject_trees=[],
-        )
-
-        assert len(result) > 100, "Template should render substantial content"
-        assert "metric" in result.lower()
-        assert "explicitly names a readable SQL file" in result
-        assert "call `read_file` once" in result
-        assert "Read the complete supplied SQL" in result
-        assert "keep literal filters, grouping, ordering, and result layout as query-time concerns" in result
-
-    @pytest.mark.parametrize(
-        "template_name",
-        [
-            "gen_metrics_system_1.1.j2",
-            "gen_metrics_system_1.2.j2",
-            "gen_metrics_system_2.0.j2",
-        ],
-    )
-    def test_sql_file_evidence_is_read_directly(self, template_name):
-        from jinja2 import FileSystemLoader
-        from jinja2.sandbox import SandboxedEnvironment
-
-        from datus.prompts.prompt_manager import PromptManager
-
-        pm = PromptManager()
-        # Mirrors PromptManager._get_env: production renders these templates in a
-        # sandbox, so a bare Environment here would stop being representative.
-        env = SandboxedEnvironment(
-            loader=FileSystemLoader([str(pm.default_templates_dir)]),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-        result = env.get_template(template_name).render(
-            native_tools=[],
-            mcp_tools=[],
-            has_ask_user_tool=False,
-            semantic_model_dir="/tmp/test_models",
-            knowledge_base_dir="/tmp/test_kb",
-            kind_subdir="subject/semantic_models/test",
-            authoring_format="metricflow",
-            current_datasource="test",
-            current_datasource_dialect="duckdb",
-            has_subject_tree=False,
-            subject_tree=[],
-            existing_subject_trees=[],
-        )
-
-        assert "call `read_file` once" in result
-        assert "business intent" in result
-
-    def test_v12_template_mentions_skill(self):
-        """v1.2 template should reference skills and gen-metrics."""
-        from jinja2 import FileSystemLoader
-        from jinja2.sandbox import SandboxedEnvironment
-
-        from datus.prompts.prompt_manager import PromptManager
-
-        pm = PromptManager()
-
-        # Mirrors PromptManager._get_env: production renders these templates in a
-        # sandbox, so a bare Environment here would stop being representative.
-        env = SandboxedEnvironment(
-            loader=FileSystemLoader([str(pm.default_templates_dir)]),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-        template = env.get_template("gen_metrics_system_1.2.j2")
-
-        result = template.render(
-            native_tools=[],
-            mcp_tools=[],
-            has_ask_user_tool=False,
-            semantic_model_dir="/tmp/models",
-            has_subject_tree=False,
-            subject_tree=[],
-            existing_subject_trees=[],
-        )
-
-        assert "gen-metrics" in result
-        assert "available_skills" in result
-        assert "load_skill" in result
-
-    def test_v12_is_latest_version(self):
-        """PromptManager.get_latest_version returns '1.2' for gen_metrics."""
-        from datus.prompts.prompt_manager import PromptManager
-
-        pm = PromptManager()
-        latest = pm.get_latest_version("gen_metrics_system")
-        latest_parts = tuple(int(p) for p in latest.split("."))
-        assert latest_parts >= (1, 2), f"Expected latest version >= '1.2', got '{latest}'"
-
-
 class TestGenSqlSystemV12Template:
     """Smoke tests for gen_sql_system_1.2.j2."""
 
@@ -459,3 +331,5 @@ class TestGenSqlSystemV12Template:
         assert '"sql"' in content
         assert '"output"' in content
         assert "Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields." in content
+        assert "## Semantic Metric Path" in content
+        assert "Legacy" not in content

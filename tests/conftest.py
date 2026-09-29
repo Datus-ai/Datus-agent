@@ -183,7 +183,7 @@ def isolate_bird_sqlite_databases(
 
     Nightly/acceptance configs intentionally reference the developer or CI
     benchmark checkout under ``~/benchmark``. Tests that initialize adapters
-    capable of DDL, such as MetricFlow, must not write support tables back into
+    capable of DDL, such as Legacy, must not write support tables back into
     that shared fixture. This helper copies the requested databases into a
     tmp-root benchmark layout, removes known generated support tables from the
     copies, and rewrites both the ``bird_sqlite`` glob datasource and any

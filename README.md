@@ -35,7 +35,7 @@ The diagram reads top to bottom: who uses Datus, what the agent is made of, and 
 
 - **Three entry points, by role**: data engineers work in [Datus-CLI](https://docs.datus.ai/latest/cli/introduction/) to explore data and build assets; analysts ask through [Datus-Chat](https://docs.datus.ai/latest/web_chatbot/introduction/) on the web, in Slack/Feishu, or in VS Code, and their feedback flows back into the agent; other agents and applications consume [Datus-API](https://docs.datus.ai/latest/API/introduction/) over REST and MCP.
 - **The agent core**: [subagents](https://docs.datus.ai/latest/subagent/introduction/) package curated context, tools, and rules for one business domain, and [skills](https://docs.datus.ai/latest/skills/introduction/) add packaged tools. Underneath sits the [context engine](https://docs.datus.ai/latest/knowledge_base/introduction/): metadata, metrics, reference SQL, knowledge, and local files, retrieved through business-domain trees plus vector search, with [storage](https://docs.datus.ai/latest/configuration/storage/) on embedded LanceDB and SQLite and PostgreSQL for teams that share context.
-- **Connected systems**: LLM providers, data warehouses, the [Dosi](https://dosi.datus.ai/) semantic layer, job schedulers, BI tools, and MCP servers and clients, reached through adapters and through [plugins](https://docs.datus.ai/latest/plugin/introduction/) that bring third-party and in-house tools into the agent.
+- **Connected systems**: LLM providers, data warehouses, job schedulers, BI tools, and MCP servers and clients connect through adapters and [plugins](https://docs.datus.ai/latest/plugin/introduction/). The [Dosi](https://dosi.datus.ai/) semantic engine is built into the agent.
 
 ## Features
 
@@ -61,7 +61,7 @@ The diagram reads top to bottom: who uses Datus, what the agent is made of, and 
 
 ## Quickstart
 
-Linux or macOS:
+Linux x86_64/aarch64 (glibc 2.28+) or Apple Silicon macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
@@ -73,7 +73,7 @@ Open a new shell and run `datus`, then:
 2. `/datasource` to add a datasource
 3. `/init` (optional) to scan the current project
 
-Manual install works too: `pip install datus-agent` (Python 3.12+); more install options are covered in the [Quickstart](https://docs.datus.ai/latest/getting_started/Quickstart/). When `pip` spends minutes backtracking through `litellm` releases (versions up to 0.3.9 are affected), `uv` resolves the same set in seconds: `pip install uv && uv pip install datus-agent --system`. The [end-to-end tutorial](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/#part-2-hands-on-tutorial-california-schools) demonstrates the full flow on a sample dataset. Configuration has two levels: a global `agent.yml` for the main settings, and a per-project `.datus/config.yml` for overrides such as the active model and default datasource (see the [configuration docs](https://docs.datus.ai/latest/configuration/introduction/)).
+Manual install works too: `pip install datus-agent` (Python 3.12+ on the supported platforms above); more install options are covered in the [Quickstart](https://docs.datus.ai/latest/getting_started/Quickstart/). When `pip` spends minutes backtracking through `litellm` releases (versions up to 0.3.9 are affected), `uv` resolves the same set in seconds: `pip install uv && uv pip install datus-agent --system`. The [end-to-end tutorial](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/#part-2-hands-on-tutorial-california-schools) demonstrates the full flow on a sample dataset. Configuration has two levels: a global `agent.yml` for the main settings, and a per-project `.datus/config.yml` for overrides such as the active model and default datasource (see the [configuration docs](https://docs.datus.ai/latest/configuration/introduction/)).
 
 ## Interfaces
 

@@ -39,7 +39,6 @@ def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
             version = "{version}"
             dependencies = [
                 "datus-db-core>=0.1.3",
-                "datus-semantic-core>=0.2.0",
                 "datus-bi-core>=0.1.2",
                 "datus-scheduler-core>=0.1.1",
             ]
@@ -51,7 +50,6 @@ def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
         dedent(
             """
             datus-db-core>=0.1.3
-            datus-semantic-core>=0.2.0
             datus-bi-core>=0.1.2
             datus-scheduler-core>=0.1.1
             """
@@ -250,7 +248,6 @@ def test_adapter_dependency_consistency_accepts_matching_lower_bounds(tmp_path, 
     assert errors == []
     assert {check.name: check.pyproject_lower_bound for check in checks} == {
         "datus-db-core": Version("0.1.3"),
-        "datus-semantic-core": Version("0.2.0"),
         "datus-bi-core": Version("0.1.2"),
         "datus-scheduler-core": Version("0.1.1"),
     }
@@ -262,7 +259,6 @@ def test_adapter_dependency_consistency_rejects_mismatched_requirements_lower_bo
         dedent(
             """
             datus-db-core>=0.1.2
-            datus-semantic-core>=0.2.0
             datus-bi-core>=0.1.2
             datus-scheduler-core>=0.1.1
             """
@@ -294,7 +290,6 @@ def test_adapter_latest_check_rejects_stale_lower_bound(tmp_path, check_release_
         checks,
         lambda package_name: {
             "datus-db-core": Version("0.1.4"),
-            "datus-semantic-core": Version("0.2.0"),
             "datus-bi-core": Version("0.1.2"),
             "datus-scheduler-core": Version("0.1.1"),
         }[package_name],

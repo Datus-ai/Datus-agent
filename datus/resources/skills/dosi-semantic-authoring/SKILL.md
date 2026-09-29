@@ -11,13 +11,11 @@ user_invocable: false
 disable_model_invocation: false
 allowed_agents:
   - semantic_modeling
-  - gen_semantic_model
-  - gen_metrics
 ---
 
 # Dosi Semantic Authoring
 
-Author the active Dosi semantic model as strict OSI core YAML. Use this skill for native document authoring rules; use the active adapter specification and native validation as the exact document and DATUS-extension contract. The node prompt owns target selection, result-set strategy, mutation order, validation, and synchronization.
+Author the active Dosi semantic model as strict OSI core YAML. Use this skill for native document authoring rules; use the Dosi specification and native validation as the exact document and DATUS-extension contract. The node prompt owns target selection, result-set strategy, mutation order, validation, and synchronization.
 
 ## Model reusable semantics
 

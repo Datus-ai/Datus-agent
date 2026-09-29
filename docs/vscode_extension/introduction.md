@@ -81,7 +81,7 @@ The left-hand **Datus: Object Explorer** offers two tabs:
     - Click a table → a *Table Info* tab opens in the editor area with **Columns** (type / nullable / default / PK), **Indexes**, and **Sample data**.
     - Search and refresh are available at the top — refresh after metadata changes to resync immediately.
 - **Context**: the context knowledge tree, aligned with Datus-agent's `subject/` directory:
-    - **Metrics**: MetricFlow metric definitions.
+    - **Metrics**: Dosi metric definitions.
     - **Reference**: Reference SQL and Reference Templates.
     - **Knowledge**: External Knowledge / Platform Documentation.
 
@@ -93,7 +93,7 @@ The **Agents** section in the lower-left lists every subagent for the current pr
 
 1. **Description**: basic information (name, description, target scenario).
 2. **Tools**: pick available tools / MCP tools.
-3. **Objects**: define the SubAgent's visible **Catalog scope** and **Context scope** — using the same two trees as above, with check boxes down to schema / table / knowledge-node level. The *Selected* area at the bottom echoes wildcards such as `jeff_shop.*` and `Root.*`.
+3. **Objects**: define the SubAgent's visible **Catalog scope** and **Context scope** — using the same two trees as above, with check boxes down to schema / table / knowledge-node level. The *Selected* area at the bottom echoes wildcards such as `sample_shop.*` and `Root.*`.
 4. **Rules**: behavior rules, few-shot examples, conversational style, and so on.
 
 ![Add SubAgent wizard (Objects step)](../assets/vscode-create-subagent.png)

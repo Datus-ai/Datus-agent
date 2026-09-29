@@ -100,7 +100,7 @@ conf/
 - **[Agent 设置](agent.md)**：配置模型、提供方与全局设置
 - **[数据源配置](datasources.md)**：配置 `agent.services.datasources` 下的数据库连接
 - **[数据库 adapter](../adapters/db_adapters.md)**：了解 adapter 发现机制并扩展新数据库
-- **[Semantic adapter](../adapters/semantic_adapters.md)**：选择语义查询与建模集成
+- **[Dosi 语义引擎](../semantic/dosi_engine.zh.md)**：模型发现、查询与创作
 - **[Plugin](../plugin/introduction.md)**：接入 BI、调度、基础设施及其他外部系统
 - **[工作流定义](workflow.md)**：自定义执行路径
 - **[节点配置](nodes.md)**：微调各节点行为

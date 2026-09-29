@@ -20,8 +20,8 @@ from datus.utils.terminal_utils import suppress_keyboard_input
 
 logger = get_logger(__name__)
 
-METRICFLOW_YAML_UNSUPPORTED_MESSAGE = (
-    "MetricFlow semantic YAML (`data_source:` / `metric:` documents) can no longer be imported. "
+LEGACY_SEMANTIC_YAML_UNSUPPORTED_MESSAGE = (
+    "Legacy semantic YAML (`data_source:` / `metric:` documents) can no longer be imported. "
     "Semantic authoring is Dosi-only: migrate the project to Dosi and re-author the model with semantic_modeling."
 )
 
@@ -29,25 +29,17 @@ METRICFLOW_YAML_UNSUPPORTED_MESSAGE = (
 def reject_non_dosi_semantic_yaml(yaml_file_path: str, agent_config: Optional[AgentConfig]) -> Optional[str]:
     """Return the actionable error when semantic YAML import is unavailable.
 
-    Import is Dosi-only: non-Dosi projects get the query-only migration
-    message, and MetricFlow-format documents are rejected explicitly before
-    any sync is attempted. Returns ``None`` when the import may proceed.
+    Legacy-format documents are rejected explicitly before any sync is
+    attempted. Returns ``None`` when the import may proceed.
     """
-    from datus.agent.node.semantic_authoring import (
-        AUTHORING_FORMAT_OSI,
-        QUERY_ONLY_MIGRATION_MESSAGE,
-        resolve_authoring_format,
-    )
-
-    if resolve_authoring_format(agent_config) != AUTHORING_FORMAT_OSI:
-        return QUERY_ONLY_MIGRATION_MESSAGE
+    del agent_config
     try:
         with open(yaml_file_path, "r", encoding="utf-8") as f:
             docs = list(yaml.safe_load_all(f))
     except Exception as exc:
         return f"Failed to read semantic YAML file '{yaml_file_path}': {exc}"
     if any(isinstance(doc, dict) and ("data_source" in doc or "metric" in doc) for doc in docs):
-        return METRICFLOW_YAML_UNSUPPORTED_MESSAGE
+        return LEGACY_SEMANTIC_YAML_UNSUPPORTED_MESSAGE
     return None
 
 
@@ -128,7 +120,6 @@ def refresh_success_story_semantic_model_profile(
     success_story: str,
     emit: Optional[Callable[[BatchEvent], None]] = None,
     *,
-    authoring_format: str = "",
     profile_mode: str = "deep",
     max_tables: int = 8,
     max_columns_per_table: int = 40,
@@ -167,10 +158,7 @@ def refresh_success_story_semantic_model_profile(
     except Exception as exc:
         return False, f"Failed to read semantic YAML file '{resolved_yaml_path}': {exc}", 0
 
-    fmt = _infer_semantic_yaml_authoring_format(docs, authoring_format)
-    if fmt != "osi":
-        return False, METRICFLOW_YAML_UNSUPPORTED_MESSAGE, 0
-    tables = _semantic_yaml_profile_tables(docs, fmt)
+    tables = _semantic_yaml_profile_tables(docs)
     if not tables:
         return False, f"No table targets found in semantic YAML file: {resolved_yaml_path}", 0
 
@@ -233,7 +221,6 @@ def refresh_success_story_semantic_model_profile(
     success, error, changed = refresh_semantic_yaml_profile_descriptions(
         resolved_yaml_path,
         profile_result.result or {},
-        authoring_format=fmt,
         agent_config=agent_config,
         sync_to_storage=True,
     )
@@ -291,15 +278,7 @@ def _success_story_cell(row: Any, key: str) -> str:
     return str(value).strip()
 
 
-def _infer_semantic_yaml_authoring_format(docs: list[dict], authoring_format: str = "") -> str:
-    fmt = (authoring_format or "").strip().lower()
-    if fmt:
-        return fmt
-    return "metricflow" if any(isinstance(doc, dict) and doc.get("data_source") for doc in docs) else "osi"
-
-
-def _semantic_yaml_profile_tables(docs: list[dict], authoring_format: str) -> list[str]:
-    del authoring_format
+def _semantic_yaml_profile_tables(docs: list[dict]) -> list[str]:
     return _dedupe_semantic_yaml_values(
         _osi_dataset_table(dataset) for doc in docs for dataset in _iter_osi_yaml_datasets(doc)
     )
@@ -365,7 +344,7 @@ def init_semantic_yaml_semantic_model(
     from datus.tools.func_tool.generation_tools import GenerationTools
 
     try:
-        result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_to_db(
+        result = GenerationTools(agent_config=agent_config).sync_osi_to_db(
             yaml_file_path,
             include_semantic_objects=True,
             include_metrics=False,
@@ -426,7 +405,7 @@ def sync_semantic_yaml_tree(
 
     from datus.tools.func_tool.generation_tools import GenerationTools
 
-    tools = GenerationTools(agent_config=agent_config, authoring_format="osi")
+    tools = GenerationTools(agent_config=agent_config)
     synced = 0
     failures: list[str] = []
     for path in files:
@@ -478,7 +457,6 @@ def refresh_semantic_yaml_profile_descriptions(
     yaml_file_path: str,
     profile_evidence: dict,
     *,
-    authoring_format: str = "",
     agent_config: Optional[AgentConfig] = None,
     sync_to_storage: bool = False,
 ) -> tuple[bool, str, int]:
@@ -499,10 +477,7 @@ def refresh_semantic_yaml_profile_descriptions(
     if not os.path.exists(resolved_yaml_path):
         return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
 
-    # Rewriting descriptions is an authoring mutation: gate on the project
-    # adapter, not just the document shape, so OSI-shaped YAML in a
-    # MetricFlow project (or an explicit authoring_format override) cannot
-    # slip through to the write/sync below.
+    # Reject retired document formats before mutating the artifact.
     if agent_config is not None:
         rejection = reject_non_dosi_semantic_yaml(resolved_yaml_path, agent_config)
         if rejection:
@@ -517,9 +492,6 @@ def refresh_semantic_yaml_profile_descriptions(
     try:
         from datus.storage.semantic_model.profile_description import refresh_osi_yaml_descriptions
 
-        fmt = _infer_semantic_yaml_authoring_format(docs, authoring_format)
-        if fmt != "osi":
-            return False, METRICFLOW_YAML_UNSUPPORTED_MESSAGE, 0
         changed = refresh_osi_yaml_descriptions(docs, profile_evidence)
     except Exception as exc:
         return False, f"Failed to refresh semantic YAML descriptions: {exc}", 0
@@ -537,7 +509,7 @@ def refresh_semantic_yaml_profile_descriptions(
         try:
             from datus.tools.func_tool.generation_tools import GenerationTools
 
-            result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_to_db(
+            result = GenerationTools(agent_config=agent_config).sync_osi_to_db(
                 resolved_yaml_path,
                 include_semantic_objects=True,
                 include_metrics=False,
