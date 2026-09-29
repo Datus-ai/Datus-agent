@@ -134,10 +134,8 @@ install_package() {
     # for non-ref OIDs. A full clone is more bytes but makes DATUS_REF
     # work reliably for any branch/tag/commit SHA.
     #
-    # No submodules: benchmark/* is excluded from the wheel build (see
-    # pyproject.toml), and upstream submodule chains (e.g. Spider2) may
-    # fail `git submodule update --recursive` for reasons unrelated to
-    # this install.
+    # Benchmark datasets are provisioned separately under {agent.home} and
+    # are not needed to build or install the package.
     src_dir=$(mktemp -d -t datus-src-XXXXXX)
     # shellcheck disable=SC2064
     trap "rm -rf \"$src_dir\"" EXIT

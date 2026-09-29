@@ -6,8 +6,10 @@ for the actual agentic loop execution. Session management methods
 read from disk each time (no in-memory state).
 """
 
+import json
+import os
 import uuid
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.api.models.base_models import Result
@@ -57,6 +59,152 @@ def _is_ask_user_call(action: ActionHistory) -> bool:
         and action.status == ActionStatus.PROCESSING
         and input_data.get("function_name") == "ask_user"
     )
+
+
+def _is_task_result(action: ActionHistory) -> bool:
+    input_data = action.input if isinstance(action.input, dict) else {}
+    return (
+        action.role == ActionRole.TOOL
+        and action.status != ActionStatus.PROCESSING
+        and input_data.get("function_name") == "task"
+    )
+
+
+def _subagent_session_id(result_action: ActionHistory) -> Optional[str]:
+    output = result_action.output if isinstance(result_action.output, dict) else {}
+    result = output.get("result", output)
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except (TypeError, ValueError):
+            return None
+    sub_session_id = result.get("session_id") if isinstance(result, dict) else None
+    return sub_session_id if isinstance(sub_session_id, str) and sub_session_id else None
+
+
+def _is_safe_session_id(session_id: str) -> bool:
+    try:
+        SessionManager._validate_session_id(session_id)
+    except ValueError:
+        return False
+    # The validator allows dots; ``..`` as a directory name would leave the user's scope.
+    return ".." not in session_id
+
+
+def _load_subagent_runs(session_dir: str, sub_session_id: str) -> List[List[ActionHistory]]:
+    """A subagent session's stored actions, one list per prompt it received."""
+    # SessionManager() creates its directory, so check for the file before building one.
+    if not os.path.isfile(os.path.join(session_dir, f"{sub_session_id}.db")):
+        return []
+    try:
+        raw_messages = SessionManager(session_dir=session_dir).get_session_messages(sub_session_id)
+    except Exception as e:
+        logger.warning(f"Failed to read subagent session {sub_session_id} for history: {e}")
+        return []
+
+    # The prompt itself is already on the task card.
+    runs: List[List[ActionHistory]] = []
+    for msg in raw_messages:
+        if msg.get("role") == "user":
+            runs.append([])
+        elif msg.get("role") == "assistant":
+            if not runs:
+                runs.append([])
+            runs[-1].extend(msg.get("actions") or [])
+    return runs
+
+
+def _subagent_run_actions(
+    session_dir: str,
+    call_id: str,
+    result_action: ActionHistory,
+    runs_cache: Dict[str, List[List[ActionHistory]]],
+) -> List[ActionHistory]:
+    """The steps one ``task`` call's subagent ran, stamped as depth-1 children of the call.
+
+    ``session_dir`` is where ``SubAgentTaskTool`` nests subagent sessions for this main
+    session, inside the user's scope. A resumed session holds several runs, and each
+    ``task`` result takes the next one; ``runs_cache`` reads each session once per request.
+    """
+    sub_session_id = _subagent_session_id(result_action)
+    if not sub_session_id or not _is_safe_session_id(sub_session_id):
+        return []
+    if sub_session_id not in runs_cache:
+        runs_cache[sub_session_id] = _load_subagent_runs(session_dir, sub_session_id)
+    runs = runs_cache[sub_session_id]
+    if not runs:
+        return []
+
+    actions = runs.pop(0)
+    for action in actions:
+        action.depth = max(action.depth, 1)
+        action.parent_action_id = action.parent_action_id or call_id
+    return actions
+
+
+def _actions_to_payloads(
+    messages: List[ActionHistory],
+    event_id: int,
+    expand_subagent: Optional[Callable[[str, ActionHistory], List[ActionHistory]]] = None,
+) -> tuple[List[SSEMessagePayload], int]:
+    """Convert one stored assistant group into history payloads.
+
+    ``expand_subagent`` returns the steps a ``task`` call's subagent ran; they go
+    out flat, right before the task result, in the order the live stream sends them.
+    """
+    sse_messages: List[SSEMessagePayload] = []
+    assistant_response_seen = False
+    tool_result_seen = False
+    # Maps fingerprint -> owning message_id; the helpers below
+    # need the owner to tell a legitimate UPDATE from a repeat.
+    seen_assistant_message_fingerprints: dict[str, str] = {}
+    tool_results = {
+        a.action_id.removeprefix("complete_"): a
+        for a in messages
+        if a.role == ActionRole.TOOL and a.status != ActionStatus.PROCESSING
+    }
+    replayed_ask_user_ids: set[str] = set()
+    for action in messages:
+        if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
+            if action.action_id.removeprefix("complete_") in replayed_ask_user_ids:
+                # Folded into the card, but it still counts as a tool result.
+                tool_result_seen = True
+                continue
+        if expand_subagent and _is_task_result(action):
+            call_id = action.action_id.removeprefix("complete_")
+            sub_payloads, event_id = _actions_to_payloads(expand_subagent(call_id, action), event_id)
+            sse_messages.extend(sub_payloads)
+        sse_event = None
+        if _is_ask_user_call(action) and action.action_id in tool_results:
+            sse_event = answered_ask_user_to_sse_event(
+                action, tool_results[action.action_id], event_id, str(uuid.uuid4())
+            )
+            if sse_event:
+                replayed_ask_user_ids.add(action.action_id)
+        if sse_event is None:
+            include_final_response = _should_include_final_response(action, assistant_response_seen)
+            sse_event = action_to_sse_event(
+                action,
+                event_id,
+                str(uuid.uuid4()),
+                include_user_message=True,
+                include_final_response=include_final_response,
+            )
+        if sse_event:
+            if _should_skip_duplicate_assistant_message(
+                action,
+                sse_event,
+                seen_assistant_message_fingerprints,
+            ):
+                continue
+            sse_messages.append(sse_event.data.payload)
+            event_id += 1
+            _remember_assistant_message(sse_event, seen_assistant_message_fingerprints)
+            if _is_visible_assistant_response(action, sse_event, tool_result_seen=tool_result_seen):
+                assistant_response_seen = True
+            if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
+                tool_result_seen = True
+    return sse_messages, event_id
 
 
 class ChatService:
@@ -294,6 +442,12 @@ class ChatService:
 
             sse_messages: List[SSEMessagePayload] = []
             event_id = 0
+            # Subagent sessions nest under this one, in the user's scope. Only that
+            # directory is read: the flat pre-fix layout is shared by every user.
+            subagent_dir = (
+                os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
+            )
+            subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")
@@ -325,54 +479,20 @@ class ChatService:
                         event_id += 1
                 elif role == "assistant":
                     if "actions" in msg:
-                        messages = msg["actions"]
-                        assistant_response_seen = False
-                        tool_result_seen = False
-                        # Maps fingerprint -> owning message_id; the helpers below
-                        # need the owner to tell a legitimate UPDATE from a repeat.
-                        seen_assistant_message_fingerprints: dict[str, str] = {}
-                        tool_results = {
-                            a.action_id.removeprefix("complete_"): a
-                            for a in messages
-                            if a.role == ActionRole.TOOL and a.status != ActionStatus.PROCESSING
-                        }
-                        replayed_ask_user_ids: set[str] = set()
-                        for action in messages:
-                            if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
-                                if action.action_id.removeprefix("complete_") in replayed_ask_user_ids:
-                                    # Folded into the card, but it still counts as a tool result.
-                                    tool_result_seen = True
-                                    continue
-                            sse_event = None
-                            if _is_ask_user_call(action) and action.action_id in tool_results:
-                                sse_event = answered_ask_user_to_sse_event(
-                                    action, tool_results[action.action_id], event_id, str(uuid.uuid4())
+                        payloads, event_id = _actions_to_payloads(
+                            msg["actions"],
+                            event_id,
+                            expand_subagent=(
+                                (
+                                    lambda call_id, result_action: _subagent_run_actions(
+                                        subagent_dir, call_id, result_action, subagent_runs
+                                    )
                                 )
-                                if sse_event:
-                                    replayed_ask_user_ids.add(action.action_id)
-                            if sse_event is None:
-                                include_final_response = _should_include_final_response(action, assistant_response_seen)
-                                sse_event = action_to_sse_event(
-                                    action,
-                                    event_id,
-                                    str(uuid.uuid4()),
-                                    include_user_message=True,
-                                    include_final_response=include_final_response,
-                                )
-                            if sse_event:
-                                if _should_skip_duplicate_assistant_message(
-                                    action,
-                                    sse_event,
-                                    seen_assistant_message_fingerprints,
-                                ):
-                                    continue
-                                sse_messages.append(sse_event.data.payload)
-                                event_id += 1
-                                _remember_assistant_message(sse_event, seen_assistant_message_fingerprints)
-                                if _is_visible_assistant_response(action, sse_event, tool_result_seen=tool_result_seen):
-                                    assistant_response_seen = True
-                                if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
-                                    tool_result_seen = True
+                                if subagent_dir
+                                else None
+                            ),
+                        )
+                        sse_messages.extend(payloads)
                     elif msg.get("content"):
                         sse_messages.append(
                             SSEMessagePayload(

@@ -4,12 +4,6 @@ This page is for contributors running Datus Agent from a source checkout. If you
 
 ## Source Setup
 
-Clone the repository and initialize submodules:
-
-```bash
-git submodule update --init
-```
-
 Use Python 3.12. The recommended development environment is `uv`:
 
 ```bash
@@ -216,6 +210,8 @@ uv run datus-agent benchmark \
 ```
 
 ### Spider 2.0 Snow
+
+Download the [Spider2 dataset](../benchmark/benchmark_manual.md#spider2-data) into `{agent.home}/benchmark/spider2/` before running this benchmark. The source checkout does not contain it.
 
 Configure a Snowflake datasource. The datasource name can be anything; the examples use `snowflake`.
 
