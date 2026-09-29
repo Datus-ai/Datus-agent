@@ -3683,7 +3683,9 @@ class AgenticNode(Node):
             raise
         except Exception as exc:
             error_msg = self._format_execution_error(exc)
-            logger.error("%s execution error: %s", node_name, error_msg)
+            # ``error_msg`` may be trimmed to the provider's sentence; keep the
+            # full exception in the server log.
+            logger.error("%s execution error: %s", node_name, exc)
 
             error_result = self._build_error_result(exc, ctx)
             self.result = error_result
@@ -4630,12 +4632,16 @@ class AgenticNode(Node):
         ``DatusException`` carries a structured error code that is normally
         lost when callers fall back to ``str(exc)``. Surface it as
         ``[CODE] <message>`` so logs and SSE error cards remain greppable.
+
+        A provider rejection stringifies as ``Error code: 400 - {<body>}``;
+        only the provider's own message inside that body is shown.
         """
+        from datus.models.model_error import model_error_message
         from datus.utils.exceptions import DatusException
 
         if isinstance(exc, DatusException):
             return f"[{exc.code}] {exc}"
-        return str(exc)
+        return model_error_message(exc) or str(exc)
 
     def _compose_hooks(self, extra: Any = None) -> Any:
         """Combine permission hooks with an optional per-node hook.

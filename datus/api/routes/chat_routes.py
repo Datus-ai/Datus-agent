@@ -459,9 +459,23 @@ async def submit_user_interaction(
         )
 
     success = await broker.submit(request.interaction_key, request.input)
+    data = {"interaction_key": request.interaction_key, "submitted": success}
+    if success:
+        return Result[dict](success=True, data=data)
+    # A key the broker no longer holds belongs to a question nobody is waiting
+    # on: already answered, timed out, or asked by a process that has since gone.
+    if not broker.is_pending(request.interaction_key):
+        return Result[dict](
+            success=False,
+            data=data,
+            errorCode="INTERACTION_NOT_FOUND",
+            errorMessage="This question is no longer waiting for an answer",
+        )
     return Result[dict](
-        success=success,
-        data={"interaction_key": request.interaction_key, "submitted": success},
+        success=False,
+        data=data,
+        errorCode="INVALID_INPUT",
+        errorMessage="Answer does not match the question's options",
     )
 
 

@@ -2982,7 +2982,7 @@ class TestRunLoopSettlesTurn:
     """``_run_loop`` settles every turn with ``on_turn_end`` — the billing path."""
 
     @staticmethod
-    def _node(raise_after=None, usage_total=120):
+    def _node(raise_after=None, usage_total=120, extra_actions=()):
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
         from datus.schemas.token_usage import TokenUsage
 
@@ -3008,6 +3008,8 @@ class TestRunLoopSettlesTurn:
                         output={},
                         status=ActionStatus.PROCESSING,
                     )
+                    for extra in extra_actions:
+                        yield extra
                     if raise_after is not None:
                         raise raise_after
                 finally:
@@ -3068,6 +3070,46 @@ class TestRunLoopSettlesTurn:
         assert turn_id and turn_id == task.turn_id
         assert (status, error) == ("error", "model blew up")
         assert usage["total_tokens"] == 120
+
+    @staticmethod
+    def _error_action(depth=0, error="messages.1.content.0: Input tag 'output_text' found"):
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        return ActionHistory(
+            action_id=f"err-{depth}",
+            role=ActionRole.ASSISTANT,
+            action_type="error",
+            messages=f"chat interaction failed: {error}",
+            input={},
+            output={"success": False, "error": error, "error_code": None},
+            status=ActionStatus.FAILED,
+            depth=depth,
+        )
+
+    @pytest.mark.asyncio
+    async def test_turn_ending_in_a_node_error_action_settles_as_error(self, real_agent_config):
+        # The node catches the model failure and yields an ``error`` action
+        # instead of raising; the turn must not settle as completed.
+        node = self._node(extra_actions=(self._error_action(),))
+        task, calls = await self._run(real_agent_config, node)
+
+        assert task.status == "error"
+        assert task.error == "messages.1.content.0: Input tag 'output_text' found"
+        ((usage, error, status, _turn_id),) = calls
+        assert (status, error) == ("error", "messages.1.content.0: Input tag 'output_text' found")
+        # Still billed, and the stream still closed with its end event.
+        assert usage["total_tokens"] == 120
+        assert usage == task.end_usage
+        assert task.events[-1].event == "end"
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_error_action_does_not_fail_the_turn(self, real_agent_config):
+        node = self._node(extra_actions=(self._error_action(depth=1),))
+        task, calls = await self._run(real_agent_config, node)
+
+        assert task.status == "completed"
+        ((_usage, error, status, _turn_id),) = calls
+        assert (status, error) == ("completed", None)
 
     @pytest.mark.asyncio
     async def test_settlement_failure_never_fails_the_turn(self, real_agent_config):
