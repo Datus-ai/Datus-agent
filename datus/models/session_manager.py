@@ -27,6 +27,7 @@ from datus.models.sqlite_session import (
     DatusSQLiteSession,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.tool_summary import detect_tool_failure
 from datus.storage.session_state import ContextState
 from datus.utils.async_utils import run_async
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -42,6 +43,22 @@ if TYPE_CHECKING:
 
 
 DEFAULT_CHAT_AGENT = "chat"
+
+
+def tool_output_action_status(output_data: Any) -> ActionStatus:
+    """Status a replayed tool result deserves, read from the result itself.
+
+    A function tool reports failure by returning ``FuncToolResult(success=0)``
+    rather than raising, so "the call returned" says nothing about whether it
+    worked. Recording every returned result as ``SUCCESS`` makes a failed call
+    render with a success mark and an empty payload, which reads as "there was
+    nothing to return" instead of "this call failed".
+
+    Delegates to :func:`detect_tool_failure`, the same helper the live model
+    integrations use, so a resumed session classifies a result exactly as the
+    turn that produced it did.
+    """
+    return ActionStatus.FAILED if detect_tool_failure(output_data) else ActionStatus.SUCCESS
 
 
 @dataclass(frozen=True)
@@ -1764,20 +1781,23 @@ class SessionManager:
                                             # Last resort: store as string
                                             output_data = {"result": output_text}
 
-                                # Create a new SUCCESS action, prefix with "complete_" like openai_compatible.py
+                                # Create the completion action, prefixed with
+                                # "complete_" like openai_compatible.py. Its status
+                                # comes from the result, not from the call having
+                                # returned.
                                 call_id = message_json.get("call_id", last_action.action_id)
-                                success_action = ActionHistory(
+                                completion_action = ActionHistory(
                                     action_id="complete_" + call_id,
                                     role=ActionRole.TOOL,
                                     messages=f"Tool result: {last_action.action_type}",
                                     action_type=last_action.action_type,
                                     input=last_action.input,
                                     output=output_data,
-                                    status=ActionStatus.SUCCESS,
+                                    status=tool_output_action_status(output_data),
                                     start_time=last_action.start_time,
                                     end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
                                 )
-                                current_actions.append(success_action)
+                                current_actions.append(completion_action)
                             continue
 
                         # Handle assistant messages (thinking and final output)
@@ -1990,18 +2010,18 @@ class SessionManager:
                 except json.JSONDecodeError:
                     output_data = {"result": output_text}
 
-        success_action = ActionHistory(
+        completion_action = ActionHistory(
             action_id="complete_" + (tool_use_id or match.action_id),
             role=ActionRole.TOOL,
             messages=f"Tool result: {match.action_type}",
             action_type=match.action_type,
             input=match.input,
             output=output_data,
-            status=ActionStatus.SUCCESS,
+            status=tool_output_action_status(output_data),
             start_time=match.start_time,
             end_time=datetime.fromisoformat(created_at) if created_at else datetime.now(),
         )
-        current_actions.append(success_action)
+        current_actions.append(completion_action)
 
     def close_all_sessions(self) -> None:
         """Close all active sessions."""
