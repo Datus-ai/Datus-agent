@@ -68,6 +68,8 @@ def parse_dependency_list(requirement_lines: Iterable[str]) -> dict[str, Require
     for requirement in parsed:
         name = canonicalize_name(requirement.name)
         key = f"{name}; {requirement.marker}" if counts[name] > 1 else name
+        if key in requirements:
+            raise ValueError(f"{requirement.name} is listed more than once with the same marker: {key}")
         requirements[key] = requirement
     return requirements
 

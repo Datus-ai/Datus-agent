@@ -217,6 +217,12 @@ def test_requirements_match_pyproject_compares_each_per_environment_pin(tmp_path
     assert "==2.1.4" in error and "==2.1.3" in error
 
 
+def test_parse_dependency_list_rejects_a_repeated_pin(check_release_readiness):
+    """Two lines with the same name and marker would otherwise shadow one another."""
+    with pytest.raises(ValueError, match="pandas"):
+        check_release_readiness.parse_dependency_list(["pandas==2.1.4", "pandas==2.3.3"])
+
+
 def test_requirements_match_pyproject_reports_dependencies_missing_from_either_side(tmp_path, check_release_readiness):
     repo_root = _write_release_repo(tmp_path)
     requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8")
