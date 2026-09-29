@@ -3635,6 +3635,7 @@ class DBFuncTool:
     # these methods, we return safe fallback values so the migration agent
     # can continue in pure-LLM mode.
 
+    @mcp_tool()
     def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Get migration target hints (dialect_family, requires, forbids, type_hints,
@@ -3679,6 +3680,7 @@ class DBFuncTool:
             )
         return FuncToolResult(result=capabilities)
 
+    @mcp_tool()
     def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
         """
         Suggest dialect-specific table layout (distribution/partition/order) for
@@ -3718,6 +3720,7 @@ class DBFuncTool:
             return FuncToolResult(result={})
         return FuncToolResult(result=suggestion)
 
+    @mcp_tool()
     def validate_ddl(
         self,
         datasource: Optional[str] = "",
@@ -3763,6 +3766,11 @@ class DBFuncTool:
 
         # If static errors were found, skip dry_run — DDL is already invalid.
         if target_table and not errors and hasattr(connector, "dry_run_ddl"):
+            # The dry-run is a real CREATE + DROP, so it is gated like every
+            # other write path. MCP calls reach this with no PermissionHooks.
+            refusal = self._refuse_write_if_read_only("validate_ddl", datasource=datasource)
+            if refusal:
+                return refusal
             try:
                 dry_errors = connector.dry_run_ddl(ddl, target_table)
                 if dry_errors:
