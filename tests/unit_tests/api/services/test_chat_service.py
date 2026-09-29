@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from contextlib import AbstractContextManager
 from unittest.mock import MagicMock, patch
 
@@ -563,6 +564,125 @@ class TestChatServiceGetHistory:
             result = chat_svc.get_history("sid")
 
         assert [m.content[0].type for m in result.data.messages] == ["call-tool", "call-tool-result"]
+
+
+class TestChatServiceGetHistorySubagent:
+    """Subagent steps live in a nested session; history replays them flat, as live does."""
+
+    MAIN = "chat_session_main0001"
+    SUB = "semantic_modeling_session_ab12"
+
+    @staticmethod
+    def _tool_pair(call_id: str, name: str, arguments: dict, output: dict) -> list[dict]:
+        return [
+            {"type": "function_call", "call_id": call_id, "name": name, "arguments": json.dumps(arguments)},
+            {"type": "function_call_output", "call_id": call_id, "output": str(output)},
+        ]
+
+    @staticmethod
+    def _assistant(text: str) -> dict:
+        return {"role": "assistant", "type": "message", "content": [{"type": "output_text", "text": text}]}
+
+    def _task_items(self, call_id: str, prompt: str, response: str) -> list[dict]:
+        output = {"success": 1, "error": None, "result": {"response": response, "session_id": self.SUB}}
+        return self._tool_pair(call_id, "task", {"type": "semantic_modeling", "prompt": prompt}, output)
+
+    def _sub_run(self, prompt: str, call_id: str, answer: str) -> list[dict]:
+        read = {"success": 1, "error": None, "result": "orders: ..."}
+        return [
+            {"role": "user", "content": prompt},
+            *self._tool_pair(call_id, "read_file", {"path": "orders.yml"}, read),
+            self._assistant(answer),
+        ]
+
+    @staticmethod
+    def _write(session_dir: str, session_id: str, items: list[dict]) -> None:
+        session = SessionManager(session_dir=session_dir).get_session(session_id)
+        asyncio.run(session.add_items(items))
+
+    def _sub_dir(self, chat_svc) -> str:
+        return os.path.join(chat_svc._session_dir, self.MAIN)
+
+    @staticmethod
+    def _rows(result) -> list[tuple]:
+        rows = []
+        for m in result.data.messages:
+            c = m.content[0]
+            label = c.payload.get("toolName") or c.payload.get("content")
+            rows.append((c.type, label, m.depth, m.parent_action_id))
+        return rows
+
+    def test_subagent_steps_replay_flat_before_task_result(self, chat_svc):
+        self._write(
+            chat_svc._session_dir,
+            self.MAIN,
+            [
+                {"role": "user", "content": "model the orders table"},
+                *self._task_items("call_task1", "build a model", "done"),
+                self._assistant("The subagent finished."),
+            ],
+        )
+        self._write(self._sub_dir(chat_svc), self.SUB, self._sub_run("build a model", "call_read1", "Model written."))
+
+        result = chat_svc.get_history(self.MAIN)
+
+        assert result.success is True
+        assert self._rows(result) == [
+            ("markdown", "model the orders table", 0, None),
+            ("call-tool", "task", 0, None),
+            ("call-tool", "read_file", 1, "call_task1"),
+            ("call-tool-result", "read_file", 1, "call_task1"),
+            ("thinking", "Model written.", 1, "call_task1"),
+            ("call-tool-result", "task", 0, None),
+            ("thinking", "The subagent finished.", 0, None),
+        ]
+
+    def test_resumed_subagent_session_replays_each_run_under_its_own_task(self, chat_svc):
+        self._write(
+            chat_svc._session_dir,
+            self.MAIN,
+            [
+                {"role": "user", "content": "model it"},
+                *self._task_items("call_task1", "first pass", "v1"),
+                *self._task_items("call_task2", "second pass", "v2"),
+                self._assistant("Both passes done."),
+            ],
+        )
+        self._write(
+            self._sub_dir(chat_svc),
+            self.SUB,
+            [
+                *self._sub_run("first pass", "call_read1", "Pass one."),
+                *self._sub_run("second pass", "call_read2", "Pass two."),
+            ],
+        )
+
+        result = chat_svc.get_history(self.MAIN)
+
+        sub_rows = [(r[1], r[3]) for r in self._rows(result) if r[2] == 1 and r[0] == "thinking"]
+        assert sub_rows == [("Pass one.", "call_task1"), ("Pass two.", "call_task2")]
+
+    def test_missing_subagent_session_keeps_history_and_creates_nothing(self, chat_svc):
+        self._write(
+            chat_svc._session_dir,
+            self.MAIN,
+            [{"role": "user", "content": "model it"}, *self._task_items("call_task1", "p", "done")],
+        )
+
+        result = chat_svc.get_history(self.MAIN)
+
+        assert [r[:2] for r in self._rows(result)] == [
+            ("markdown", "model it"),
+            ("call-tool", "task"),
+            ("call-tool-result", "task"),
+        ]
+        assert not os.path.exists(self._sub_dir(chat_svc))
+
+    @pytest.mark.parametrize("session_id", ["..", "a..b", "bad/id"])
+    def test_unsafe_session_ids_are_rejected(self, session_id):
+        from datus.api.services.chat_service import _is_safe_session_id
+
+        assert _is_safe_session_id(session_id) is False
 
 
 class TestChatServiceScopePropagation:
