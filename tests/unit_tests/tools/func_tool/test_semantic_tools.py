@@ -296,6 +296,59 @@ class TestQueryMetricsCompression:
         assert "49,4900" in cached_result["csv"]
         assert "..." not in cached_result["csv"]
 
+    def _query_fifty_rows(self, semantic_tools):
+        rows = [{"id": i, "value": i * 100} for i in range(50)]
+        query_result = QueryResult(columns=["id", "value"], data=rows, metadata={})
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            return semantic_tools.query_metrics(metrics=["value"])
+
+    def test_get_query_metrics_result_pages_the_full_rows(self, semantic_tools):
+        """The rows the compressed preview left out are reachable, a page at a time."""
+        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+
+        first = semantic_tools.get_query_metrics_result(result_id, offset=0, limit=20)
+        last = semantic_tools.get_query_metrics_result(result_id, offset=40, limit=20)
+
+        assert first.success == 1
+        assert first.result["row_count"] == 50
+        assert first.result["returned"] == 20
+        assert first.result["has_more"] is True
+        assert first.result["csv"].splitlines()[0] == "id,value"
+        assert first.result["csv"].splitlines()[1:] == [f"{i},{i * 100}" for i in range(20)]
+
+        assert last.result["returned"] == 10
+        assert last.result["has_more"] is False
+        assert last.result["csv"].splitlines()[-1] == "49,4900"
+
+    def test_get_query_metrics_result_caps_the_page(self, semantic_tools):
+        semantic_tools.MAX_QUERY_METRICS_RESULT_PAGE = 5
+        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+
+        page = semantic_tools.get_query_metrics_result(result_id, limit=1000)
+
+        assert page.result["returned"] == 5
+        assert page.result["has_more"] is True
+
+    def test_get_query_metrics_result_refuses_an_unknown_id(self, semantic_tools):
+        result = semantic_tools.get_query_metrics_result("query_metrics:1")
+
+        assert result.success == 0
+        assert "Unknown or expired" in result.error
+
+    def test_result_ids_cannot_be_guessed_from_one_another(self, semantic_tools):
+        """``get_query_metrics_result`` serves whoever names a key, and one instance
+        can serve many MCP clients — a counter would let them read each other's."""
+        first = semantic_tools._cache_query_metrics_result(["id"], [{"id": 1}])
+        second = semantic_tools._cache_query_metrics_result(["id"], [{"id": 2}])
+
+        assert first != second
+        assert first.startswith("query_metrics:") and second.startswith("query_metrics:")
+        assert first not in {"query_metrics:1", "query_metrics:2"}
+        assert len(first.split(":", 1)[1]) >= 16
+
+    def test_get_query_metrics_result_is_not_a_chat_tool(self, semantic_tools):
+        assert "get_query_metrics_result" not in SemanticTools.all_tools_name()
+
     def test_query_metrics_full_result_cache_is_bounded(self, semantic_tools):
         semantic_tools.MAX_QUERY_METRICS_RESULT_CACHE_SIZE = 2
 

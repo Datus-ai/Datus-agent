@@ -13,7 +13,9 @@ import csv
 import hashlib
 import inspect
 import io
+import itertools
 import json
+import secrets
 from collections import OrderedDict
 from copy import copy
 from pathlib import Path
@@ -540,7 +542,6 @@ class SemanticTools:
             token_threshold=METRIC_RESULT_TOKEN_BUDGET,
         )
         self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
-        self._query_metrics_result_cache_counter = 0
 
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
@@ -597,8 +598,10 @@ class SemanticTools:
         if not full_csv:
             return None
 
-        self._query_metrics_result_cache_counter += 1
-        cache_key = f"query_metrics:{self._query_metrics_result_cache_counter}"
+        # Random, not a counter: ``get_query_metrics_result`` hands a cached result
+        # to whoever names its key, and on the agent's dynamic MCP server one
+        # instance serves every client of a datasource.
+        cache_key = f"query_metrics:{secrets.token_urlsafe(12)}"
         self._query_metrics_result_cache[cache_key] = {
             "columns": list(columns),
             "csv": full_csv,
@@ -610,6 +613,57 @@ class SemanticTools:
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         return self._query_metrics_result_cache.get(cache_key)
+
+    # One page has to fit an MCP response; the cached result is bounded only by the query.
+    MAX_QUERY_METRICS_RESULT_PAGE = 1000
+
+    # MCP only, deliberately not in ``available_tools``: a node's model is told the
+    # full result is used for its final output, and paging it into the context
+    # would be the opposite of the compression.
+    @mcp_tool(availability_check="has_semantic_adapter")
+    def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
+        """
+        Read the full rows behind a ``query_metrics`` result, one page at a time.
+
+        ``query_metrics`` returns a compressed preview in ``data`` and, for a real
+        (non-dry-run) query, a ``result_id`` naming the complete result it kept.
+        Use this when the preview is not enough. It runs no query, and only knows
+        results that ``query_metrics`` returned to this caller.
+
+        Args:
+            result_id: The ``result_id`` an earlier ``query_metrics`` call returned.
+            offset: Index of the first row to return, 0-based.
+            limit: Maximum number of rows to return, at most 1000.
+
+        Returns:
+            result = {"result_id", "columns", "csv" (header plus this page's rows),
+            "row_count" (rows in the whole result), "offset", "returned", "has_more"}
+        """
+        result_id = str(result_id or "").strip()
+        cached = self.get_cached_query_metrics_result(result_id)
+        if cached is None:
+            return FuncToolResult(success=0, error=f"Unknown or expired query_metrics result_id: {result_id}")
+        offset = max(int(offset or 0), 0)
+        limit = min(max(int(limit or 0), 1), self.MAX_QUERY_METRICS_RESULT_PAGE)
+
+        reader = csv.reader(io.StringIO(cached["csv"]))
+        header = next(reader, list(cached["columns"]))
+        page = list(itertools.islice(reader, offset, offset + limit))
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(header)
+        writer.writerows(page)
+        return FuncToolResult(
+            result={
+                "result_id": result_id,
+                "columns": list(cached["columns"]),
+                "csv": buf.getvalue(),
+                "row_count": cached["row_count"],
+                "offset": offset,
+                "returned": len(page),
+                "has_more": offset + len(page) < cached["row_count"],
+            }
+        )
 
     @staticmethod
     def _drop_compiled_sql(metadata: dict) -> dict:

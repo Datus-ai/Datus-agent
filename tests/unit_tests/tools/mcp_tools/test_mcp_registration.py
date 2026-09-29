@@ -197,7 +197,14 @@ class TestGlobalToolRegistry:
                 "semantic_tool",
                 "has_semantic_tools",
                 "semantic_tools",
-                {"list_metrics", "get_metric", "query_metrics", "validate_semantic", "attribution_analyze"},
+                {
+                    "list_metrics",
+                    "get_metric",
+                    "query_metrics",
+                    "get_query_metrics_result",
+                    "validate_semantic",
+                    "attribution_analyze",
+                },
             ),
             ("date_parsing_tool", "has_date_parsing_tools", "date_parsing_tools", {"parse_temporal_expressions"}),
             (
