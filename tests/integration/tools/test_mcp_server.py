@@ -177,7 +177,7 @@ async def mcp_stdio_session(server_params: StdioServerParameters):
 def parse_tool_result(result) -> dict:
     """Parse a CallToolResult into a dict with success/error/result keys."""
     assert not result.isError, f"Tool call returned error: {result}"
-    assert len(result.content) > 0, "Tool call returned empty content"
+    assert result.content[0].type == "text"
     data = json.loads(result.content[0].text)
     return data
 
@@ -222,7 +222,7 @@ class StaticModeTestBase:
             result = await session.call_tool("describe_table", {"table_name": "customer"})
             data = parse_tool_result(result)
             assert data["success"] == 1, f"describe_table failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert "c_custkey" in {col["name"] for col in data["result"]["columns"]}
 
     async def test_read_query(self):
         """Verify execute_sql executes SQL and returns results."""
@@ -230,7 +230,7 @@ class StaticModeTestBase:
             result = await session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
             data = parse_tool_result(result)
             assert data["success"] == 1, f"execute_sql failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert data["result"]["original_columns"] == ["cnt"]
 
     async def test_list_databases(self):
         """Verify list_databases returns database info."""
@@ -308,7 +308,7 @@ class DynamicModeTestBase:
             result = await session.call_tool("describe_table", {"table_name": "supplier"})
             data = parse_tool_result(result)
             assert data["success"] == 1, f"describe_table ssb failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert "s_suppkey" in {col["name"] for col in data["result"]["columns"]}
 
     async def test_read_query_ssb(self):
         """Verify execute_sql on ssb_sqlite executes SQL."""
@@ -316,7 +316,7 @@ class DynamicModeTestBase:
             result = await session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM supplier"})
             data = parse_tool_result(result)
             assert data["success"] == 1, f"execute_sql ssb failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert data["result"]["original_columns"] == ["cnt"]
 
     async def test_read_query_duckdb(self):
         """Verify execute_sql on duckdb executes SQL."""
@@ -326,7 +326,7 @@ class DynamicModeTestBase:
             )
             data = parse_tool_result(result)
             assert data["success"] == 1, f"execute_sql duckdb failed: {data.get('error')}"
-            assert data["result"] is not None
+            assert data["result"]["original_columns"] == ["cnt"]
 
     async def test_multi_datasource_isolation(self):
         """Verify that ssb_sqlite and duckdb return different table sets."""
@@ -533,7 +533,7 @@ class TestMCPClient:
             data = parse_tool_result(result)
 
             assert data["success"] == 1, f"list_subject_tree should succeed, got error: {data.get('error')}"
-            assert data["result"] is not None, "list_subject_tree should return a result"
+            assert isinstance(data["result"], dict)
 
     async def test_error_handling_invalid_sql(self):
         """N10-07a: execute_sql with invalid SQL returns proper error via MCP."""
@@ -542,8 +542,7 @@ class TestMCPClient:
             data = parse_tool_result(result)
 
             assert data["success"] == 0, "execute_sql with invalid table should return success=0"
-            assert data.get("error") is not None, "Should have error message"
-            assert len(data["error"]) > 0, "Error message should not be empty"
+            assert "nonexistent_xyz_table" in data["error"]
 
     async def test_error_handling_nonexistent_table_describe(self):
         """N10-07b: describe_table for nonexistent table returns a clear failure."""
@@ -561,7 +560,6 @@ class TestMCPClient:
             data = parse_tool_result(result)
 
             assert data["success"] == 1, f"execute_sql should succeed, got error: {data.get('error')}"
-            assert data["result"] is not None, "Should have result data"
             # Result should contain data in some form
             result_str = str(data["result"])
             assert len(result_str) > 100, f"Large result should have substantial content, got len={len(result_str)}"
@@ -582,7 +580,12 @@ class TestMCPClient:
             for i, result in enumerate(results):
                 data = parse_tool_result(result)
                 assert data["success"] == 1, f"Concurrent call {i} should succeed, got error: {data.get('error')}"
-                assert data["result"] is not None, f"Concurrent call {i} should have result"
+                if i == 0:
+                    assert "lineorder" in str(data["result"]).lower()
+                elif i == 1:
+                    assert "c_custkey" in {col["name"] for col in data["result"]["columns"]}
+                else:
+                    assert data["result"]["original_columns"] == ["cnt"]
 
 
 # =============================================================================
@@ -605,8 +608,6 @@ class TestMCPToolRegistration:
     async def test_list_tools(self, server):
         """Test that tools are registered with FastMCP."""
         tools = await server.mcp.list_tools()
-        assert len(tools) > 0
-
         tool_names = [t.name for t in tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
@@ -635,14 +636,13 @@ class TestMCPToolExecution:
     async def test_call_list_tables(self, server):
         """Test calling list_tables tool."""
         result = await server.mcp.call_tool("list_tables", {})
-        assert result is not None
-        assert len(result) > 0
+        assert result[0][0].type == "text"
 
     @pytest.mark.asyncio
     async def test_call_list_subject_tree(self, server):
         """Test calling list_subject_tree tool."""
         result = await server.mcp.call_tool("list_subject_tree", {})
-        assert result is not None
+        assert result[0][0].type == "text"
 
 
 @pytest.mark.nightly

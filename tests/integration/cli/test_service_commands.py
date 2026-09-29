@@ -246,8 +246,8 @@ def bi_core_stub():
 def _build_agent_config(tmp_path, bi_tools):
     """Construct a minimal real ``AgentConfig`` scoped to ``tmp_path``.
 
-    The BI-dispatch path only touches ``services.bi_tools`` and the derived
-    ``dashboard_config``; all other sections (models, databases,
+    The BI-dispatch path only touches ``services.bi_platforms`` and the derived
+    ``dashboard_config``; all other sections (models, datasources,
     agentic_nodes, storage) are left at sensible defaults so we do not pay
     the cost of the heavier ``real_agent_config`` fixture in
     ``tests/unit_tests/conftest.py``.
@@ -266,8 +266,8 @@ def _build_agent_config(tmp_path, bi_tools):
             },
         },
         services={
-            "databases": {},
-            "bi_tools": dict(bi_tools),
+            "datasources": {},
+            "bi_platforms": dict(bi_tools),
             "schedulers": {},
         },
         project_root=str(tmp_path / "workspace"),
@@ -443,13 +443,13 @@ class TestWriteBlockedAndUnknown:
         cmd = ServiceCommands(cli_with_superset)
         cmd.dispatch("/superset.create_dashboard", "--title=new")
         out = _output(cli_with_superset).lower()
-        assert "write" in out or "read-only" in out or "privileged" in out
+        assert "read-only" in out
 
     def test_unknown_method_prints_hint(self, cli_with_superset):
         cmd = ServiceCommands(cli_with_superset)
         cmd.dispatch("/superset.no_such", "")
         out = _output(cli_with_superset)
-        assert "Unknown method" in out or "no_such" in out
+        assert "Unknown method" in out
 
 
 class TestMultiInstanceSamePlatform:

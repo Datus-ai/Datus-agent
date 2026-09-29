@@ -370,7 +370,7 @@ class TestEmbeddedPanel:
             panel = app.build_embedded_panel(fut)
             assert isinstance(panel, EmbeddedWizard)
             assert panel.done_future is fut
-            assert app._on_done is not None
+            assert callable(app._on_done)
             # Initial focus is the list window the panel builds.
             assert panel.first_focus is app._list_window
         finally:

@@ -46,7 +46,7 @@ class TestDBFuncToolIntegrationReal:
         assert result.success == 1
         assert "columns" in result.result
         columns = result.result["columns"]
-        assert len(columns) > 0
+        assert {"c_custkey", "c_name"}.issubset({col["name"] for col in columns})
 
         # Check column structure
         for col in columns:
@@ -94,23 +94,22 @@ class TestDBFuncToolIntegrationReal:
         result = ssb_db_tool.read_query("SELECT COUNT(*) as cnt FROM customer")
 
         assert result.success == 1
-        assert result.result is not None
-        # Result should be compressed data with count info
-        assert "data" in result.result or "is_compressed" in result.result
+        assert result.result["original_rows"] == 1
+        assert result.result["original_columns"] == ["cnt"]
 
     def test_sqlite_read_query_with_limit(self, ssb_db_tool):
         """Test read_query with LIMIT clause."""
         result = ssb_db_tool.read_query("SELECT * FROM customer LIMIT 5")
 
         assert result.success == 1
-        assert result.result is not None
+        assert result.result["original_rows"] == 5
 
     def test_sqlite_read_query_invalid_sql_returns_error(self, ssb_db_tool):
         """Test that invalid SQL returns an error."""
         result = ssb_db_tool.read_query("SELECT * FROM nonexistent_table_xyz")
 
         assert result.success == 0
-        assert result.error is not None
+        assert "nonexistent_table_xyz" in result.error
 
     def test_sqlite_available_tools_correct_count(self, ssb_db_tool):
         """Test that SQLite returns correct number of tools."""
@@ -133,8 +132,7 @@ class TestDBFuncToolIntegrationReal:
 
         tool = db_function_tool_instance(ssb_sqlite_config)
 
-        assert tool._db_manager is not None
-        assert tool.connector is not None
+        assert tool.connector.dialect == DBType.SQLITE
 
 
 @pytest.mark.acceptance
@@ -163,7 +161,6 @@ class TestSqliteMultiConnector:
     def test_connector_mode_initialization(self, db_tool):
         """Test that multi-connector mode initializes correctly."""
 
-        assert db_tool._db_manager is not None
         assert db_tool._default_datasource == "bird_sqlite"
         assert db_tool._connector_cache_size > 1
 
@@ -235,21 +232,22 @@ class TestDuckDBTool:
         assert result.success == 1
         assert "columns" in result.result
         columns = result.result["columns"]
-        assert len(columns) > 0
+        assert {col["name"] for col in columns} == {"country", "ds", "id_customer"}
 
     def test_duckdb_read_query_executes_sql(self, duckdb_tool):
         """Test that read_query executes SQL on DuckDB."""
         result = duckdb_tool.read_query("SELECT COUNT(*) as cnt FROM mf_demo.mf_demo_customers")
 
         assert result.success == 1
-        assert result.result is not None
+        assert result.result["original_rows"] == 1
+        assert result.result["original_columns"] == ["cnt"]
 
     def test_duckdb_read_query_with_schema_qualified_table(self, duckdb_tool):
         """Test read_query with schema-qualified table name."""
         result = duckdb_tool.read_query("SELECT * FROM mf_demo.mf_demo_countries LIMIT 3")
 
         assert result.success == 1
-        assert result.result is not None
+        assert result.result["original_rows"] == 3
 
     def test_duckdb_connector_dialect(self, duckdb_tool):
         """Test that DuckDB connector has correct dialect."""
@@ -286,7 +284,7 @@ class TestConnectorInterface:
         connector = connector_registry.create_connector("sqlite", config)
         try:
             result = connector.test_connection()
-            assert result is not None
+            assert result is True
         finally:
             connector.close()
 
@@ -300,7 +298,7 @@ class TestConnectorInterface:
         connector = connector_registry.create_connector("duckdb", config)
         try:
             result = connector.test_connection()
-            assert result is not None
+            assert result is True
         finally:
             connector.close()
 
@@ -331,7 +329,6 @@ class TestDBFuncToolErrors:
         result = ssb_db_tool.read_query("SELECT * FROM nonexistent_xyz_table")
 
         assert result.success == 0, "Should fail for nonexistent table"
-        assert result.error is not None, "Error message should not be None"
         assert len(result.error) > 10, f"Error message should be descriptive, got: {result.error}"
 
     def test_read_query_invalid_sql_syntax(self, ssb_db_tool):
@@ -339,8 +336,7 @@ class TestDBFuncToolErrors:
         result = ssb_db_tool.read_query("COMPLETELY INVALID SQL STATEMENT")
 
         assert result.success == 0, "Should fail for invalid SQL"
-        assert result.error is not None, "Error message should not be None"
-        assert len(result.error) > 0, "Error message should not be empty"
+        assert "Only read-only queries" in result.error
 
 
 @pytest.mark.acceptance
@@ -397,7 +393,7 @@ class TestScopedTables:
         # Blocked table should fail
         blocked_result = scoped_tool.describe_table("supplier")
         assert blocked_result.success == 0, "describe_table for out-of-scope table should fail"
-        assert blocked_result.error is not None, "Should have error message"
+        assert "scope" in blocked_result.error.lower()
 
 
 @pytest.mark.acceptance

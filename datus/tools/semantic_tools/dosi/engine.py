@@ -33,6 +33,26 @@ _INSTALL_HINT = "dosi-engine is missing; reinstall datus-agent from its lockfile
 _METRIC_FRAGMENT_DIR = "metrics"
 
 
+def _normalize_sqlite_source(source: str) -> str:
+    """Resolve Datus SQLite URI spellings to the underlying file."""
+    text = str(source).strip()
+    if text.lower().startswith("sqlite:"):
+        text = text[len("sqlite:") :]
+        while text.startswith("//"):
+            text = text[1:]
+    return os.path.abspath(os.path.expanduser(text))
+
+
+def _sqlite_source_mtime(sqlite_path: str) -> float:
+    """Include SQLite WAL and SHM writes when checking connection freshness."""
+    newest = os.path.getmtime(sqlite_path)
+    for suffix in ("-wal", "-shm"):
+        sidecar = sqlite_path + suffix
+        if os.path.exists(sidecar):
+            newest = max(newest, os.path.getmtime(sidecar))
+    return newest
+
+
 def resolve_model_files(config: DosiConfig) -> list[str]:
     """Resolve every model file available to a Dosi runtime configuration.
 
@@ -173,18 +193,14 @@ class EngineHandle:
         source = db_config.get("uri") or db_config.get("path")
         if not source:
             return None
-        from datus.tools.semantic_tools.dosi.sqlite_bridge import normalize_sqlite_source
-
-        return normalize_sqlite_source(str(source))
+        return _normalize_sqlite_source(str(source))
 
     def _sqlite_signature(self) -> Optional[float]:
         source = self._sqlite_source()
         if source is None:
             return None
-        from datus.tools.semantic_tools.dosi.sqlite_bridge import sqlite_source_mtime
-
         try:
-            return sqlite_source_mtime(source)
+            return _sqlite_source_mtime(source)
         except OSError:
             # Let _runtime_connections raise the actionable error.
             return None

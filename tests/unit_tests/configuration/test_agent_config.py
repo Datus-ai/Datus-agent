@@ -635,10 +635,11 @@ class TestAgentConfigServiceSelectors:
             skip_init_dirs=True,
         )
 
-    def test_legacy_semantic_layer_is_ignored_with_warning(self, tmp_path, caplog):
-        cfg = self._make(tmp_path, services={"datasources": {}, "semantic_layer": {"legacy": None}})
+    def test_legacy_semantic_layer_is_ignored_with_warning(self, tmp_path):
+        with patch("datus.configuration.agent_config.logger.warning") as warning:
+            cfg = self._make(tmp_path, services={"datasources": {}, "semantic_layer": {"legacy": None}})
         assert not hasattr(cfg.services, "semantic_layer")
-        assert "Ignoring `agent.services.semantic_layer`" in caplog.text
+        warning.assert_called_once_with("Ignoring `agent.services.semantic_layer`; Dosi is built in.")
 
     def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
         cfg = self._make(

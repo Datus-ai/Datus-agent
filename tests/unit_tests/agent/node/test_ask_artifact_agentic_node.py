@@ -2282,7 +2282,9 @@ class TestChatDecoupling:
             real_agent_config, "web_tool.*,filesystem_tools.*", name="ask_web", slug="withweb"
         )
         node._get_system_prompt()
-        assert node._web_tool is not None  # gate passed through to the base injector
+        from datus.tools.func_tool.web_tool import WebTool
+
+        assert isinstance(node._web_tool, WebTool)
 
     def test_no_db_boundary_statement_gated_on_db_exposure(self, real_agent_config):
         """A db-less whitelist gets the explicit 'no live database access'

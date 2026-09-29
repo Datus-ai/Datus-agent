@@ -81,7 +81,8 @@ class TestAskMetricsAgentic:
         queried = node.semantic_tools.query_metrics(metrics=["school_count", "total_enrollment_k12"])
         assert queried.success == 1, f"query_metrics failed: {queried.error}"
         cached = node.semantic_tools.get_cached_query_metrics_result(queried.result["result_id"])
-        assert cached is not None
+        assert cached["columns"] == ["school_count", "total_enrollment_k12"]
+        assert cached["row_count"] == 1
         rows = list(csv.DictReader(io.StringIO(cached["csv"])))
         assert len(rows) == 1
         assert int(rows[0]["school_count"]) == 9986

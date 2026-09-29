@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 
 from datus.cli.bootstrap_app import (
@@ -190,9 +191,9 @@ class TestEmbeddedPanel:
             assert isinstance(panel, EmbeddedWizard)
             assert panel.done_future is fut
             # Key bindings instance is attached to the panel container subtree.
-            assert panel.key_bindings is not None
+            assert isinstance(panel.key_bindings, KeyBindings)
             # _on_done must be installed so _finish dispatches through the future.
-            assert app._on_done is not None
+            assert callable(app._on_done)
         finally:
             loop.close()
 

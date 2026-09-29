@@ -220,7 +220,6 @@ def test_dosi_authoring_validates_reconciles_and_queries_without_llm(
     live = node.semantic_tools.query_metrics(metrics=["revenue"])
     assert live.success == 1, live.error
     cached = node.semantic_tools.get_cached_query_metrics_result(live.result["result_id"])
-    assert cached is not None
     assert cached["columns"] == ["revenue"]
     rows = list(csv.DictReader(io.StringIO(cached["csv"])))
     assert len(rows) == 1
