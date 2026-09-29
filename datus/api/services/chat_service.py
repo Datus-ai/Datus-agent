@@ -100,27 +100,19 @@ def _subagent_run_actions(
 ) -> List[ActionHistory]:
     """The steps one ``task`` call's subagent ran, stamped as depth-1 children of the call.
 
-    Subagent sessions live at ``{session dir}/{parent session id}/{sub session id}.db``,
-    which the parent transcript never includes. ``session_dirs`` are the base dirs to try,
-    in order (see ``AgenticNode.session_manager`` for the layout).
+    The parent transcript never includes them; they sit in the subagent's own session.
+    ``session_dirs`` are the directories to look in, in order.
     """
     sub_session_id = _subagent_session_id(result_action)
     if not sub_session_id or not _is_safe_session_id(parent_session_id) or not _is_safe_session_id(sub_session_id):
         return []
     # SessionManager() creates its directory, so find the file before building one.
-    nested_dir = next(
-        (
-            os.path.join(base, parent_session_id)
-            for base in session_dirs
-            if os.path.isfile(os.path.join(base, parent_session_id, f"{sub_session_id}.db"))
-        ),
-        None,
-    )
-    if nested_dir is None:
+    sub_dir = next((d for d in session_dirs if os.path.isfile(os.path.join(d, f"{sub_session_id}.db"))), None)
+    if sub_dir is None:
         return []
 
     try:
-        raw_messages = SessionManager(session_dir=nested_dir).get_session_messages(sub_session_id)
+        raw_messages = SessionManager(session_dir=sub_dir).get_session_messages(sub_session_id)
     except Exception as e:
         logger.warning(f"Failed to read subagent session {sub_session_id} for history: {e}")
         return []
@@ -450,9 +442,14 @@ class ChatService:
             # A resumed subagent session holds several runs; the k-th task result
             # for a session id replays that session's k-th run.
             subagent_runs_used: Dict[str, int] = {}
-            # Subagent nodes are built without a scope, so their sessions sit under the
-            # unscoped dir; the scoped one covers a node that does carry the user's scope.
-            subagent_session_dirs = [self._session_dir, session_manager.session_dir]
+            # Subagent nodes carry no scope, and their session manager is cached during
+            # construction — before SubAgentTaskTool sets ``session_subdir`` — so today the
+            # .db lands flat in the unscoped dir. The nested layouts are the intended ones.
+            subagent_session_dirs = [
+                self._session_dir,
+                os.path.join(self._session_dir, session_id),
+                os.path.join(session_manager.session_dir, session_id),
+            ]
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")

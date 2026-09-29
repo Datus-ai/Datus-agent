@@ -604,8 +604,17 @@ class TestChatServiceGetHistorySubagent:
     def _main_manager(self, chat_svc) -> SessionManager:
         return SessionManager(session_dir=chat_svc._session_dir, scope=self.USER)
 
-    def _sub_manager(self, chat_svc, scope=None) -> SessionManager:
-        """The manager a subagent node really writes through (``SubAgentTaskTool`` sets no scope)."""
+    @staticmethod
+    def _sub_manager(chat_svc) -> SessionManager:
+        """Where a subagent session lands today: flat and unscoped.
+
+        The node carries no scope, and its manager is cached in ``__init__`` before
+        ``SubAgentTaskTool`` sets ``session_subdir`` (observed on a live backend).
+        """
+        return SessionManager(session_dir=chat_svc._session_dir)
+
+    def _nested_sub_manager(self, chat_svc, scope=None) -> SessionManager:
+        """The intended nested layout, built by the node's own path rule."""
         from datus.agent.node.agentic_node import AgenticNode
 
         node = SimpleNamespace(
@@ -694,20 +703,21 @@ class TestChatServiceGetHistorySubagent:
         assert not os.path.exists(os.path.join(chat_svc._session_dir, self.MAIN))
         assert not os.path.exists(os.path.join(chat_svc._session_dir, self.USER, self.MAIN))
 
-    def test_subagent_session_under_the_user_scope_is_found_too(self, chat_svc):
-        """Fallback for a subagent node that does carry the user's scope."""
+    @pytest.mark.parametrize("scope", [None, "alice"], ids=["nested", "nested-user-scope"])
+    def test_intended_nested_layouts_are_found_too(self, chat_svc, scope):
+        """Once the nested layout takes effect, history still finds the session."""
         self._write(
             self._main_manager(chat_svc),
             self.MAIN,
             [{"role": "user", "content": "model it"}, *self._task_items("call_task1", "p", "done")],
         )
         self._write(
-            self._sub_manager(chat_svc, scope=self.USER), self.SUB, self._sub_run("p", "call_read1", "Scoped run.")
+            self._nested_sub_manager(chat_svc, scope=scope), self.SUB, self._sub_run("p", "call_read1", "Nested run.")
         )
 
         result = chat_svc.get_history(self.MAIN, user_id=self.USER)
 
-        assert ("thinking", "Scoped run.", 1, "call_task1") in self._rows(result)
+        assert ("thinking", "Nested run.", 1, "call_task1") in self._rows(result)
 
     @pytest.mark.parametrize("session_id", ["..", "a..b", "bad/id"])
     def test_unsafe_session_ids_are_rejected(self, session_id):
