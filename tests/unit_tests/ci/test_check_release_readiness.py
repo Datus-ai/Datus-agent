@@ -174,6 +174,49 @@ def test_requirements_match_pyproject_rejects_every_kind_of_divergence(
         assert fragment in error
 
 
+def _add_split_pin(repo_root: Path, pyproject_pin: str, requirements_pin: str) -> None:
+    """Pin one package twice, per Python version, as pandas is."""
+    pyproject = repo_root / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace(
+            '"datus-db-core>=0.1.3",',
+            '"datus-db-core>=0.1.3",\n'
+            f"    'pandas{pyproject_pin}; python_version < \"3.13\"',\n"
+            "    'pandas>=2.3.3,<3; python_version >= \"3.13\"',",
+        ),
+        encoding="utf-8",
+    )
+    requirements = repo_root / "requirements.txt"
+    requirements.write_text(
+        requirements.read_text(encoding="utf-8")
+        + f'\npandas{requirements_pin}; python_version < "3.13"'
+        + '\npandas>=2.3.3,<3; python_version >= "3.13"\n',
+        encoding="utf-8",
+    )
+
+
+def test_requirements_match_pyproject_compares_each_per_environment_pin(tmp_path, check_release_readiness):
+    """Both lines of a split pin are compared, not just whichever parsed last.
+
+    The drift is on the first line on purpose: keyed by name alone, the second
+    line replaced it and the check passed.
+    """
+    (tmp_path / "same").mkdir()
+    repo_root = _write_release_repo(tmp_path / "same")
+    _add_split_pin(repo_root, "==2.1.4", "==2.1.4")
+
+    assert check_release_readiness.check_requirements_match_pyproject(repo_root) == []
+
+    (tmp_path / "drifted").mkdir()
+    repo_root = _write_release_repo(tmp_path / "drifted")
+    _add_split_pin(repo_root, "==2.1.4", "==2.1.3")
+
+    (error,) = check_release_readiness.check_requirements_match_pyproject(repo_root)
+
+    assert "pandas" in error
+    assert "==2.1.4" in error and "==2.1.3" in error
+
+
 def test_requirements_match_pyproject_reports_dependencies_missing_from_either_side(tmp_path, check_release_readiness):
     repo_root = _write_release_repo(tmp_path)
     requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8")
