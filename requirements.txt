@@ -2,13 +2,14 @@
 # `ci/check_release_readiness.py` compares the two and fails on any drift, so
 # every edit here needs the matching edit there (and vice versa).
 python-dotenv==1.2.2
-pandas==2.1.4
+pandas==2.1.4; python_version < '3.13'
+pandas>=2.3.3,<3; python_version >= '3.13'
 sqlalchemy==2.0.23
 sqlglot>=26.12.0,<31
 pyyaml==6.0.1
 packaging>=21.0
 lancedb==0.34.0
-fastembed==0.4.2
+fastembed==0.8.1
 structlog>=23.1.0
 # OpenAI 2.45 makes cache_write_tokens a first-class InputTokensDetails
 # field, so AdvancedSQLiteSession persists it without a Datus-side patch.

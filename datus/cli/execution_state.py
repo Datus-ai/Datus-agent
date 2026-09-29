@@ -447,6 +447,11 @@ class InteractionBroker:
         """Check if there are pending interactions waiting for response."""
         return len(self._pending) > 0
 
+    def is_pending(self, action_id: str) -> bool:
+        """Check whether ``action_id`` is still waiting for a response."""
+        with self._lock:
+            return action_id in self._pending
+
     def is_queue_empty(self) -> bool:
         """Check if the output queue is empty."""
         return self._output_queue.empty()
