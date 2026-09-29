@@ -621,6 +621,9 @@ class SemanticTools:
 
     # One page has to fit an MCP response; the cached result is bounded only by the query.
     MAX_QUERY_METRICS_RESULT_PAGE = 1000
+    # ...and a row cap alone does not bound it: a few wide cells can make 1000 rows
+    # any size. A page over this many characters is cut down to fewer rows.
+    MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 1_000_000
 
     # MCP only, deliberately not in ``available_tools``: a node's model is told the
     # full result is used for its final output, and paging it into the context
@@ -638,7 +641,10 @@ class SemanticTools:
         Args:
             result_id: The ``result_id`` an earlier ``query_metrics`` call returned.
             offset: Index of the first row to return, 0-based.
-            limit: Maximum number of rows to return, at most 1000.
+            limit: Maximum number of rows to return, at most 1000. A page is also
+                cut to fewer rows when its CSV would pass about 1,000,000
+                characters; ``returned`` says how many came back, so continue
+                from ``offset + returned``.
 
         Returns:
             result = {"result_id", "columns", "csv" (header plus this page's rows),
@@ -652,14 +658,23 @@ class SemanticTools:
         limit = min(max(int(limit or 0), 1), self.MAX_QUERY_METRICS_RESULT_PAGE)
 
         # Serialized with the same writer as the full ``csv``, so a page reads
-        # exactly like the matching rows of it.
-        page = self._slice_query_data(cached["data"], offset, limit)
+        # exactly like the matching rows of it. Halved until it fits the character
+        # budget, but never below one row: paging has to advance past a row that
+        # is on its own wider than the budget.
+        columns = list(cached["columns"])
+        page_rows = limit
+        while True:
+            page = self._slice_query_data(cached["data"], offset, page_rows)
+            page_csv = self._query_data_to_csv(columns, page)
+            if len(page_csv) <= self.MAX_QUERY_METRICS_RESULT_PAGE_CHARS or page_rows == 1:
+                break
+            page_rows = max(1, page_rows // 2)
         returned = self._query_data_row_count(page)
         return FuncToolResult(
             result={
                 "result_id": result_id,
-                "columns": list(cached["columns"]),
-                "csv": self._query_data_to_csv(list(cached["columns"]), page),
+                "columns": columns,
+                "csv": page_csv,
                 "row_count": cached["row_count"],
                 "offset": offset,
                 "returned": returned,
