@@ -418,19 +418,8 @@ class SemanticTools:
 
     @classmethod
     def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "SemanticTools":
-        """Create a SemanticTools instance for dynamic MCP mode.
-
-        Resolves the adapter the way the agent nodes do
-        (``resolve_semantic_adapter_type``), so an MCP client sees the same
-        semantic layer a node's model would.
-        """
-        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-        return cls(
-            agent_config,
-            sub_agent_name=sub_agent_name,
-            adapter_type=resolve_semantic_adapter_type(agent_config),
-        )
+        """Create a Dosi-backed SemanticTools instance for dynamic MCP mode."""
+        return cls(agent_config, sub_agent_name=sub_agent_name)
 
     @classmethod
     def create_static(
@@ -573,7 +562,7 @@ class SemanticTools:
     # MCP only, deliberately not in ``available_tools``: a node's model is told the
     # full result is used for its final output, and paging it into the context
     # would be the opposite of the compression.
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def get_query_metrics_result(self, result_id: str, offset: int = 0, limit: int = 500) -> FuncToolResult:
         """
         Read the full rows behind a ``query_metrics`` result, one page at a time.
@@ -943,7 +932,7 @@ class SemanticTools:
             trans_to_function_tool(self.attribution_analyze),
         ]
 
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -1113,7 +1102,7 @@ class SemanticTools:
         )
         return None
 
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def get_metric(
         self,
         name: str,
@@ -1235,7 +1224,7 @@ class SemanticTools:
 
     # Dosi binding names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def query_metrics(
         self,
         metrics: List[str],
@@ -1433,7 +1422,7 @@ class SemanticTools:
                 error=f"Failed to query metrics: {str(e)}",
             )
 
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def validate_semantic(
         self,
         scope: Literal["all", "semantic_model"] = "all",
@@ -1566,7 +1555,7 @@ class SemanticTools:
 
     # Dosi parameter names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
-    @mcp_tool(availability_check="has_semantic_adapter")
+    @mcp_tool()
     def attribution_analyze(
         self,
         metric_name: str,

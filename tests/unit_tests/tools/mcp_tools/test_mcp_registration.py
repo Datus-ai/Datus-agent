@@ -182,6 +182,20 @@ class TestGlobalToolRegistry:
         assert "list_subject_tree" in tool_names
         assert "search_metrics" in tool_names
 
+    def test_semantic_mcp_tools_use_builtin_dosi(self, monkeypatch):
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+
+        calls = []
+
+        def fake_init(self, agent_config, sub_agent_name=None):
+            calls.append((agent_config, sub_agent_name))
+
+        monkeypatch.setattr(SemanticTools, "__init__", fake_init)
+        config = object()
+        assert isinstance(SemanticTools.create_dynamic(config, "analyst"), SemanticTools)
+        assert calls == [(config, "analyst")]
+        assert all(tool_config.availability_check is None for _, _, tool_config in get_mcp_tools(SemanticTools))
+
     def test_all_tools_have_docstrings(self):
         """All MCP tools must have docstrings (used as tool descriptions)."""
         import datus.mcp_server  # noqa: F401  (import registers every tool class)
