@@ -319,23 +319,7 @@ agent:
 
 ## Benchmark Configuration
 
-### BIRD-dev Setup
-
-```yaml
-agent:
-  benchmark:
-    bird_dev:
-      benchmark_path: benchmark/bird/dev_20240627 
-```
-
-### Spider2 Setup
-
-```yaml
-agent:
-  benchmark:
-    spider2:
-      benchmark_path: benchmark/spider2/spider2-snow
-```
+Built-in BIRD-dev and Spider2 paths are resolved under `{agent.home}/benchmark`; do not configure their `benchmark_path` in `agent.yml`. Place Spider2 data at `{agent.home}/benchmark/spider2/spider2-snow/`. See the [benchmark manual](../../docs/benchmark/benchmark_manual.md#spider2-data) for the pinned dataset download.
 
 ## Storage Configuration
 

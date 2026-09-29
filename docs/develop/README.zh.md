@@ -4,12 +4,6 @@
 
 ## 源码环境
 
-克隆仓库后初始化 submodule：
-
-```bash
-git submodule update --init
-```
-
 使用 Python 3.12。推荐用 `uv` 管理开发环境：
 
 ```bash
@@ -216,6 +210,8 @@ uv run datus-agent benchmark \
 ```
 
 ### Spider 2.0 Snow
+
+运行此基准测试前，先将 [Spider2 数据](../benchmark/benchmark_manual.zh.md#spider2-data)下载到 `{agent.home}/benchmark/spider2/`。源码仓库不包含这些数据。
 
 配置 Snowflake 数据源。数据源名称可以自定义，示例里使用 `snowflake`。
 

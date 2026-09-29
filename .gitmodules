@@ -1,4 +1,0 @@
-[submodule "benchmark/spider2"]
-	path = benchmark/spider2
-	url = https://github.com/xlang-ai/Spider2.git
-	ignore = all

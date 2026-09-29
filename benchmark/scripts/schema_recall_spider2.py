@@ -2,6 +2,7 @@ import json
 import os
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Set
 
 import pytest
@@ -32,10 +33,13 @@ def rag(agent_config: AgentConfig) -> SchemaWithValueRAG:
 # run utils/extracting_sql_metadata.py first to generate the schema files.
 
 
-def load_gold_tables() -> dict[str, Set[str]]:
-    gold_schema_file: str = os.path.join(
-        PROJECT_ROOT, "benchmark/spider2/methods/gold-tables/spider2-snow-gold-tables.jsonl"
-    )
+def spider2_question_file(agent_config: AgentConfig) -> Path:
+    return Path(agent_config.benchmark_path("spider2")) / "spider2-snow.jsonl"
+
+
+def load_gold_tables(agent_config: AgentConfig) -> dict[str, Set[str]]:
+    spider2_dir = Path(agent_config.benchmark_path("spider2")).parent
+    gold_schema_file = spider2_dir / "methods/gold-tables/spider2-snow-gold-tables.jsonl"
 
     gold_tables = {}
     for gold_table in load_jsonl(gold_schema_file):
@@ -73,8 +77,8 @@ def match_result(target_schema: Set[str], full_name_set: Set[str]):
     "task_ids,use_rerank", [({"sf_ga011", "sf_ga019", "sf_ga030", "sf_ga005", "sf_ga028", "sf_ga022"}, False)]
 )
 def test_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, task_ids: Set[str], use_rerank: bool):
-    gold_tables = load_gold_tables()
-    with open(os.path.join(agent_config.benchmark_path("spider2"), "spider2-snow.jsonl")) as f:
+    gold_tables = load_gold_tables(agent_config)
+    with spider2_question_file(agent_config).open() as f:
         for line in f:
             task = json.loads(line)
             if task["instance_id"] not in task_ids:
@@ -110,14 +114,14 @@ def test_full_recall(agent_config: AgentConfig, rag: SchemaWithValueRAG, top_n: 
         top_n: Number of top results to return
     """
 
-    tasks_file = os.path.join(agent_config.benchmark_path("spider2"), "spider2-snow.jsonl")
+    tasks_file = spider2_question_file(agent_config)
     start_time = datetime.now()
     with open(tasks_file) as f:
         tasks = [json.loads(line) for line in f]
 
     match_results = []
     total = 0
-    gold_tables = load_gold_tables()
+    gold_tables = load_gold_tables(agent_config)
     for task in tasks:
         result = do_recall(rag, task, top_n, use_rerank, gold_tables)
         if result:
