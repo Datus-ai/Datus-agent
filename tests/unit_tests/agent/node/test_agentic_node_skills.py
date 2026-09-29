@@ -885,7 +885,7 @@ class TestBuiltinNodeDefaultSkills:
 
         assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table"
 
-    def test_semantic_modeling_defaults_derive_from_active_dosi_adapter(self):
+    def test_semantic_modeling_defaults_derive_from_dosi_runtime(self):
         from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
         assert SemanticModelingAgenticNode.DEFAULT_SKILLS is None

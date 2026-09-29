@@ -115,10 +115,7 @@ class GenerationEvidence:
     def record_validation_result(self, result: Any) -> None:
         payload = _result_payload(result)
         valid = isinstance(payload, dict) and payload.get("valid") is True
-        # Explicit adapter checks are diagnostic subsets. Only the adapter's
-        # canonical default profile may satisfy a generation publish gate.
-        canonical_profile = isinstance(payload, dict) and payload.get("checks") is None
-        if _result_success(result) and valid and canonical_profile:
+        if _result_success(result) and valid:
             self.validation_passed = True
             semantic_model_name = str(payload.get("semantic_model_name") or "").strip()
             semantic_model_file = str(payload.get("semantic_model_file") or "").strip()

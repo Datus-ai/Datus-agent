@@ -56,7 +56,7 @@ class KeyTableSchema(BaseModel):
     """Snapshot of one entry from ``manifest.key_tables``.
 
     ``name`` mirrors the manifest entry verbatim (fully qualified per
-    SQL convention, e.g. ``jeff_shop.raw_orders``). ``error`` is
+    SQL convention, e.g. ``sample_shop.raw_orders``). ``error`` is
     populated iff ``describe_table`` failed for this table; when set,
     ``columns`` is empty and the prompt renderer surfaces a "schema
     unavailable; call describe_table()" hint instead of a column list.

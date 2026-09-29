@@ -11,10 +11,6 @@ from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
-from datus.tools.func_tool.attribution_utils import (
-    AttributionValidationErrorPayload,
-    AttributionValidationException,
-)
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async
@@ -22,7 +18,6 @@ from datus.tools.semantic_tools.models import (
     AttributionRequest,
     AttributionWindow,
     QueryResult,
-    ValidationResult,
 )
 
 
@@ -92,21 +87,23 @@ def semantic_tools():
 
         mock_config = Mock()
         mock_config.active_model.return_value.model = "gpt-4o"
-        mock_config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
-        mock_config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
-        tool = SemanticTools(agent_config=mock_config, adapter_type="mock_adapter")
+        mock_config.current_datasource = "ns1"
+        mock_config.runtime_db_context.return_value = {}
+        mock_config.current_db_config.return_value = None
+        mock_config.path_manager.semantic_model_path.return_value = "/tmp/models"
+        tool = SemanticTools(agent_config=mock_config)
         return tool
 
 
 @pytest.fixture
-def mock_adapter(semantic_tools):
-    """Set up a mock adapter on the SemanticTools instance."""
-    adapter = Mock()
-    semantic_tools._adapter = adapter
-    return adapter
+def mock_runtime(semantic_tools):
+    """Set up a mock Dosi runtime on the SemanticTools instance."""
+    runtime = Mock()
+    semantic_tools._runtime = runtime
+    return runtime
 
 
-@pytest.mark.usefixtures("mock_adapter")
+@pytest.mark.usefixtures("mock_runtime")
 class TestQueryMetricsCompression:
     """Test cases for query_metrics with DataCompressor integration."""
 
@@ -130,27 +127,15 @@ class TestQueryMetricsCompression:
         assert [tool.name for tool in node.tools] == ["query_metrics"]
         await self._assert_parameterized_query_executes(semantic_tools, node.tools[0])
 
-    @pytest.mark.asyncio
-    async def test_cli_registration_preserves_parameter_schema(self, semantic_tools):
-        from datus.cli.service_client import READ_METHODS, ServiceClient
-
-        client = ServiceClient("semantic_layer", "dosi", semantic_tools, READ_METHODS["semantic_layer"])
-        query_tool = client.get_tool("query_metrics")
-
-        assert query_tool.name == "query_metrics"
-        assert query_tool is client.get_tool("query_metrics")
-        await self._assert_parameterized_query_executes(semantic_tools, query_tool)
-
     async def _assert_parameterized_query_executes(self, semantic_tools, query_tool):
         calls = []
 
-        class Adapter:
+        class Runtime:
             async def query_metrics(self, metrics, params=None, **kwargs):
                 calls.append((metrics, params))
                 return QueryResult(columns=["revenue"], data=[{"revenue": 100}])
 
-        semantic_tools.adapter_type = "dosi"
-        semantic_tools._adapter = Adapter()
+        semantic_tools._runtime = Runtime()
         params = {"regions": ["APAC", "EMEA"], "threshold": 100}
         assert query_tool.strict_json_schema is False
         result = await query_tool.on_invoke_tool(None, json.dumps({"metrics": ["revenue"], "params": params}))
@@ -159,16 +144,18 @@ class TestQueryMetricsCompression:
         assert result["result"]["columns"] == ["revenue"]
         assert calls == [(["revenue"], params)]
 
-    def test_tool_schema_exposes_osi_half_open_time_range(self, semantic_tools):
+    def test_tool_schema_exposes_dosi_time_range_and_query_arguments(self, semantic_tools):
         schema = trans_to_function_tool(semantic_tools.query_metrics).params_json_schema
 
         start_description = schema["properties"]["time_start"]["description"].lower()
         end_description = schema["properties"]["time_end"]["description"].lower()
         assert "inclusive" in start_description
         assert "exclusive" in end_description
-        assert "2024-02-01" in end_description
+        assert "yyyy-mm-dd" in start_description
+        assert "yyyy-mm-dd" in end_description
+        assert "path" not in schema["properties"]
 
-    def test_query_metrics_success_with_compression(self, semantic_tools, mock_adapter):
+    def test_query_metrics_success_with_compression(self, semantic_tools, mock_runtime):
         """Test that query_metrics returns compressed data on success."""
         query_result = QueryResult(
             columns=["date", "revenue", "orders"],
@@ -178,7 +165,7 @@ class TestQueryMetricsCompression:
             ],
             metadata={"execution_time": 0.5},
         )
-        mock_adapter.query_metrics = Mock(return_value=query_result)
+        mock_runtime.query_metrics = Mock(return_value=query_result)
 
         with patch(
             "datus.tools.func_tool.semantic_tools._run_async",
@@ -221,7 +208,7 @@ class TestQueryMetricsCompression:
     def test_query_metrics_passes_dosi_parameter_bindings(self, semantic_tools):
         calls = {}
 
-        class _Adapter:
+        class _Runtime:
             service_type = "dosi"
 
             async def query_metrics(self, metrics, params=None, **kwargs):
@@ -229,8 +216,7 @@ class TestQueryMetricsCompression:
                 calls["params"] = params
                 return QueryResult(columns=["revenue"], data=[{"revenue": 1}])
 
-        semantic_tools.adapter_type = "dosi"
-        semantic_tools._adapter = _Adapter()
+        semantic_tools._runtime = _Runtime()
         result = semantic_tools.query_metrics(
             metrics=["revenue"],
             params={"regions": ["APAC", "EMEA"], "threshold": 100},
@@ -241,15 +227,6 @@ class TestQueryMetricsCompression:
             "metrics": ["revenue"],
             "params": {"regions": ["APAC", "EMEA"], "threshold": 100},
         }
-
-    def test_query_metrics_rejects_params_for_non_dosi_adapter(self, semantic_tools):
-        result = semantic_tools.query_metrics(
-            metrics=["revenue"],
-            params={"region": "APAC"},
-        )
-
-        assert result.success == 0
-        assert "only by the Dosi" in result.error
 
     def test_query_metrics_small_data_not_compressed(self, semantic_tools):
         """Test that small data within token threshold is not compressed."""
@@ -488,42 +465,30 @@ class TestQueryMetricsCompression:
         assert compressed_data["is_compressed"] is False
         assert compressed_data["compression_type"] == "none"
 
-    def test_query_metrics_no_adapter(self, semantic_tools):
-        """Test query_metrics returns error when no adapter is configured."""
-        semantic_tools._adapter = None
-        semantic_tools.adapter_type = None
-
-        result = semantic_tools.query_metrics(metrics=["revenue"])
-
-        assert result.success == 0
-        assert "adapter" in result.error.lower()
-
     @pytest.mark.parametrize("metrics", [[], ["null", "", None], ""])
-    def test_query_metrics_rejects_empty_metrics_before_adapter_call(self, semantic_tools, mock_adapter, metrics):
-        """MetricFlow otherwise raises a cryptic ComputeMetricsNode assertion."""
+    def test_query_metrics_rejects_empty_metrics_before_runtime_call(self, semantic_tools, mock_runtime, metrics):
+        """Legacy otherwise raises a cryptic ComputeMetricsNode assertion."""
         result = semantic_tools.query_metrics(metrics=metrics)
 
         assert result.success == 0
         assert "at least one metric name" in result.error
-        mock_adapter.query_metrics.assert_not_called()
+        mock_runtime.query_metrics.assert_not_called()
 
-    def test_query_metrics_normalizes_string_arguments(self, semantic_tools, mock_adapter):
+    def test_query_metrics_normalizes_string_arguments(self, semantic_tools, mock_runtime):
         """LLM tool calls may send a single string even when the schema says list."""
         query_result = QueryResult(columns=["revenue"], data=[{"revenue": 10}], metadata={})
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(
                 metrics="revenue",
-                dimensions="metric_time__day",
-                path="Finance",
+                dimensions="metric_time",
                 order_by="-revenue",
             )
 
         assert result.success == 1
-        mock_adapter.query_metrics.assert_called_once_with(
+        mock_runtime.query_metrics.assert_called_once_with(
             metrics=["revenue"],
-            dimensions=["metric_time__day"],
-            path=["Finance"],
+            dimensions=["metric_time"],
             time_start=None,
             time_end=None,
             time_granularity=None,
@@ -534,17 +499,17 @@ class TestQueryMetricsCompression:
         )
 
     @pytest.mark.parametrize("limit", ["", " ", "null", "None"])
-    def test_query_metrics_normalizes_null_limit(self, semantic_tools, mock_adapter, limit):
-        """LLM null placeholders must not reach adapters as a present limit."""
+    def test_query_metrics_normalizes_null_limit(self, semantic_tools, mock_runtime, limit):
+        """LLM null placeholders must not reach runtimes as a present limit."""
         query_result = QueryResult(columns=["revenue"], data=[{"revenue": 10}], metadata={})
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=["revenue"], limit=limit)
 
         assert result.success == 1
-        assert mock_adapter.query_metrics.call_args.kwargs["limit"] is None
+        assert mock_runtime.query_metrics.call_args.kwargs["limit"] is None
 
-    def test_query_metrics_runs_warehouse_dry_run_for_compiled_sql(self, semantic_tools, mock_adapter):
+    def test_query_metrics_runs_warehouse_dry_run_for_compiled_sql(self, semantic_tools, mock_runtime):
         query_result = QueryResult(
             columns=["sql"],
             data=[{"sql": "SELECT COUNT(*) FROM orders"}],
@@ -565,7 +530,7 @@ class TestQueryMetricsCompression:
             "datasource": "warehouse",
         }
 
-    def test_query_metrics_returns_failure_when_warehouse_dry_run_fails(self, semantic_tools, mock_adapter):
+    def test_query_metrics_returns_failure_when_warehouse_dry_run_fails(self, semantic_tools, mock_runtime):
         query_result = QueryResult(
             columns=["sql"],
             data=[{"sql": "SELECT COUNT(*) FROM missing_orders"}],
@@ -583,7 +548,7 @@ class TestQueryMetricsCompression:
         assert result.error == "Warehouse dry-run failed: table not found"
         assert result.result["metadata"]["warehouse_dry_run"]["status"] == "failed"
 
-    def test_query_metrics_delegates_dimension_validation_to_adapter(self, semantic_tools, mock_adapter):
+    def test_query_metrics_delegates_dimension_validation_to_runtime(self, semantic_tools, mock_runtime):
         """Dimension metadata is advisory; the backend validates the requested query."""
         query_result = QueryResult(
             columns=["supplier_nation", "discount_rate"],
@@ -598,11 +563,10 @@ class TestQueryMetricsCompression:
             )
 
         assert result.success == 1
-        mock_adapter.get_dimensions.assert_not_called()
-        mock_adapter.query_metrics.assert_called_once_with(
+        mock_runtime.get_dimensions.assert_not_called()
+        mock_runtime.query_metrics.assert_called_once_with(
             metrics=["shipped_revenue", "discount_rate"],
             dimensions=["supplier_nation"],
-            path=None,
             time_start=None,
             time_end=None,
             time_granularity=None,
@@ -612,8 +576,8 @@ class TestQueryMetricsCompression:
             dry_run=False,
         )
 
-    def test_query_metrics_delegates_time_granularity_validation_to_adapter(self, semantic_tools, mock_adapter):
-        """Advertised grains are hints; the adapter validates explicit requests."""
+    def test_query_metrics_delegates_time_granularity_validation_to_runtime(self, semantic_tools, mock_runtime):
+        """Advertised grains are hints; the runtime validates explicit requests."""
         query_result = QueryResult(
             columns=["order_date__month", "orders"],
             data=[{"order_date__month": "2024-01-01", "orders": 10}],
@@ -628,11 +592,10 @@ class TestQueryMetricsCompression:
             )
 
         assert result.success == 1
-        mock_adapter.get_dimensions.assert_not_called()
-        mock_adapter.query_metrics.assert_called_once_with(
+        mock_runtime.get_dimensions.assert_not_called()
+        mock_runtime.query_metrics.assert_called_once_with(
             metrics=["orders"],
             dimensions=["order_date"],
-            path=None,
             time_start=None,
             time_end=None,
             time_granularity="month",
@@ -642,8 +605,8 @@ class TestQueryMetricsCompression:
             dry_run=False,
         )
 
-    def test_query_metrics_adapter_exception(self, semantic_tools):
-        """Test query_metrics handles adapter exceptions gracefully."""
+    def test_query_metrics_runtime_exception(self, semantic_tools):
+        """Test query_metrics handles runtime exceptions gracefully."""
         with patch(
             "datus.tools.func_tool.semantic_tools._run_async",
             side_effect=Exception("Connection timeout"),
@@ -730,7 +693,7 @@ class TestQueryMetricsCompression:
     def test_query_metrics_gives_up_the_last_requested_metric_first(self, semantic_tools):
         """Columns are dropped from the far end of the request, not the middle.
 
-        Result column order follows adapter compilation, so dropping from the
+        Result column order follows runtime compilation, so dropping from the
         middle discards whichever metric happens to land there — in practice the
         one asked for first. The caller's own ordering is the only statement of
         importance available.
@@ -739,7 +702,7 @@ class TestQueryMetricsCompression:
 
         semantic_tools.compressor = DataCompressor(model_name="gpt-4o", token_threshold=32)
         requested = [f"metric_{index}" for index in range(8)]
-        # The adapter emits them in an unrelated order.
+        # The runtime emits them in an unrelated order.
         emitted = requested[4:] + requested[:4]
         query_result = QueryResult(
             columns=emitted,
@@ -848,15 +811,14 @@ class TestQueryMetricsCompression:
         compressed_data = result.result["data"]
         assert set(compressed_data["original_columns"]) == {"date", "revenue", "orders", "customers"}
 
-    def test_query_metrics_passes_all_parameters(self, semantic_tools, mock_adapter):
-        """Test that all parameters are correctly passed to the adapter."""
+    def test_query_metrics_passes_dosi_parameters(self, semantic_tools, mock_runtime):
+        """Test that Dosi query parameters reach the runtime."""
         query_result = QueryResult(columns=["x"], data=[{"x": 1}], metadata={})
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(
                 metrics=["revenue"],
                 dimensions=["region"],
-                path=["Finance"],
                 time_start="2024-01-01",
                 time_end="2024-02-01",
                 time_granularity="day",
@@ -866,11 +828,10 @@ class TestQueryMetricsCompression:
                 dry_run=True,
             )
 
-            # Verify adapter.query_metrics was called with correct parameters
-            mock_adapter.query_metrics.assert_called_once_with(
+            # Verify runtime.query_metrics was called with correct parameters
+            mock_runtime.query_metrics.assert_called_once_with(
                 metrics=["revenue"],
                 dimensions=["region"],
-                path=["Finance"],
                 time_start="2024-01-01",
                 time_end="2024-02-01",
                 time_granularity="day",
@@ -886,7 +847,7 @@ class TestQueryMetricsCompression:
             assert result.result["data"]["original_columns"] == ["x"]
 
     def test_query_metrics_preserves_join_filtered_rows_metadata(self, semantic_tools):
-        """Adapter-reported unmatched-row counts must reach the tool result metadata.
+        """Runtime-reported unmatched-row counts must reach the tool result metadata.
 
         The ask_metrics prompt instructs the model to disclose
         `join_policy_filtered_rows` to the user; this protects that contract.
@@ -897,14 +858,14 @@ class TestQueryMetricsCompression:
             metadata={"join_policy": "match_only", "join_policy_filtered_rows": 3},
         )
 
-        class Adapter:
+        class Runtime:
             def get_dimensions(self, metric_name, path=None):
                 return []
 
             def query_metrics(self, metrics, **kwargs):
                 return query_result
 
-        semantic_tools._adapter = Adapter()
+        semantic_tools._runtime = Runtime()
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
             result = semantic_tools.query_metrics(metrics=["order_count"])
 
@@ -913,12 +874,12 @@ class TestQueryMetricsCompression:
         assert result.result["metadata"]["join_policy_filtered_rows"] == 3
 
     def test_metric_datasets_maps_names_from_catalog_metadata(self, semantic_tools):
-        """The adapter reports which datasets each metric reads."""
+        """The runtime reports which datasets each metric reads."""
         metrics = [
             SimpleNamespace(name="revenue", metadata={"datasets": ["orders"]}),
             SimpleNamespace(name="signups", metadata={"datasets": ["users"]}),
         ]
-        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
+        semantic_tools._runtime = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
             assert semantic_tools.metric_datasets() == {"revenue": ["orders"], "signups": ["users"]}
 
@@ -935,15 +896,15 @@ class TestQueryMetricsCompression:
             offsets.append(offset)
             return pages[len(offsets) - 1]
 
-        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        semantic_tools._runtime = SimpleNamespace(list_metrics=list_metrics)
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
             mapping = semantic_tools.metric_datasets()
 
         assert offsets == [0, 1, 2]
         assert mapping == {"a": ["orders"], "b": ["users"]}
 
-    def test_metric_datasets_keeps_paging_when_the_adapter_caps_the_page(self, semantic_tools):
-        """An adapter may honour offset while returning fewer rows than requested."""
+    def test_metric_datasets_keeps_paging_when_the_runtime_caps_the_page(self, semantic_tools):
+        """An runtime may honour offset while returning fewer rows than requested."""
         served = []
 
         def list_metrics(limit, offset):
@@ -952,16 +913,16 @@ class TestQueryMetricsCompression:
                 return []
             return [SimpleNamespace(name=f"m{offset}", metadata={"datasets": ["orders"]})]
 
-        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        semantic_tools._runtime = SimpleNamespace(list_metrics=list_metrics)
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
             mapping = semantic_tools.metric_datasets()
 
         assert [offset for _, offset in served] == [0, 1, 2, 3]
         assert sorted(mapping) == ["m0", "m1", "m2"]
 
-    def test_metric_datasets_gives_up_on_an_adapter_that_ignores_offset(self, semantic_tools):
+    def test_metric_datasets_gives_up_on_an_runtime_that_ignores_offset(self, semantic_tools):
         """An incomplete map must not look like a complete one."""
-        semantic_tools._adapter = SimpleNamespace(
+        semantic_tools._runtime = SimpleNamespace(
             list_metrics=lambda limit, offset: [SimpleNamespace(name="m", metadata={"datasets": ["orders"]})]
         )
         with (
@@ -979,7 +940,7 @@ class TestQueryMetricsCompression:
                 return []
             return [SimpleNamespace(name=f"m{offset}", metadata={"datasets": ["orders"]})]
 
-        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        semantic_tools._runtime = SimpleNamespace(list_metrics=list_metrics)
         with (
             patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro),
             patch.object(SemanticTools, "_metric_catalog_paging", return_value=(1, max_pages)),
@@ -1002,61 +963,45 @@ class TestQueryMetricsCompression:
     def test_metric_datasets_normalizes_the_reported_shape(self, semantic_tools, raw, expected):
         """A lone string names one dataset; iterating it would yield characters."""
         metrics = [SimpleNamespace(name="revenue", metadata={"datasets": raw})]
-        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
+        semantic_tools._runtime = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
             assert semantic_tools.metric_datasets() == {"revenue": expected}
-
-    def test_metric_catalog_paging_reads_the_adapter_config(self, semantic_tools):
-        semantic_tools.agent_config.get_semantic_layer_config = lambda adapter_type=None: {
-            "metric_catalog_page_size": 50,
-            "metric_catalog_max_pages": 10,
-        }
-        assert semantic_tools._metric_catalog_paging() == (50, 10)
-
-    @pytest.mark.parametrize("bad", [0, -1, "abc", None])
-    def test_metric_catalog_paging_falls_back_on_bad_values(self, semantic_tools, bad):
-        from datus.tools.func_tool.semantic_tools import _METRIC_DATASETS_PAGE_SIZE
-
-        semantic_tools.agent_config.get_semantic_layer_config = lambda adapter_type=None: {
-            "metric_catalog_page_size": bad
-        }
-        assert semantic_tools._metric_catalog_paging()[0] == _METRIC_DATASETS_PAGE_SIZE
 
     def test_metric_datasets_keeps_metrics_without_dataset_information(self, semantic_tools):
         """A metric reported without dataset information maps to an empty list."""
         metrics = [SimpleNamespace(name="orphan", metadata={})]
-        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
+        semantic_tools._runtime = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
             assert semantic_tools.metric_datasets() == {"orphan": []}
 
-    def test_metric_datasets_without_an_adapter_is_none(self, semantic_tools):
+    def test_metric_datasets_without_an_runtime_is_none(self, semantic_tools):
         """An unavailable catalog is distinct from a readable empty one."""
-        with patch.object(type(semantic_tools), "adapter", property(lambda self: None)):
+        with patch.object(type(semantic_tools), "runtime", property(lambda self: None)):
             assert semantic_tools.metric_datasets() is None
 
     @pytest.mark.parametrize("reported", [None, ["orders"], "orders"])
     def test_metric_datasets_rejects_a_non_mapping_from_the_accessor(self, semantic_tools, reported):
         """An invalid provider result must not reach the transformer context."""
-        semantic_tools._adapter = SimpleNamespace(metric_datasets=lambda: reported, list_metrics=lambda **kwargs: [])
+        semantic_tools._runtime = SimpleNamespace(metric_datasets=lambda: reported, list_metrics=lambda **kwargs: [])
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
             assert semantic_tools.metric_datasets() is None
 
     def test_metric_datasets_skips_unnamed_metrics_from_the_accessor(self, semantic_tools):
         """Both read paths drop metrics without a usable name."""
-        semantic_tools._adapter = SimpleNamespace(
+        semantic_tools._runtime = SimpleNamespace(
             metric_datasets=lambda: {None: ["x"], "": ["y"], " revenue ": ["orders"]},
             list_metrics=lambda **kwargs: [],
         )
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
             assert semantic_tools.metric_datasets() == {"revenue": ["orders"]}
 
-    def test_metric_datasets_prefers_the_adapter_lightweight_accessor(self, semantic_tools):
-        """Adapters may skip building a MetricDefinition per metric."""
+    def test_metric_datasets_prefers_the_runtime_lightweight_accessor(self, semantic_tools):
+        """The runtime may skip building a MetricDefinition per metric."""
 
         def fail_list_metrics(**kwargs):
             raise AssertionError("should not fall back to list_metrics")
 
-        semantic_tools._adapter = SimpleNamespace(
+        semantic_tools._runtime = SimpleNamespace(
             metric_datasets=lambda: {"revenue": ["orders"]},
             list_metrics=fail_list_metrics,
         )
@@ -1064,14 +1009,8 @@ class TestQueryMetricsCompression:
             assert semantic_tools.metric_datasets() == {"revenue": ["orders"]}
 
 
-# ---------------------------------------------------------------------------
-# Extended fixtures (no adapter_type)
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
-def semantic_tools_ext():
-    """Create a SemanticTools instance WITHOUT adapter_type (for tests that require no adapter)."""
+def semantic_tools_with_runtime():
     with (
         patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
     ):
@@ -1079,27 +1018,14 @@ def semantic_tools_ext():
 
         config = Mock()
         config.active_model.return_value.model = "gpt-4o"
-        config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
-        config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
+        config.current_datasource = "ns1"
+        config.runtime_db_context.return_value = {}
+        config.current_db_config.return_value = None
+        config.path_manager.semantic_model_path.return_value = "/tmp/models"
         tool = SemanticTools(agent_config=config)
-        return tool
-
-
-@pytest.fixture
-def semantic_tools_with_adapter():
-    with (
-        patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-    ):
-        from datus.tools.func_tool.semantic_tools import SemanticTools
-
-        config = Mock()
-        config.active_model.return_value.model = "gpt-4o"
-        config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
-        config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
-        tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-        mock_adapter = Mock()
-        tool._adapter = mock_adapter
-        return tool, mock_adapter
+        mock_runtime = Mock()
+        tool._runtime = mock_runtime
+        return tool, mock_runtime
 
 
 # ---------------------------------------------------------------------------
@@ -1129,475 +1055,111 @@ class TestAllToolsName:
 
 
 class TestAvailableTools:
-    def test_no_adapter_returns_no_tools(self, semantic_tools_ext):
-        with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
-            mock_trans.side_effect = lambda f: Mock(name=f.__name__)
-            tools = semantic_tools_ext.available_tools()
-        assert tools == []
-
-    def test_default_metricflow_adapter_does_not_load_during_tool_registration(self):
+    def test_dosi_runtime_does_not_load_during_tool_registration(self):
         with (
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
             patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                side_effect=RuntimeError("adapter unavailable"),
-            ),
+                "datus.tools.func_tool.semantic_tools.DosiRuntime",
+                side_effect=RuntimeError("engine unavailable"),
+            ) as runtime,
         ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
             config = Mock()
             config.active_model.return_value.model = "gpt-4o"
-            config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type or "metricflow"
-            config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
+            config.resolve_semantic_runtime.return_value = "dosi"
             tool = SemanticTools(agent_config=config)
+            with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as convert:
+                convert.side_effect = lambda function: SimpleNamespace(name=function.__name__)
+                names = [registered.name for registered in tool.available_tools()]
+        assert names == ["list_metrics", "get_metric", "query_metrics", "validate_semantic", "attribution_analyze"]
+        runtime.assert_not_called()
 
-            with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
-
-                def _mock_tool(func, **_kwargs):
-                    tool = Mock()
-                    tool.name = func.__name__
-                    return tool
-
-                mock_trans.side_effect = _mock_tool
-                tools = tool.available_tools()
-
-        names = [tool.name for tool in tools]
-        assert names == [
-            "list_metrics",
-            "get_metric",
-            "query_metrics",
-            "validate_semantic",
-            "attribution_analyze",
-        ]
-
-    def test_with_adapter_adds_validate_and_attribution_tools(self):
+    def test_configured_runtime_load_failure_is_reported_when_tool_runs(self):
         with (
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch("datus.tools.func_tool.semantic_tools.DosiRuntime", side_effect=RuntimeError("bad yaml")),
         ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
             config = Mock()
             config.active_model.return_value.model = "gpt-4o"
+            config.current_datasource = "ns1"
+            config.current_db_config.return_value = None
+            config.runtime_db_context.return_value = {}
+            config.path_manager.semantic_model_path.return_value = "/tmp/models"
             tool = SemanticTools(agent_config=config)
-            tool._adapter = Mock()  # Set adapter (also enables attribution_tool)
-
-            with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
-                mock_trans.side_effect = lambda f, **_kwargs: Mock(name=f.__name__)
-                tools = tool.available_tools()
-        # 3 base + validate_semantic + attribution_analyze (both enabled when adapter is set)
-        assert len(tools) == 5
-
-    def test_configured_adapter_load_failure_is_reported_when_tool_runs(self):
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-            patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                side_effect=RuntimeError("bad yaml"),
-            ),
-        ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            config = Mock()
-            config.active_model.return_value.model = "gpt-4o"
-            config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
-            config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
-            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-
-            with patch("datus.tools.func_tool.semantic_tools.trans_to_function_tool") as mock_trans:
-
-                def _mock_tool(func, **_kwargs):
-                    tool = Mock()
-                    tool.name = func.__name__
-                    return tool
-
-                mock_trans.side_effect = _mock_tool
-                tools = tool.available_tools()
-
-            names = [tool.name for tool in tools]
-            assert names == [
-                "list_metrics",
-                "get_metric",
-                "query_metrics",
-                "validate_semantic",
-                "attribution_analyze",
-            ]
-
             result = tool.validate_semantic()
-            assert result.success == 0
-            assert "bad yaml" in result.error
+        assert result.success == 0
+        assert "bad yaml" in result.error
 
 
 class TestRuntimeDbContext:
     def test_normalize_runtime_context_handles_empty_and_aliases(self):
-        from datus.tools.func_tool.semantic_tools import SemanticTools
-
         assert SemanticTools._normalize_runtime_db_context(None) == {}
-        assert SemanticTools._normalize_runtime_db_context(
-            {
-                "catalog_name": " runtime_catalog ",
-                "database_name": " runtime_db ",
-                "db_schema": " runtime_schema ",
-            }
-        ) == {
-            "catalog_name": "runtime_catalog",
-            "catalog": "runtime_catalog",
+        assert SemanticTools._normalize_runtime_db_context({"database_name": " runtime_db "}) == {
             "database_name": "runtime_db",
             "database": "runtime_db",
-            "db_schema": "runtime_schema",
-            "schema": "runtime_schema",
-        }
-        assert SemanticTools._normalize_runtime_db_context({"schema_name": "runtime_schema"}) == {
-            "schema_name": "runtime_schema",
-            "schema": "runtime_schema",
         }
 
-    def test_adapter_config_receives_runtime_context_and_reloads_when_it_changes(self):
-        runtime_context = {"datasource": "college_exam", "database": "db_one"}
-        captured_builder_calls = []
-        adapter_config = object()
-        adapter_one = Mock()
-        adapter_two = Mock()
-
-        def build_config(adapter_type=None, database_name=None, runtime_db_context=None):
-            captured_builder_calls.append(
-                {
-                    "adapter_type": adapter_type,
-                    "database_name": database_name,
-                    "runtime_db_context": dict(runtime_db_context or {}),
-                }
-            )
-            return adapter_config
+    def test_runtime_change_rebuilds_dosi_runtime(self):
+        context = {"datasource": "warehouse", "database": "one"}
 
         with (
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
-            patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                side_effect=[adapter_one, adapter_two],
-            ) as create_adapter,
+            patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime,
         ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
             config = Mock()
             config.active_model.return_value.model = "gpt-4o"
-            config.current_datasource = "college_exam"
-            config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
-            config.build_semantic_adapter_config = build_config
-            tool = SemanticTools(
-                agent_config=config,
-                adapter_type="metricflow",
-                runtime_db_context_provider=lambda: runtime_context,
-            )
+            config.current_datasource = "warehouse"
+            config.current_db_config.return_value = None
+            config.path_manager.semantic_model_path.return_value = "/tmp/models"
+            tool = SemanticTools(config, runtime_db_context_provider=lambda: context)
+            first = tool.runtime
+            assert tool.runtime is first
+            assert runtime.call_args.args[0].db_config["database"] == "one"
+            context["database"] = "two"
+            assert tool.runtime is first
+            assert runtime.call_count == 2
+            assert runtime.call_args.args[0].db_config["database"] == "two"
 
-            assert tool.adapter is adapter_one
-            assert tool.adapter is adapter_one
-            runtime_context["database"] = "db_two"
-            assert tool.adapter is adapter_two
-
-        assert create_adapter.call_count == 2
-        assert captured_builder_calls == [
-            {
-                "adapter_type": "metricflow",
-                "database_name": "college_exam",
-                "runtime_db_context": {"datasource": "college_exam", "database": "db_one"},
-            },
-            {
-                "adapter_type": "metricflow",
-                "database_name": "college_exam",
-                "runtime_db_context": {"datasource": "college_exam", "database": "db_two"},
-            },
-        ]
-
-    def test_adapter_config_uses_agent_config_runtime_context_when_provider_absent(self):
-        captured_builder_calls = []
-        adapter_config = object()
-        adapter = Mock()
-
-        def build_config(adapter_type=None, database_name=None, runtime_db_context=None):
-            captured_builder_calls.append(
-                {
-                    "adapter_type": adapter_type,
-                    "database_name": database_name,
-                    "runtime_db_context": dict(runtime_db_context or {}),
-                }
-            )
-            return adapter_config
-
+    def test_selected_model_path_rebuilds_runtime(self, tmp_path):
+        selected = {"path": str(tmp_path / "orders.yml")}
         with (
             patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
-            patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                return_value=adapter,
-            ) as create_adapter,
+            patch("datus.tools.func_tool.semantic_tools.DosiRuntime") as runtime,
         ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
             config = Mock()
             config.active_model.return_value.model = "gpt-4o"
-            config.current_datasource = "static_ds"
-            config.runtime_db_context.return_value = {
-                "datasource": "runtime_ds",
-                "database": "agent_ctx_db",
-            }
-            config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
-            config.build_semantic_adapter_config = build_config
-
-            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-
-            assert tool.adapter is adapter
-
-        assert create_adapter.call_count == 1
-        assert captured_builder_calls == [
-            {
-                "adapter_type": "metricflow",
-                "database_name": "runtime_ds",
-                "runtime_db_context": {"datasource": "runtime_ds", "database": "agent_ctx_db"},
-            }
-        ]
+            config.current_datasource = "warehouse"
+            config.current_db_config.return_value = None
+            config.runtime_db_context.return_value = {}
+            config.path_manager.semantic_model_path.return_value = str(tmp_path)
+            tool = SemanticTools(config, semantic_model_path_provider=lambda: selected["path"])
+            first = tool.runtime
+            assert runtime.call_args.args[0].semantic_model_path == selected["path"]
+            selected["path"] = str(tmp_path / "finance.yml")
+            assert tool.runtime is first
+            assert runtime.call_count == 2
+            assert runtime.call_args.args[0].semantic_model_path == selected["path"]
 
     def test_runtime_context_provider_failure_returns_empty_context(self):
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-        ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
+        with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
             config = Mock()
             config.active_model.return_value.model = "gpt-4o"
-            tool = SemanticTools(
-                agent_config=config,
-                adapter_type="metricflow",
-                runtime_db_context_provider=Mock(side_effect=RuntimeError("boom")),
-            )
-
+            tool = SemanticTools(config, runtime_db_context_provider=Mock(side_effect=RuntimeError("boom")))
         assert tool._runtime_db_context() == {}
 
-    def test_agent_config_runtime_context_failure_returns_empty_context(self):
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-        ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
+    def test_static_runtime_context_invalidates_cached_runtime(self):
+        with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
             config = Mock()
             config.active_model.return_value.model = "gpt-4o"
-            config.runtime_db_context.side_effect = RuntimeError("boom")
-            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-
-        assert tool._runtime_db_context() == {}
-
-    def test_static_runtime_context_overrides_agent_config_context_and_is_idempotent(self):
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-        ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            config = Mock()
-            config.active_model.return_value.model = "gpt-4o"
-            config.runtime_db_context.return_value = {"database": "agent_db"}
-            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-
-        tool._adapter = Mock()
-        tool._attribution_tool = Mock()
-        tool._adapter_context_key = ("metricflow", "ds", "", "", "")
-        tool.set_runtime_db_context({"database_name": "static_db"})
-
-        assert tool._runtime_db_context() == {
-            "database_name": "static_db",
-            "database": "static_db",
-        }
-        assert tool._adapter is None
-        assert tool._attribution_tool is None
-        assert tool._adapter_context_key is None
-
-        adapter = Mock()
-        tool._adapter = adapter
-        tool.set_runtime_db_context({"database_name": "static_db"})
-
-        assert tool._adapter is adapter
-
-    def test_adapter_uses_default_config_when_builder_absent(self, tmp_path):
-        adapter = Mock()
-        path_manager = SimpleNamespace(semantic_model_path=lambda datasource: tmp_path / datasource)
-        config = SimpleNamespace(
-            active_model=lambda: SimpleNamespace(model="gpt-4o"),
-            current_datasource="runtime_ds",
-            path_manager=path_manager,
-        )
-
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
-            patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                return_value=adapter,
-            ) as create_adapter,
-        ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-
-            assert tool.adapter is adapter
-
-        adapter_config = create_adapter.call_args.args[1]
-        assert adapter_config.datasource == "runtime_ds"
-
-    def test_adapter_uses_metadata_config_when_builder_absent(self, tmp_path):
-        adapter = Mock()
-
-        class FakeConfig:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-
-        config = SimpleNamespace(
-            active_model=lambda: SimpleNamespace(model="gpt-4o"),
-            current_datasource="runtime_ds",
-            path_manager=SimpleNamespace(semantic_model_path=lambda datasource: tmp_path / datasource),
-        )
-        metadata = SimpleNamespace(config_class=FakeConfig)
-
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=metadata),
-            patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                return_value=adapter,
-            ) as create_adapter,
-        ):
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-
-            assert tool.adapter is adapter
-
-        adapter_config = create_adapter.call_args.args[1]
-        assert adapter_config.kwargs["datasource"] == "runtime_ds"
-        assert adapter_config.kwargs["semantic_models_path"] == str(tmp_path / "runtime_ds")
-
-    def test_adapter_tracks_selected_semantic_model_path(self, tmp_path):
-        first_adapter = Mock()
-        second_adapter = Mock()
-
-        class FakeConfig:
-            model_fields = {
-                "semantic_model_path": object(),
-                "semantic_models_path": object(),
-            }
-
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-
-        selected = {"path": str(tmp_path / "orders.yml")}
-        config = SimpleNamespace(
-            active_model=lambda: SimpleNamespace(model="gpt-4o"),
-            current_datasource="runtime_ds",
-            build_semantic_adapter_config=lambda adapter_type, **kwargs: {
-                "semantic_models_path": str(tmp_path),
-            },
-        )
-        metadata = SimpleNamespace(config_class=FakeConfig)
-
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=metadata),
-            patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                side_effect=[first_adapter, second_adapter],
-            ) as create_adapter,
-        ):
-            tool = SemanticTools(
-                agent_config=config,
-                adapter_type="dosi",
-                semantic_model_path_provider=lambda: selected["path"],
-            )
-
-            assert tool.adapter is first_adapter
-            first_config = create_adapter.call_args_list[0].args[1]
-            assert first_config.kwargs["semantic_model_path"] == str(tmp_path / "orders.yml")
-
-            selected["path"] = str(tmp_path / "finance.yml")
-            assert tool.adapter is second_adapter
-            second_config = create_adapter.call_args_list[1].args[1]
-            assert second_config.kwargs["semantic_model_path"] == str(tmp_path / "finance.yml")
-
-    def test_validate_semantic_initializes_adapter_with_runtime_database(self, tmp_path):
-        from datus.configuration.agent_config import AgentConfig, NodeConfig
-        from datus.tools.func_tool.semantic_tools import SemanticTools
-
-        captured_configs = []
-
-        class FakeAdapter:
-            async def validate_semantic(self, scope="all"):
-                return ValidationResult(valid=True, issues=[])
-
-        def create_adapter(adapter_type, adapter_config):
-            captured_configs.append(adapter_config)
-            return FakeAdapter()
-
-        config = AgentConfig(
-            nodes={"test": NodeConfig(model="test-model", input=None)},
-            home=str(tmp_path / "h"),
-            target="mock",
-            models={
-                "mock": {
-                    "type": "openai",
-                    "api_key": "k",
-                    "model": "m",
-                    "base_url": "http://localhost:0",
-                }
-            },
-            services={
-                "datasources": {
-                    "college_exam": {
-                        "type": "mysql",
-                        "host": "mysql",
-                        "username": "user",
-                        "password": "pass",
-                        "default": True,
-                    },
-                },
-                "semantic_layer": {"metricflow": {"datasource": "college_exam"}},
-            },
-            skip_init_dirs=True,
-        )
-
-        with (
-            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
-            patch(
-                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
-                side_effect=create_adapter,
-            ),
-        ):
-            tool = SemanticTools(
-                agent_config=config,
-                adapter_type="metricflow",
-                runtime_db_context_provider=lambda: {
-                    "datasource": "college_exam",
-                    "database": "college_exam",
-                },
-            )
-
-            result = tool.validate_semantic(scope="semantic_model")
-
-        assert result.success == 1
-        assert result.result["valid"] is True
-        assert captured_configs
-        first_config = captured_configs[0]
-        assert first_config.datasource == "college_exam"
-        assert first_config.db_config["type"] == "mysql"
-        assert first_config.db_config["host"] == "mysql"
-        assert first_config.db_config["database"] == "college_exam"
+            tool = SemanticTools(config)
+        tool._runtime = Mock()
+        tool.set_runtime_db_context({"database_name": "next"})
+        assert tool._runtime is None
+        assert tool._runtime_db_context()["database"] == "next"
 
 
 class TestListMetrics:
-    def test_no_adapter_returns_error(self, semantic_tools_ext):
-        result = semantic_tools_ext.list_metrics()
-
-        assert result.success == 0
-        assert "semantic adapter" in result.error.lower()
-
-    def test_success_from_adapter(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_success_from_runtime(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = [{"name": "orders", "subject_path": ["Commerce", "Orders"]}]
         mock_metric = Mock()
         mock_metric.name = "orders"
@@ -1607,7 +1169,7 @@ class TestListMetrics:
         mock_metric.measures = []
         mock_metric.unit = None
         mock_metric.format = None
-        mock_metric.path = ["Ignored", "Adapter", "Path"]
+        mock_metric.path = ["Ignored", "Runtime", "Path"]
         mock_metric.metadata = {
             "base_kind": "aggregate",
             "time_dimension": "orders.ordered_at",
@@ -1620,7 +1182,7 @@ class TestListMetrics:
         assert result.success == 1
         envelope = result.result
         # A summary row: identity and derivation only. ``measures`` (compiled
-        # internal names), the adapter's always-empty ``dimensions``, and unset
+        # internal names), the runtime's always-empty ``dimensions``, and unset
         # unit/format stay out — get_metric carries the per-metric detail.
         assert envelope["items"] == [
             {
@@ -1628,14 +1190,14 @@ class TestListMetrics:
                 "description": "Order count",
                 "kind": "aggregate",
                 "time_dimension": "orders.ordered_at",
-                # The knowledge-base path wins over the adapter's own ``path``.
+                # The knowledge-base path wins over the runtime's own ``path``.
                 "path": ["Commerce", "Orders"],
             }
         ]
         assert envelope["total"] is None
         assert envelope["has_more"] is False
         assert envelope["extra"] is None
-        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
+        mock_runtime.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
         # Contract: list_metrics MUST NOT carry compressor artefacts anymore.
         assert "compressed_data" not in envelope
         assert "original_rows" not in envelope
@@ -1653,41 +1215,41 @@ class TestListMetrics:
         ],
     )
     def test_paging_bounds_accept_what_a_model_actually_sends(
-        self, semantic_tools_with_adapter, limit, offset, expected_limit, expected_offset
+        self, semantic_tools_with_runtime, limit, offset, expected_limit, expected_offset
     ):
         """A schema declaring ``int`` does not stop a model sending ``"200"``.
 
-        Adapters slice and add with these values, so a string arrives as
+        Runtimes slice and add with these values, so a string arrives as
         ``TypeError: slice indices must be integers`` — a failed call whose error
         tells the caller nothing about what to do differently.
         """
-        tool, mock_adapter = semantic_tools_with_adapter
+        tool, mock_runtime = semantic_tools_with_runtime
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
             result = tool.list_metrics(limit=limit, offset=offset)
 
         assert result.success == 1
-        assert mock_adapter.list_metrics.call_args.kwargs["limit"] == expected_limit
-        assert mock_adapter.list_metrics.call_args.kwargs["offset"] == expected_offset
+        assert mock_runtime.list_metrics.call_args.kwargs["limit"] == expected_limit
+        assert mock_runtime.list_metrics.call_args.kwargs["offset"] == expected_offset
 
-    def test_paging_bounds_reach_the_adapter_as_ints(self, semantic_tools_with_adapter):
+    def test_paging_bounds_reach_the_runtime_as_ints(self, semantic_tools_with_runtime):
         """Coercion must produce real ints — ``"200"`` slices nothing."""
-        tool, mock_adapter = semantic_tools_with_adapter
+        tool, mock_runtime = semantic_tools_with_runtime
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
             tool.list_metrics(limit="200", offset="0")
 
-        kwargs = mock_adapter.list_metrics.call_args.kwargs
+        kwargs = mock_runtime.list_metrics.call_args.kwargs
         assert type(kwargs["limit"]) is int
         assert type(kwargs["offset"]) is int
 
-    def test_summary_row_carries_the_dependency_edges(self, semantic_tools_with_adapter):
+    def test_summary_row_carries_the_dependency_edges(self, semantic_tools_with_runtime):
         """derive_expr / derive_base are what make a composite metric decomposable.
 
         Without them a caller sees that a metric is derived but not from what, so
         it cannot walk from a total down to the inputs that moved it.
         """
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = []
         composed = Mock()
         composed.name = "area_score"
@@ -1725,8 +1287,8 @@ class TestListMetrics:
         assert items["store_issue_num_rn"]["derive_family"] == "window"
         assert "derive_expr" not in items["store_issue_num_rn"]
 
-    def test_filters_path_with_kb_and_does_not_pass_path_to_adapter(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_filters_path_with_kb_and_does_not_pass_path_to_runtime(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = [
             {"name": "M1", "subject_path": ["Finance"]},
             {"name": "m2", "subject_path": ["Sales"]},
@@ -1761,11 +1323,11 @@ class TestListMetrics:
         assert envelope["total"] == 2
         assert envelope["has_more"] is False
         assert envelope["extra"] is None
-        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
+        mock_runtime.list_metrics.assert_called_once_with(path=None, limit=100, offset=0)
         tool.metric_rag.search_all_metrics.assert_called_once_with(select_fields=["name"])
 
-    def test_path_filtering_happens_before_pagination(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_path_filtering_happens_before_pagination(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = [
             {"name": name, "subject_path": ["Metrics", "flights"]} for name in ("m1", "m3", "m5")
         ]
@@ -1788,7 +1350,7 @@ class TestListMetrics:
         assert result.result["total"] == 3
         assert result.result["has_more"] is True
         assert result.result["extra"] == {"next_offset": 2}
-        assert mock_adapter.list_metrics.call_args_list == [
+        assert mock_runtime.list_metrics.call_args_list == [
             call(path=None, limit=1, offset=0),
             call(path=None, limit=1, offset=1),
             call(path=None, limit=1, offset=2),
@@ -1796,18 +1358,18 @@ class TestListMetrics:
             call(path=None, limit=1, offset=4),
         ]
 
-    def test_unknown_kb_path_returns_empty_without_reading_adapter(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_unknown_kb_path_returns_empty_without_reading_runtime(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = []
 
         result = tool.list_metrics(path=["Metrics", "missing"])
 
         assert result.success == 1
         assert result.result == {"items": [], "total": 0, "has_more": False, "extra": None}
-        mock_adapter.list_metrics.assert_not_called()
+        mock_runtime.list_metrics.assert_not_called()
 
-    def test_path_query_excludes_kb_metric_missing_from_adapter(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_path_query_excludes_kb_metric_missing_from_runtime(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = [
             {"name": "flight_count", "subject_path": ["Metrics", "flights"]},
             {"name": "stale_metric", "subject_path": ["Metrics", "flights"]},
@@ -1827,8 +1389,8 @@ class TestListMetrics:
         assert result.result["total"] == 1
 
     @pytest.mark.parametrize("extra_page,expected_success", [([], 1), ([SimpleNamespace(name="m2")], 0)])
-    def test_path_query_handles_catalog_page_cap(self, semantic_tools_with_adapter, extra_page, expected_success):
-        tool, _ = semantic_tools_with_adapter
+    def test_path_query_handles_catalog_page_cap(self, semantic_tools_with_runtime, extra_page, expected_success):
+        tool, _ = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = [{"name": "missing", "subject_path": ["Metrics", "flights"]}]
         unrelated = SimpleNamespace(name="m1", description="")
 
@@ -1846,18 +1408,18 @@ class TestListMetrics:
             assert "error_code=400001" in result.error
             assert "cannot apply the knowledge-base subject path safely" in result.error
 
-    def test_drops_null_path_placeholders(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_drops_null_path_placeholders(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = []
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[]):
             result = tool.list_metrics(path=[None, "", "null"], limit=50, offset=0)
 
         assert result.success == 1
-        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=50, offset=0)
+        mock_runtime.list_metrics.assert_called_once_with(path=None, limit=50, offset=0)
 
-    def test_ignores_non_dict_metric_metadata(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_ignores_non_dict_metric_metadata(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.return_value = []
         mock_metric = Mock()
         mock_metric.name = "orders"
@@ -1875,16 +1437,16 @@ class TestListMetrics:
 
         assert result.success == 1
         item = result.result["items"][0]
-        # Unusable metadata degrades to the adapter's own ``type`` rather than
+        # Unusable metadata degrades to the runtime's own ``type`` rather than
         # failing the listing.
         assert item["kind"] == "count"
         assert not any(key.startswith("derive_") for key in item)
-        # The KB knows no path for this metric, so the adapter's own path must
+        # The KB knows no path for this metric, so the runtime's own path must
         # not leak in as a substitute.
         assert item.get("path") is None
 
-    def test_no_path_keeps_adapter_available_when_kb_read_fails(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_no_path_keeps_runtime_available_when_kb_read_fails(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.side_effect = RuntimeError("KB unavailable")
         mock_metric = SimpleNamespace(name="orders", description="Order count", path=["Yaml", "Path"])
 
@@ -1894,26 +1456,26 @@ class TestListMetrics:
         assert result.success == 1
         assert result.result["items"][0]["name"] == "orders"
         assert result.result["items"][0].get("path") is None
-        mock_adapter.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
+        mock_runtime.list_metrics.assert_called_once_with(path=None, limit=200, offset=0)
 
-    def test_path_query_fails_when_kb_read_fails(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_path_query_fails_when_kb_read_fails(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         tool.metric_rag.search_all_metrics.side_effect = RuntimeError("KB unavailable")
 
         result = tool.list_metrics(path=["Metrics", "orders"])
 
         assert result.success == 0
         assert "KB unavailable" in result.error
-        mock_adapter.list_metrics.assert_not_called()
+        mock_runtime.list_metrics.assert_not_called()
 
-    def test_exception_returns_failure(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_exception_returns_failure(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
 
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("adapter error")):
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("runtime error")):
             result = tool.list_metrics()
 
         assert result.success == 0
-        assert "adapter error" in result.error
+        assert "runtime error" in result.error
 
 
 def _detail_metric(name, metadata, measures=("m",)):
@@ -1948,7 +1510,7 @@ class TestGetMetric:
 
     @staticmethod
     def _wire(metrics, dimensions=("cell.brand", "cell.area"), dimension_rows=None):
-        """Route the two adapter coroutines this tool awaits, in call order."""
+        """Route the two runtime coroutines this tool awaits, in call order."""
         dimension_rows = dimension_rows if dimension_rows is not None else [{"name": name} for name in dimensions]
 
         def dispatch(coro):
@@ -1960,23 +1522,17 @@ class TestGetMetric:
         dispatch.calls = 0
         return patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=dispatch)
 
-    def test_no_adapter_returns_error(self, semantic_tools_ext):
-        result = semantic_tools_ext.get_metric(name="revenue")
-
-        assert result.success == 0
-        assert "semantic adapter" in result.error.lower()
-
     @pytest.mark.parametrize("name", ["", "   ", None, "null"])
-    def test_rejects_a_missing_name(self, semantic_tools_with_adapter, name):
-        tool, _ = semantic_tools_with_adapter
+    def test_rejects_a_missing_name(self, semantic_tools_with_runtime, name):
+        tool, _ = semantic_tools_with_runtime
 
         result = tool.get_metric(name=name)
 
         assert result.success == 0
         assert "requires a metric name" in result.error
 
-    def test_returns_detail_and_queryable_dimensions(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_returns_detail_and_queryable_dimensions(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("store_issue_num_rn", self.RANKED)
 
         with self._wire([metric]):
@@ -1989,11 +1545,11 @@ class TestGetMetric:
         assert item["datasets"] == ["repair"]
         assert [dimension["name"] for dimension in item["dimensions"]] == ["cell.brand", "cell.area"]
 
-    def test_omits_compiled_measure_names(self, semantic_tools_with_adapter):
+    def test_omits_compiled_measure_names(self, semantic_tools_with_runtime):
         """Compiled measure names are unusable as tool arguments and dominate
         the row, so they stay out of the detail exactly as they stay out of the
         summary."""
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("area_score", {"base_kind": "expression"}, measures=["a_very_long_compiled_name"] * 21)
 
         with self._wire([metric]):
@@ -2001,16 +1557,16 @@ class TestGetMetric:
 
         assert "measures" not in result.result
 
-    def test_passes_through_the_dimensions_the_adapter_says_are_required(self, semantic_tools_with_adapter):
-        """The requirement is the adapter's answer, carried verbatim.
+    def test_passes_through_the_dimensions_the_runtime_says_are_required(self, semantic_tools_with_runtime):
+        """The requirement is the runtime's answer, carried verbatim.
 
         Which dimensions a metric needs before its partitions mean anything can
-        depend on metrics the adapter never published — a composite inherits the
+        depend on metrics the runtime never published — a composite inherits the
         requirement from its inputs. Deriving it here from the partition rule
         would report "no requirement" for exactly those metrics, so the field is
         passed through and never reconstructed.
         """
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         metric = _detail_metric(
             "area_score",
             {"base_kind": "expression", "derive_family": "compose", "required_dimensions": ["cell.brand", "cell.area"]},
@@ -2021,11 +1577,11 @@ class TestGetMetric:
 
         assert result.result["required_dimensions"] == ["cell.brand", "cell.area"]
 
-    def test_keeps_the_field_absent_when_the_adapter_reports_nothing(self, semantic_tools_with_adapter):
+    def test_keeps_the_field_absent_when_the_runtime_reports_nothing(self, semantic_tools_with_runtime):
         """A metric whose window excludes a dimension but that publishes no
-        requirement must not grow one here: absence means the adapter did not
+        requirement must not grow one here: absence means the runtime did not
         say, and inventing an answer from the rule is what got it wrong."""
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("store_issue_num_rn", self.RANKED)
 
         with self._wire([metric]):
@@ -2033,8 +1589,8 @@ class TestGetMetric:
 
         assert "required_dimensions" not in result.result
 
-    def test_unknown_name_fails_with_the_name(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_unknown_name_fails_with_the_name(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})
 
         with self._wire([metric]):
@@ -2044,9 +1600,9 @@ class TestGetMetric:
         assert "no_such_metric" in result.error
         assert "list_metrics" in result.error
 
-    def test_dimension_failure_keeps_the_rest_of_the_detail(self, semantic_tools_with_adapter):
+    def test_dimension_failure_keeps_the_rest_of_the_detail(self, semantic_tools_with_runtime):
         """Detail a caller can use should survive one failing sub-query."""
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("kpi_issues", {"base_kind": "aggregate"})
 
         def dispatch(coro):
@@ -2064,8 +1620,8 @@ class TestGetMetric:
         assert "planner unavailable" in result.result["dimensions_error"]
         assert "dimensions" not in result.result
 
-    def test_catalog_failure_is_reported(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_catalog_failure_is_reported(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("catalog down")):
             result = tool.get_metric(name="kpi_issues")
@@ -2073,13 +1629,13 @@ class TestGetMetric:
         assert result.success == 0
         assert "catalog down" in result.error
 
-    def test_promotes_the_time_axis_off_the_dimension_rows(self, semantic_tools_with_adapter):
+    def test_promotes_the_time_axis_off_the_dimension_rows(self, semantic_tools_with_runtime):
         """The time contract is one answer per metric, not per dimension.
 
-        The adapter reports it on whichever dimension is the primary time axis;
+        The runtime reports it on whichever dimension is the primary time axis;
         repeating it on every row would restate the same answer N times.
         """
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         metric = _detail_metric("event_total", {"base_kind": "aggregate"})
         dimensions = [
             {
@@ -2114,14 +1670,14 @@ class TestGetMetric:
         assert result.result["dimensions"][1]["recommended"] is False
         assert result.result["dimensions"][1]["recommendation_source"] == "inferred:primary_key"
 
-    def test_describes_a_metric_that_only_a_later_catalog_page_holds(self, semantic_tools_with_adapter):
+    def test_describes_a_metric_that_only_a_later_catalog_page_holds(self, semantic_tools_with_runtime):
         """Every name list_metrics can hand out, get_metric has to accept.
 
         list_metrics pages the catalog, so it will report names past the first
         page. Resolving those against a single bounded read answers "unknown
         metric" for a metric the caller was just told exists.
         """
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         wanted = _detail_metric("revenue", {"base_kind": "aggregate"})
         pages = [
             [_detail_metric(f"filler_{index}", {"base_kind": "aggregate"}) for index in range(3)],
@@ -2141,10 +1697,10 @@ class TestGetMetric:
         assert result.success == 1
         assert result.result["name"] == "revenue"
 
-    def test_unknown_name_fails_once_the_catalog_runs_out(self, semantic_tools_with_adapter):
+    def test_unknown_name_fails_once_the_catalog_runs_out(self, semantic_tools_with_runtime):
         """Paging to the end of the catalog is an unknown metric, not a failure
         to read it: the caller needs to fix the name, not retry."""
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         pages = [[_detail_metric("revenue", {"base_kind": "aggregate"})], []]
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: pages.pop(0)):
@@ -2154,33 +1710,28 @@ class TestGetMetric:
         assert "no_such_metric" in result.error
         assert "list_metrics" in result.error
 
-    def test_resolves_the_name_against_the_whole_catalog_not_the_path(self, semantic_tools_with_adapter):
+    def test_resolves_the_name_against_the_whole_catalog_not_the_path(self, semantic_tools_with_runtime):
         """Name resolution must scope exactly the way list_metrics scopes it.
 
-        list_metrics filters by knowledge-base subject path and asks the adapter
-        for its unfiltered catalog. Narrowing the adapter read by path here would
+        list_metrics filters by knowledge-base subject path and asks the runtime
+        for its unfiltered catalog. Narrowing the runtime read by path here would
         make get_metric reject names list_metrics had just handed out under that
         same path.
         """
-        tool, mock_adapter = semantic_tools_with_adapter
+        tool, mock_runtime = semantic_tools_with_runtime
         metric = _detail_metric("revenue", {"base_kind": "aggregate"})
 
         with self._wire([metric]):
             result = tool.get_metric(name="revenue", path=["Finance"])
 
         assert result.success == 1
-        assert mock_adapter.list_metrics.call_args.kwargs["path"] is None
-        mock_adapter.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
+        assert mock_runtime.list_metrics.call_args.kwargs["path"] is None
+        mock_runtime.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
 
 
 class TestValidateSemantic:
-    def test_no_adapter_returns_error(self, semantic_tools_ext):
-        result = semantic_tools_ext.validate_semantic()
-        assert result.success == 0
-        assert "adapter" in result.error.lower()
-
-    def test_valid_result(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_valid_result(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2189,7 +1740,7 @@ class TestValidateSemantic:
         mock_validation.issues = []
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_validation):
-            with patch.object(tool, "_reload_adapter", return_value=True):
+            with patch.object(tool, "_reload_runtime", return_value=True):
                 result = tool.validate_semantic()
 
         assert result.success == 1
@@ -2197,17 +1748,16 @@ class TestValidateSemantic:
         assert result.result["issues"] == []
         assert evidence.validation_passed is True
 
-    def test_records_compiled_evidence_without_exposing_descriptions(self, semantic_tools_with_adapter, tmp_path):
-        tool, _ = semantic_tools_with_adapter
+    def test_records_compiled_evidence_without_exposing_descriptions(self, semantic_tools_with_runtime, tmp_path):
+        tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
         artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
         calls = {}
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
-        tool.adapter_type = "dosi"
         tool._semantic_metric_names_provider = lambda: ["revenue"]
 
-        class _Adapter:
+        class _Runtime:
             async def validate_semantic(self, scope="all", metric_names=None):
                 calls["metric_names"] = metric_names
                 return SimpleNamespace(
@@ -2229,8 +1779,8 @@ class TestValidateSemantic:
                     },
                 )
 
-        tool._adapter = _Adapter()
-        with patch.object(tool, "_reload_adapter", return_value=True):
+        tool._runtime = _Runtime()
+        with patch.object(tool, "_reload_runtime", return_value=True):
             result = tool.validate_semantic()
 
         assert result.success == 1
@@ -2239,8 +1789,8 @@ class TestValidateSemantic:
         assert "compiled_metrics" not in result.result
         assert evidence.compiled_validation_passed(artifact, ["revenue"])
 
-    def test_invalid_result(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_invalid_result(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2260,8 +1810,8 @@ class TestValidateSemantic:
         assert "bad config" in result.error
         assert evidence.validation_passed is False
 
-    def test_invalid_result_is_compact_for_large_backend_errors(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_invalid_result_is_compact_for_large_backend_errors(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
         mock_validation = Mock()
         mock_validation.valid = False
         mock_validation.issues = []
@@ -2283,8 +1833,8 @@ class TestValidateSemantic:
         assert len(result.error) < 2_500
         assert "additional validation issue" in result.result["issues"][-1]["message"]
 
-    def test_all_scope_keeps_no_metrics_validation_error(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_all_scope_keeps_no_metrics_validation_error(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2306,8 +1856,8 @@ class TestValidateSemantic:
         assert result.result["ignored_issues"] == []
         assert evidence.validation_passed is False
 
-    def test_semantic_model_scope_ignores_no_metrics_validation_error(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_semantic_model_scope_ignores_no_metrics_validation_error(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2321,7 +1871,7 @@ class TestValidateSemantic:
         mock_validation.issues = [mock_issue]
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_validation):
-            with patch.object(tool, "_reload_adapter", return_value=True):
+            with patch.object(tool, "_reload_runtime", return_value=True):
                 result = tool.validate_semantic(scope="semantic_model")
 
         assert result.success == 1
@@ -2331,8 +1881,8 @@ class TestValidateSemantic:
         assert result.result["scope"] == "semantic_model"
         assert evidence.validation_passed is True
 
-    def test_semantic_model_scope_keeps_real_validation_errors(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_semantic_model_scope_keeps_real_validation_errors(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2363,8 +1913,8 @@ class TestValidateSemantic:
         assert "Element ac_code" in result.error
         assert evidence.validation_passed is False
 
-    def test_semantic_model_scope_treats_enum_severity_as_error(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_semantic_model_scope_treats_enum_severity_as_error(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
@@ -2389,102 +1939,37 @@ class TestValidateSemantic:
         assert result.result["ignored_issues"] == []
         assert evidence.validation_passed is False
 
-    def test_invalid_scope_returns_error(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_invalid_scope_returns_error(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
 
         result = tool.validate_semantic(scope="unknown")
 
         assert result.success == 0
         assert "scope must be one of" in result.error
 
-    def test_passes_checks_and_baseline_to_supported_adapter(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-        calls = {}
+    def test_validate_semantic_schema_exposes_dosi_options(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+        schema = trans_to_function_tool(tool.validate_semantic).params_json_schema
 
-        class _Adapter:
-            async def validate_semantic(
-                self,
-                scope="all",
-                semantic_model_name=None,
-                checks=None,
-                baseline_artifact=None,
-            ):
-                calls["scope"] = scope
-                calls["semantic_model_name"] = semantic_model_name
-                calls["checks"] = checks
-                calls["baseline_artifact"] = baseline_artifact
-                result = Mock()
-                result.valid = True
-                result.issues = []
-                return result
+        assert set(schema["properties"]) == {"scope", "semantic_model_name"}
 
-        tool._adapter = _Adapter()
-        baseline = {"version": "0.2.0.dev0", "semantic_model": [{"name": "shop", "datasets": []}]}
-
-        with patch.object(tool, "_reload_adapter", return_value=True):
-            result = tool.validate_semantic(
-                semantic_model_name="shop",
-                checks="authoring_quality,mutation_guard",
-                baseline_artifact_json=json.dumps(baseline),
-            )
-
-        assert result.success == 1
-        assert result.result["checks"] == ["authoring_quality", "mutation_guard"]
-        assert calls == {
-            "scope": "all",
-            "semantic_model_name": "shop",
-            "checks": ["authoring_quality", "mutation_guard"],
-            "baseline_artifact": baseline,
-        }
-
-    def test_passes_validation_options_to_kwargs_adapter(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-        calls = {}
-
-        class _Adapter:
-            async def validate_semantic(self, **kwargs):
-                calls.update(kwargs)
-                result = Mock()
-                result.valid = True
-                result.issues = []
-                return result
-
-        tool._adapter = _Adapter()
-        baseline = {"semantic_model": [{"name": "commerce"}]}
-
-        with patch.object(tool, "_reload_adapter", return_value=True):
-            result = tool.validate_semantic(
-                scope="semantic_model",
-                semantic_model_name="commerce",
-                checks=["authoring_quality"],
-                baseline_artifact_json=json.dumps(baseline),
-            )
-
-        assert result.success == 1
-        assert calls == {
-            "scope": "semantic_model",
-            "semantic_model_name": "commerce",
-            "checks": ["authoring_quality"],
-            "baseline_artifact": baseline,
-        }
-
-    def test_records_target_artifact_validation_evidence(self, semantic_tools_with_adapter, tmp_path):
-        tool, _ = semantic_tools_with_adapter
+    def test_records_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
+        tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
         artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
         evidence = GenerationEvidence()
         tool.generation_evidence = evidence
 
-        class _Adapter:
+        class _Runtime:
             async def validate_semantic(self, scope="all", semantic_model_name=None):
                 result = Mock()
                 result.valid = True
                 result.issues = []
                 return result
 
-        tool._adapter = _Adapter()
+        tool._runtime = _Runtime()
         with (
-            patch.object(tool, "_reload_adapter", return_value=True),
+            patch.object(tool, "_reload_runtime", return_value=True),
             patch.object(
                 tool,
                 "_semantic_model_artifact_evidence",
@@ -2502,11 +1987,10 @@ class TestValidateSemantic:
         assert result.success == 1
         assert evidence.semantic_artifact_validation_passed("commerce", artifact)
 
-    def test_resolves_target_artifact_validation_evidence(self, semantic_tools_with_adapter, tmp_path):
-        tool, _ = semantic_tools_with_adapter
+    def test_resolves_target_artifact_validation_evidence(self, semantic_tools_with_runtime, tmp_path):
+        tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
         artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
-        tool.adapter_type = "dosi"
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2523,11 +2007,10 @@ class TestValidateSemantic:
         assert result["semantic_model_file"] == str(artifact.resolve())
         assert len(result["semantic_model_file_sha256"]) == 64
 
-    def test_dosi_resolves_osi_target_artifact_evidence(self, semantic_tools_with_adapter, tmp_path):
-        tool, _ = semantic_tools_with_adapter
+    def test_dosi_resolves_osi_target_artifact_evidence(self, semantic_tools_with_runtime, tmp_path):
+        tool, _ = semantic_tools_with_runtime
         artifact = tmp_path / "commerce.yml"
         artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
-        tool.adapter_type = "dosi"
 
         with patch(
             "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
@@ -2543,77 +2026,35 @@ class TestValidateSemantic:
         assert result["semantic_model_name"] == "commerce"
         assert result["semantic_model_file"] == str(artifact.resolve())
 
-    def test_rejects_target_when_adapter_does_not_support_it(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_exception_returns_failure(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
 
-        class _Adapter:
-            async def validate_semantic(self, scope="all"):
-                result = Mock()
-                result.valid = True
-                result.issues = []
-                return result
-
-        tool._adapter = _Adapter()
-
-        result = tool.validate_semantic(semantic_model_name="shop")
-
-        assert result.success == 0
-        assert "Targeted semantic-model validation is not supported" in result.error
-
-    def test_rejects_checks_when_adapter_does_not_support_them(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-
-        class _Adapter:
-            async def validate_semantic(self, scope="all"):
-                result = Mock()
-                result.valid = True
-                result.issues = []
-                return result
-
-        tool._adapter = _Adapter()
-
-        result = tool.validate_semantic(checks=["authoring_quality"])
-
-        assert result.success == 0
-        assert "checks are not supported" in result.error
-
-    def test_rejects_invalid_baseline_json(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-
-        result = tool.validate_semantic(baseline_artifact_json="{bad")
-
-        assert result.success == 0
-        assert "baseline_artifact_json must be valid JSON" in result.error
-
-    def test_exception_returns_failure(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
-
-        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("adapter crash")):
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=Exception("runtime crash")):
             result = tool.validate_semantic()
 
         assert result.success == 0
-        assert "adapter crash" in result.error
+        assert "runtime crash" in result.error
 
 
 class TestAttributionAnalyze:
-    def test_tool_schema_exposes_drilldown_guardrail_parameters(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_tool_schema_exposes_drilldown_guardrail_parameters(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
 
         schema = trans_to_function_tool(tool.attribution_analyze).params_json_schema
 
         assert {
             "where",
-            "path",
             "max_dimension_values",
             "time_dimension",
             "params",
         }.issubset(schema["properties"])
+        assert "path" not in schema["properties"]
         assert "anomaly_context" not in schema["properties"]
         assert "exclusive" in schema["properties"]["baseline_end"]["description"].lower()
         assert "exclusive" in schema["properties"]["current_end"]["description"].lower()
 
-    def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
 
         description = " ".join(trans_to_function_tool(tool.attribution_analyze).description.lower().split())
 
@@ -2622,20 +2063,8 @@ class TestAttributionAnalyze:
         assert "root cause analysis" not in description
         assert "failed, truncated, and non-additive dimensions are excluded" in description
 
-    def test_no_attribution_tool_returns_error(self, semantic_tools_ext):
-        result = semantic_tools_ext.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
-        assert result.success == 0
-        assert "semantic adapter" in result.error.lower()
-
-    def test_success_builds_unified_request(self, semantic_tools_with_adapter):
-        tool, mock_adapter = semantic_tools_with_adapter
+    def test_success_builds_unified_request(self, semantic_tools_with_runtime):
+        tool, mock_runtime = semantic_tools_with_runtime
         mock_result = Mock()
         mock_result.model_dump.return_value = {
             "metric": "revenue",
@@ -2656,7 +2085,6 @@ class TestAttributionAnalyze:
             current_start="2024-01-08",
             current_end="2024-01-15",
             where="region = 'US'",
-            path=["sales"],
             max_dimension_values=25,
             time_dimension="orders.order_date",
             params={"currency": "USD"},
@@ -2664,23 +2092,21 @@ class TestAttributionAnalyze:
 
         assert result.success == 1
         assert result.result["warnings"][0]["code"] == "unequal_windows"
-        called_adapter, request = tool._attribute.await_args.args
-        assert called_adapter is mock_adapter
+        called_runtime, request = tool._attribute.await_args.args
+        assert called_runtime is mock_runtime
         assert request.metric == "revenue"
         assert request.dimensions == ["region"]
         assert request.where_sql == "region = 'US'"
-        assert request.path == ["sales"]
         assert request.max_values_per_dimension == 25
         assert request.time_dimension == "orders.order_date"
         assert request.params == {"currency": "USD"}
         mock_result.model_dump.assert_called_once_with(exclude_none=True)
 
     @pytest.mark.asyncio
-    async def test_attribute_prefers_native_adapter(self, semantic_tools_with_adapter):
-        tool, adapter = semantic_tools_with_adapter
+    async def test_attribute_prefers_native_runtime(self, semantic_tools_with_runtime):
+        tool, runtime = semantic_tools_with_runtime
         native_result = Mock()
-        adapter.attribute = AsyncMock(return_value=native_result)
-        tool._attribution_tool = Mock()
+        runtime.attribute = AsyncMock(return_value=native_result)
         request = AttributionRequest(
             metric="revenue",
             dimensions=["region"],
@@ -2688,32 +2114,12 @@ class TestAttributionAnalyze:
             current=AttributionWindow(start="2024-01-08", end="2024-01-15"),
         )
 
-        result = await tool._attribute(adapter, request)
+        result = await tool._attribute(runtime, request)
 
         assert result is native_result
-        tool._attribution_tool.attribute.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_attribute_falls_back_when_adapter_returns_none(self, semantic_tools_with_adapter):
-        tool, adapter = semantic_tools_with_adapter
-        generic_result = Mock()
-        adapter.attribute = AsyncMock(return_value=None)
-        tool._attribution_tool = Mock()
-        tool._attribution_tool.attribute = AsyncMock(return_value=generic_result)
-        request = AttributionRequest(
-            metric="revenue",
-            dimensions=["region"],
-            baseline=AttributionWindow(start="2024-01-01", end="2024-01-08"),
-            current=AttributionWindow(start="2024-01-08", end="2024-01-15"),
-        )
-
-        result = await tool._attribute(adapter, request)
-
-        assert result is generic_result
-        tool._attribution_tool.attribute.assert_awaited_once_with(request)
-
-    def test_exception_returns_failure(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_exception_returns_failure(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
         tool._attribute = AsyncMock(side_effect=Exception("analysis failed"))
 
         result = tool.attribution_analyze(
@@ -2728,32 +2134,8 @@ class TestAttributionAnalyze:
         assert result.success == 0
         assert "analysis failed" in result.error
 
-    def test_validation_exception_returns_structured_failure(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-        payload = AttributionValidationErrorPayload(
-            code="MULTI_ROW_TOTAL",
-            message="Expected one total row.",
-            period="baseline",
-            columns=["revenue"],
-            row_count=2,
-        )
-
-        tool._attribute = AsyncMock(side_effect=AttributionValidationException(payload))
-        result = tool.attribution_analyze(
-            metric_name="revenue",
-            candidate_dimensions=["region"],
-            baseline_start="2024-01-01",
-            baseline_end="2024-01-08",
-            current_start="2024-01-08",
-            current_end="2024-01-15",
-        )
-
-        assert result.success == 0
-        assert result.error == "Expected one total row."
-        assert result.result == payload.model_dump()
-
-    def test_native_validation_exception_returns_adapter_payload(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
+    def test_native_validation_exception_returns_runtime_payload(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
         payload = Mock(
             error_type="semantic_validation_error",
             code="unknown_metric",
@@ -2821,31 +2203,19 @@ class TestExtractDbConfig:
         assert result["catalog"] == "skip"
 
 
-class TestReloadAdapter:
-    def test_no_adapter_type_returns_false(self, semantic_tools_ext):
-        result = semantic_tools_ext._reload_adapter()
-        assert result is False
-
-    def test_reload_success(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-        new_adapter = Mock()
-        # After clearing, the property should return a new adapter
-        with patch.object(type(tool), "adapter", new_callable=lambda: property(lambda self: new_adapter)):
-            result = tool._reload_adapter()
+class TestReloadRuntime:
+    def test_reload_success(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+        new_runtime = Mock()
+        # After clearing, the property should return a new runtime
+        with patch.object(type(tool), "runtime", new_callable=lambda: property(lambda self: new_runtime)):
+            result = tool._reload_runtime()
         assert result is True
 
-    def test_reload_adapter_fails_returns_false(self, semantic_tools_with_adapter):
-        tool, _ = semantic_tools_with_adapter
-        tool._adapter = None
-
-        # Simulate adapter load failure
-        with patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry") as mock_registry:
-            mock_registry.get_metadata.return_value = None
-            mock_registry.create_adapter.side_effect = Exception("config missing")
-
-            result = tool._reload_adapter()
-
-        assert result is False
+    def test_reload_runtime_failure_returns_false(self, semantic_tools_with_runtime):
+        tool, _ = semantic_tools_with_runtime
+        with patch("datus.tools.func_tool.semantic_tools.DosiRuntime", side_effect=RuntimeError("missing model")):
+            assert tool._reload_runtime() is False
 
 
 class TestCompressorModelName:
@@ -2862,7 +2232,7 @@ class TestCompressorModelName:
             tool = SemanticTools(agent_config=config)
             assert tool.compressor.model_name == "deepseek/deepseek-chat"
 
-    def test_list_metrics_returns_envelope_without_compressor(self, semantic_tools_with_adapter):
+    def test_list_metrics_returns_envelope_without_compressor(self, semantic_tools_with_runtime):
         """list_metrics returns the canonical FuncToolListResult envelope.
 
         Regression: list_metrics used to wrap rows in DataCompressor output
@@ -2870,7 +2240,7 @@ class TestCompressorModelName:
         After the envelope migration it returns ``{items, total, has_more,
         extra}`` with NO compressor artefacts — list_* never compresses.
         """
-        tool, _ = semantic_tools_with_adapter
+        tool, _ = semantic_tools_with_runtime
         mock_metric = Mock()
         mock_metric.name = "orders"
         mock_metric.description = ""

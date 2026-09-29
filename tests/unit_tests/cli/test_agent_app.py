@@ -41,7 +41,6 @@ def _stub_agent_config(**overrides):
     cfg = MagicMock()
     cfg.models = overrides.get("models", {"my-internal": SimpleNamespace(type="openai", model="internal-gpt")})
     cfg.agentic_nodes = overrides.get("agentic_nodes", {})
-    cfg.resolve_semantic_adapter = MagicMock(return_value=overrides.get("semantic_adapter", "dosi"))
     cfg.set_agentic_node_override = MagicMock()
     return cfg
 
@@ -71,8 +70,8 @@ class TestListing:
         assert app._builtin_names[0] == "chat"
         assert set(app._builtin_names[1:]) == (SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
 
-    def test_semantic_modeling_is_listed_for_dosi(self):
-        app = _build(semantic_adapter="dosi")
+    def test_semantic_modeling_is_listed(self):
+        app = _build()
         assert "semantic_modeling" in app._builtin_names
 
     def test_hidden_builtins_are_excluded(self):

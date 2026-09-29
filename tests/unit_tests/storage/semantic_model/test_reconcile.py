@@ -103,7 +103,6 @@ def _fake_sync(agent_config):
 @pytest.fixture
 def project(real_agent_config):
     """A Dosi project with a second datasource bound next to the default one."""
-    real_agent_config.resolve_semantic_adapter = lambda *_: "dosi"
     datasources = real_agent_config.services.datasources
     datasources[OTHER] = copy.copy(datasources[DATASOURCE])
     root = Path(real_agent_config.project_root) / "subject" / "semantic_models"

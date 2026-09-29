@@ -91,23 +91,23 @@ class TestChatServiceListSessions:
         assert "test-list-session" in session_ids
 
     def test_list_sessions_filters_by_subagent_id(self, chat_svc):
-        """subagent_id='gen_metrics' keeps only sessions whose prefix matches."""
+        """subagent_id='sample_agent' keeps only sessions whose prefix matches."""
         sm = SessionManager(session_dir=chat_svc._session_dir)
         sm.create_session("chat_session_a")
-        sm.create_session("gen_metrics_session_a")
-        sm.create_session("gen_metrics_session_b")
+        sm.create_session("sample_agent_session_a")
+        sm.create_session("sample_agent_session_b")
 
-        result = chat_svc.list_sessions(subagent_id="gen_metrics")
+        result = chat_svc.list_sessions(subagent_id="sample_agent")
         assert result.success is True
         session_ids = {s.session_id for s in result.data.sessions}
-        assert session_ids == {"gen_metrics_session_a", "gen_metrics_session_b"}
+        assert session_ids == {"sample_agent_session_a", "sample_agent_session_b"}
 
     def test_list_sessions_filter_chat_includes_legacy(self, chat_svc):
         """subagent_id='chat' returns chat-prefixed and legacy (no-prefix) ids, but not subagents."""
         sm = SessionManager(session_dir=chat_svc._session_dir)
         sm.create_session("chat_session_a")
         sm.create_session("legacy-id-1")
-        sm.create_session("gen_metrics_session_a")
+        sm.create_session("sample_agent_session_a")
 
         result = chat_svc.list_sessions(subagent_id="chat")
         assert result.success is True
@@ -118,12 +118,12 @@ class TestChatServiceListSessions:
         """subagent_id=None returns sessions for every agent."""
         sm = SessionManager(session_dir=chat_svc._session_dir)
         sm.create_session("chat_session_a")
-        sm.create_session("gen_metrics_session_a")
+        sm.create_session("sample_agent_session_a")
 
         result = chat_svc.list_sessions()
         assert result.success is True
         session_ids = {s.session_id for s in result.data.sessions}
-        assert {"chat_session_a", "gen_metrics_session_a"} <= session_ids
+        assert {"chat_session_a", "sample_agent_session_a"} <= session_ids
 
     def test_list_sessions_timestamps_use_iso_z_format(self, chat_svc):
         """created_at / last_updated must be ISO-8601 UTC with 'Z' suffix.
@@ -372,7 +372,7 @@ class TestChatServiceListSessionsPagination:
         assert [s.session_id for s in result.data.sessions] == ids[:3]
 
     def test_subagent_filter_applied_before_pagination(self, chat_svc):
-        ids = ["chat_session_a", "gen_metrics_session_a", "chat_session_b", "gen_metrics_session_b", "chat_session_c"]
+        ids = ["chat_session_a", "sample_agent_session_a", "chat_session_b", "sample_agent_session_b", "chat_session_c"]
         fake = self._fake_session_manager(ids)
         with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
             result = chat_svc.list_sessions(subagent_id="chat", offset=1, limit=1)

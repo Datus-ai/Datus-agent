@@ -36,29 +36,20 @@ def _make_agent(
     *,
     dashboards=None,
     schedulers=None,
-    semantic=None,
     active_dash=None,
     active_sched=None,
-    active_semantic=None,
     default_dash=None,
     default_sched=None,
-    default_semantic=None,
-    resolved_semantic=None,
 ):
     cfg = MagicMock()
     cfg.dashboard_config = dashboards or {}
     cfg.scheduler_services = schedulers or {}
-    cfg.semantic_layer_configs = semantic or {}
     cfg.active_dashboard = MagicMock(return_value=active_dash)
     cfg.active_scheduler = MagicMock(return_value=active_sched)
-    cfg.active_semantic = MagicMock(return_value=active_semantic)
     cfg.default_dashboard_service = MagicMock(return_value=default_dash)
     cfg.default_scheduler_service = MagicMock(return_value=default_sched)
-    cfg.default_semantic_adapter = MagicMock(return_value=default_semantic)
-    cfg.resolve_semantic_adapter = MagicMock(return_value=resolved_semantic)
     cfg.set_active_dashboard = MagicMock()
     cfg.set_active_scheduler = MagicMock()
-    cfg.set_active_semantic = MagicMock()
     return cfg
 
 
@@ -117,7 +108,6 @@ class TestBootstrapDefault:
         sb.run(cli)
         cfg.set_active_dashboard.assert_not_called()
         cfg.set_active_scheduler.assert_not_called()
-        cfg.set_active_semantic.assert_not_called()
 
     def test_skips_when_already_pinned(self):
         cfg = _make_agent(
@@ -197,18 +187,6 @@ class TestBootstrapDefault:
 
 
 class TestBackgroundInstall:
-    def test_empty_semantic_section_installs_built_in_default(self, monkeypatch):
-        cfg = _make_agent(resolved_semantic="dosi")
-        monkeypatch.setattr(sb, "is_adapter_installed", lambda *_: False)
-
-        assert sb._missing_install_targets(cfg) == [("semantic_layer", "dosi")]
-
-    def test_configured_semantic_adapter_outranks_built_in_default(self, monkeypatch):
-        cfg = _make_agent(semantic={"metricflow": {}}, resolved_semantic="dosi")
-        monkeypatch.setattr(sb, "is_adapter_installed", lambda *_: False)
-
-        assert sb._missing_install_targets(cfg) == [("semantic_layer", "metricflow")]
-
     def test_only_processes_missing_packages(self, monkeypatch):
         # Two BI services, only one is missing. Use SimpleNamespace so
         # ``getattr(cfg, 'adapter_type', '')`` returns the literal value

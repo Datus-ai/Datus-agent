@@ -120,7 +120,7 @@ def test_collect_semantic_only_success_story(app: BootstrapApp) -> None:
     app._sem_success_story.text = "/data/success.csv"
     app._sem_subject_tree.text = "Sales, Orders"
     opts = app._collect_for(_Tab.SEMANTIC)
-    # No semantic_yaml / from_adapter / catalog / subject_path / source.
+    # No semantic_yaml / catalog / subject_path / source.
     assert opts == {
         "datasource": "ssb_sqlite",
         "success_story": "/data/success.csv",

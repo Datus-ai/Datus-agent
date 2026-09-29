@@ -30,7 +30,6 @@ def _config(tmp_path: Path):
             semantic_model_path=lambda datasource: model_root / datasource,
         ),
         project_root=tmp_path,
-        resolve_semantic_adapter=lambda _: "dosi",
     ), model_dir
 
 
@@ -366,15 +365,13 @@ def test_semantic_plan_can_recover_unique_core_schema_invalid_model(tmp_path, mo
 
 def test_dosi_plan_can_repair_legacy_osi_yaml_after_project_switch(tmp_path, monkeypatch):
     config, model_dir = _config(tmp_path)
-    config.resolve_semantic_adapter = lambda _: "dosi"
     target = model_dir / "legacy_osi.yml"
     _write_model(target, name="orders_model")
 
-    def validate_for_active_adapter(document, *, semantic_adapter):
-        assert semantic_adapter == "dosi"
+    def validate_with_dosi(document):
         return "legacy OSI document requires Dosi repair"
 
-    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", validate_for_active_adapter)
+    monkeypatch.setattr(semantic_authoring, "validate_osi_authoring_document", validate_with_dosi)
     tools = OsiSemanticModelTargetTools(config)
 
     inventory = tools.list_existing_osi_semantic_models()

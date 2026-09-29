@@ -255,9 +255,7 @@ Spider metadata 初始化可能需要数小时，因为 benchmark 包含大量�
 
 ### 语义层
 
-MetricFlow 通过 semantic adapter 系统配置，不再需要手动运行 `poetry lock`、`mf setup`，也不需要直接编辑 `~/.metricflow/config.yml`。
-
-至少需要配置一个数据源，并显式配置 MetricFlow semantic adapter：
+Agent 使用内置 Dosi 引擎管理语义模型和指标。只需配置数据源：
 
 ```yaml
 agent:
@@ -266,11 +264,9 @@ agent:
       duckdb:
         type: duckdb
         uri: duckdb:///path/to/duck.db
-    semantic_layer:
-      metricflow: {}
 ```
 
-`/services semantic` TUI 可以添加 `metricflow` 条目；如果缺少适配器包，也会安装 `datus-semantic-metricflow`。
+使用 `uv sync --locked` 安装 Agent 依赖。Dosi 从项目的 `subject/semantic_models/<datasource>/` 目录加载模型。
 
 把 semantic-layer benchmark 数据放到：
 
@@ -305,5 +301,5 @@ Observability 配置与 tracing 示例已移到独立的 [可观测性](observab
 - [Agent 配置](../configuration/agent.zh.md)
 - [可观测性](observability.zh.md)
 - [Benchmark 手册](../benchmark/benchmark_manual.zh.md)
-- [语义层配置](../configuration/semantic_layer.zh.md)
+- [Dosi 语义引擎](../semantic/dosi_engine.zh.md)
 - [LLM Trace 使用](../training/llm_trace_usage.zh.md)

@@ -119,11 +119,6 @@ class AskMetricsAgenticNode(AgenticNode):
     def get_node_name(self) -> str:
         return self.configured_node_name or self.NODE_NAME
 
-    def _resolve_adapter_type(self) -> Optional[str]:
-        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-        return resolve_semantic_adapter_type(self.agent_config)
-
     def _resolve_subject_tree_prompt_limit(self) -> int:
         raw_limit = self.node_config.get("subject_tree_prompt_limit", self.SUBJECT_TREE_PROMPT_LIMIT)
         try:
@@ -183,16 +178,11 @@ class AskMetricsAgenticNode(AgenticNode):
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
                 sub_agent_name=sub_agent_name,
-                adapter_type=self._resolve_adapter_type(),
                 runtime_db_context_provider=self._semantic_runtime_db_context,
             )
-            if not self.semantic_tools._configured_adapter_type():
-                self.startup_error = self.semantic_tools._adapter_unavailable_message()
-                logger.warning("AskMetrics semantic adapter unavailable: %s", self.startup_error)
-                return
         except Exception as exc:  # noqa: BLE001
-            self.startup_error = f"Semantic adapter unavailable: {exc}"
-            logger.warning("AskMetrics semantic adapter setup failed: %s", exc)
+            self.startup_error = f"Dosi runtime unavailable: {exc}"
+            logger.warning("AskMetrics Dosi runtime setup failed: %s", exc)
             return
 
         for pattern in tool_patterns:
@@ -470,7 +460,6 @@ class AskMetricsAgenticNode(AgenticNode):
             "subject_tree_prompt": self.subject_tree_prompt,
             "subject_tree_prompt_limit": self.subject_tree_prompt_limit,
             "require_final_result_selection": self.require_final_result_selection,
-            "semantic_adapter_type": self._resolve_adapter_type(),
         }
 
         if self.agent_config:

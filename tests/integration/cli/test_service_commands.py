@@ -267,7 +267,6 @@ def _build_agent_config(tmp_path, bi_tools):
         },
         services={
             "databases": {},
-            "semantic_layer": {},
             "bi_tools": dict(bi_tools),
             "schedulers": {},
         },
@@ -347,7 +346,7 @@ class TestServicesListing:
         assert "grafana_ro" in out
 
     def test_empty_services_prints_hint(self, cli_without_services):
-        # No bi_tools / schedulers / semantic_layer configured.
+        # No bi_tools or schedulers configured.
         cmd = ServiceCommands(cli_without_services)
         cmd.cmd_services("")
         out = _output(cli_without_services)

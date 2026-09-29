@@ -1,7 +1,7 @@
 # Copyright 2025-present DatusAI, Inc.
 # Licensed under the Apache License, Version 2.0.
 
-"""Tests for semantic bootstrap compatibility routing, YAML import, and profile parsing."""
+"""Tests for Dosi semantic bootstrap, YAML import, and profile parsing."""
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from datus.storage.semantic_model.semantic_model_init import (
-    METRICFLOW_YAML_UNSUPPORTED_MESSAGE,
+    LEGACY_SEMANTIC_YAML_UNSUPPORTED_MESSAGE,
     _load_success_story_profile_entries,
     init_semantic_yaml_semantic_model,
     init_success_story_semantic_model_async,
@@ -20,10 +20,8 @@ from datus.storage.semantic_model.semantic_model_init import (
 )
 
 
-def _config(adapter: str = "dosi") -> MagicMock:
-    config = MagicMock()
-    config.resolve_semantic_adapter = MagicMock(return_value=adapter)
-    return config
+def _config() -> MagicMock:
+    return MagicMock()
 
 
 @pytest.mark.asyncio
@@ -62,7 +60,7 @@ def test_semantic_yaml_import_reports_missing_file(tmp_path):
 def test_semantic_yaml_import_syncs_osi_documents(tmp_path):
     yaml_path = tmp_path / "semantic.yml"
     yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
-    config = _config("dosi")
+    config = _config()
 
     with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
         tools_cls.return_value.sync_osi_to_db.return_value = {"success": True, "message": "imported"}
@@ -82,37 +80,23 @@ def test_semantic_yaml_import_surfaces_sync_failure(tmp_path):
 
     with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
         tools_cls.return_value.sync_osi_to_db.return_value = {"success": False, "error": "invalid YAML"}
-        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config("dosi"))
+        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config())
 
     assert success is False
     assert "invalid YAML" in error
 
 
-def test_semantic_yaml_import_rejected_for_non_dosi_project(tmp_path):
-    """Contract: non-Dosi projects are query-only — the YAML import entry
-    must fail before any KB sync is attempted."""
-    yaml_path = tmp_path / "semantic.yml"
-    yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
-
-    with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
-        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config("metricflow"))
-
-    assert success is False
-    assert "query-only" in error
-    tools_cls.return_value.sync_osi_to_db.assert_not_called()
-
-
-def test_semantic_yaml_import_rejects_metricflow_documents(tmp_path):
-    """Contract: MetricFlow ``data_source:``/``metric:`` YAML can no longer be
+def test_semantic_yaml_import_rejects_legacy_documents(tmp_path):
+    """Contract: Legacy ``data_source:``/``metric:`` YAML can no longer be
     imported, even in a Dosi project — the error must be explicit."""
     yaml_path = tmp_path / "semantic.yml"
     yaml_path.write_text("data_source:\n  name: orders\n  sql_table: public.orders\n", encoding="utf-8")
 
     with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
-        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config("dosi"))
+        success, error = init_semantic_yaml_semantic_model(str(yaml_path), _config())
 
     assert success is False
-    assert error == METRICFLOW_YAML_UNSUPPORTED_MESSAGE
+    assert error == LEGACY_SEMANTIC_YAML_UNSUPPORTED_MESSAGE
     tools_cls.return_value.sync_osi_to_db.assert_not_called()
 
 
@@ -120,7 +104,7 @@ def test_reject_helper_accepts_osi_documents_in_dosi_project(tmp_path):
     yaml_path = tmp_path / "semantic.yml"
     yaml_path.write_text("semantic_model:\n  - name: orders\n    datasets: []\n", encoding="utf-8")
 
-    assert reject_non_dosi_semantic_yaml(str(yaml_path), _config("dosi")) is None
+    assert reject_non_dosi_semantic_yaml(str(yaml_path), _config()) is None
 
 
 def test_profile_parser_keeps_question_and_sql_rows(tmp_path):
@@ -150,7 +134,7 @@ def test_profile_description_refresh_preserves_yaml_and_syncs_projection(tmp_pat
         "semantic_model:\n  - name: orders\n    datasets:\n      - name: orders\n        source: public.orders\n",
         encoding="utf-8",
     )
-    config = _config("dosi")
+    config = _config()
     config.path_manager.subject_dir = str(tmp_path)
 
     with (
@@ -164,7 +148,6 @@ def test_profile_description_refresh_preserves_yaml_and_syncs_projection(tmp_pat
         result = refresh_semantic_yaml_profile_descriptions(
             str(yaml_path),
             {"tables": []},
-            authoring_format="osi",
             agent_config=config,
             sync_to_storage=True,
         )
@@ -177,13 +160,13 @@ def test_profile_description_refresh_preserves_yaml_and_syncs_projection(tmp_pat
     )
 
 
-def test_profile_description_refresh_rejects_metricflow_yaml(tmp_path):
-    """Contract: profile refresh no longer patches MetricFlow YAML."""
+def test_profile_description_refresh_rejects_legacy_yaml(tmp_path):
+    """Contract: profile refresh no longer patches legacy semantic YAML."""
     semantic_dir = tmp_path / "semantic_models"
     semantic_dir.mkdir()
     yaml_path = semantic_dir / "semantic.yml"
     yaml_path.write_text("data_source:\n  name: orders\n  description: Orders\n", encoding="utf-8")
-    config = _config("dosi")
+    config = _config()
     config.path_manager.subject_dir = str(tmp_path)
 
     result = refresh_semantic_yaml_profile_descriptions(
@@ -193,33 +176,7 @@ def test_profile_description_refresh_rejects_metricflow_yaml(tmp_path):
         sync_to_storage=True,
     )
 
-    assert result == (False, METRICFLOW_YAML_UNSUPPORTED_MESSAGE, 0)
-
-
-def test_profile_description_refresh_rejects_non_dosi_project(tmp_path):
-    """Contract: profile refresh is an authoring mutation — an OSI-shaped YAML
-    in a non-Dosi project must be rejected by the adapter gate, not slip
-    through document-shape inference."""
-    semantic_dir = tmp_path / "semantic_models"
-    semantic_dir.mkdir()
-    yaml_path = semantic_dir / "semantic.yml"
-    yaml_path.write_text(
-        "semantic_model:\n  - name: orders\n    datasets:\n      - name: orders\n        source: public.orders\n",
-        encoding="utf-8",
-    )
-    config = _config("metricflow")
-    config.path_manager.subject_dir = str(tmp_path)
-
-    result = refresh_semantic_yaml_profile_descriptions(
-        str(yaml_path),
-        {"tables": []},
-        authoring_format="osi",
-        agent_config=config,
-        sync_to_storage=True,
-    )
-
-    assert result[0] is False
-    assert "query-only" in result[1]
+    assert result == (False, LEGACY_SEMANTIC_YAML_UNSUPPORTED_MESSAGE, 0)
 
 
 def _write_model(path, name: str) -> None:
@@ -233,7 +190,7 @@ def _write_model(path, name: str) -> None:
 def test_sync_semantic_yaml_tree_projects_every_file_under_the_directory(tmp_path):
     _write_model(tmp_path / "sales.yml", "sales")
     _write_model(tmp_path / "fulfillment.yaml", "fulfillment")
-    config = _config("dosi")
+    config = _config()
     tools = MagicMock()
     tools.sync_osi_to_db.return_value = {"success": True}
 
@@ -252,7 +209,7 @@ def test_sync_semantic_yaml_tree_skips_the_metrics_fragment_directory(tmp_path):
     fragments = tmp_path / "metrics"
     fragments.mkdir()
     _write_model(fragments / "revenue.yml", "revenue")
-    config = _config("dosi")
+    config = _config()
     tools = MagicMock()
     tools.sync_osi_to_db.return_value = {"success": True}
 
@@ -266,7 +223,7 @@ def test_sync_semantic_yaml_tree_reports_failures_without_stopping(tmp_path):
     """One unreadable model must not cost the others their refresh."""
     _write_model(tmp_path / "sales.yml", "sales")
     _write_model(tmp_path / "broken.yml", "broken")
-    config = _config("dosi")
+    config = _config()
     tools = MagicMock()
     tools.sync_osi_to_db.side_effect = [{"success": False, "error": "bad model"}, {"success": True}]
 
@@ -280,7 +237,7 @@ def test_sync_semantic_yaml_tree_reports_failures_without_stopping(tmp_path):
 
 
 def test_sync_semantic_yaml_tree_rejects_a_missing_path(tmp_path):
-    successful, message, synced = sync_semantic_yaml_tree(_config("dosi"), str(tmp_path / "absent"))
+    successful, message, synced = sync_semantic_yaml_tree(_config(), str(tmp_path / "absent"))
 
     assert successful is False
     assert synced == 0

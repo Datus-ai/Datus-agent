@@ -311,21 +311,11 @@ agent:
         username: ${STARROCKS_USER}
         password: ${STARROCKS_PASSWORD}
         database: ${STARROCKS_DATABASE}
-    # Default selection across BI / Scheduler / Semantic follows one rule:
+    # Dosi is the built-in semantic runtime.
+    # Default selection across BI and Scheduler follows one rule:
     # explicit call-site arg → ``./.datus/config.yml`` project pin → YAML
     # ``default: true`` flag → single-entry shortcut → raise on ambiguity.
     # Mark at most one entry per section with ``default: true``.
-    semantic_layer:
-      metricflow: {}
-      # metricflow:                 # alternative: pin as global default
-      #   default: true
-      #   metric_catalog_page_size: 5000  # rows per list_metrics request when
-      #   metric_catalog_max_pages: 200   # building the metric->dataset map.
-      #                                   # Together they bound how many metrics
-      #                                   # are readable (1M by default); the
-      #                                   # real ceiling is rows the adapter
-      #                                   # actually returns per page x pages.
-      #                                   # Exceeding it denies metric queries.
     bi_platforms:
       superset:
         type: superset
@@ -500,16 +490,6 @@ agent:
     semantic_modeling:
       model: anthropic
       max_turns: 50
-
-    # Retained only so existing configuration files continue to load. These
-    # agents are hidden and direct invocation returns an actionable error.
-    gen_semantic_model:
-      model: anthropic
-
-    gen_metrics:
-      model: anthropic
-      max_turns: 40
-      # Default: "gen-metrics, gen-semantic-model"
 
     gen_sql_summary:
       model: deepseek_v3

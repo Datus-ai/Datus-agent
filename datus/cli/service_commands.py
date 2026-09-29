@@ -91,9 +91,6 @@ class ServiceCommands:
         if token in ("scheduler", "schedulers"):
             self._run_config_menu(initial_tab="scheduler")
             return
-        if token in ("semantic", "semantic_layer"):
-            self._run_config_menu(initial_tab="semantic")
-            return
         if not token or token in ("config", "configure", "edit"):
             self._run_config_menu(initial_tab="dashboard")
             return
@@ -105,7 +102,7 @@ class ServiceCommands:
         self._render_listing()
         print_info(
             self.cli.console,
-            "Use `/services dashboard`, `/services scheduler`, or `/services semantic` to open the configuration TUI.",
+            "Use `/services dashboard` or `/services scheduler` to open the configuration TUI.",
         )
 
     # ------------------------------------------------------------------ #
@@ -163,8 +160,6 @@ class ServiceCommands:
                 return
             if selection.section == "schedulers":
                 seed_tab = "scheduler"
-            elif selection.section == "semantic_layer":
-                seed_tab = "semantic"
             else:
                 seed_tab = "dashboard"
             seed_status = self._apply_selection(selection)
@@ -260,7 +255,6 @@ class ServiceCommands:
         active_map = {
             "bi_platforms": ("active_dashboard", "set_active_dashboard"),
             "schedulers": ("active_scheduler", "set_active_scheduler"),
-            "semantic_layer": ("active_semantic", "set_active_semantic"),
         }
         if sel.section in active_map:
             getter_name, setter_name = active_map[sel.section]
@@ -281,7 +275,7 @@ class ServiceCommands:
         print_error(self.cli.console, f"Probe failed for `{sel.name}`: {msg}", prefix=False)
         return f"Probe failed for `{sel.name}`: {msg}"
 
-    _SET_DEFAULT_SECTIONS = ("bi_platforms", "schedulers", "semantic_layer")
+    _SET_DEFAULT_SECTIONS = ("bi_platforms", "schedulers")
 
     def _do_set_global_default(self, sel: ServiceConfigSelection) -> Optional[str]:
         from datus.configuration.agent_config_loader import configuration_manager
@@ -320,9 +314,6 @@ class ServiceCommands:
         elif sel.section == "schedulers":
             setter = getattr(self.cli.agent_config, "set_active_scheduler", None)
             label = "scheduler"
-        elif sel.section == "semantic_layer":
-            setter = getattr(self.cli.agent_config, "set_active_semantic", None)
-            label = "semantic layer"
         else:
             return None
         if not callable(setter):
@@ -377,27 +368,11 @@ class ServiceCommands:
         a one-liner up to the App's status row. Any exception from the
         adapter is caught — the goal is signal, not stack traces.
 
-        The semantic-layer branch is a pure in-memory registry lookup so
-        it runs on the calling thread; bi_platforms / schedulers reach
-        external HTTP endpoints and are isolated in a daemon thread with
+        BI and scheduler probes reach external HTTP endpoints and are isolated
+        in a daemon thread with
         ``_PROBE_TIMEOUT_SECS`` so a stuck TCP connect cannot freeze the
         REPL.
         """
-        if section == "semantic_layer":
-            # MetricFlow's ``list_metrics`` requires a bound datasource;
-            # use the registry probe instead so we can confirm
-            # ``hot_reload_adapter`` actually wired the adapter without
-            # forcing the user to pre-bind a DB.
-            try:
-                from datus.tools.semantic_tools.registry import semantic_adapter_registry
-
-                metadata = semantic_adapter_registry.get_metadata(name)
-                if metadata is not None:
-                    return True, f"adapter `{name}` registered"
-                return False, f"adapter `{name}` not registered after install"
-            except Exception as exc:
-                return False, str(exc) or exc.__class__.__name__
-
         holder: List[Tuple[bool, str]] = []
 
         def _runner() -> None:
@@ -517,7 +492,6 @@ class ServiceCommands:
     _ADAPTER_PACKAGE_HINTS = {
         "bi_platforms": "datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
         "schedulers": "datus-scheduler-<platform>  (e.g. datus-scheduler-airflow)",
-        "semantic_layer": "datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
     }
 
     def _print_missing_adapter_hint(self, client: ServiceClient) -> None:
@@ -872,7 +846,7 @@ class ServiceCommands:
 
         ``ServiceCommands`` is invoked synchronously from the REPL thread.
         The allow-listed service methods are synchronous Python (typically a
-        blocking HTTP call into Superset/Airflow/MetricFlow) and
+        blocking HTTP call into Superset/Airflow) and
         ``trans_to_function_tool`` runs them inline inside the coroutine.
         Scheduling this on the shared ``DatusCLI._bg_loop`` would freeze
         every *other* background task (``_async_init_agent``, session

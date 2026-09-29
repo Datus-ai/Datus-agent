@@ -117,10 +117,7 @@ class Node(ABC):
                 session_id=session_id,
             )
         elif node_type == NodeType.TYPE_SEMANTIC:
-            from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
-
             semantic_node_name = node_name or "semantic_modeling"
-            ensure_semantic_agent_available(semantic_node_name, agent_config)
             if semantic_node_name == "semantic_modeling":
                 from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 

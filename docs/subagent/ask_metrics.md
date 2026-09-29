@@ -2,7 +2,7 @@
 
 ## Overview
 
-`ask_metrics` is a built-in metric question-answering subagent. It answers questions from existing semantic metrics instead of exploring raw tables or asking the model to write ad hoc SQL; the active semantic adapter compiles and executes the query.
+`ask_metrics` is a built-in metric question-answering subagent. It answers questions from existing semantic metrics instead of exploring raw tables or asking the model to write ad hoc SQL; Dosi compiles and executes the query.
 
 Use AskMetrics when the user asks for:
 
@@ -15,9 +15,9 @@ AskMetrics is intentionally narrow. If no existing metric can answer the questio
 
 ## Prerequisites
 
-AskMetrics needs executable semantic metrics on the current datasource. Dosi is the built-in default semantic adapter, so no `semantic_layer` entry is needed when another adapter is not configured. See [Semantic Layer Configuration](../configuration/semantic_layer.md) for other adapter options.
+AskMetrics needs executable semantic metrics on the current datasource. Dosi is built in. See [Dosi Semantic Engine](../semantic/dosi_engine.md) for model discovery.
 
-Metrics can come from existing semantic-layer assets or from the Dosi-only [`semantic_modeling`](semantic_modeling.md) subagent. After `semantic_modeling` successfully returns `generated`, it validates the target YAML and syncs the metrics to the Knowledge Base. They are immediately available on the same datasource without a manual publish, import, or Datus restart. Existing MetricFlow and OSI projects remain queryable, but semantic authoring is unavailable until the project uses Dosi.
+Metrics can come from existing OSI models or from the [`semantic_modeling`](semantic_modeling.md) subagent. After `semantic_modeling` successfully returns `generated`, it validates the target YAML and syncs the metrics to the Knowledge Base. They are immediately available on the same datasource without a manual publish, import, or Datus restart.
 
 A metric subject tree is optional, but recommended because AskMetrics uses it as a routing catalog before searching.
 
@@ -83,6 +83,7 @@ Key behavior:
 - Direct subject-tree matches are preferred over search.
 - `search_metrics` is used only when the subject tree is missing, partial, or ambiguous.
 - `get_metric` is called before grouping, filtering, or attribution.
+- Grouping names come directly from `get_metric.dimensions[].name`, including dataset qualification where present.
 - `query_metrics` is the primary tool for metric values.
 - `attribution_analyze` is used for change explanation and contribution questions.
 - Raw SQL tools are not part of the default AskMetrics surface.
@@ -94,12 +95,12 @@ Key behavior:
 | `context_search_tools.search_metrics` | Find candidate metrics when direct subject-tree matching is not enough |
 | `context_search_tools.get_metrics` | Retrieve details for a known metric and subject path |
 | `context_search_tools.list_subject_tree` | List metric subject paths when the startup subject tree is too large to inline |
-| `semantic_tools.list_metrics` | Enumerate executable metrics from the semantic adapter |
+| `semantic_tools.list_metrics` | Enumerate executable metrics from Dosi |
 | `semantic_tools.get_metric` | Describe one metric: its queryable dimensions, time axis, and grains |
 | `semantic_tools.query_metrics` | Query metric values |
 | `semantic_tools.attribution_analyze` | Explain metric movement across candidate dimensions |
 
-If the semantic adapter is unavailable, AskMetrics is unavailable because it cannot safely answer metric questions. If context search is unavailable, AskMetrics can still use semantic adapter tools, but it will not have subject-tree routing context.
+If the Dosi runtime is unavailable, AskMetrics cannot safely answer metric questions. If context search is unavailable, AskMetrics can still query Dosi, but it will not have subject-tree routing context.
 
 ## Output
 

@@ -46,8 +46,6 @@ class EmbeddingProvider(StrEnum):
 # System sub-agents that are built-in and not user-configurable
 SYS_SUB_AGENTS = {
     "semantic_modeling",
-    "gen_semantic_model",
-    "gen_metrics",
     "gen_sql_summary",
     "gen_sql",
     "ask_metrics",
@@ -60,16 +58,11 @@ SYS_SUB_AGENTS = {
     "feedback",
 }
 
-# Legacy semantic authoring names remain reserved so saved configurations keep
-# loading, but they are no longer discoverable or executable.
-RETIRED_SYS_SUB_AGENTS = frozenset({"gen_semantic_model", "gen_metrics"})
-
 # Subset of SYS_SUB_AGENTS hidden from user-facing listings (autocomplete and
 # the ".agent" selector). Internal agents may still be invoked by their owning
-# workflow; retired agents are rejected by the shared node factory.
+# workflow.
 HIDDEN_SYS_SUB_AGENTS = {
     "feedback",
-    *RETIRED_SYS_SUB_AGENTS,
 }
 
 

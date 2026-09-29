@@ -298,7 +298,7 @@ class TestShouldCreateNewNode:
         cmds.current_node = cmds._create_new_node(subagent_name="gen_sql")
         cmds.current_subagent_name = "gen_sql"
 
-        result = cmds._should_create_new_node(subagent_name="gen_semantic_model")
+        result = cmds._should_create_new_node(subagent_name="semantic_modeling")
         assert result is True
         assert cmds.current_subagent_name == "gen_sql"  # Not changed yet
 
@@ -387,10 +387,10 @@ class TestExtractNodeTypeFromSessionId:
         assert result == "gen_sql"
         assert "session" not in result
 
-    def test_gen_semantic_model_session(self):
-        """Extract 'gen_semantic_model' from a gen_semantic_model session ID."""
-        result = ChatCommands._extract_node_type_from_session_id("gen_semantic_model_session_789xyz")
-        assert result == "gen_semantic_model"
+    def test_semantic_modeling_session(self):
+        """Extract the semantic modeling agent from its session ID."""
+        result = ChatCommands._extract_node_type_from_session_id("semantic_modeling_session_789xyz")
+        assert result == "semantic_modeling"
         assert "_session_" not in result
 
     def test_no_session_marker_returns_chat(self):
@@ -440,15 +440,6 @@ class TestCreateNewNode:
 
         assert isinstance(node, GenSQLAgenticNode)
         assert not isinstance(node, ChatAgenticNode)
-
-    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_node_creation_fails(self, real_agent_config, mock_llm_create, agent_name):
-        """The CLI rejects retired semantic authoring names with migration guidance."""
-        from datus.utils.exceptions import DatusException
-
-        cmds = _make_chat_commands(real_agent_config)
-        with pytest.raises(DatusException, match="semantic_modeling"):
-            cmds._create_new_node(subagent_name=agent_name)
 
     def test_gen_sql_summary_node_creation(self, real_agent_config, mock_llm_create):
         """subagent_name='gen_sql_summary' creates a SqlSummaryAgenticNode."""
@@ -526,15 +517,6 @@ class TestCreateNodeInput:
         assert isinstance(node_input, GenSQLNodeInput)
         assert node_type == "gen_sql"
         assert node_input.user_message == "Generate SQL for users"
-
-    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_nodes_have_no_cli_input_path(self, real_agent_config, mock_llm_create, agent_name):
-        """The CLI cannot build inputs for retired semantic nodes."""
-        from datus.utils.exceptions import DatusException
-
-        cmds = _make_chat_commands(real_agent_config)
-        with pytest.raises(DatusException, match="semantic_modeling"):
-            cmds._create_new_node(subagent_name=agent_name)
 
     def test_sql_summary_node_input(self, real_agent_config, mock_llm_create):
         """SqlSummaryAgenticNode gets SqlSummaryNodeInput with 'sql_summary' type."""
@@ -3916,13 +3898,6 @@ class TestCreateNewNodeExtended:
             chat_cmd._create_new_node(None)
         mock_init.assert_called_once()
 
-    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_nodes_are_rejected(self, chat_cmd, agent_name):
-        from datus.utils.exceptions import DatusException
-
-        with pytest.raises(DatusException, match="semantic_modeling"):
-            chat_cmd._create_new_node(agent_name)
-
     def test_create_gen_sql_default(self, chat_cmd):
         mock_node = MagicMock()
         with patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode") as mock_cls:
@@ -4247,13 +4222,13 @@ class TestSessionFilterByAgent:
         """cmd_resume with no args filters by intended agent (default_agent); empty result message mentions agent."""
         console = Console(file=io.StringIO(), no_color=True)
         cmds = _make_chat_commands(real_agent_config, console=console)
-        cmds.cli.default_agent = "gen_metrics"
+        cmds.cli.default_agent = "semantic_modeling"
 
         _create_session_on_disk("chat_session_a", [("user", "hi")])
         cmds.cmd_resume("")
 
         output = _get_console_output(console)
-        assert "gen_metrics" in output
+        assert "semantic_modeling" in output
         assert cmds.current_node is None
 
 

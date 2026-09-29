@@ -329,7 +329,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             return
         if not getattr(self, "semantic_tools", None):
             try:
-                from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
                 from datus.tools.func_tool.semantic_tools import SemanticTools
 
                 self.semantic_tools = SemanticTools(
@@ -338,7 +337,6 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                     # prompt template, and the scope lookup silently returns unfiltered
                     # storage when the name misses (``rag_scope.build_scope_filter``).
                     sub_agent_name=self.get_node_name(),
-                    adapter_type=resolve_semantic_adapter_type(self.agent_config),
                     runtime_db_context_provider=self._semantic_runtime_db_context,
                 )
             except Exception as exc:

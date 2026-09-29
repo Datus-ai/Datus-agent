@@ -120,7 +120,6 @@ def build_workspace(root: Path, *, sql_read_only: bool) -> Path:
         },
         "services": {
             "datasources": {"probe": {"type": "sqlite", "uri": str(db), "name": "probe", "default": True}},
-            "semantic_layer": {},
         },
         "agentic_nodes": {},
     }

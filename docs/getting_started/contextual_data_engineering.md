@@ -129,7 +129,7 @@ You need:
 
 - `datus` installed (see the [Quick Start Guide](Quickstart.md))
 - An LLM provider configured via `/model` inside `datus`. The picker writes provider credentials into `~/.datus/conf/agent.yml`.
-- The default Dosi semantic-layer adapter. On interactive launch, Datus installs it automatically when no semantic adapter is configured; you can also select it explicitly with `/services semantic`.
+- Dosi is included in the Agent installation.
 
 You do **not** need to download or `cp` anything. The first time `datus` runs without a config, it bootstraps `~/.datus/`:
 
@@ -218,7 +218,7 @@ success_story: ~/.datus/benchmark/california_schools/success_story.csv
 overwrite:     [x]
 ```
 
-`success_story.csv` is a CSV of `(question, sql)` pairs that Datus uses as evidence when authoring Dosi datasets, relationships, and metrics. The file ships with the sample dataset, so the path above resolves directly. This authoring flow requires the project semantic adapter to be Dosi.
+`success_story.csv` is a CSV of `(question, sql)` pairs that Datus uses as evidence when authoring Dosi datasets, relationships, and metrics. The file ships with the sample dataset, so the path above resolves directly. This authoring flow uses the built-in Dosi engine.
 
 Press **Ctrl+R**. Expected output:
 

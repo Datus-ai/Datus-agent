@@ -50,7 +50,6 @@ def _write_release_repo(tmp_path: Path) -> Path:
             version = "0.2.6"
             dependencies = [
                 "datus-db-core>=0.1.3",
-                "datus-semantic-core>=0.2.0",
                 "datus-bi-core>=0.1.2",
                 "datus-scheduler-core>=0.1.1",
             ]
@@ -63,7 +62,6 @@ def _write_release_repo(tmp_path: Path) -> Path:
         dedent(
             """
             datus-db-core>=0.1.3
-            datus-semantic-core>=0.2.0
             datus-bi-core>=0.1.2
             datus-scheduler-core>=0.1.1
             """
@@ -148,7 +146,6 @@ def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatc
         "latest_adapter_bounds",
         lambda timeout, allow_prerelease: {
             "datus-db-core": Version("0.1.4"),
-            "datus-semantic-core": Version("0.2.1"),
             "datus-bi-core": Version("0.1.3"),
             "datus-scheduler-core": Version("0.1.2"),
         },
@@ -166,7 +163,7 @@ def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatc
     assert 'version = "0.2.7"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version("datus-agent")' in (repo_root / "datus" / "__init__.py").read_text(encoding="utf-8")
     assert '"datus-db-core>=0.1.4"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
-    assert "datus-semantic-core>=0.2.1" in (repo_root / "requirements.txt").read_text(encoding="utf-8")
+    assert "datus-bi-core>=0.1.3" in (repo_root / "requirements.txt").read_text(encoding="utf-8")
 
 
 def test_prepare_release_can_leave_adapter_bounds_unchanged(tmp_path, monkeypatch, prepare_release):

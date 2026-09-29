@@ -40,7 +40,7 @@ def _fake_cli():
     cli.console = MagicMock()
     cli._bg_loop = None  # commands use asyncio.run in this case
     cli.agent_config = SimpleNamespace(
-        services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
+        services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}),
     )
     return cli
 
@@ -125,7 +125,7 @@ class TestDispatchServiceListing:
         """``list`` on an empty config still emits the "no services" hint."""
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, schedulers={}),
         )
         cmd = ServiceCommands(cli)
         cmd.cmd_services("list")
@@ -797,10 +797,7 @@ class TestServiceConfigDispatch:
             cmd.cmd_services("foobar")
         menu.assert_not_called()
         rendered = _printed_text(cli)
-        assert (
-            "Use `/services dashboard`, `/services scheduler`, or `/services semantic` to open the configuration TUI."
-            in rendered
-        )
+        assert "Use `/services dashboard` or `/services scheduler` to open the configuration TUI." in rendered
 
 
 class TestApplySelectionPersistence:
@@ -812,7 +809,7 @@ class TestApplySelectionPersistence:
         cli = _fake_cli()
         # Set ``services`` shape so the listing path doesn't crash.
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}),
             set_active_dashboard=MagicMock(),
             set_active_scheduler=MagicMock(),
             active_dashboard=MagicMock(return_value=None),
@@ -831,7 +828,7 @@ class TestApplySelectionPersistence:
             payload={"type": "superset", "api_base_url": "http://x", "username": "u"},
         )
         mgr = MagicMock()
-        mgr.get = MagicMock(return_value={"bi_platforms": {}, "schedulers": {}, "semantic_layer": {}})
+        mgr.get = MagicMock(return_value={"bi_platforms": {}, "schedulers": {}})
         with (
             patch("datus.cli.service_adapter_installer.ensure_adapter") as ensure,
             patch("datus.cli.service_adapter_installer.hot_reload_adapter") as hot,
@@ -1060,7 +1057,7 @@ class TestApplySelectionMissingType:
 
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, schedulers={}),
         )
         cmd = ServiceCommands(cli)
         sel = ServiceConfigSelection(action="save", section="bi_platforms", name="x", payload={})
@@ -1084,7 +1081,7 @@ class TestDeleteEdgeCases:
     def _fresh_cmd(self):
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}),
             active_dashboard=MagicMock(return_value="old"),
             active_scheduler=MagicMock(return_value=None),
             set_active_dashboard=MagicMock(),
@@ -1218,30 +1215,6 @@ class TestTestAndDefaultEdgeCases:
         assert committed["grafana"]["default"] is True
         assert "default" not in committed["superset"]
 
-    def test_set_global_default_works_for_semantic_layer(self):
-        """Same generic pathway for semantic_layer."""
-        from datus.cli.service_config_app import ServiceConfigSelection
-
-        cmd, _ = _make_commands_with_bi_stub()
-        mgr = MagicMock()
-        mgr.get = MagicMock(
-            return_value={
-                "semantic_layer": {
-                    "metricflow": {"type": "metricflow", "default": True},
-                    "dbt": {"type": "dbt"},
-                }
-            }
-        )
-        with (
-            patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
-            patch.object(ServiceCommands, "_reload_agent_config"),
-        ):
-            cmd._apply_selection(ServiceConfigSelection(action="set_default", section="semantic_layer", name="dbt"))
-        mgr.update_item.assert_called_once()
-        committed = mgr.update_item.call_args.args[1]["semantic_layer"]
-        assert committed["dbt"]["default"] is True
-        assert "default" not in committed["metricflow"]
-
     def test_set_global_default_unknown_section_returns_none(self):
         from datus.cli.service_config_app import ServiceConfigSelection
 
@@ -1250,25 +1223,6 @@ class TestTestAndDefaultEdgeCases:
             result = cmd._apply_selection(ServiceConfigSelection(action="set_default", section="datasources", name="x"))
         assert result is None
         mgr_factory.assert_not_called()
-
-    def test_set_project_default_for_semantic_layer(self):
-        """semantic_layer is now wired into ``_do_set_project_default``;
-        the section's ``set_active_semantic`` setter must be invoked with
-        the chosen name."""
-        from datus.cli.service_config_app import ServiceConfigSelection
-
-        cli = _fake_cli()
-        setter = MagicMock()
-        cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
-            set_active_semantic=setter,
-        )
-        cmd = ServiceCommands(cli)
-        result = cmd._apply_selection(
-            ServiceConfigSelection(action="set_project_default", section="semantic_layer", name="metricflow")
-        )
-        setter.assert_called_once_with("metricflow")
-        assert result and "metricflow" in result
 
     def test_set_project_default_unknown_section_returns_none(self):
         from datus.cli.service_config_app import ServiceConfigSelection
@@ -1285,7 +1239,7 @@ class TestTestAndDefaultEdgeCases:
         cli = _fake_cli()
         # Strip the setters so the helper sees ``None``.
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, schedulers={}),
         )
         cmd = ServiceCommands(cli)
         result = cmd._apply_selection(
@@ -1299,7 +1253,7 @@ class TestTestAndDefaultEdgeCases:
 
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, schedulers={}),
             set_active_dashboard=MagicMock(side_effect=RuntimeError("disk full")),
             set_active_scheduler=MagicMock(),
         )
@@ -1376,29 +1330,6 @@ class TestProbeImplementation:
         assert ok is False
         assert "Unsupported section" in msg
 
-    def test_probe_semantic_returns_true_when_metadata_registered(self):
-        cmd, _ = _make_commands_with_bi_stub()
-        fake_registry = SimpleNamespace(get_metadata=lambda name: {"name": name})
-        with patch.dict(
-            "sys.modules",
-            {"datus.tools.semantic_tools.registry": SimpleNamespace(semantic_adapter_registry=fake_registry)},
-        ):
-            ok, msg = cmd._probe("semantic_layer", "metricflow")
-        assert ok is True
-        assert "metricflow" in msg
-        assert "registered" in msg
-
-    def test_probe_semantic_returns_false_when_metadata_missing(self):
-        cmd, _ = _make_commands_with_bi_stub()
-        fake_registry = SimpleNamespace(get_metadata=lambda name: None)
-        with patch.dict(
-            "sys.modules",
-            {"datus.tools.semantic_tools.registry": SimpleNamespace(semantic_adapter_registry=fake_registry)},
-        ):
-            ok, msg = cmd._probe("semantic_layer", "metricflow")
-        assert ok is False
-        assert "not registered" in msg
-
 
 class TestProbeTimeout:
     """Verify that ``_probe`` enforces ``_PROBE_TIMEOUT_SECS`` for the
@@ -1452,21 +1383,6 @@ class TestProbeTimeout:
             ok, msg = cmd._probe("bi_platforms", "superset")
         assert ok is True
         assert "1 dashboards" in msg
-
-    def test_probe_semantic_layer_skips_threading_path(self):
-        """Semantic-layer probe must run on the calling thread (no
-        timeout) because it's a pure in-memory registry lookup.
-        """
-        cmd, _ = _make_commands_with_bi_stub()
-        cmd._PROBE_TIMEOUT_SECS = 0.0  # would trip immediately if threaded
-        fake_registry = SimpleNamespace(get_metadata=lambda name: {"name": name})
-        with patch.dict(
-            "sys.modules",
-            {"datus.tools.semantic_tools.registry": SimpleNamespace(semantic_adapter_registry=fake_registry)},
-        ):
-            ok, msg = cmd._probe("semantic_layer", "metricflow")
-        assert ok is True
-        assert "registered" in msg
 
 
 class TestCountEnvelope:

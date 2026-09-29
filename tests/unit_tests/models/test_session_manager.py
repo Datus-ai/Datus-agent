@@ -2270,11 +2270,11 @@ class TestUserMessageContext:
         self._seed_turn(sm_custom, session_id)
         sm_custom.save_user_message_context(
             session_id,
-            {"table_paths": ["default_catalog.jeff_shop_live.raw_customers"], "metric_paths": ["m/gmv"]},
+            {"table_paths": ["default_catalog.sample_shop.raw_customers"], "metric_paths": ["m/gmv"]},
         )
         users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
         assert len(users) == 1
-        assert users[0]["at_context"]["table_paths"] == ["default_catalog.jeff_shop_live.raw_customers"]
+        assert users[0]["at_context"]["table_paths"] == ["default_catalog.sample_shop.raw_customers"]
         assert users[0]["at_context"]["metric_paths"] == ["m/gmv"]
 
     def test_no_context_leaves_user_bubble_without_at_context(self, sm_custom):
@@ -2345,7 +2345,7 @@ class TestExtractAgentFromSessionId:
 
     def test_subagent_prefix(self):
         """Subagent-prefixed ids return the subagent name."""
-        assert extract_agent_from_session_id("gen_metrics_session_abc123") == "gen_metrics"
+        assert extract_agent_from_session_id("sample_agent_session_abc123") == "sample_agent"
 
     def test_multi_underscore_prefix(self):
         """Splits on the last '_session_' so underscores in the agent name survive."""
@@ -2374,22 +2374,22 @@ class TestSessionMatchesAgent:
 
     def test_subagent_match(self):
         """Subagent session matches its own name."""
-        assert session_matches_agent("gen_metrics_session_1", "gen_metrics") is True
+        assert session_matches_agent("sample_agent_session_1", "sample_agent") is True
 
     def test_subagent_does_not_match_chat(self):
         """Subagent session must not surface under the chat filter."""
-        assert session_matches_agent("gen_metrics_session_1", None) is False
-        assert session_matches_agent("gen_metrics_session_1", "chat") is False
+        assert session_matches_agent("sample_agent_session_1", None) is False
+        assert session_matches_agent("sample_agent_session_1", "chat") is False
 
     def test_chat_does_not_match_subagent(self):
         """Chat session must not surface under a subagent filter."""
-        assert session_matches_agent("chat_session_1", "gen_metrics") is False
+        assert session_matches_agent("chat_session_1", "sample_agent") is False
 
     def test_legacy_session_matches_chat(self):
         """Legacy prefix-less sessions are visible to the chat agent."""
         assert session_matches_agent("legacy-id", None) is True
         assert session_matches_agent("legacy-id", "chat") is True
-        assert session_matches_agent("legacy-id", "gen_metrics") is False
+        assert session_matches_agent("legacy-id", "sample_agent") is False
 
 
 # ===========================================================================

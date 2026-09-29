@@ -2,7 +2,7 @@
 
 ## 概览
 
-`ask_metrics` 是内置的指标问答 subagent。它基于已有语义指标回答问题，不直接探索原始表，也不让模型临时编写 SQL；实际查询由当前 semantic adapter 编译并执行。
+`ask_metrics` 是内置的指标问答 subagent。它基于已有语义指标回答问题，不直接探索原始表，也不让模型临时编写 SQL；实际查询由 Dosi 编译并执行。
 
 适合使用 AskMetrics 的问题包括：
 
@@ -15,15 +15,15 @@ AskMetrics 的能力边界刻意保持较窄。如果没有现有指标能够回
 
 ## 前置条件
 
-AskMetrics 需要当前 datasource 上存在可执行的语义指标。Dosi 是内置的默认 semantic adapter；没有配置其他 adapter 时，无需额外添加 `semantic_layer` 配置。其他 adapter 的配置见[语义层配置](../configuration/semantic_layer.zh.md)。
+AskMetrics 需要当前 datasource 上存在可执行的语义指标。Dosi 已内置。模型发现规则见 [Dosi 语义引擎](../semantic/dosi_engine.zh.md)。
 
-指标可以来自已有语义层资产，也可以由仅限 Dosi 的 [`semantic_modeling`](semantic_modeling.md) subagent 生成。`semantic_modeling` 成功返回 `generated` 后，会校验目标 YAML 并将指标同步到 Knowledge Base；保持在同一个 datasource 即可立即使用，无需手工发布、导入或重启 Datus。已有 MetricFlow 和 OSI 项目仍可查询，但在项目使用 Dosi 前不能进行语义创作。
+指标可以来自已有 OSI 模型，也可以由 [`semantic_modeling`](semantic_modeling.zh.md) subagent 生成。`semantic_modeling` 成功返回 `generated` 后，会校验目标 YAML 并将指标同步到 Knowledge Base；保持在同一个 datasource 即可立即使用，无需手工发布、导入或重启 Datus。
 
 主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。
 
 ## 快速开始：查询刚生成的指标
 
-沿用[语义建模](semantic_modeling.md)中的 DuckDB 示例，使用同一个 datasource 启动 Datus：
+沿用[语义建模](semantic_modeling.zh.md)中的 DuckDB 示例，使用同一个 datasource 启动 Datus：
 
 ```bash
 datus --datasource duckdb_demo
@@ -83,6 +83,7 @@ graph LR
 - 优先使用主题树中的直接指标匹配，而不是搜索。
 - 只有在主题树缺失、不完整或存在歧义时才使用 `search_metrics`。
 - 分组、过滤或归因前会先调用 `get_metric`。
+- 分组维度直接使用 `get_metric.dimensions[].name` 返回的名称，包括其中的数据集限定名。
 - `query_metrics` 是查询指标值的主要工具。
 - 变化解释和贡献分析问题使用 `attribution_analyze`。
 - 默认工具面不包含原始 SQL 工具。
@@ -94,12 +95,12 @@ graph LR
 | `context_search_tools.search_metrics` | 当主题树无法直接匹配时搜索候选指标 |
 | `context_search_tools.get_metrics` | 获取已知主题路径和指标名的指标详情 |
 | `context_search_tools.list_subject_tree` | 当启动时主题树过大、只能内联部分内容时列出指标主题路径 |
-| `semantic_tools.list_metrics` | 从语义适配器列出可执行指标 |
+| `semantic_tools.list_metrics` | 从 Dosi 列出可执行指标 |
 | `semantic_tools.get_metric` | 描述单个指标：可查询维度、时间轴和粒度 |
 | `semantic_tools.query_metrics` | 查询指标值 |
 | `semantic_tools.attribution_analyze` | 按候选维度解释指标变化 |
 
-如果语义适配器不可用，AskMetrics 会不可用，因为它无法安全回答指标问题。如果上下文搜索不可用，AskMetrics 仍可使用语义适配器工具，但不会有主题树路由上下文。
+如果 Dosi 无法加载当前模型，AskMetrics 无法回答指标问题。如果上下文搜索不可用，AskMetrics 仍可使用 Dosi 工具，但不会有主题树路由上下文。
 
 ## 输出
 
@@ -153,7 +154,7 @@ agent:
 
 | 需求 | 使用 |
 |------|------|
-| 从 SQL 生成新的 Dosi 指标定义 | [semantic_modeling](semantic_modeling.md) |
+| 从 SQL 生成新的 Dosi 指标定义 | [semantic_modeling](semantic_modeling.zh.md) |
 | 生成或修复原始表 SQL | [gen_sql](builtin_subagents.zh.md#gen_sql) |
 | 探索 schema、样本或参考上下文 | [explore](builtin_subagents.zh.md#explore) |
 | 构建可视化报告 artifact | [gen_visual_report](gen_visual_report.zh.md) |

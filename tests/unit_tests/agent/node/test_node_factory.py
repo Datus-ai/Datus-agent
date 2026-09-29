@@ -23,7 +23,6 @@ from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput, A
 def _mock_agent_config(**kwargs):
     config = MagicMock()
     config.agentic_nodes = kwargs.get("agentic_nodes", None)
-    config.resolve_semantic_adapter.return_value = "dosi"
     return config
 
 
@@ -85,31 +84,6 @@ class TestCreateInteractiveNode:
         call_kwargs = mock_init.call_args[1]
         assert call_kwargs["node_id"] == "chat_test"
         assert call_kwargs["node_type"] == "chat"
-
-    @pytest.mark.parametrize("agent_name", ["gen_semantic_model", "gen_metrics"])
-    def test_retired_semantic_agents_fail_with_replacement(self, agent_name):
-        from datus.utils.exceptions import DatusException
-
-        config = _mock_agent_config()
-        with pytest.raises(DatusException, match=rf"{agent_name} is retired. Use semantic_modeling instead"):
-            create_interactive_node(agent_name, config)
-
-    @pytest.mark.parametrize("config_key", ["node_class", "type"])
-    @pytest.mark.parametrize("node_class", ["gen_semantic_model", "gen_metrics"])
-    def test_custom_alias_with_retired_semantic_node_class_falls_back(self, config_key, node_class):
-        config = _mock_agent_config(agentic_nodes={"legacy_alias": {"node_class": node_class}})
-        config.agentic_nodes = {"legacy_alias": {config_key: node_class}}
-        with patch(
-            "datus.agent.node.semantic_modeling_agentic_node.SemanticModelingAgenticNode.__init__",
-            return_value=None,
-        ) as mock_init:
-            create_interactive_node("legacy_alias", config)
-        mock_init.assert_called_once_with(
-            agent_config=config,
-            execution_mode="interactive",
-            scope=None,
-            session_id=None,
-        )
 
     @patch("datus.agent.node.sql_summary_agentic_node.SqlSummaryAgenticNode.__init__", return_value=None)
     def test_gen_sql_summary(self, mock_init):
@@ -354,21 +328,6 @@ class TestNodeSemanticWiring:
             session_id=None,
         )
         assert node.input is input_data
-
-    @pytest.mark.parametrize("node_name", ["gen_semantic_model", "gen_metrics"])
-    def test_new_instance_rejects_retired_semantic_nodes(self, node_name):
-        from datus.utils.exceptions import DatusException
-
-        config = _mock_agent_config()
-        with pytest.raises(DatusException, match="Use semantic_modeling instead"):
-            Node.new_instance(
-                node_id="semantic_node",
-                description="semantic authoring",
-                node_type=NodeType.TYPE_SEMANTIC,
-                agent_config=config,
-                node_name=node_name,
-                is_subagent=True,
-            )
 
 
 class TestNodeAskMetricsWiring:

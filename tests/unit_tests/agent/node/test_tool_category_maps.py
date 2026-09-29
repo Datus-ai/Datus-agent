@@ -189,8 +189,7 @@ class TestPopulateToolRegistry:
         assert node.tool_registry.to_dict() == {}
 
     def test_same_group_referenced_twice_registered_once(self):
-        """Aliased attributes (e.g. ``semantic_func_tool`` aliasing
-        ``semantic_tools`` on gen_semantic_model) must not double-register."""
+        """Aliased tool-group attributes must not double-register."""
         node = _bare_node()
         group = _group("semantic_tools", "list_metrics")
         node.semantic_tools = group

@@ -449,9 +449,6 @@ class SubAgentTaskTool:
 
     def _create_builtin_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a builtin system subagent node with its non-standard constructor."""
-        from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
-
-        ensure_semantic_agent_available(subagent_type, self.agent_config)
         if subagent_type == "semantic_modeling":
             from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 
@@ -635,10 +632,6 @@ class SubAgentTaskTool:
             node_class = sub_config.get("node_class") or sub_config.get("type")
         else:
             node_class = getattr(sub_config, "node_class", None) or getattr(sub_config, "type", None)
-        from datus.utils.constants import RETIRED_SYS_SUB_AGENTS
-
-        if node_class in RETIRED_SYS_SUB_AGENTS:
-            return NodeType.TYPE_SEMANTIC, "semantic_modeling"
         node_type = NODE_CLASS_MAP.get(node_class or "gen_sql", NodeType.TYPE_GEN_SQL)
         return node_type, subagent_type
 
@@ -723,11 +716,6 @@ class SubAgentTaskTool:
         allowed_types = self._get_available_types()
         raw_subagent_type = subagent_type
         normalized = subagent_type.strip().strip("\"'") if isinstance(subagent_type, str) else subagent_type
-        from datus.agent.node.semantic_authoring import retired_semantic_agent_message
-
-        retired_message = retired_semantic_agent_message(str(normalized or ""), self.agent_config)
-        if retired_message:
-            return FuncToolResult(success=0, error=retired_message)
         if normalized in allowed_types:
             subagent_type = normalized
         else:
@@ -1477,10 +1465,6 @@ class SubAgentTaskTool:
         from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS
 
         builtin_types = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
-        from datus.agent.node.semantic_authoring import is_semantic_modeling_available
-
-        if not is_semantic_modeling_available(self.agent_config):
-            builtin_types.discard("semantic_modeling")
         types.extend(sorted(builtin_types))
 
         if self.agent_config and hasattr(self.agent_config, "agentic_nodes"):

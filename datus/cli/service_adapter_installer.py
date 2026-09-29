@@ -50,18 +50,13 @@ logger = get_logger(__name__)
 _PKG_PREFIXES: dict[str, Tuple[str, str]] = {
     "bi_platforms": ("datus-bi-", "datus_bi_"),
     "schedulers": ("datus-scheduler-", "datus_scheduler_"),
-    "semantic_layer": ("datus-semantic-", "datus_semantic_"),
 }
 
 # Some adapters need an install extra to provide their query backend. Keep the
 # import module unchanged so registration still targets the adapter itself.
-_PACKAGE_OVERRIDES: dict[Tuple[str, str], str] = {
-    ("semantic_layer", "osi"): "datus-semantic-osi[metricflow]",
-}
+_PACKAGE_OVERRIDES: dict[Tuple[str, str], str] = {}
 
-_REQUIRED_IMPORTS: dict[Tuple[str, str], Tuple[str, ...]] = {
-    ("semantic_layer", "osi"): ("datus_semantic_osi", "datus_semantic_metricflow"),
-}
+_REQUIRED_IMPORTS: dict[Tuple[str, str], Tuple[str, ...]] = {}
 
 
 # Entry-point group each section's adapter packages register under.
@@ -75,7 +70,6 @@ _REQUIRED_IMPORTS: dict[Tuple[str, str], Tuple[str, ...]] = {
 _EP_GROUPS: dict[str, str] = {
     "bi_platforms": "datus.bi_adapters",
     "schedulers": "datus.schedulers",
-    "semantic_layer": "datus.semantic_adapters",
 }
 
 
@@ -288,18 +282,6 @@ def hot_reload_adapter(section: str, adapter_type: str) -> bool:
                 discover()
             except Exception as exc:  # pragma: no cover - defensive
                 logger.debug("adapter_registry.discover_adapters() raised: %s", exc)
-    elif section == "semantic_layer":
-        try:
-            from datus.tools.semantic_tools.registry import semantic_adapter_registry
-        except ImportError:
-            return registered
-        discover = getattr(semantic_adapter_registry, "discover_adapters", None)
-        if callable(discover):
-            try:
-                discover()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("semantic_adapter_registry.discover_adapters() raised: %s", exc)
-
     return registered
 
 

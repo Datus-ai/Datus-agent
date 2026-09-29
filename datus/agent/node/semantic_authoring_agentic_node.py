@@ -27,7 +27,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
     - Filesystem tools for file operations
     - Generation tools for semantic artifacts
     - Hooks support for custom behavior
-    - Semantic adapter integration
+    - Dosi runtime integration
     - Session-based conversation management
     """
 
@@ -135,12 +135,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             self.semantic_discovery_tools.reset_request_cache()
 
     def _ensure_bash_tool_in_tools(self) -> None:
-        """Keep OSI metric authoring on its metrics-only filesystem surface."""
-        from datus.agent.node.semantic_authoring import is_osi_authoring
-
-        if is_osi_authoring(self.agent_config):
-            return
-        super()._ensure_bash_tool_in_tools()
+        """Keep semantic authoring on its narrow filesystem surface."""
 
     def _make_filesystem_tool(self, **kwargs):
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
@@ -169,8 +164,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             "mutation_callback",
             self.generation_evidence.record_artifact_mutation,
         )
-        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
         return filesystem_tool_cls(
             root_path=root_path,
             current_node=current_node,
@@ -179,19 +172,10 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             inherited_memory_node=inherited_memory_node,
             session_data_dir=session_data_dir,
             mutation_callback=mutation_callback,
-            semantic_adapter=resolve_semantic_adapter_type(self.agent_config),
             osi_target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,
             **kwargs,
         )
-
-    def _setup_skill_func_tools(self) -> None:
-        """Default the optional skill set from the active authoring format."""
-        from datus.agent.node.semantic_authoring import default_optional_skills
-
-        if self.node_config.get("skills") is None:
-            self.node_config["skills"] = default_optional_skills(self.agent_config, self.NODE_NAME)
-        super()._setup_skill_func_tools()
 
     def _get_required_skills(self) -> list:
         """Host-inject the metric authoring specification skill."""
@@ -213,16 +197,12 @@ class SemanticAuthoringAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic tools for metrics querying and exploration."""
         try:
-            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
             from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            adapter_type = resolve_semantic_adapter_type(self.agent_config)
 
             # Initialize semantic func tool
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
-                adapter_type=adapter_type,
                 generation_evidence=self.generation_evidence,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
                 warehouse_dry_run_provider=self._warehouse_dry_run_compiled_sql,
@@ -239,7 +219,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
             self.tools.extend(semantic_tools)
 
             tool_names = [tool.name for tool in semantic_tools]
-            logger.info(f"Added semantic tools (adapter: {adapter_type}): {', '.join(tool_names)}")
+            logger.info(f"Added Dosi semantic tools: {', '.join(tool_names)}")
 
         except Exception as e:
             logger.error(f"Failed to setup semantic tools: {e}")
@@ -354,10 +334,6 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context.update(build_datasource_prompt_context(self.agent_config))
 
-        from datus.agent.node.semantic_authoring import resolve_authoring_format
-
-        context["authoring_format"] = resolve_authoring_format(self.agent_config)
-
         logger.debug(f"Prepared template context: {context}")
         return context
 
@@ -367,12 +343,10 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         extra_enhanced_parts: Optional[List[str]] = None,
     ) -> str:
         """Expose a structured caller hint without resolving it on the host."""
-        from datus.agent.node.semantic_authoring import is_osi_authoring
-
         parts = list(extra_enhanced_parts or [])
         semantic_model_name = str(getattr(user_input, "semantic_model_name", "") or "").strip()
         semantic_model_file = str(getattr(user_input, "semantic_model_file", "") or "").strip()
-        if is_osi_authoring(self.agent_config) and (semantic_model_name or semantic_model_file):
+        if semantic_model_name or semantic_model_file:
             hints = ["## OSI Semantic Model Selection Hint for This Turn"]
             if semantic_model_file:
                 hints.append(f"- Requested semantic model file: `{semantic_model_file}`")
@@ -411,8 +385,7 @@ class SemanticAuthoringAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
-        # Both authoring formats share one template; the format-specific spec
-        # is injected as a required skill.
+        # The Dosi authoring contract is injected as a required skill.
         template_name = f"{self.NODE_NAME}_system"
         version = (
             prompt_version or getattr(self.input, "prompt_version", None) or self.node_config.get("prompt_version")

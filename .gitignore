@@ -11,7 +11,6 @@
 /output*
 /tests/*.xlsx
 /tests/llm_find_tables
-/tests/data/metricflow_csv/*
 /tests/data/datus_db_bird_school
 /tests/data/datus_db_bird_sqlite
 /tests/data/datus_db_ssb_sqlite

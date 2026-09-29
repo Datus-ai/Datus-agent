@@ -130,7 +130,7 @@ Explore the detailed configuration for each component:
 - **[Agent Settings](agent.md)**: Configure models, providers, and global settings
 - **[Datasources](datasources.md)**: Set up database connections under `agent.services.datasources`
 - **[Database Adapters](../adapters/db_adapters.md)**: Understand adapter discovery and add a new database connector
-- **[Semantic Adapters](../adapters/semantic_adapters.md)**: Choose a semantic query/authoring integration
+- **[Dosi Semantic Engine](../semantic/dosi_engine.md)**: Model discovery, querying, and authoring
 - **[Plugins](../plugin/introduction.md)**: Connect BI, scheduler, infrastructure, and other external systems
 - **[Workflow Definitions](workflow.md)**: Define custom execution patterns
 - **[Node Configuration](nodes.md)**: Customize individual node behavior

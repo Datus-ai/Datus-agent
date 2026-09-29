@@ -15,7 +15,7 @@ with MCP SDK clients. Covers:
 
 Datasources tested:
   - ssb_sqlite: SQLite database with SSB benchmark tables
-  - duckdb: DuckDB database with MetricFlow demo tables
+  - duckdb: DuckDB database with demo tables
 """
 
 import asyncio
@@ -294,7 +294,7 @@ class DynamicModeTestBase:
             assert "customer" in tables_text
 
     async def test_list_tables_duckdb(self):
-        """Verify list_tables on duckdb returns MetricFlow demo tables."""
+        """Verify list_tables on duckdb returns demo tables."""
         async with self._duckdb_session() as session:
             result = await session.call_tool("list_tables", {})
             data = parse_tool_result(result)

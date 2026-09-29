@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Real Agent tool -> Dosi adapter -> engine -> DuckDB attribution coverage."""
+"""Real Agent tool -> bundled Dosi engine -> DuckDB attribution coverage."""
 
 from __future__ import annotations
 
@@ -14,15 +14,6 @@ import pytest
 
 from datus.configuration.agent_config import AgentConfig, NodeConfig
 from datus.tools.func_tool.semantic_tools import SemanticTools
-from tests.nightly_requirements import import_required
-
-# Dosi is an optional runtime adapter and a required CI dependency. Local
-# source-only environments may omit it; Coverage Check installs it from the
-# semantic-adapter checkout before collecting this acceptance suite.
-import_required(
-    "datus_semantic_dosi",
-    reason="Dosi attribution integration requires the datus-semantic-dosi CI dependency",
-)
 
 pytestmark = [pytest.mark.acceptance, pytest.mark.nightly]
 
@@ -32,7 +23,7 @@ SEED_PATH = FIXTURE_DIR / "seed.sql"
 
 
 @pytest.fixture
-def attribution_tool(tmp_path) -> SemanticTools:
+def attribution_tool(tmp_path, monkeypatch) -> SemanticTools:
     database = tmp_path / "attribution.duckdb"
     with duckdb.connect(str(database)) as connection:
         connection.execute(SEED_PATH.read_text(encoding="utf-8"))
@@ -59,24 +50,18 @@ def attribution_tool(tmp_path) -> SemanticTools:
                     "default": True,
                 }
             },
-            "semantic_layer": {
-                "dosi": {
-                    "type": "dosi",
-                    "default": True,
-                    "semantic_model_path": str(MODEL_PATH),
-                }
-            },
         },
     )
     config.current_datasource = "attribution"
+    monkeypatch.setattr(config.path_manager, "semantic_model_path", lambda datasource: FIXTURE_DIR)
 
     # Attribution does not use MetricRAG. Replacing that unrelated storage
     # dependency keeps this integration test focused on the real semantic
-    # adapter, engine binding, SQL execution, and Agent tool contract.
+    # engine binding, SQL execution, and Agent tool contract.
     with patch("datus.tools.func_tool.semantic_tools.MetricRAG"):
-        tool = SemanticTools(agent_config=config, adapter_type="dosi")
+        tool = SemanticTools(agent_config=config)
 
-    assert type(tool.adapter).__module__ == "datus_semantic_dosi.adapter"
+    assert type(tool.runtime).__module__ == "datus.tools.semantic_tools.dosi.runtime"
     return tool
 
 

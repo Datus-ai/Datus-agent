@@ -315,13 +315,9 @@ class GenSQLAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic tools for metric/dimension exploration."""
         try:
-            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-            adapter_type = resolve_semantic_adapter_type(self.agent_config)
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
                 sub_agent_name=self.get_node_name(),
-                adapter_type=adapter_type,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
             )
             self.tools.extend(self.semantic_tools.available_tools())
@@ -464,13 +460,9 @@ class GenSQLAgenticNode(AgenticNode):
                 tool_instance = self.context_search_tools
             elif tool_type == "semantic_tools":
                 if not self.semantic_tools:
-                    from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-
-                    adapter_type = resolve_semantic_adapter_type(self.agent_config)
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
                         sub_agent_name=self.get_node_name(),
-                        adapter_type=adapter_type,
                         runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
                 tool_instance = self.semantic_tools
@@ -915,7 +907,7 @@ def prepare_template_context(
         node_config: Node configuration
         has_db_tools: Whether database tools are available
         has_filesystem_tools: Whether filesystem tools are available
-        has_mf_tools: Legacy MetricFlow prompt flag
+        has_mf_tools: Deprecated prompt context flag, retained for callers
         has_context_search_tools: Whether context search tools are available
         has_reference_template_tools: Whether reference template tools are available
         has_parsing_tools: Whether date parsing tools are available

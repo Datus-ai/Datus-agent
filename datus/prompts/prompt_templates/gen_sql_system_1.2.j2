@@ -73,7 +73,7 @@ Use context search when the request involves metrics, rates, business definition
 {% endif %}
 
 {% if can_list_metrics or can_query_metrics %}
-## MetricFlow Path
+## Semantic Metric Path
 For KPI, metric, rate, percentage, trend, or dimensional aggregation requests:
 {% if can_list_metrics %}
 1. Call `list_metrics` first to identify standard metrics that match the user's intent.
@@ -121,7 +121,7 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 - If validation fails, analyze the error, fix the SQL, and retry.
 - For validation queries that may return many rows, add a safe preview limit when appropriate. Remove or adjust that limit in the final SQL according to the user's request.
 - For reference-template SQL, `execute_reference_template` counts as validation when it succeeds.
-- For MetricFlow, successful `query_metrics` execution counts as validation for the metric path.
+- Successful `query_metrics` execution through Dosi counts as validation for the metric path.
 {% else %}
 ## SQL Validation
 - No `execute_sql` tool is available. Do not claim ad-hoc SQL was executed.
@@ -149,6 +149,6 @@ Your final assistant response MUST be one valid JSON object, with no markdown fe
 
 Rules:
 - Include exactly the `sql` and `output` keys.
-- Put all user-facing explanation in `output`, including tables used, MetricFlow usage, reference-template usage, validation status, result preview, or reasons validation could not run.
+- Put all user-facing explanation in `output`, including tables used, Dosi metric usage, reference-template usage, validation status, result preview, or reasons validation could not run.
 - Do not use `tables`, `explanation`, `mode`, or `validation` as final JSON fields.
 - Keep `sql` to the final SQL text or the SQL file path. Do not invent SQL when a tool path does not expose SQL.

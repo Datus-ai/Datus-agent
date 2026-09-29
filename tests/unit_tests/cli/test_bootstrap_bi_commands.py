@@ -42,7 +42,6 @@ def agent_config() -> SimpleNamespace:
         current_datasource="local",
         agentic_nodes={},
         path_manager=SimpleNamespace(),
-        resolve_semantic_adapter=lambda _x: "dosi",
         current_db_config=lambda *_a, **_k: SimpleNamespace(catalog="cat", database="db", schema="sch"),
     )
 

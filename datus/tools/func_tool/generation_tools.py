@@ -104,18 +104,11 @@ class GenerationTools:
         self,
         agent_config: AgentConfig,
         generation_evidence: Optional[GenerationEvidence] = None,
-        authoring_format: Optional[str] = None,
         osi_target_state: Optional["OsiSemanticModelTargetState"] = None,
         require_bound_osi_target: bool = False,
     ):
         self.agent_config = agent_config
         self.generation_evidence = generation_evidence or GenerationEvidence()
-        if authoring_format:
-            self.authoring_format = str(authoring_format).strip().lower()
-        else:
-            from datus.agent.node.semantic_authoring import resolve_authoring_format
-
-            self.authoring_format = resolve_authoring_format(agent_config)
         self.metric_rag = MetricRAG(agent_config)
         self.semantic_dataset_rag = None
         if isinstance(getattr(agent_config, "project_name", ""), str):
@@ -127,9 +120,6 @@ class GenerationTools:
         self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
         self.osi_target_state = osi_target_state
         self.require_bound_osi_target = require_bound_osi_target
-
-    def _is_osi_authoring(self) -> bool:
-        return self.authoring_format == "osi"
 
     def available_tools(self) -> List[Tool]:
         """
@@ -175,7 +165,7 @@ class GenerationTools:
                 return FuncToolResult(success=0, error="name is required")
 
             normalized_kind = str(kind or "").strip().lower()
-            if self._is_osi_authoring() and self.require_bound_osi_target:
+            if self.require_bound_osi_target:
                 return self._check_bound_osi_object(object_name, normalized_kind)
             cache_key = (
                 normalized_kind,
@@ -391,11 +381,6 @@ class GenerationTools:
             dict: Result containing completion message and semantic_model_files
         """
         try:
-            if not self._is_osi_authoring():
-                from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
-
-                return FuncToolResult(success=0, error=QUERY_ONLY_MIGRATION_MESSAGE)
-
             semantic_model_file, resolved, model_name = self.resolve_planned_osi_semantic_target()
             semantic_model_files = [semantic_model_file]
             osi_target: tuple[str, str] = (resolved, model_name)
@@ -457,11 +442,6 @@ class GenerationTools:
             dict: Result containing completion message, file paths, metric SQLs, and sync status
         """
         try:
-            if not self._is_osi_authoring():
-                from datus.agent.node.semantic_authoring import QUERY_ONLY_MIGRATION_MESSAGE
-
-                return FuncToolResult(success=0, error=QUERY_ONLY_MIGRATION_MESSAGE)
-
             metric_sqls = dict(self.generation_evidence.metric_sqls)
             # OSI authoring normally owns the metrics collection. When it
             # narrowly repairs a dataset for the requested metrics, publish
@@ -1346,9 +1326,7 @@ class GenerationTools:
         if compiled_catalog is not None:
             missing = target_metric_names.difference(compiled_catalog)
             if missing:
-                raise ValueError(
-                    f"Configured semantic adapter did not compile target metric(s): {', '.join(sorted(missing))}"
-                )
+                raise ValueError(f"Dosi did not compile target metric(s): {', '.join(sorted(missing))}")
         metric_objects: List[dict] = []
         for metric in getattr(doc, "metrics", []):
             metric_name = getattr(metric, "name", "")
@@ -1419,52 +1397,31 @@ class GenerationTools:
         """Compile one publication artifact through the configured adapter.
 
         ``None`` means this lightweight object was constructed without a real
-        ``AgentConfig`` (primarily isolated unit tests). A configured adapter is
-        authoritative: load or pagination failures abort publication instead of
-        silently falling back to guesses from raw YAML.
+        ``AgentConfig`` (primarily isolated unit tests). Runtime load or
+        pagination failures abort publication.
         """
 
-        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
-        builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
-        if not callable(resolver) or not callable(builder):
-            return None
-        adapter_name = resolver(None)
-        if not isinstance(adapter_name, str) or not adapter_name.strip():
+        current_db_config = getattr(self.agent_config, "current_db_config", None)
+        if not callable(current_db_config):
             return None
 
-        from datus.tools.semantic_tools.config import SemanticAdapterConfig
+        from datus.configuration.agent_config import _db_config_to_dosi_profile
+        from datus.tools.semantic_tools.dosi import DosiConfig, DosiRuntime
         from datus.tools.semantic_tools.paging import metric_catalog_paging
-        from datus.tools.semantic_tools.registry import semantic_adapter_registry
         from datus.utils.async_utils import run_async
 
-        adapter_name = adapter_name.strip().lower()
-        metadata = semantic_adapter_registry.get_metadata(adapter_name)
-        adapter_config = builder(adapter_name)
-        config_class = metadata.config_class if metadata and metadata.config_class else SemanticAdapterConfig
-        config_fields = getattr(config_class, "model_fields", {})
-        artifact_overrides: Dict[str, str] = {}
-        if "semantic_model_path" in config_fields:
-            artifact_overrides["semantic_model_path"] = metric_file
-        if "semantic_models_path" in config_fields:
-            artifact_overrides["semantic_models_path"] = str(Path(metric_file).parent)
-
-        if adapter_config is None:
-            adapter_config = config_class(**artifact_overrides)
-        elif isinstance(adapter_config, dict):
-            config_payload = {**adapter_config, **artifact_overrides}
-            adapter_config = config_class(**config_payload)
-        elif artifact_overrides:
-            model_copy = getattr(adapter_config, "model_copy", None)
-            if callable(model_copy):
-                adapter_config = model_copy(update=artifact_overrides)
-            else:
-                adapter_config = copy(adapter_config)
-                for key, value in artifact_overrides.items():
-                    setattr(adapter_config, key, value)
-
-        adapter = semantic_adapter_registry.create_adapter(adapter_name, adapter_config)
+        datasource = self.agent_config.current_datasource
+        db_config = _db_config_to_dosi_profile(current_db_config(datasource))
+        adapter = DosiRuntime(
+            DosiConfig(
+                datasource=datasource,
+                db_config=db_config,
+                semantic_model_path=metric_file,
+                semantic_models_path=str(Path(metric_file).parent),
+            )
+        )
         catalog: Dict[str, Any] = {}
-        page_size, max_pages = metric_catalog_paging(self.agent_config, adapter_name)
+        page_size, max_pages = metric_catalog_paging()
         offset = 0
         for _ in range(max_pages):
             page = list(run_async(adapter.list_metrics(limit=page_size, offset=offset)))
@@ -1477,9 +1434,7 @@ class GenerationTools:
             offset += len(page)
         if not list(run_async(adapter.list_metrics(limit=page_size, offset=offset))):
             return catalog
-        raise ValueError(
-            f"Semantic adapter metric catalog exceeds the {page_size * max_pages} metric publication limit"
-        )
+        raise ValueError(f"Dosi metric catalog exceeds the {page_size * max_pages} metric publication limit")
 
     @staticmethod
     def _preserve_existing_metric_sql(metric_objects: List[dict], existing_rows: Any) -> None:

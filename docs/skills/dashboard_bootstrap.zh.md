@@ -13,7 +13,7 @@
 - 启用一个能够发现 Dashboard、列举稳定查询候选、导出 SQL，并为每条查询提供脱敏 source identity 的 BI plugin/profile。
 - 将对应的物理数据库配置为 Datus datasources；不再配置 BI profile 级 datasource 映射。
 - 生成某批 metric 前，选中由这些查询的真实连接 identity 唯一匹配到的 Datus datasource。
-- 创建或更新 metric 时使用 Dosi；MetricFlow 和普通 OSI 项目仍然只读。
+- 创建或更新 metric 时使用内置 Dosi 引擎。
 
 ## 工作流程
 

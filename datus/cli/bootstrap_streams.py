@@ -514,14 +514,7 @@ async def stream_semantic_modeling(
 
     _set_current_datasource(agent_config, datasource)
 
-    from datus.agent.node.semantic_authoring import ensure_semantic_agent_available
     from datus.storage.semantic_model.semantic_modeling_init import init_success_story_semantic_modeling_async
-
-    try:
-        ensure_semantic_agent_available("semantic_modeling", agent_config)
-    except Exception as exc:
-        yield message_action(str(exc), status=ActionStatus.FAILED)
-        return
 
     captured: Dict[str, Any] = {}
 

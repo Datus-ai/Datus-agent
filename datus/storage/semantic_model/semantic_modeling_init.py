@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 import pandas as pd
 
-from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
 from datus.agent.node.semantic_modeling_agentic_node import SemanticModelingAgenticNode
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
@@ -218,8 +217,6 @@ async def init_success_story_semantic_modeling_async(
     ``overwrite`` and ``incremental`` are compatibility aliases for the same
     artifact-reconcile behavior. ``check`` remains the only non-authoring mode.
     """
-    if resolve_semantic_adapter_type(agent_config) != "dosi":
-        return False, "semantic_modeling bootstrap is available only when semantic_adapter=dosi", None
     if build_mode not in {"check", "overwrite", "incremental"}:
         return False, f"Unsupported semantic_modeling build mode: {build_mode}", None
     if authoring_scope not in {"datasets", "full"}:

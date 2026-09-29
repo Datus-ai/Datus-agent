@@ -740,7 +740,7 @@ class TestBakeKeyTablesSchema:
         analysis_dir.mkdir()
         warning = bake_key_tables_schema(
             db_func_tool=None,
-            key_tables=["jeff_shop.raw_orders"],
+            key_tables=["sample_shop.raw_orders"],
             analysis_dir=analysis_dir,
         )
         assert warning is None
@@ -860,7 +860,7 @@ class TestBakeKeyTablesSchema:
         analysis_dir.mkdir()
         tool = _mock_describe_table_tool(
             {
-                "jeff_shop.raw_orders": {
+                "sample_shop.raw_orders": {
                     "result": {
                         "columns": [
                             {"name": "order_id", "type": "bigint", "comment": "primary key"},
@@ -876,7 +876,7 @@ class TestBakeKeyTablesSchema:
         )
         warning = bake_key_tables_schema(
             db_func_tool=tool,
-            key_tables=["jeff_shop.raw_orders"],
+            key_tables=["sample_shop.raw_orders"],
             analysis_dir=analysis_dir,
         )
         assert warning is None
@@ -885,7 +885,7 @@ class TestBakeKeyTablesSchema:
         assert out == {
             "tables": [
                 {
-                    "name": "jeff_shop.raw_orders",
+                    "name": "sample_shop.raw_orders",
                     "description": "canonical orders fact table",
                     "columns": [
                         {

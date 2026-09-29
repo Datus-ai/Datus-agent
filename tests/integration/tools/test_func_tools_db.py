@@ -296,7 +296,7 @@ class TestConnectorInterface:
 
         from datus.tools.db_tools.config import DuckDBConfig
 
-        config = DuckDBConfig(db_path="tests/data/datus_metricflow_db/duck.db")
+        config = DuckDBConfig(db_path="tests/data/demo_duckdb/duck.db")
         connector = connector_registry.create_connector("duckdb", config)
         try:
             result = connector.test_connection()

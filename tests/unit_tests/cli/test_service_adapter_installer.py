@@ -28,21 +28,6 @@ class TestPackageFor:
         assert pkg == "datus-scheduler-airflow"
         assert mod == "datus_scheduler_airflow"
 
-    def test_semantic_layer_mapping(self):
-        pkg, mod = sai.package_for("semantic_layer", "MetricFlow")
-        assert pkg == "datus-semantic-metricflow"
-        assert mod == "datus_semantic_metricflow"
-
-    def test_dosi_semantic_layer_mapping(self):
-        pkg, mod = sai.package_for("semantic_layer", "Dosi")
-        assert pkg == "datus-semantic-dosi"
-        assert mod == "datus_semantic_dosi"
-
-    def test_osi_semantic_layer_mapping_installs_query_backend(self):
-        pkg, mod = sai.package_for("semantic_layer", "OSI")
-        assert pkg == "datus-semantic-osi[metricflow]"
-        assert mod == "datus_semantic_osi"
-
     def test_unknown_section_raises(self):
         with pytest.raises(ValueError):
             sai.package_for("unknown_section", "x")
@@ -74,19 +59,6 @@ class TestIsAdapterInstalled:
 
     def test_unknown_section_returns_false(self):
         assert sai.is_adapter_installed("unknown_section", "x") is False
-
-    def test_osi_requires_adapter_and_metricflow_backend(self, monkeypatch):
-        installed = {"datus_semantic_osi"}
-        monkeypatch.setattr(
-            sai.importlib.util,
-            "find_spec",
-            lambda name: SimpleNamespace(name=name) if name in installed else None,
-        )
-
-        assert sai.is_adapter_installed("semantic_layer", "osi") is False
-
-        installed.add("datus_semantic_metricflow")
-        assert sai.is_adapter_installed("semantic_layer", "osi") is True
 
 
 class TestEnsureAdapter:
@@ -177,62 +149,6 @@ class TestEnsureAdapter:
         result = sai.ensure_adapter("unknown_section", "x")
         assert result.ok is False
         assert "Unsupported" in (result.error or "")
-
-    def test_semantic_layer_runs_pip_for_metricflow(self, monkeypatch):
-        """Creating a semantic_layer service must trigger
-        ``pip install datus-semantic-metricflow`` when the package isn't
-        already importable — this is the entire point of the new tab."""
-        monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
-        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
-        captured = {}
-
-        def fake_run(cmd, capture_output, text, check):
-            captured["cmd"] = cmd
-            return SimpleNamespace(returncode=0, stdout="installed\n", stderr="")
-
-        monkeypatch.setattr(sai.subprocess, "run", fake_run)
-        monkeypatch.setattr(sai.importlib, "invalidate_caches", lambda: None)
-
-        result = sai.ensure_adapter("semantic_layer", "metricflow")
-        assert result.ok is True
-        assert result.package == "datus-semantic-metricflow"
-        assert "datus-semantic-metricflow" in captured["cmd"]
-
-    def test_semantic_layer_installs_dosi_with_engine_dependency(self, monkeypatch):
-        monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
-        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
-        captured = {}
-
-        def fake_run(cmd, capture_output, text, check):
-            captured["cmd"] = cmd
-            return SimpleNamespace(returncode=0, stdout="installed\n", stderr="")
-
-        monkeypatch.setattr(sai.subprocess, "run", fake_run)
-        monkeypatch.setattr(sai.importlib, "invalidate_caches", lambda: None)
-
-        result = sai.ensure_adapter("semantic_layer", "dosi")
-
-        assert result.ok is True
-        assert result.package == "datus-semantic-dosi"
-        assert "datus-semantic-dosi" in captured["cmd"]
-
-    def test_semantic_layer_installs_osi_with_metricflow_backend(self, monkeypatch):
-        monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
-        monkeypatch.setattr(sai.shutil, "which", lambda name: None)
-        captured = {}
-
-        def fake_run(cmd, capture_output, text, check):
-            captured["cmd"] = cmd
-            return SimpleNamespace(returncode=0, stdout="installed\n", stderr="")
-
-        monkeypatch.setattr(sai.subprocess, "run", fake_run)
-        monkeypatch.setattr(sai.importlib, "invalidate_caches", lambda: None)
-
-        result = sai.ensure_adapter("semantic_layer", "osi")
-
-        assert result.ok is True
-        assert result.package == "datus-semantic-osi[metricflow]"
-        assert "datus-semantic-osi[metricflow]" in captured["cmd"]
 
     def test_line_callback_receives_pip_output(self, monkeypatch):
         monkeypatch.setattr(sai, "is_adapter_installed", lambda *_: False)
@@ -363,28 +279,5 @@ class TestHotReloadAdapter:
         fake_module = SimpleNamespace(adapter_registry=fake_registry)
         with patch.dict(sai.sys.modules, {"datus_bi_core": fake_module}):
             assert sai.hot_reload_adapter("bi_platforms", "superset") is True
-        assert register_calls == [True]
-        assert discover_calls == [True]
-
-    def test_semantic_branch_uses_semantic_entry_point_group(self, monkeypatch):
-        """Semantic adapter packages register under ``datus.semantic_adapters``
-        — verify ``hot_reload_adapter`` looks up that group (not the BI /
-        scheduler ones) and runs the matching ``register`` callable."""
-        monkeypatch.setattr(sai.importlib, "import_module", lambda name: object())
-        monkeypatch.delitem(sai.sys.modules, "datus_semantic_metricflow", raising=False)
-        register_calls = []
-        discover_calls = []
-
-        fake = _FakeEntryPoints(
-            {"datus.semantic_adapters": [_FakeEntryPoint("metricflow", lambda: register_calls.append(True))]}
-        )
-        import importlib.metadata as metadata
-
-        monkeypatch.setattr(metadata, "entry_points", lambda: fake)
-
-        fake_registry = SimpleNamespace(discover_adapters=lambda: discover_calls.append(True))
-        fake_module = SimpleNamespace(semantic_adapter_registry=fake_registry)
-        with patch.dict(sai.sys.modules, {"datus.tools.semantic_tools.registry": fake_module}):
-            assert sai.hot_reload_adapter("semantic_layer", "metricflow") is True
         assert register_calls == [True]
         assert discover_calls == [True]

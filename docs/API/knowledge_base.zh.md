@@ -28,7 +28,7 @@
 重放进存储；不传 `semantic_yaml` 则同步当前 datasource 的全部文件。
 
 `strategy=refresh-profile` 仅在 `components` 恰好为 `["semantic_model"]` 时有效。它要求同时传入 `semantic_yaml`
-和 `success_story`，会用有界、只读的数据 profile 刷新已有 MetricFlow 或 OSI YAML 中生成的 `Observed profile:`
+和 `success_story`，会用有界、只读的数据 profile 刷新已有 OSI YAML 中生成的 `Observed profile:`
 description 片段，并把更新后的 YAML 同步回 semantic model storage。它不会重新运行完整语义模型生成，也不会清空
 semantic model store。
 

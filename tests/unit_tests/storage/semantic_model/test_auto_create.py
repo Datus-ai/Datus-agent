@@ -287,7 +287,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "mydb"
         mock_db_config.schema = "public"
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
         node_init_kwargs = {}
         semantic_input_cls = MagicMock(return_value=MagicMock())
 
@@ -332,7 +331,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -370,7 +368,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -408,7 +405,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -451,7 +447,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -490,7 +485,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
 
         class MockNode:
             def __init__(self, *args, **kwargs):
@@ -530,7 +524,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "db"
         mock_db_config.schema = "public"
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
         semantic_input_cls = MagicMock(return_value=MagicMock())
 
         class MockNode:
@@ -581,7 +574,6 @@ class TestCreateSemanticModelForTable:
         mock_db_config.database = "SNOWFLAKE_SAMPLE_DATA"
         mock_db_config.schema = "TPCH_SF1"
         mock_config.current_db_config.return_value = mock_db_config
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
         semantic_input_cls = MagicMock(return_value=MagicMock())
 
         class MockNode:
@@ -622,7 +614,6 @@ class TestCreateSemanticModelForTable:
         from datus.storage.semantic_model.auto_create import create_semantic_model_for_table
 
         mock_config = MagicMock()
-        mock_config.resolve_semantic_adapter.return_value = "dosi"
         mock_config.current_db_config.side_effect = RuntimeError("missing datasource")
 
         success, error = await create_semantic_model_for_table("orders", mock_config)
