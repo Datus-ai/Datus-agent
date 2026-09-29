@@ -367,6 +367,35 @@ class TestQueryMetricsCompression:
         assert page.result["has_more"] is False
         assert page.result["csv"].splitlines() == ["id,value", "8,800", "9,900"]
 
+    def test_get_query_metrics_result_cuts_a_page_to_the_character_budget(self, semantic_tools):
+        """A row cap does not bound a page's size; ``returned``/``has_more`` must
+        describe the rows that actually fit, so paging on from them loses none."""
+        semantic_tools.MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 80
+        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+
+        rows, offset = [], 0
+        while True:
+            page = semantic_tools.get_query_metrics_result(result_id, offset=offset, limit=1000).result
+            assert len(page["csv"]) <= 80
+            assert page["returned"] < 50
+            rows.extend(page["csv"].splitlines()[1:])
+            offset += page["returned"]
+            if not page["has_more"]:
+                break
+
+        assert rows == [f"{i},{i * 100}" for i in range(50)]
+
+    def test_get_query_metrics_result_still_advances_past_one_oversized_row(self, semantic_tools):
+        semantic_tools.MAX_QUERY_METRICS_RESULT_PAGE_CHARS = 10
+        rows = [{"id": 0, "note": "x" * 100}, {"id": 1, "note": "y"}]
+        result_id = semantic_tools._cache_query_metrics_result(["id", "note"], rows)
+
+        page = semantic_tools.get_query_metrics_result(result_id, offset=0, limit=2).result
+
+        assert page["returned"] == 1
+        assert page["has_more"] is True
+        assert "x" * 100 in page["csv"]
+
     def test_get_query_metrics_result_caps_the_page(self, semantic_tools):
         semantic_tools.MAX_QUERY_METRICS_RESULT_PAGE = 5
         result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
