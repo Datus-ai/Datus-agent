@@ -2603,7 +2603,7 @@ class TestSplitSubjectPath:
 
 class TestResolveMetricSqlPaths:
     """@Metric/@Sql resolve by exact subject path via the non-vector store
-    lookup (same as the get_metrics / get_reference_sql tools)."""
+    lookup."""
 
     def test_metric_uses_path_scoped_detail_lookup(self):
         mgr = ChatTaskManager()

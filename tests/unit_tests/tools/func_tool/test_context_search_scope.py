@@ -41,7 +41,6 @@ def test_context_wildcard_includes_all_available_context_tools():
     assert tool_names == {
         "list_subject_tree",
         "search_metrics",
-        "get_metrics",
         "search_reference_sql",
         "get_reference_sql",
         "search_semantic_objects",
@@ -75,7 +74,7 @@ def test_list_subject_tree_description_does_not_name_disabled_context_tools():
     tool_names = {tool.name for tool in available_tools}
     subject_tree_tool = next(tool for tool in available_tools if tool.name == "list_subject_tree")
 
-    assert tool_names == {"list_subject_tree", "search_metrics", "get_metrics"}
+    assert tool_names == {"list_subject_tree", "search_metrics"}
     assert "enabled context retrieval tools" in subject_tree_tool.description
     assert "get_reference_sql" not in subject_tree_tool.description
 
@@ -88,7 +87,6 @@ def test_missing_sub_agent_config_uses_default_context_tools():
     assert tool_names == {
         "list_subject_tree",
         "search_metrics",
-        "get_metrics",
         "search_reference_sql",
         "get_reference_sql",
         "search_semantic_objects",
@@ -108,7 +106,6 @@ def test_declared_config_without_tools_key_inherits_default_context_tools():
     assert tool_names == {
         "list_subject_tree",
         "search_metrics",
-        "get_metrics",
         "search_reference_sql",
         "get_reference_sql",
         "search_semantic_objects",

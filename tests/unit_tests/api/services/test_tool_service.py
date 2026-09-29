@@ -20,7 +20,6 @@ def mock_context_search_tools():
     mock = MagicMock()
     mock.list_subject_tree = MagicMock(return_value=FuncToolResult(success=1, result={"domain": {}}))
     mock.search_metrics = MagicMock(return_value=FuncToolResult(success=1, result=[]))
-    mock.get_metrics = MagicMock(return_value=FuncToolResult(success=1, result={}))
     mock.search_reference_sql = MagicMock(return_value=FuncToolResult(success=1, result=[]))
     mock.get_reference_sql = MagicMock(return_value=FuncToolResult(success=1, result={}))
     mock.search_semantic_objects = MagicMock(return_value=FuncToolResult(success=1, result=[]))
@@ -40,7 +39,6 @@ class TestToolRegistry:
     def test_all_context_tools_registered(self, tool_service):
         """All expected ContextSearchTools methods are registered."""
         expected = [
-            "get_metrics",
             "get_reference_sql",
             "list_subject_tree",
             "search_metrics",

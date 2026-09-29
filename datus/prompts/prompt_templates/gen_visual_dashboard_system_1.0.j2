@@ -143,7 +143,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 4. **Bind the dashboard** — call `start_new_dashboard(slug, name, description)` (creating) or `bind_existing_dashboard(dashboard_slug)` (editing) exactly once. For new dashboards, draft a meaningful `name` and one-paragraph `description` from the user's intent before calling; both follow the Response Language directive.
 5. **Discover context — metrics FIRST.** Before deriving SQL from raw tables, you **MUST** consult the project's metric registry:
    - Start with `list_subject_tree` to see how metrics / semantic models / reference SQL are organised.
-   - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every KPI / chart in the user's question. Use `get_metrics(subject_path, name)` to read full definitions.
+   - Call `search_metrics(query_text, subject_path)` and/or `list_metrics(path)` for every KPI / chart in the user's question. Use `get_metric(name)` to read executable definitions.
    - Also check `search_reference_sql` for pre-curated SQL templates that fit.
    - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and note it in the template `description`.
    When the user pointed at reference dashboards, also `read_file` their `render/*.jsx` and `queries/<slug>.sql.j2` files for inspiration.

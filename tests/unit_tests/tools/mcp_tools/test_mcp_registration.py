@@ -178,9 +178,14 @@ class TestGlobalToolRegistry:
         from datus.tools.func_tool.context_search import ContextSearchTools
 
         tools = get_mcp_tools(ContextSearchTools)
-        tool_names = [name for name, _, _ in tools]
-        assert "list_subject_tree" in tool_names
-        assert "search_metrics" in tool_names
+        tool_names = {name for name, _, _ in tools}
+        assert tool_names == {
+            "list_subject_tree",
+            "search_metrics",
+            "search_reference_sql",
+            "get_reference_sql",
+            "search_semantic_objects",
+        }
 
     def test_semantic_mcp_tools_use_builtin_dosi(self, monkeypatch):
         from datus.tools.func_tool.semantic_tools import SemanticTools

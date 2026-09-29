@@ -50,12 +50,12 @@ def test_empty_hints_render_nothing():
     assert AgenticNode._render_context_hint_part([]) == ""
 
 
-def test_metric_hint_points_at_get_metrics():
+def test_metric_hint_keeps_name_and_path():
     out = AgenticNode._render_context_hint_part(
         [{"kind": "metric", "name": "aov", "subject_path": ["Commerce", "Orders"]}]
     )
-    assert "## Referenced items to look up" in out
-    assert "get_metrics(subject_path=['Commerce', 'Orders'], name=\"aov\")" in out
+    assert "## Referenced items" in out
+    assert "Metric \"aov\" (subject_path: ['Commerce', 'Orders'])" in out
 
 
 def test_reference_sql_hint_points_at_get_reference_sql():
@@ -69,7 +69,6 @@ def test_knowledge_hint_has_no_tool_call():
     out = AgenticNode._render_context_hint_part(
         [{"kind": "knowledge", "name": "gmv", "subject_path": ["Domain", "Glossary"]}]
     )
-    # No get_* tool exists for knowledge — point at the subject tree instead.
-    assert "get_metrics" not in out and "get_reference_sql" not in out
-    assert "list_subject_tree" in out
+    # Knowledge hints preserve the source path without requiring another lookup.
+    assert "→ call" not in out
     assert "Domain/Glossary/gmv" in out

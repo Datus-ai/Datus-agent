@@ -108,7 +108,7 @@ def finalize_stage_text(stage: int, language: Optional[str] = None) -> Optional[
 # "reminder cards" in the finalize prompt — limits the LLM's chance of
 # forgetting a subject asset it actually consulted earlier in the loop.
 SUBJECT_TOOL_NAMES = {
-    "get_metrics",
+    "get_metric",
     "query_metrics",
     "read_reference_sql",
     "list_subject_tree",
@@ -529,9 +529,8 @@ def aggregate_subject_refs(queries_dir: Path) -> SubjectRefs:
 
     First-occurrence wins per dedup key, preserving the order the LLM
     declared assets in across queries. The ``ask_*`` consultant
-    reading the resulting file uses each ``(path, name)`` to call
-    ``get_metrics`` / ``get_reference_sql`` for the canonical
-    definition; no other metadata is snapshotted here because the
+    reading the resulting file uses each ``(path, name)`` to identify
+    the asset; no other metadata is snapshotted here because the
     subject library is the source of truth.
     """
     metrics: Dict[Tuple[Tuple[str, ...], str], SubjectAssetRef] = {}

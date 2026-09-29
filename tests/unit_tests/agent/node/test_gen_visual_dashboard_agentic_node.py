@@ -123,7 +123,7 @@ class TestGenVisualDashboardInit:
 
     def test_metric_discovery_tools_exposed_when_metrics_present(self, real_agent_config, mock_llm_create, monkeypatch):
         """Mirrors the report-node contract: with metrics indexed, the
-        dashboard node must expose ``search_metrics`` and ``get_metrics``
+        dashboard node must expose ``search_metrics``
         so the LLM can discover the metric registry instead of
         re-deriving SQL from raw schema. Also exercises the
         ``context_search_tools.*`` wildcard end-to-end.
@@ -135,7 +135,7 @@ class TestGenVisualDashboardInit:
         node = _make_node(real_agent_config)
         assert isinstance(node.context_search_tools, ContextSearchTools)
         tool_names = {t.name for t in node.tools}
-        assert {"search_metrics", "get_metrics", "list_subject_tree"}.issubset(tool_names)
+        assert {"search_metrics", "list_subject_tree"}.issubset(tool_names)
 
     def test_apply_proxy_tools_keeps_filesystem_tools_unwrapped(self, real_agent_config, mock_llm_create):
         """End-to-end check mirroring the visual report case: web-source
