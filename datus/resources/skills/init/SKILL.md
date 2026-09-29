@@ -6,7 +6,7 @@ tags:
   - workspace
   - project
   - lineage
-version: 4.6.2
+version: 4.7.0
 user_invocable: true
 ---
 
@@ -38,7 +38,7 @@ Tools: `extract_sql_lineage`, filesystem (`glob`, `grep`, `read_file`, `write_fi
 - **Every statement you write needs a source**: a script, a doc section, a comment, or a database probe. If you are inferring, say so (`inferred from naming`). Never invent a table, column, code value or number, and do not add caveats or interpretations the sources do not support.
 - **Authority order.** Human-written material states *intent*: docs written for people or agents, and SQL comments (the only place script authors explain themselves). The database states *reality*: what exists and what values actually occur. SQL states *practice*: what the pipelines really do. For business definitions prefer docs → comments → SQL; for existence, names and values prefer the database.
 - **Disagreements are findings, not noise.** A doc naming a table the database lacks, a doc rule the SQL does not apply, two script versions filtering differently — record each under the domain's `## Known Issues` with both sides, and tell the downstream agent what to do.
-- **Frequency is evidence.** A filter present in most scripts that use a table is a rule of that table; one present in a single script is a local choice — do not promote it.
+- **Frequency identifies candidates.** Compare distinct statements against the table-read denominator and check clause context, business scope and counterexamples. Neither high frequency nor a single occurrence establishes a mandatory table rule; confirm it with authoritative documentation or independent consumers before promoting it.
 
 ---
 
@@ -59,16 +59,16 @@ The user may invoke `/init <free-text hints>`; hints arrive as "Additional conte
 
 Skip this step when there are no SQL scripts in scope.
 
-1. Call `extract_sql_lineage(paths=[<in-scope SQL globs>])` once — it returns every section. Pass `dialect` when the scripts target a different engine than the datasource. If the result is too large, lower `max_items` or narrow `paths` rather than splitting by `sections`: every result stays in context, so a split only repeats the lineage.
+1. Call `extract_sql_lineage(paths=[<in-scope SQL globs>])` once — it returns every section. Pass `dialect` when the scripts target a different engine than the datasource. Inspect `pagination` and follow every needed `next_offset` with `result_path` and `offset`, keeping paths, dialect and sections unchanged. Fetch all `comments.file_headers` pages for a question-to-SQL corpus. Narrow `paths` for source-level detail; use `result_path="statements"` or `"raw_lineage"` for uncollapsed evidence. If `files_truncated` is true, split the input paths. For `detail_omitted` or `text_truncated`, read the referenced source file.
 2. **Database name mapping.** `stats.databases_referenced` lists the databases the scripts write to and read from. If they differ from the datasource's database, or table-name case differs, match script names against `list_tables` (case-insensitive) and record the mapping once in AGENTS.md.
 
 Read the result as leads, then open only what it points at:
 
-- `lineage` + `roots` → layers, main flows, and which tables are built vs. ingested. Several `scripts` for one target = versioned copies; several similarly named targets (version, backup or date suffixes) = a version family to resolve in Step 3.
-- `joins` → candidate relationships, ranked by `occurrences`. `transforms` expose hidden keys (a code embedded in another id, a date truncated to a coarser period).
-- `rules.filters` → ranked by `files`. The top entries on a shared dimension table are usually mandatory rules; entries whose `clauses` are mostly `CASE` are metric conditions or rule change points (look for date literals).
-- `rules.value_mappings` → code-to-label dictionaries, ready to use.
-- `rules.dedup` → snapshot / latest-record patterns (partition keys + `ORDER BY ... DESC`) — they tell you the table's real grain.
+- `tables` + `lineage` + `roots` → tables read/written in the scanned corpus and candidate flows, including pure SELECT queries. A root only means no write was observed here, not external ownership. Several `scripts` for one target may be versions or distinct jobs; inspect their evidence before deciding; several similarly named targets (version, backup or date suffixes) = a version family to resolve in Step 3.
+- `joins` → candidate relationships with direction relative to the returned table order. `transforms` describe key expressions; `evidence` locates the full conditions. Self-joins retain aliases. Check unresolved relationship conditions before assuming a relationship is absent.
+- `rules.filters` → observed constant predicates, ranked by `distinct_statements` (comment-free normalized SQL, so copies do not inflate support). Compare with `table_read_statements`, the independent statements reading that table. Frequency is a lead, never proof of a mandatory rule. WHERE, JOIN, HAVING and CASE contexts are separate; inspect `conditions` for full branch/compound logic and branch order.
+- `rules.value_mappings` → partial observed code-to-label mappings; inspect evidence for ELSE branches, evaluation order and conflicting labels before writing business definitions.
+- `rules.window_functions` → observed ROW_NUMBER windows, including numbering without filtering and Top N. `rules.dedup` only reports a traced selection retaining at most one row per partition at that query stage. Neither proves source-table uniqueness or final output grain; verify in Step 3. `parameterized_predicates` on lineage are query parameters, not proof of incremental loading.
 - `comments.file_headers` → the full comment block each script opens with. In an ETL project it describes the script; when headers carry a business question with its definitions, notes or expected output, the scripts form a **question→SQL corpus** and the headers are the richest human input you have — read every one (see Step 5).
 - `comments.metric_notes` → the author's name for a computed column plus its expression: map metric names to where they are computed.
 - `comments.notes` → intent and caveats; notes on `WHERE` / `JOIN` lines often explain a rule or a workaround (bug, exclusion, temporary fix). Read the surrounding code for the ones that matter.
@@ -124,7 +124,7 @@ One file per domain, target ≤ ~400 lines; split a domain that grows past it (e
 - **Time:** <date / partition column>; data from <start>; <observed cadence, load mode and latency>
 - **Dimensions:** only non-obvious ones — `<col>`: <value>=<label>, …; snapshot / latest-record semantics
 - **Measures:** `<col>` — <meaning>, <additivity>, <unit>; <conditions the build script already applies inside it>
-- **Filters:** predicates the scripts consistently apply when reading this table (from `rules.filters` whose `seen_in` covers most of its consumers) or that docs require
+- **Filters:** predicates the scripts consistently apply when reading this table (from `rules.filters`, checked against its `table_read_statements` denominator and source evidence) or that docs require
 
 ## Relationships
 | Left | Right | Keys | Cardinality | Note |
@@ -189,7 +189,7 @@ Hard limit: **≤ 200 lines** (only the first 200 are injected). It is a map wit
 - [<Domain>](knowledge/<domain>.md) — <scope naming the concrete contents: which tables, metric names, code tables>
 ```
 
-- **Global Rules** are few (≤ ~12) and each must be supported by docs or by high `files` frequency across scripts.
+- **Global Rules** are few (≤ ~12) and each must be supported by authoritative docs or verified against independent SQL consumers and counterexamples. High file frequency alone is insufficient.
 - **SQL Conventions**: only from a corpus of validated `(question, SQL)` pairs — ETL scripts are not such a corpus. Each rule is *"when the question says ⟨phrasing⟩ → ⟨output shape⟩"*, schema-free, checked for counter-examples. No corpus → omit the section.
 - Do not write `## Semantic Models` / `## Metrics` / `## Reference SQL` — `/build-kb` owns them.
 - `AGENTS.md` already exists → scoped `edit_file` of the sections you own; ask via `ask_user` only before replacing the whole file (the only question this skill may ask). With scope hints, edit only in-scope rows and keep every other section verbatim.

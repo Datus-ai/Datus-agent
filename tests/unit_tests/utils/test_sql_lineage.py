@@ -51,14 +51,14 @@ def test_write_statements_produce_edges_with_every_source(sql, target, statement
     assert edges[target].statement == statement
 
 
-def test_cte_names_and_target_are_not_sources():
+def test_cte_names_are_not_sources_but_target_reads_are_preserved():
     sql = """
     INSERT INTO dw.t
     WITH base AS (SELECT id FROM dw.orders), agg AS (SELECT id FROM base)
     SELECT agg.id FROM agg JOIN dw.t ON agg.id = t.id
     """
     edge = edge_map(run(sql))["dw.t"]
-    assert edge.sources == ["dw.orders"]
+    assert set(edge.sources) == {"dw.orders", "dw.t"}
 
 
 def test_unqualified_tables_get_default_database_and_qualified_keep_theirs():
@@ -98,8 +98,8 @@ def test_parse_failure_is_reported_and_other_statements_survive():
 
 def test_load_mode_detection():
     incremental = edge_map(run("INSERT INTO dw.t SELECT a FROM dw.s WHERE pt_date >= '${pt_date}'"))["dw.t"]
-    assert incremental.load_mode == "incremental"
-    assert incremental.window == ["pt_date >= '${pt_date}'"]
+    assert incremental.load_mode == "insert"
+    assert incremental.parameterized_predicates == ["pt_date >= '${pt_date}'"]
     truncated = edge_map(run("TRUNCATE TABLE dw.t; INSERT INTO dw.t SELECT a FROM dw.s"))["dw.t"]
     assert truncated.load_mode == "truncate_reload"
     overwrite = edge_map(run("INSERT OVERWRITE TABLE dw.t SELECT a FROM dw.s", dialect="hive"))["dw.t"]
@@ -115,8 +115,8 @@ def test_lineage_does_not_depend_on_requested_sections(sections):
         "LEFT JOIN dw.d d ON s.a = d.a WHERE s.month >= '${month}'"
     )
     edge = edge_map(run(sql, sections=sections))["dw.t"]
-    assert edge.load_mode == "incremental"
-    assert edge.window == ["month >= '${month}'"]
+    assert edge.load_mode == "insert"
+    assert edge.parameterized_predicates == ["month >= '${month}'"]
 
 
 # ---------------------------------------------------------------- templating
@@ -253,7 +253,7 @@ def test_or_under_where_is_not_a_filter_but_or_under_case_is():
 def test_template_predicates_feed_the_window_not_the_filters():
     result = run("INSERT INTO dw.t SELECT a FROM dw.s WHERE pt_date >= '${pt_date}'", sections=["rules"])
     assert result.predicates == []
-    assert edge_map(result)["dw.t"].window == ["pt_date >= '${pt_date}'"]
+    assert edge_map(result)["dw.t"].parameterized_predicates == ["pt_date >= '${pt_date}'"]
 
 
 def test_value_mappings_from_searched_case_simple_case_and_if():
@@ -359,3 +359,231 @@ def test_sections_limit_what_is_collected():
     result = run(sql, sections=[])
     assert (result.joins, result.predicates, result.comments) == ([], [], [])
     assert len(result.lineage) == 1
+
+
+@pytest.mark.parametrize("prefix", ["DROP TABLE IF EXISTS dw.t;", ""])
+def test_rebuilt_table_keeps_lineage(prefix):
+    """A cleanup before CTAS must not erase the final published table."""
+    result = run(prefix + "CREATE TABLE dw.t AS SELECT * FROM dw.src")
+    assert edge_map(result)["dw.t"].sources == ["dw.src"]
+    assert edge_map(result)["dw.t"].load_mode == "create"
+
+
+def test_cte_shadow_preserves_outer_physical_source():
+    """Nested CTE names must not hide physical tables in outer scopes."""
+    result = run(
+        "INSERT INTO dw.out SELECT * FROM orders WHERE id IN "
+        "(WITH orders AS (SELECT id FROM archive) SELECT id FROM orders)"
+    )
+    assert set(edge_map(result)["dw.out"].sources) == {"dw.orders", "dw.archive"}
+
+
+def test_repeated_table_lifecycles_keep_distinct_statement_sources():
+    """Reusing a scratch name must not mix sources across its lifetimes."""
+    result = run(
+        "CREATE TABLE tmp AS SELECT * FROM a; INSERT INTO x SELECT * FROM tmp; "
+        "DROP TABLE tmp; CREATE TABLE tmp AS SELECT * FROM b; INSERT INTO y SELECT * FROM tmp;"
+    )
+    facts = [s for s in result.statement_facts if s.write_tables == ["dw.tmp"] and s.operation.startswith("CREATE")]
+    assert [s.read_tables for s in facts] == [["dw.a"], ["dw.b"]]
+    assert edge_map(result)["dw.tmp"].sources == ["dw.b"]
+
+
+@pytest.mark.parametrize("sections", [[], ["joins"], ["rules"], ["comments"]])
+def test_parameterized_predicate_is_not_incremental_evidence(sections):
+    """A region parameter says nothing about the loading strategy."""
+    edge = edge_map(run("INSERT INTO t SELECT * FROM s WHERE region = '${region}'", sections=sections))["dw.t"]
+    assert edge.load_mode == "insert"
+    assert edge.parameterized_predicates == ["region = '${region}'"]
+
+
+def test_truncate_after_insert_does_not_relabel_previous_write():
+    """Only a preceding truncate can justify a reload classification."""
+    edge = edge_map(run("INSERT INTO t SELECT * FROM s; TRUNCATE TABLE t"))["dw.t"]
+    assert edge.load_mode == "insert"
+
+
+@pytest.mark.parametrize("predicate", ["z.id = a.id", "a.id = z.id"])
+def test_canonical_outer_join_preserves_retained_side(predicate):
+    """Canonical table order must retain the original preserved table."""
+    [join] = run(f"SELECT * FROM z LEFT JOIN a ON {predicate}").joins
+    assert (join.left_table, join.right_table, join.join_type) == ("dw.a", "dw.z", "RIGHT")
+
+
+def test_direct_join_transform_matches_derived_transform():
+    """Equivalent direct and derived key expressions resolve consistently."""
+    [join] = run("SELECT * FROM issues i JOIN stores s ON LEFT(i.issue_id, 6) = s.store_code").joins
+    assert join.keys == [("issue_id", "store_code")]
+    assert join.transforms == {"dw.issues.issue_id": "LEFT(i.issue_id, 6)"}
+
+
+def test_self_join_retains_relationship():
+    """Employee-to-manager relationships must survive physical table equality."""
+    [join] = run("SELECT * FROM employees e LEFT JOIN employees m ON e.manager_id = m.id").joins
+    assert join.keys == [("manager_id", "id")]
+    assert join.aliases == ["e", "m"]
+
+
+def test_unsupported_join_is_visible_in_coverage():
+    """An unsupported OR join is reported, rather than silently absent."""
+    result = run("SELECT * FROM a JOIN b ON a.id = b.id OR a.x = b.x")
+    assert result.join_predicates == result.join_predicates_unresolved == 1
+    assert result.conditions[0].status == "unresolved"
+
+
+def test_negated_conjunction_does_not_invent_mandatory_filters():
+    """De Morgan transformations must not turn alternatives into mandatory rules."""
+    result = run("SELECT * FROM s WHERE NOT (a = 1 AND b = 2)", sections=["rules"])
+    assert result.predicates == []
+    assert result.conditions[0].expression == "NOT (a = 1 AND b = 2)"
+
+
+def test_row_number_without_selection_is_only_a_window():
+    """Numbering rows does not change the grain or deduplicate them."""
+    result = run("SELECT ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) AS rn FROM events")
+    assert result.dedups == []
+    assert result.window_functions[0].partition_by == ["id"]
+    assert result.window_functions[0].selection is None
+
+
+@pytest.mark.parametrize("selection,kind", [("rn = 1", "dedup"), ("rn <= 10", "top_n")])
+def test_window_selection_is_traced_through_projection(selection, kind):
+    """Window results require an actual consumer predicate before classification."""
+    result = run(
+        "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) AS rn "
+        f"FROM events) x WHERE {selection}"
+    )
+    assert result.window_functions[0].selection_kind == kind
+    assert len(result.dedups) == (1 if kind == "dedup" else 0)
+
+
+def test_global_row_number_is_observed_without_inventing_partition():
+    """Global ranking must be reported even without PARTITION BY."""
+    result = run("SELECT ROW_NUMBER() OVER (ORDER BY score DESC) AS rn FROM scores")
+    assert len(result.window_functions) == 1
+    assert result.window_functions[0].partition_by == []
+    assert result.window_functions[0].selection_kind is None
+    assert result.dedups == []
+
+
+def test_window_alias_selection_survives_three_nested_projections():
+    """A renamed ROW_NUMBER remains traceable across nested pass-through queries."""
+    result = run(
+        "SELECT * FROM (SELECT rank1 AS rank2 FROM (SELECT rn AS rank1 FROM "
+        "(SELECT ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts) AS rn FROM events) a) b) c "
+        "WHERE rank2 = 1"
+    )
+    assert result.dedups[0].selection == "rank2 = 1"
+
+
+def test_window_alias_on_unrelated_join_source_is_not_dedup():
+    """An identically named rank on another input cannot select this window."""
+    result = run(
+        "SELECT * FROM (SELECT ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts) AS rn FROM events) a "
+        "JOIN other b ON a.rn=b.rn WHERE b.rn=1"
+    )
+    assert result.dedups == []
+
+
+def test_qualify_confirms_window_selection():
+    """QUALIFY can select the window expression directly."""
+    result = run(
+        "SELECT * FROM events QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts) = 1", dialect="snowflake"
+    )
+    assert result.dedups[0].selection_kind == "dedup"
+
+
+def test_cte_before_insert_resolves_to_physical_table():
+    """A WITH clause attached to INSERT remains available to source resolution."""
+    result = run("WITH x AS (SELECT * FROM a) INSERT INTO b SELECT * FROM x")
+    assert edge_map(result)["dw.b"].sources == ["dw.a"]
+
+
+@pytest.mark.parametrize(
+    "condition,expected", [("NOT (a=1 OR b=2)", {("a", "!= 1"), ("b", "!= 2")}), ("NOT (a>1)", {("a", "<= 1")})]
+)
+def test_negation_keeps_sql_boolean_semantics(condition, expected):
+    """Safe mandatory atoms reflect negation of both conjunctions and comparisons."""
+    result = run(f"SELECT * FROM s WHERE {condition}", sections=["rules"])
+    assert {(p.column, p.predicate) for p in result.predicates} == expected
+
+
+def test_case_conditions_keep_branch_order_and_output_column():
+    """Business-rule consumers need complete branch conditions in evaluation order."""
+    result = run("SELECT CASE WHEN x=1 AND y=2 THEN 'A' WHEN x=1 THEN 'B' END AS label FROM s")
+    assert [(c.expression, c.output_column, c.branch) for c in result.conditions] == [
+        ("x = 1 AND y = 2", "label", 1),
+        ("x = 1", "label", 2),
+    ]
+
+
+def test_temp_folding_preserves_raw_statement_graph():
+    """A compact graph must still expose the original intermediate dependencies."""
+    result = run("CREATE TABLE tmp AS SELECT * FROM a; INSERT INTO b SELECT * FROM tmp; DROP TABLE tmp")
+    assert edge_map(result)["dw.b"].sources == ["dw.a"]
+    assert [(e.target, e.sources) for e in result.raw_lineage] == [("dw.tmp", ["dw.a"]), ("dw.b", ["dw.tmp"])]
+
+
+def test_rank_threshold_is_a_filter_not_top_n_or_dedup():
+    """A percentile-like lower threshold selects ranks without claiming uniqueness."""
+    result = run(
+        "SELECT * FROM (SELECT ROW_NUMBER() OVER (ORDER BY score) AS rn FROM scores) x "
+        "WHERE rn >= 0.8 * (SELECT COUNT(*) FROM scores)"
+    )
+    assert result.window_functions[0].selection_kind == "filtered"
+    assert result.dedups == []
+
+
+def test_self_join_keeps_both_key_transforms():
+    """Two transforms of the same physical column must retain their respective aliases."""
+    [join] = run("SELECT * FROM events a JOIN events b ON LEFT(a.id,6) = RIGHT(b.id,6)").joins
+    assert join.transforms == {"dw.events@a.id": "LEFT(a.id, 6)", "dw.events@b.id": "RIGHT(b.id, 6)"}
+
+
+def test_statement_evidence_starts_at_code_after_block_header():
+    """A multiline business header must not move every SQL reference to line one."""
+    result = run("/* question\n knowledge */\n-- note\nSELECT * FROM orders")
+    assert result.statement_facts[0].line == 4
+    assert result.statement_facts[0].read_tables == ["dw.orders"]
+
+
+def test_comment_only_file_does_not_claim_a_statement():
+    """Documentation-only SQL files contribute comments without phantom parsed statements."""
+    result = run("/* knowledge */\n-- more knowledge")
+    assert result.statements == result.parsed == 0
+    assert result.comments[0].text == "knowledge\nmore knowledge"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE dst SET x=c.x FROM c WHERE dst.id=c.id",
+        "DELETE FROM dst USING c WHERE dst.id=c.id",
+        "MERGE INTO dst USING c ON dst.id=c.id WHEN MATCHED THEN UPDATE SET x=c.x",
+    ],
+)
+def test_dml_cte_chain_resolves_only_physical_sources(statement):
+    """DML CTE names must not become physical tables, even through nested chains."""
+    result = run(
+        "WITH a AS (SELECT * FROM src), b AS (SELECT * FROM a), c AS (SELECT * FROM b) " + statement,
+        dialect="postgres",
+    )
+    assert result.unresolved == []
+    assert result.statement_facts[0].read_tables == ["dw.src"]
+    assert edge_map(result)["dw.dst"].sources == ["dw.src"]
+
+
+def test_dml_cte_does_not_hide_qualified_physical_table():
+    """An explicit database-qualified source cannot resolve to a same-named CTE."""
+    result = run(
+        "WITH c AS (SELECT * FROM src) UPDATE dst SET x=p.x FROM archive.c p WHERE dst.id=p.id",
+        dialect="postgres",
+    )
+    assert set(result.statement_facts[0].read_tables) == {"dw.src", "archive.c"}
+
+
+@pytest.mark.parametrize("join_type", ["JOIN", "LEFT JOIN", "RIGHT JOIN"])
+def test_join_row_condition_does_not_invent_self_relationship(join_type):
+    """Comparisons within one row are not additional self-join relationships."""
+    result = run(f"SELECT * FROM a {join_type} b ON a.id=b.id AND b.x=b.y")
+    assert join_set(result) == {("dw.a", "dw.b", (("id", "id"),))}

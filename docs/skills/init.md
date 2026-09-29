@@ -14,6 +14,8 @@ Run it with the `/init` command inside the REPL.
 
 It is the **lightweight** tier: no vector index and no confirmation gate. It takes a few minutes on a project with a hundred or so scripts. For the vector-indexed knowledge base, use [`/build-kb`](build_kb.md).
 
+The analyzer returns a versioned, paginated result. It inventories tables even in SELECT-only corpora and attaches source evidence to relationships and rules. Initialization follows required pages and reads source files when records are clipped. Parameterized conditions do not prove incremental loading, and ROW_NUMBER alone does not prove de-duplication or table grain. Recurrence across independent SQL statements is a verification lead, not a mandatory business rule.
+
 ## When to use it
 
 - A new project workspace has no `AGENTS.md` yet.

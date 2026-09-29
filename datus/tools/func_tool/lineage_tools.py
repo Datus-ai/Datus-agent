@@ -13,9 +13,12 @@ Read-only: it never writes files or touches the database.
 from __future__ import annotations
 
 import glob
+import hashlib
+import json
 import os
 import re
 from collections import Counter
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +27,7 @@ from agents import Tool
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.sql_lineage import (
     ALL_SECTIONS,
@@ -91,6 +95,7 @@ class LineageTools:
         self.agent_config = agent_config
         self.root_path = Path(root_path or os.getcwd()).expanduser().resolve(strict=False)
         self.path_allowlist = path_allowlist
+        self._extraction_cache: Optional[tuple[tuple, ExtractionResult]] = None
 
     @classmethod
     def all_tools_name(cls) -> List[str]:
@@ -108,54 +113,54 @@ class LineageTools:
         default_database: Optional[str] = None,
         max_items: int = 100,
         max_files: int = 500,
+        offset: int = 0,
+        result_path: Optional[str] = None,
+        max_output_chars: int = 60000,
     ) -> FuncToolResult:
         """
         Statically analyze SQL files (no SQL is executed): table lineage, join keys, constant rules, comments.
 
-        Use it before reading SQL files one by one: it covers every file at once, counts how often each
-        pattern recurs, and tells you which files and lines are worth reading. Frequency is the signal —
-        a filter present in most scripts is a project-wide rule; one present once is a local choice.
-        Join cardinality and business meaning are NOT inferred: verify with execute_sql and read the
-        files the result points at.
+        Use this to locate SQL evidence before reading scripts or verifying with the database.
+        Frequencies describe this corpus, not mandatory business rules. Never infer source-table grain,
+        join cardinality, incremental loading or ownership from syntax alone.
 
         Args:
-            paths: Files or glob patterns relative to the workspace, e.g. ["etl/**/*.sql", "dags/*.py"].
-                .sql files are parsed whole; .py files contribute only literal triple-quoted SQL strings.
-            sections: Any of "joins", "rules", "comments" in addition to lineage (always returned).
-                Defaults to all — prefer one call with every section; to shrink the result, lower max_items
-                or narrow paths (lineage is repeated in every call, so splitting by section costs more).
-            datasource: Datasource whose dialect and default database are used. Defaults to the active one.
-            dialect: SQL dialect of the files (e.g. "hive", "starrocks"), overriding the datasource's —
-                use when the ETL scripts target a different engine than the connected datasource.
-            default_database: Database used to qualify unqualified table names; tables in it are shown
-                by bare name. Defaults to the datasource's configured database.
-            max_items: Cap per list (joins, filters, value_mappings, dedup, comment groups), most frequent
-                first; the result reports truncation.
-            max_files: Cap on files scanned; the result reports truncation.
+            paths: Workspace-relative SQL/Python files or globs. Narrow paths for file-level details.
+            sections: Optional joins/rules/comments; defaults to all. Public lineage and table facts
+                are independent of this selection.
+            datasource: Datasource supplying the dialect and default database; defaults to active.
+            dialect: Override the datasource dialect, e.g. starrocks or hive.
+            default_database: Qualify bare names with this database; its prefix is shortened in summaries.
+            max_items: Page size per result list, between 1 and 300.
+            max_files: Scan limit between 1 and 5000; split paths if files_truncated is true.
+            offset: Start index for result lists. Use pagination[result_path].next_offset to continue.
+            result_path: Return only this collection, e.g. rules.filters, comments.file_headers,
+                tables, statements, raw_lineage, filter_occurrences, join_occurrences, mapping_occurrences,
+                window_occurrences, comment_occurrences or unresolved. statements/raw_lineage expose uncollapsed
+                per-statement evidence; they are not included in the default summary.
+            max_output_chars: JSON result character budget, at least 6000. Oversized individual records
+                return source references and detail_omitted; open those files for their full contents.
 
         Returns:
-            dict with 'success', 'error', and 'result' containing:
-            - 'lineage': one entry per target table — sources (union over scripts), statement kinds,
-              load mode (truncate_reload / overwrite / incremental / insert), the templated window of an
-              incremental load, and the scripts that write it (several scripts usually means versioned copies).
-            - 'roots': tables read but never written by the scanned files (ingested / upstream-owned).
-            - 'joins': join relationships by occurrences — the two tables, key columns in the order of
-              'tables' ("a=b", "a" when both sides share the name, composite keys kept together, "a=b|c"
-              for alternative columns such as UNION branches), join types, transforms applied to a key
-              before comparison (e.g. LEFT(issue_id, 6)), and 'seen_in' — tables whose build contains it.
-            - 'rules': 'filters' — constant predicates on physical columns with occurrences, the clauses
-              they appear in (WHERE / JOIN / HAVING / CASE) and how many files use them; 'value_mappings' —
-              code-to-label dictionaries read from CASE / IF; 'dedup' — ROW_NUMBER partition and order keys.
-            - 'comments': author comments — 'file_headers' are the full comment block each file opens with
-              (script descriptions; in a question→SQL corpus the question plus its business knowledge — read
-              every one); 'metric_notes' name computed columns; 'notes' are other prose (intent, caveats) with
-              the code line they annotate; 'column_labels' is a glossary; 'commented_code' samples disabled SQL.
-            - 'unresolved': statements or files that could not be analyzed, with a reason.
-              Missing lineage for a table listed here means "unknown", not "no upstream".
-            - 'stats': coverage counters, databases referenced, truncation flags.
+            success/error/result envelope. result schema_version=2 contains:
+            lineage (write dependencies and observed operations), tables (read/write inventory including
+            SELECT), roots (read but not written in this scan, not proof of external ownership), joins
+            (canonical table order, outer-join direction and transforms), rules (constant filters,
+            partial value mappings, observed window_functions and confirmed ROW_NUMBER selections in
+            dedup), conditions (compound/branch or unresolved relationship expressions), comments,
+            unresolved, stats and pagination. Parameterized predicates do not establish incremental
+            loading. Evidence includes file, statement start line and statement_id; distinct_statements
+            deduplicates comment-free normalized SQL, table_read_statements is its corpus denominator.
+            Pagination totals describe all matching records, independent of returned page size. Request
+            every required page, especially file_headers in a question-to-SQL corpus. Missing facts in
+            failed/unresolved or truncated inputs are unknown, not evidence of absence.
         """
         if not paths:
             return FuncToolResult(success=0, error="paths must contain at least one file or glob pattern")
+        if not 1 <= max_files <= 5000:
+            return FuncToolResult(success=0, error="max_files must be between 1 and 5000")
+        if not 1 <= max_items <= _MAX_ITEMS or offset < 0 or max_output_chars < 6000:
+            return FuncToolResult(success=0, error="max_items must be 1..300, offset >= 0, max_output_chars >= 6000")
         wanted = ALL_SECTIONS if sections is None else {s.strip().lower() for s in sections if s}
         unknown = wanted - ALL_SECTIONS
         if unknown:
@@ -175,13 +180,34 @@ class LineageTools:
                     unreadable.append({"file": display, "line": 0, "reason": f"unreadable: {e}"})
                     continue
                 if file_path.suffix.lower() == ".py":
-                    fragments.extend(extract_sql_from_python(text, display))
+                    extracted = extract_sql_from_python(text, display)
+                    fragments.extend(extracted)
+                    if not extracted:
+                        unreadable.append({"file": display, "line": 0, "reason": "no supported literal SQL fragments"})
                 else:
                     fragments.append(SqlFragment(text=text, file=display))
 
-            extraction = extract_from_fragments(fragments, dialect=dialect, default_database=database, sections=wanted)
-            shaper = _Shaper(extraction, database, max(1, min(max_items, _MAX_ITEMS)))
+            # A single corpus cache serves continuation requests. Read and authorize files again;
+            # content hashes, not mtimes, invalidate results when scripts or comments change.
+            cache_key = (
+                dialect,
+                database,
+                frozenset(wanted),
+                tuple((f.file, f.line_offset, hashlib.sha256(f.text.encode()).digest()) for f in fragments),
+            )
+            cached = self._extraction_cache
+            if cached is not None and cached[0] == cache_key:
+                extraction = cached[1]
+            else:
+                extraction = extract_from_fragments(
+                    fragments, dialect=dialect, default_database=database, sections=wanted
+                )
+                # Publish key and value together; concurrent calls keep their own local extraction.
+                self._extraction_cache = (cache_key, extraction)
+            shaper = _Shaper(extraction, database)
             result = shaper.shape(wanted, unreadable)
+            if result_path in shaper.details:
+                result[result_path] = shaper.details[result_path]
             result["stats"].update(
                 {
                     "files_scanned": len(files),
@@ -190,6 +216,7 @@ class LineageTools:
                     "default_database": database,
                 }
             )
+            result = _page_result(result, max_items, offset, result_path, max_output_chars)
             return FuncToolResult(result=result)
         except Exception as e:
             logger.error(f"extract_sql_lineage failed: {e}")
@@ -206,7 +233,7 @@ class LineageTools:
             name = datasource or getattr(config, "current_datasource", "") or ""
             datasources = getattr(getattr(config, "services", None), "datasources", {}) or {}
             if datasource and datasource not in datasources:
-                raise ValueError(f"Unknown datasource: {datasource}")
+                raise DatusException(ErrorCode.TOOL_INVALID_INPUT, f"Unknown datasource: {datasource}")
             db_config = datasources.get(name)
             if db_config is not None:
                 dialect = getattr(db_config, "type", "") or ""
@@ -219,27 +246,56 @@ class LineageTools:
         """Expand globs inside readable zones; hidden and out-of-workspace paths are skipped."""
         seen: Dict[Path, None] = {}
         skipped: List[Dict[str, Any]] = []
+        visited = 0
         for pattern in patterns:
             expanded = os.path.expanduser(pattern)
             anchor = expanded if os.path.isabs(expanded) else str(self.root_path / expanded)
-            matches = sorted(glob.glob(anchor, recursive=True)) if glob.has_magic(anchor) else [anchor]
-            if not matches:
-                skipped.append({"file": pattern, "line": 0, "reason": "no files matched"})
+            # Reject external/hidden literal prefixes before traversing their directories.
+            prefix = re.split(r"[\[*?]", anchor, maxsplit=1)[0]
+            prefix_path = (
+                Path(anchor)
+                if not glob.has_magic(anchor)
+                else (Path(prefix) if prefix.endswith(os.sep) else Path(prefix).parent)
+            )
+            if (
+                classify_path(str(prefix_path), root_path=self.root_path, allowlist=self.path_allowlist).zone
+                not in _READABLE_ZONES
+            ):
+                skipped.append({"file": pattern, "line": 0, "reason": "outside the readable workspace"})
+                continue
+            matches = glob.iglob(anchor, recursive=True) if glob.has_magic(anchor) else iter([anchor])
+            matched = False
             for match in matches:
+                matched = True
+                visited += 1
+                if visited > max_files * 20:
+                    skipped.append({"file": pattern, "line": 0, "reason": "scan entry budget exceeded; narrow paths"})
+                    return sorted(seen), skipped, True
                 path = Path(match)
                 if not path.is_file():
+                    if not glob.has_magic(anchor):
+                        skipped.append({"file": pattern, "line": 0, "reason": "not a readable file"})
                     continue
-                zone = classify_path(str(path), root_path=self.root_path, allowlist=self.path_allowlist).zone
-                if zone not in _READABLE_ZONES:
+                if (
+                    classify_path(str(path), root_path=self.root_path, allowlist=self.path_allowlist).zone
+                    not in _READABLE_ZONES
+                ):
                     skipped.append({"file": pattern, "line": 0, "reason": "outside the readable workspace"})
+                    continue
+                if path.suffix.lower() not in {".sql", ".py"}:
                     continue
                 if path.stat().st_size > _MAX_FILE_BYTES:
                     skipped.append({"file": self._display(path), "line": 0, "reason": "file too large"})
                     continue
-                seen.setdefault(path.resolve(strict=False), None)
-        files = list(seen)
-        truncated = len(files) > max_files
-        return files[:max_files], skipped, truncated
+                resolved = path.resolve(strict=False)
+                if resolved in seen:
+                    continue
+                if len(seen) == max_files:
+                    return sorted(seen), skipped, True
+                seen[resolved] = None
+            if not matched:
+                skipped.append({"file": pattern, "line": 0, "reason": "no files matched"})
+        return sorted(seen), skipped, False
 
     def _display(self, path: Path) -> str:
         try:
@@ -249,202 +305,239 @@ class LineageTools:
 
 
 class _Shaper:
-    """Aggregate raw extraction records into a compact, context-friendly result.
+    """Build complete summaries first; the pager alone truncates returned collections."""
 
-    Table names in ``database`` are shortened to the bare table name (the stats
-    block carries ``default_database``): the same prefix on every name is most
-    of the payload on a single-database warehouse.
-    """
-
-    def __init__(self, extraction: ExtractionResult, database: str, max_items: int):
+    def __init__(self, extraction: ExtractionResult, database: str):
         self.extraction = extraction
         self.prefix = f"{database}." if database else ""
-        self.max_items = max_items
-        self.truncated: Dict[str, int] = {}
+        self.facts = {f.statement_id: f for f in extraction.statement_facts}
+        self.details = {}
 
     def short(self, name: Optional[str]) -> Optional[str]:
-        if name and self.prefix and name.startswith(self.prefix):
-            return name[len(self.prefix) :]
-        return name
+        return name[len(self.prefix) :] if name and self.prefix and name.startswith(self.prefix) else name
 
-    def shape(self, sections, unreadable: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _seen_in(self, targets: Dict[str, Any]) -> List[str]:
+        return list(targets)[:_MAX_SEEN_IN]
+
+    def _support(self, records: List[Any], table: Optional[str] = None) -> Dict[str, Any]:
+        evidence = {}
+        hashes = set()
+        for record in records:
+            statement_id = getattr(record, "statement_id", "")
+            fact = self.facts.get(statement_id)
+            if fact is None:
+                fact = next(
+                    (
+                        f
+                        for f in self.facts.values()
+                        if f.file == record.file and f.sequence == getattr(record, "sequence", -1)
+                    ),
+                    None,
+                )
+            if fact is not None:
+                hashes.add(fact.sql_hash)
+                statement_id = fact.statement_id
+            key = (record.file, record.line, statement_id)
+            evidence[key] = {"file": record.file, "line": record.line, "statement_id": statement_id}
+            if getattr(record, "condition", ""):
+                evidence[key]["expression"] = record.condition
+        result = {
+            "evidence": list(evidence.values())[:3],
+            "evidence_total": len(evidence),
+            "distinct_statements": len(hashes),
+        }
+        if table is not None:
+            result["table_read_statements"] = len({f.sql_hash for f in self.facts.values() if table in f.read_tables})
+        return result
+
+    def shape(self, sections: set, unreadable: List[Dict[str, Any]]) -> Dict[str, Any]:
         ex = self.extraction
-        result: Dict[str, Any] = {}
-        result["lineage"], result["roots"] = self._lineage()
+        lineage, roots = self._lineage()
+        tables = self._tables()
+        result = {"schema_version": 2, "lineage": lineage, "roots": roots, "tables": tables}
         if "joins" in sections:
             result["joins"] = self._joins()
         if "rules" in sections:
             result["rules"] = {
                 "filters": self._filters(),
                 "value_mappings": self._mappings(),
-                "dedup": self._dedups(),
+                "window_functions": self._windows(ex.window_functions),
+                "dedup": self._windows(ex.dedups),
             }
+        if sections & {"rules", "joins"}:
+            result["conditions"] = [asdict(c) for c in ex.conditions]
         if "comments" in sections:
             result["comments"] = self._comments()
-        result["unresolved"] = unreadable + [
-            {"file": u.file, "line": u.line, "reason": u.reason} for u in ex.unresolved
-        ]
+        result["unresolved"] = unreadable + [asdict(u) for u in ex.unresolved]
         databases = Counter(
-            name.rsplit(".", 1)[0] for e in ex.lineage for name in [e.target, *e.sources] if "." in name
+            name.rsplit(".", 1)[0]
+            for f in self.facts.values()
+            for name in dict.fromkeys(f.read_tables + f.write_tables)
+            if "." in name
         )
+        written = {t for f in self.facts.values() for t in f.write_tables}
         result["stats"] = {
             "statements": ex.statements,
             "parsed": ex.parsed,
             "queries_without_target": ex.queries,
-            "tables_written": len(result["lineage"]),
-            "tables_read_only": len(result["roots"]),
+            "tables_written": len(written),
+            "tables_read_only": len(roots),
+            "tables_referenced": len(tables),
+            "distinct_statements": len({f.sql_hash for f in self.facts.values()}),
             "databases_referenced": dict(databases.most_common()),
             "join_predicates": ex.join_predicates,
             "join_predicates_unresolved": ex.join_predicates_unresolved,
             "rule_predicates": ex.rule_predicates,
             "rule_predicates_unresolved": ex.rule_predicates_unresolved,
-            "truncated_lists": self.truncated,
+            "truncated_lists": {},
+            "evidence_line_kind": "statement_start",
+        }
+        self.details = {
+            "statements": [asdict(f) for f in self.facts.values()],
+            "raw_lineage": [asdict(e) for e in ex.raw_lineage],
+            "filter_occurrences": [asdict(p) for p in ex.predicates],
+            "join_occurrences": [asdict(j) for j in ex.joins],
+            "mapping_occurrences": [asdict(m) for m in ex.mappings],
+            "window_occurrences": [asdict(w) for w in ex.window_functions],
+            "comment_occurrences": [asdict(c) for c in ex.comments],
         }
         return result
 
-    def _cap(self, name: str, items: List[Any]) -> List[Any]:
-        if len(items) > self.max_items:
-            self.truncated[name] = len(items)
-        return items[: self.max_items]
-
-    def _cap_hard(self, name: str, items: List[Any]) -> List[Any]:
-        if len(items) > _MAX_ITEMS:
-            self.truncated[name] = len(items)
-        return items[:_MAX_ITEMS]
-
-    def _seen_in(self, targets: Dict[str, None]) -> List[str]:
-        return list(targets)[:_MAX_SEEN_IN]
-
-    # ---------------------------------------------------------------- lineage
-
-    def _lineage(self):
-        by_target: Dict[str, Dict[str, Any]] = {}
-        for edge in self.extraction.lineage:
-            entry = by_target.setdefault(
-                edge.target,
-                {"sources": {}, "statements": {}, "load_modes": {}, "window": {}, "scripts": {}, "via_temp": {}},
-            )
-            entry["sources"].update(dict.fromkeys(self.short(src) for src in edge.sources))
-            entry["statements"][edge.statement] = None
-            entry["load_modes"][edge.load_mode] = None
-            entry["window"].update(dict.fromkeys(edge.window))
-            entry["scripts"][edge.file] = None
-            entry["via_temp"].update(dict.fromkeys(self.short(tmp) for tmp in edge.via_temp))
-        lineage = []
-        for target, entry in by_target.items():
-            shaped = {
-                "target": self.short(target),
-                "sources": list(entry["sources"]),
-                "statements": list(entry["statements"]),
-                "load_modes": list(entry["load_modes"]),
-                "scripts": list(entry["scripts"]),
-            }
-            if entry["window"]:
-                shaped["window"] = list(entry["window"])
-            if entry["via_temp"]:
-                shaped["via_temp"] = list(entry["via_temp"])
-            lineage.append(shaped)
-        written = {entry["target"] for entry in lineage}
-        roots = sorted({src for entry in lineage for src in entry["sources"]} - written)
-        return lineage, roots
-
-    # ------------------------------------------------------------------ joins
-
-    def _joins(self) -> List[Dict[str, Any]]:
-        grouped: Dict[tuple, Dict[str, Any]] = {}
-        for join in self.extraction.joins:
-            key = (join.left_table, join.right_table, tuple(join.keys))
-            entry = grouped.setdefault(key, {"join_types": {}, "transforms": {}, "occurrences": 0, "seen_in": {}})
-            entry["occurrences"] += 1
-            entry["join_types"][join.join_type] = None
-            entry["transforms"].update({self.short(col): expr for col, expr in join.transforms.items()})
-            entry["seen_in"][self.short(join.statement_target) or join.file] = None
-        ranked = sorted(grouped.items(), key=lambda item: (-item[1]["occurrences"], item[0]))
-        joins = []
-        for (left_table, right_table, keys), entry in self._cap("joins", ranked):
-            shaped = {
-                "tables": [self.short(left_table), self.short(right_table)],
-                "on": [left if left == right else f"{left}={right}" for left, right in keys],
-                "join_types": list(entry["join_types"]),
-                "occurrences": entry["occurrences"],
-                "seen_in": self._seen_in(entry["seen_in"]),
-            }
-            if entry["transforms"]:
-                shaped["transforms"] = entry["transforms"]
-            joins.append(shaped)
-        return joins
-
-    # ------------------------------------------------------------------ rules
-
-    def _filters(self) -> List[Dict[str, Any]]:
-        grouped: Dict[tuple, Dict[str, Any]] = {}
-        for p in self.extraction.predicates:
-            key = (p.table, p.column, p.transform or "", p.predicate)
-            entry = grouped.setdefault(key, {"occurrences": 0, "clauses": Counter(), "files": set(), "seen_in": {}})
-            entry["occurrences"] += 1
-            entry["clauses"][p.clause] += 1
-            entry["files"].add(p.file)
-            entry["seen_in"][self.short(p.statement_target) or p.file] = None
-        ranked = sorted(grouped.items(), key=lambda item: (-len(item[1]["files"]), -item[1]["occurrences"], item[0]))
-        filters = []
-        for (table, column, transform, predicate), entry in self._cap("filters", ranked):
-            shaped = {
-                "column": f"{self.short(table)}.{column}",
-                "predicate": predicate,
-                "files": len(entry["files"]),
-                "occurrences": entry["occurrences"],
-                "clauses": dict(entry["clauses"].most_common()),
-                "seen_in": self._seen_in(entry["seen_in"]),
-            }
-            if transform:
-                shaped["transform"] = transform
-            filters.append(shaped)
-        return filters
-
-    def _mappings(self) -> List[Dict[str, Any]]:
-        grouped: Dict[tuple, Dict[str, Any]] = {}
-        for m in self.extraction.mappings:
-            entry = grouped.setdefault(
-                (m.table, m.column, m.transform or ""), {"values": {}, "occurrences": 0, "seen_in": {}}
-            )
-            entry["occurrences"] += 1
-            entry["values"].setdefault(m.value, Counter())[m.label] += 1
-            entry["seen_in"][self.short(m.statement_target) or m.file] = None
-        ranked = sorted(grouped.items(), key=lambda item: (-item[1]["occurrences"], item[0]))
-        mappings = []
-        for (table, column, transform), entry in self._cap("value_mappings", ranked):
-            values = {value: labels.most_common(1)[0][0] for value, labels in entry["values"].items()}
-            shaped = {
-                "column": f"{self.short(table)}.{column}",
-                "values": values,
-                "occurrences": entry["occurrences"],
-                "seen_in": self._seen_in(entry["seen_in"]),
-            }
-            if transform:
-                shaped["transform"] = transform
-            conflicts = {value: list(labels) for value, labels in entry["values"].items() if len(labels) > 1}
-            if conflicts:
-                shaped["conflicting_labels"] = conflicts
-            mappings.append(shaped)
-        return mappings
-
-    def _dedups(self) -> List[Dict[str, Any]]:
-        grouped: Dict[tuple, Dict[str, Any]] = {}
-        for d in self.extraction.dedups:
-            key = (d.table, tuple(d.partition_by), tuple(d.order_by))
-            entry = grouped.setdefault(key, {"occurrences": 0, "seen_in": {}})
-            entry["occurrences"] += 1
-            entry["seen_in"][self.short(d.statement_target) or d.file] = None
-        ranked = sorted(grouped.items(), key=lambda item: (-item[1]["occurrences"], item[0]))
+    def _tables(self) -> List[Dict[str, Any]]:
+        names = sorted({name for f in self.facts.values() for name in f.read_tables + f.write_tables})
         return [
             {
-                "table": self.short(table),
-                "partition_by": list(partition),
-                "order_by": list(order),
-                "occurrences": entry["occurrences"],
-                "seen_in": self._seen_in(entry["seen_in"]),
+                "table": self.short(name),
+                "read_statements": sum(name in f.read_tables for f in self.facts.values()),
+                "write_statements": sum(name in f.write_tables for f in self.facts.values()),
+                **self._support([f for f in self.facts.values() if name in f.read_tables + f.write_tables]),
             }
-            for (table, partition, order), entry in self._cap("dedup", ranked)
+            for name in names
+        ]
+
+    def _lineage(self) -> tuple[List[Dict[str, Any]], List[str]]:
+        grouped = {}
+        for edge in self.extraction.lineage:
+            grouped.setdefault(edge.target, []).append(edge)
+        lineage = []
+        for target, edges in grouped.items():
+            item = {
+                "target": self.short(target),
+                "sources": sorted({self.short(s) for e in edges for s in e.sources}),
+                "statements": sorted({e.statement for e in edges}),
+                "load_modes": sorted({e.load_mode for e in edges}),
+                "scripts": sorted({e.file for e in edges}),
+                **self._support(edges),
+            }
+            parameters = list(dict.fromkeys(p for e in edges for p in e.parameterized_predicates))
+            if parameters:
+                item["parameterized_predicates"] = parameters
+            temps = sorted({self.short(t) for e in edges for t in e.via_temp})
+            if temps:
+                item["via_temp"] = temps
+            lineage.append(item)
+        reads = {t for f in self.facts.values() for t in f.read_tables}
+        writes = {t for f in self.facts.values() for t in f.write_tables}
+        return lineage, sorted(self.short(t) for t in reads - writes)
+
+    def _joins(self) -> List[Dict[str, Any]]:
+        grouped = {}
+        for join in self.extraction.joins:
+            key = (
+                join.left_table,
+                join.right_table,
+                tuple(join.keys),
+                join.join_type,
+                tuple(sorted(join.transforms.items())),
+                tuple(join.aliases),
+            )
+            grouped.setdefault(key, []).append(join)
+        result = []
+        for key, records in sorted(grouped.items(), key=lambda pair: (-len(pair[1]), pair[0])):
+            left, right, keys, kind, transforms, aliases = key
+            item = {
+                "tables": [self.short(left), self.short(right)],
+                "on": [a if a == b else f"{a}={b}" for a, b in keys],
+                "join_types": [kind],
+                "occurrences": len(records),
+                "seen_in": self._seen_in(dict.fromkeys(self.short(r.statement_target) or r.file for r in records)),
+                **self._support(records),
+            }
+            if transforms:
+                item["transforms"] = {self.short(c): expr for c, expr in transforms}
+            if aliases:
+                item["aliases"] = list(aliases)
+            result.append(item)
+        return result
+
+    def _filters(self) -> List[Dict[str, Any]]:
+        grouped = {}
+        for p in self.extraction.predicates:
+            key = (p.table, p.column, p.transform or "", p.predicate, p.clause)
+            grouped.setdefault(key, []).append(p)
+        ranked = sorted(
+            grouped.items(), key=lambda pair: (-self._support(pair[1])["distinct_statements"], -len(pair[1]), pair[0])
+        )
+        result = []
+        for (table, column, transform, predicate, clause), records in ranked:
+            item = {
+                "column": f"{self.short(table)}.{column}",
+                "predicate": predicate,
+                "files": len({r.file for r in records}),
+                "occurrences": len(records),
+                "clauses": {clause: len(records)},
+                "seen_in": self._seen_in(dict.fromkeys(self.short(r.statement_target) or r.file for r in records)),
+                **self._support(records, table),
+            }
+            if transform:
+                item["transform"] = transform
+            result.append(item)
+        return result
+
+    def _mappings(self) -> List[Dict[str, Any]]:
+        grouped = {}
+        for m in self.extraction.mappings:
+            grouped.setdefault((m.table, m.column, m.transform or ""), []).append(m)
+        result = []
+        for (table, column, transform), records in sorted(grouped.items(), key=lambda pair: (-len(pair[1]), pair[0])):
+            values = {}
+            for r in records:
+                values.setdefault(r.value, Counter())[r.label] += 1
+            item = {
+                "column": f"{self.short(table)}.{column}",
+                "values": {v: labels.most_common(1)[0][0] for v, labels in values.items()},
+                "occurrences": len(records),
+                "partial": True,
+                "seen_in": self._seen_in(dict.fromkeys(self.short(r.statement_target) or r.file for r in records)),
+                **self._support(records),
+            }
+            if transform:
+                item["transform"] = transform
+            conflicts = {v: list(labels) for v, labels in values.items() if len(labels) > 1}
+            if conflicts:
+                item["conflicting_labels"] = conflicts
+            result.append(item)
+        return result
+
+    def _windows(self, windows: List[Any]) -> List[Dict[str, Any]]:
+        grouped = {}
+        for w in windows:
+            key = (w.table or "", tuple(w.partition_by), tuple(w.order_by), w.selection or "", w.selection_kind or "")
+            grouped.setdefault(key, []).append(w)
+        return [
+            {
+                "table": self.short(t) or None,
+                "partition_by": list(p),
+                "order_by": list(o),
+                "selection": selection or None,
+                "selection_kind": kind or None,
+                "occurrences": len(records),
+                "seen_in": self._seen_in(dict.fromkeys(self.short(r.statement_target) or r.file for r in records)),
+                **self._support(records),
+            }
+            for (t, p, o, selection, kind), records in sorted(
+                grouped.items(), key=lambda pair: (-len(pair[1]), pair[0])
+            )
         ]
 
     # --------------------------------------------------------------- comments
@@ -470,7 +563,16 @@ class _Shaper:
         for c in self.extraction.comments:
             target = self.short(c.statement_target) or c.file
             if c.kind == "header":
-                entry = headers.setdefault(c.text, {"file": c.file, "text": c.text, "copies": 0})
+                entry = headers.setdefault(
+                    c.text,
+                    {
+                        "file": c.file,
+                        "line": c.line,
+                        "text": c.text,
+                        "copies": 0,
+                        "text_truncated": c.text.endswith("..."),
+                    },
+                )
                 entry["copies"] += 1
                 continue
             if c.kind == "code":
@@ -479,7 +581,16 @@ class _Shaper:
             alias = _projection_alias(c.code)
             if alias and _AGGREGATE_RE.search(c.code):
                 entry = metrics.setdefault(
-                    (alias, c.text), {"column": alias, "label": c.text, "expr": c.code, "copies": 0, "seen_in": {}}
+                    (alias, c.text),
+                    {
+                        "column": alias,
+                        "label": c.text,
+                        "expr": c.code,
+                        "file": c.file,
+                        "line": c.line,
+                        "copies": 0,
+                        "seen_in": {},
+                    },
                 )
                 entry["copies"] += 1
                 entry["seen_in"][target] = None
@@ -501,11 +612,10 @@ class _Shaper:
             m["seen_in"] = self._seen_in(m["seen_in"])
         prose = sorted(notes.values(), key=lambda n: (-n["copies"], n["file"], n["line"]))
         return {
-            # Headers are the primary human input of a corpus: bounded by the hard cap, not by max_items.
-            "file_headers": [self._drop_single(h) for h in self._cap_hard("file_headers", list(headers.values()))],
+            "file_headers": [self._drop_single(h) for h in headers.values()],
             "column_labels": column_labels,
-            "metric_notes": [self._drop_single(m) for m in self._cap("metric_notes", metric_notes)],
-            "notes": [self._drop_single(n) for n in self._cap("notes", prose)],
+            "metric_notes": [self._drop_single(m) for m in metric_notes],
+            "notes": [self._drop_single(n) for n in prose],
             "commented_code": {
                 "count": sum(len(v) for v in code_by_file.values()),
                 "files": len(code_by_file),
@@ -524,3 +634,124 @@ class _Shaper:
         if not item.get("code"):
             item.pop("code", None)
         return item
+
+
+def _page_result(
+    result: Dict[str, Any], limit: int, offset: int, result_path: Optional[str], budget: int
+) -> Dict[str, Any]:
+    """Page every collection and bound JSON size; continuation selects one collection."""
+    collections = {}
+
+    def discover(value, prefix=""):
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if key == "stats":
+                continue
+            if isinstance(item, list) or path == "comments.column_labels":
+                collections[path] = item
+            elif isinstance(item, dict):
+                discover(item, path)
+
+    discover(result)
+    if result_path and result_path not in collections:
+        raise DatusException(
+            ErrorCode.TOOL_INVALID_INPUT, f"Unknown result_path: {result_path}; available: {sorted(collections)}"
+        )
+    selected = {result_path: collections[result_path]} if result_path else collections
+    output = {"schema_version": result["schema_version"], "stats": dict(result["stats"]), "pagination": {}}
+    pages = {}
+
+    def assign(path, value):
+        dest = output
+        parts = path.split(".")
+        for part in parts[:-1]:
+            dest = dest.setdefault(part, {})
+        dest[parts[-1]] = value
+
+    for path, items in selected.items():
+        rows = list(items.items()) if isinstance(items, dict) else items
+        page = rows[offset : offset + limit]
+        pages[path] = page
+        assign(path, dict(page) if isinstance(items, dict) else page)
+        output["pagination"][path] = {
+            "total": len(rows),
+            "offset": offset,
+            "returned": len(page),
+            "next_offset": offset + len(page) if offset + len(page) < len(rows) else None,
+        }
+    if not result_path and "comments" in result:
+        code = result["comments"].get("commented_code", {})
+        output["comments"].setdefault("commented_code", {}).update({k: v for k, v in code.items() if k != "samples"})
+
+    def refresh(path):
+        page = pages[path]
+        assign(path, dict(page) if isinstance(selected[path], dict) else page)
+        meta = output["pagination"][path]
+        meta.update(returned=len(page), next_offset=offset + len(page) if offset + len(page) < meta["total"] else None)
+        output["stats"]["truncated_lists"] = {
+            p: m["total"] for p, m in output["pagination"].items() if m["next_offset"] is not None or m["offset"] > 0
+        }
+
+    for path in pages:
+        refresh(path)
+
+    def size(value):
+        return len(json.dumps(value, ensure_ascii=False))
+
+    sizes = {
+        path: [size(dict([row])) - 2 if isinstance(selected[path], dict) else size(row) for row in page]
+        for path, page in pages.items()
+    }
+    current_size = size(output)
+    while current_size > budget:
+        candidates = [p for p in pages if pages[p]]
+        if not candidates:
+            # Large database inventories must not defeat the global output budget.
+            databases = output["stats"].get("databases_referenced", {})
+            if databases:
+                databases.pop(next(reversed(databases)))
+                output["stats"]["database_stats_truncated"] = True
+                current_size = size(output)
+                continue
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT, "Output metadata exceeds budget; increase max_output_chars"
+            )
+        path = max(candidates, key=lambda p: sum(sizes[p]) + 2 * len(sizes[p]))
+        if result_path and len(pages[path]) == 1:
+            record = pages[path][0]
+            if isinstance(record, dict):
+                refs = record.get("evidence", [])[:3]
+                if record.get("file"):
+                    refs = [{"file": record["file"], "line": record.get("line", 0)}]
+                pages[path][0] = {
+                    "detail_omitted": True,
+                    "reason": "Record exceeds budget; read source files",
+                    "evidence": [{k: r[k] for k in ("file", "line") if k in r} for r in refs],
+                }
+                refresh(path)
+                sizes[path] = [size(pages[path][0])]
+                current_size = size(output)
+                if current_size > budget:
+                    pages[path].clear()
+                    sizes[path].clear()
+                    refresh(path)
+                    current_size = size(output)
+                continue
+            if path == "comments.column_labels":
+                key, _ = record
+                pages[path][0] = (key, {"detail_omitted": True, "reason": "Read source column comments"})
+                refresh(path)
+                sizes[path] = [size(dict(pages[path])) - 2]
+                current_size = size(output)
+                if current_size > budget:
+                    pages[path].clear()
+                    sizes[path].clear()
+                    refresh(path)
+                    current_size = size(output)
+                continue
+        metadata_before = size(output["pagination"]) + size(output["stats"])
+        current_size -= sizes[path].pop() + (2 if len(pages[path]) > 1 else 0)
+        pages[path].pop()
+        refresh(path)
+        current_size += size(output["pagination"]) + size(output["stats"]) - metadata_before
+    return output

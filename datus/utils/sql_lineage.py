@@ -9,7 +9,7 @@ wrapper (``datus/tools/func_tool/lineage_tools.py``) owns path resolution and
 result shaping; everything here takes SQL strings and returns plain data so it
 can be unit-tested in isolation.
 
-Two artifacts come out of every statement:
+The analyzer records statement read/write facts and optional observations:
 
 - **lineage edges** — ``target <- sources`` for statements that write a table
   (INSERT / INSERT OVERWRITE / CTAS / CREATE VIEW / MERGE / UPDATE ... FROM /
@@ -33,16 +33,17 @@ scope — those need the database or judgment and belong to the calling skill.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import defaultdict
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import sqlglot
 from sqlglot import expressions as exp
 from sqlglot.errors import ParseError, TokenError
-from sqlglot.optimizer.scope import Scope, build_scope
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 from datus.utils.loggings import get_logger
 
@@ -90,9 +91,9 @@ class LineageEdge:
     line: int
     templated: bool = False
     via_temp: List[str] = field(default_factory=list)
-    # truncate_reload / overwrite / incremental / insert — how the script loads the target
-    load_mode: str = "insert"
-    window: List[str] = field(default_factory=list)  # templated predicates bounding an incremental load
+    load_mode: str = "unknown"
+    parameterized_predicates: List[str] = field(default_factory=list)
+    sequence: int = 0
 
 
 @dataclass
@@ -108,6 +109,10 @@ class JoinEdge:
     # "table.column" -> transform applied before the comparison, e.g. LEFT(issue_id, 6)
     transforms: Dict[str, str] = field(default_factory=dict)
     statement_target: Optional[str] = None  # table the enclosing statement writes, if any
+    condition: str = ""
+    aliases: List[str] = field(default_factory=list)
+
+    statement_id: str = ""
 
 
 @dataclass
@@ -123,6 +128,8 @@ class Predicate:
     statement_target: Optional[str] = None
     transform: Optional[str] = None
 
+    statement_id: str = ""
+
 
 @dataclass
 class ValueMapping:
@@ -137,17 +144,49 @@ class ValueMapping:
     statement_target: Optional[str] = None
     transform: Optional[str] = None  # the mapping applies to this expression of the column, not the raw value
 
+    statement_id: str = ""
+
 
 @dataclass
-class Dedup:
+class WindowPattern:
     """``ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)`` resolved to physical columns."""
 
-    table: str
+    table: Optional[str]
     partition_by: List[str]  # "column" or "TRANSFORM(column)"
     order_by: List[str]
     file: str
     line: int
     statement_target: Optional[str] = None
+    selection: Optional[str] = None
+    selection_kind: Optional[str] = None
+
+    statement_id: str = ""
+
+
+@dataclass
+class StatementFact:
+    statement_id: str
+    sql_hash: str
+    file: str
+    line: int
+    operation: str
+    read_tables: List[str]
+    write_tables: List[str]
+    sequence: int
+
+
+@dataclass
+class Condition:
+    expression: str
+    clause: str
+    status: str
+    file: str
+    line: int
+    reason: str = ""
+    output_column: Optional[str] = None
+    branch: Optional[int] = None
+
+    statement_id: str = ""
 
 
 @dataclass
@@ -175,7 +214,11 @@ class ExtractionResult:
     joins: List[JoinEdge] = field(default_factory=list)
     predicates: List[Predicate] = field(default_factory=list)
     mappings: List[ValueMapping] = field(default_factory=list)
-    dedups: List[Dedup] = field(default_factory=list)
+    dedups: List[WindowPattern] = field(default_factory=list)
+    window_functions: List[WindowPattern] = field(default_factory=list)
+    conditions: List[Condition] = field(default_factory=list)
+    statement_facts: List[StatementFact] = field(default_factory=list)
+    raw_lineage: List[LineageEdge] = field(default_factory=list)
     comments: List[Comment] = field(default_factory=list)
     unresolved: List[Unresolved] = field(default_factory=list)
     statements: int = 0
@@ -270,19 +313,21 @@ def _naive_split(sql: str) -> List[Tuple[str, int, int]]:
     return pieces
 
 
+def _first_code_offset(text: str) -> int:
+    """Skip leading whitespace and complete SQL comments without counting them as code."""
+    offset = 0
+    trivia = re.compile(r"\s+|--[^\n]*|/\*.*?\*/|#[^\n]*", re.DOTALL)
+    while match := trivia.match(text, offset):
+        offset = match.end()
+    return offset
+
+
 def _leading_newlines(text: str) -> int:
-    """Lines to skip before the first line that holds code (not blank / comment)."""
-    count = 0
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if stripped and not stripped.startswith("--"):
-            break
-        count += 1
-    return count
+    return text.count("\n", 0, _first_code_offset(text))
 
 
 def _has_code(text: str) -> bool:
-    return any(line.strip() and not line.strip().startswith("--") for line in text.split("\n"))
+    return bool(text[_first_code_offset(text) :].strip())
 
 
 # ---------------------------------------------------------------------------
@@ -315,13 +360,21 @@ def _write_target(stmt: exp.Expression) -> Tuple[Optional[exp.Table], str, Optio
     if isinstance(stmt, exp.Insert):
         target = stmt.this.this if isinstance(stmt.this, exp.Schema) else stmt.this
         kind = "INSERT OVERWRITE" if stmt.args.get("overwrite") else "INSERT INTO"
-        return (target if isinstance(target, exp.Table) else None), kind, stmt.expression
+        query = stmt.expression
+        if query is not None and stmt.args.get("with") is not None:
+            query = query.copy()
+            query.set("with", stmt.args["with"].copy())
+        return (target if isinstance(target, exp.Table) else None), kind, query
     if isinstance(stmt, exp.Create):
         target = stmt.this.this if isinstance(stmt.this, exp.Schema) else stmt.this
         kind = f"CREATE {(stmt.args.get('kind') or 'TABLE').upper()}"
         if stmt.expression is None:
             return None, kind, None  # plain DDL, no sources
-        return (target if isinstance(target, exp.Table) else None), kind, stmt.expression
+        query = stmt.expression
+        if query is not None and stmt.args.get("with") is not None:
+            query = query.copy()
+            query.set("with", stmt.args["with"].copy())
+        return (target if isinstance(target, exp.Table) else None), kind, query
     if isinstance(stmt, exp.Merge):
         return (stmt.this if isinstance(stmt.this, exp.Table) else None), "MERGE", stmt
     if isinstance(stmt, exp.Update):
@@ -333,31 +386,32 @@ def _write_target(stmt: exp.Expression) -> Tuple[Optional[exp.Table], str, Optio
 
 def _source_tables(query: exp.Expression, target: Optional[exp.Table], default_database: str) -> List[str]:
     """Physical tables read by ``query``, excluding CTE references and the target itself."""
-    cte_names = {cte.alias_or_name.lower() for cte in query.find_all(exp.CTE)}
     seen: Dict[str, None] = {}
+    scoped_tables = set()
+    for scope in _iter_scopes(query):
+        for table in scope.tables:
+            scoped_tables.add(id(table))
+            source = scope.sources.get(table.alias_or_name)
+            if isinstance(source, exp.Table) and _is_physical(source):
+                seen.setdefault(table_full_name(source, default_database), None)
+    # DML targets and FROM/USING tables can sit outside a SELECT scope.
+    with_clause = query.args.get("with")
+    cte_names = {cte.alias_or_name for cte in with_clause.expressions} if with_clause else set()
     for table in query.find_all(exp.Table):
-        if table is target or not _is_physical(table):
-            continue
-        if not table.db and table.name.lower() in cte_names:
-            continue
-        seen.setdefault(table_full_name(table, default_database), None)
-    if target is not None:
-        seen.pop(table_full_name(target, default_database), None)
+        if id(table) not in scoped_tables and table is not target and _is_physical(table):
+            if not table.db and not table.catalog and table.name in cte_names:
+                continue
+            seen.setdefault(table_full_name(table, default_database), None)
     return list(seen)
 
 
 def _iter_scopes(query: exp.Expression) -> Iterable[Scope]:
     """Every scope under ``query``: CTEs, derived tables and WHERE subqueries."""
-    roots = [query] if isinstance(query, (exp.Query, exp.Subquery)) else list(query.find_all(exp.Select))[:1]
-    for root in roots:
-        try:
-            scope = build_scope(root)
-        except Exception as e:  # sqlglot raises OptimizeError and friends on odd shapes
-            logger.debug("build_scope failed: %s", e)
-            continue
-        if scope is None:
-            continue
-        yield from scope.traverse()
+    try:
+        # Traverse the complete DML tree so CTE scopes remain available to sibling queries.
+        yield from traverse_scope(query)
+    except Exception as e:  # sqlglot raises OptimizeError and friends on odd shapes
+        logger.debug("traverse_scope failed: %s", e)
 
 
 _MAX_ORIGINS = 8
@@ -397,8 +451,12 @@ def _resolve_column(scope: Scope, column: exp.Column, default_database: str, dep
             continue
         if index is None:
             # ``SELECT *`` pass-through: the column comes from the inner single source.
-            if any(isinstance(p, exp.Star) for p in select.selects):
-                origins.extend(_resolve_column(branch, exp.column(column.name), default_database, depth + 1))
+            for projection in select.selects:
+                if projection.is_star:
+                    alias = projection.table if isinstance(projection, exp.Column) else None
+                    origins.extend(
+                        _resolve_column(branch, exp.column(column.name, table=alias), default_database, depth + 1)
+                    )
             continue
         if index >= len(select.selects):
             continue
@@ -475,79 +533,102 @@ def _column_source(scope: Scope, column: exp.Column):
     return None
 
 
-def _join_edges_in_scope(scope: Scope, default_database: str, result: ExtractionResult) -> List[Tuple]:
-    """``(left_table, right_table, keys, join_type, transforms)`` for every join predicate in ``scope``.
-
-    Equalities of one predicate that link the same table pair are grouped into
-    a single composite-key edge; ``left_table`` is the lexicographically smaller
-    name so the same relationship aggregates regardless of written order.
-    """
+def _join_edges_in_scope(
+    scope: Scope, default_database: str, result: ExtractionResult, file: str, line: int
+) -> List[Tuple]:
+    """Resolve conjunctive equalities, preserving canonical outer-join direction."""
     select = scope.expression
     if not isinstance(select, exp.Select):
         return []
-    predicates: List[Tuple[exp.Expression, str]] = []
+    predicates = []
     for join in select.args.get("joins") or []:
-        join_type = (join.side or join.kind or "INNER").upper()
-        on = join.args.get("on")
-        if on is not None:
-            predicates.append((on, join_type))
+        kind = (join.side or join.kind or "INNER").upper()
+        if join.args.get("on") is not None:
+            predicates.append((join.args["on"], kind, join.this.alias_or_name))
         for using in join.args.get("using") or []:
-            name = using.name
             right = join.this.alias_or_name
-            left_sources = [alias for alias in scope.selected_sources if alias != right]
-            if len(left_sources) == 1:
-                eq = exp.EQ(this=exp.column(name, table=left_sources[0]), expression=exp.column(name, table=right))
-                predicates.append((eq, join_type))
-    where = select.args.get("where")
-    if where is not None:
-        predicates.append((where.this, "WHERE"))
-
+            lefts = [alias for alias in scope.selected_sources if alias != right]
+            if len(lefts) == 1:
+                predicates.append(
+                    (
+                        exp.EQ(
+                            this=exp.column(using.name, table=lefts[0]), expression=exp.column(using.name, table=right)
+                        ),
+                        kind,
+                        right,
+                    )
+                )
+            else:
+                result.join_predicates += 1
+                result.join_predicates_unresolved += 1
+                result.conditions.append(
+                    Condition(
+                        f"USING ({using.name})", "JOIN", "unresolved", file, line, "Multiple possible left sources"
+                    )
+                )
+    if select.args.get("where") is not None:
+        predicates.append((select.args["where"].this, "WHERE", ""))
     edges = []
-    for predicate, join_type in predicates:
-        grouped: Dict[Tuple[str, str], set] = defaultdict(set)
-        transforms: Dict[Tuple[str, str], Dict[str, str]] = defaultdict(dict)
-        for eq in _conjunct_equalities(predicate):
+    for predicate, kind, right_alias in predicates:
+        grouped = defaultdict(set)
+        transforms = defaultdict(dict)
+        for atom, negated in _atoms(predicate, False):
+            columns = list(atom.find_all(exp.Column))
+            # Constant filters are handled by the rule extractor.
+            if len(columns) < 2:
+                continue
+            # Comparisons within one alias are row conditions, not self-joins.
+            if len({c.table for c in columns}) == 1:
+                continue
             result.join_predicates += 1
-            lefts = _resolve_column(scope, eq.this, default_database)
-            rights = _resolve_column(scope, eq.expression, default_database)
+            lefts = rights = []
+            if isinstance(atom, exp.EQ) and not negated:
+                lefts = _resolve_expression(scope, atom.this, default_database, 0)
+                rights = _resolve_expression(scope, atom.expression, default_database, 0)
             if not lefts or not rights:
                 result.join_predicates_unresolved += 1
+                result.conditions.append(
+                    Condition(
+                        _render(exp.Not(this=atom.copy())) if negated else _render(atom),
+                        kind,
+                        "unresolved",
+                        file,
+                        line,
+                        "Relationship is not a resolvable conjunctive equality",
+                    )
+                )
                 continue
-            # One equality whose side traces to several origins (UNION branches, CASE
-            # results) yields alternatives, not a composite key: fold them into a
-            # single "a|b" key per table pair.
-            alternatives: Dict[Tuple[str, str], Tuple[Dict[str, None], Dict[str, None]]] = {}
+            left_aliases = {c.table for c in atom.this.find_all(exp.Column)}
+            right_aliases = {c.table for c in atom.expression.find_all(exp.Column)}
+            alternatives = {}
             for left in lefts:
                 for right in rights:
-                    if left.table == right.table:
-                        continue  # self-join or row filter; not a cross-table relationship
-                    lo, hi = (left, right) if left.table < right.table else (right, left)
-                    lo_cols, hi_cols = alternatives.setdefault((lo.table, hi.table), ({}, {}))
+                    # First orient operands as written in JOIN, independent of equality order.
+                    swap = right_alias and right_alias in left_aliases and right_alias not in right_aliases
+                    lo, hi = (right, left) if swap else (left, right)
+                    aliases = (
+                        (next(iter(sorted(right_aliases)), ""), next(iter(sorted(left_aliases)), ""))
+                        if swap
+                        else (next(iter(sorted(left_aliases)), ""), next(iter(sorted(right_aliases)), ""))
+                    )
+                    canonical_kind = kind
+                    if lo.table > hi.table:
+                        lo, hi = hi, lo
+                        aliases = aliases[::-1]
+                        canonical_kind = {"LEFT": "RIGHT", "RIGHT": "LEFT"}.get(kind, kind)
+                    key = (lo.table, hi.table, canonical_kind, aliases if lo.table == hi.table else ())
+                    lo_cols, hi_cols = alternatives.setdefault(key, ({}, {}))
                     lo_cols[lo.column] = None
                     hi_cols[hi.column] = None
-                    for origin in (lo, hi):
+                    for origin, alias in zip((lo, hi), aliases):
                         if origin.transform:
-                            transforms[(lo.table, hi.table)][f"{origin.table}.{origin.column}"] = origin.transform
-            for pair, (lo_cols, hi_cols) in alternatives.items():
-                grouped[pair].add(("|".join(lo_cols), "|".join(hi_cols)))
-        for pair, keys in grouped.items():
-            edges.append((pair[0], pair[1], sorted(keys), join_type, transforms[pair]))
+                            source = f"{origin.table}@{alias}" if lo.table == hi.table else origin.table
+                            transforms[key][f"{source}.{origin.column}"] = origin.transform
+            for key, (lo_cols, hi_cols) in alternatives.items():
+                grouped[key].add(("|".join(lo_cols), "|".join(hi_cols)))
+        for key, keys in grouped.items():
+            edges.append((key[0], key[1], sorted(keys), key[2], transforms[key], _render(predicate), list(key[3])))
     return edges
-
-
-def _conjunct_equalities(predicate: exp.Expression) -> List[exp.EQ]:
-    """``col = col`` equalities in the top-level AND chain of ``predicate``.
-
-    OR branches are skipped: an equality under OR is not a join condition.
-    """
-    if isinstance(predicate, exp.Paren):
-        return _conjunct_equalities(predicate.this)
-    if isinstance(predicate, exp.And):
-        return _conjunct_equalities(predicate.this) + _conjunct_equalities(predicate.expression)
-    if isinstance(predicate, exp.EQ) and isinstance(predicate.this, exp.Column):
-        if isinstance(predicate.expression, exp.Column):
-            return [predicate]
-    return []
 
 
 # ---------------------------------------------------------------------------
@@ -584,20 +665,16 @@ def _literal_sql(node: Optional[exp.Expression]) -> Optional[str]:
     return None
 
 
-def _atoms(predicate: exp.Expression, include_or: bool) -> List[Tuple[exp.Expression, bool]]:
-    """Atomic conditions of a boolean expression as ``(atom, negated)``.
-
-    WHERE / ON only yield the top-level AND chain (an atom under OR is not a
-    filter every row satisfies). CASE conditions describe branches, so OR
-    operands are included there.
-    """
+def _atoms(predicate: exp.Expression, include_or: bool, negated: bool = False) -> List[Tuple[exp.Expression, bool]]:
+    """Only split mandatory conjunctions; respect De Morgan's law under NOT."""
     if isinstance(predicate, exp.Paren):
-        return _atoms(predicate.this, include_or)
-    if isinstance(predicate, exp.And) or (include_or and isinstance(predicate, exp.Or)):
-        return _atoms(predicate.this, include_or) + _atoms(predicate.expression, include_or)
+        return _atoms(predicate.this, include_or, negated)
     if isinstance(predicate, exp.Not):
-        return [(atom, not negated) for atom, negated in _atoms(predicate.this, include_or)]
-    return [(predicate, False)]
+        return _atoms(predicate.this, include_or, not negated)
+    conjunction = isinstance(predicate, exp.Or if negated else exp.And)
+    if conjunction or (include_or and isinstance(predicate, (exp.And, exp.Or))):
+        return _atoms(predicate.this, include_or, negated) + _atoms(predicate.expression, include_or, negated)
+    return [(predicate, negated)]
 
 
 def _constant_test(atom: exp.Expression, negated: bool) -> Optional[Tuple[exp.Column, str]]:
@@ -611,7 +688,7 @@ def _constant_test(atom: exp.Expression, negated: bool) -> Optional[Tuple[exp.Co
         value = _literal_sql(right)
         if isinstance(left, exp.Column) and value is not None:
             if negated:
-                op = {"=": "!=", "!=": "="}.get(op, f"NOT {op}")
+                op = {"=": "!=", "!=": "=", ">": "<=", ">=": "<", "<": ">=", "<=": ">"}[op]
             return left, f"{op} {value}"
         return None
     if isinstance(atom, exp.In) and isinstance(atom.this, exp.Column) and atom.expressions:
@@ -669,11 +746,8 @@ def _rule_clauses(select: exp.Select) -> List[Tuple[exp.Expression, str, bool]]:
     return clauses
 
 
-def _window_in_scope(scope: Scope) -> List[str]:
-    """Templated constant predicates (``month >= '${month}'``) bounding an incremental load.
-
-    Part of lineage (they decide ``load_mode``), so collected whichever sections are requested.
-    """
+def _parameters_in_scope(scope: Scope) -> List[str]:
+    """Parameter predicates are observations, not proof of incremental loading."""
     select = scope.expression
     if not isinstance(select, exp.Select):
         return []
@@ -699,13 +773,30 @@ def _rules_in_scope(
         return
 
     for clause, name, include_or in _rule_clauses(select):
+        if include_or or any(isinstance(n, (exp.Or, exp.Not)) for n in clause.walk()):
+            case = clause.find_ancestor(exp.Case)
+            alias = case.find_ancestor(exp.Alias) if case is not None else None
+            branches = case.args.get("ifs", []) if case is not None else []
+            branch = next((i + 1 for i, b in enumerate(branches) if b.this is clause), None)
+            result.conditions.append(
+                Condition(
+                    _restore_template(_render(clause)),
+                    name,
+                    "observed",
+                    file,
+                    line,
+                    "Branch/compound condition; atoms are not global requirements",
+                    alias.alias if alias is not None else None,
+                    branch,
+                )
+            )
         for atom, negated in _atoms(clause, include_or):
             test = _constant_test(atom, negated)
             if test is None:
                 continue
             column, text = test
             if _TEMPLATE_MARK in text:
-                continue  # an incremental-load window, reported on the lineage edge
+                continue  # parameterized predicates are reported separately
             result.rule_predicates += 1
             origin = _single_origin(scope, column, default_database)
             if origin is None:
@@ -752,9 +843,66 @@ def _rules_in_scope(
             _, text = _origin_text(scope, o.this, default_database)
             order_by.append(text + (" DESC" if o.args.get("desc") else ""))
         tables = {t for t, _ in partition if t}
-        if len(tables) != 1:
-            continue
-        result.dedups.append(Dedup(tables.pop(), [c for _, c in partition], order_by, file, line, target))
+        table = next(iter(tables)) if len(tables) == 1 else None
+        selection, selection_kind = _window_selection(scope, window_expr)
+        pattern = WindowPattern(
+            table, [c for _, c in partition], order_by, file, line, target, selection, selection_kind
+        )
+        result.window_functions.append(pattern)
+        if selection_kind == "dedup":
+            result.dedups.append(pattern)
+
+
+def _window_selection(scope: Scope, window: exp.Window) -> Tuple[Optional[str], Optional[str]]:
+    """Follow a window alias through pass-through scopes; require a mandatory filter."""
+    alias = window.parent.alias if isinstance(window.parent, exp.Alias) else ""
+    current = scope
+    previous = None
+    names = {alias} if alias else set()
+    for _ in range(_MAX_RESOLVE_DEPTH):
+        select = current.expression
+        for key in ("qualify", "where"):
+            clause = select.args.get(key)
+            if clause is None or (current is scope and key == "where"):
+                continue
+            for atom, negated in _atoms(clause.this, False):
+                if negated or not isinstance(atom, (exp.EQ, exp.NEQ, exp.LTE, exp.LT, exp.GTE, exp.GT)):
+                    continue
+                left, right = atom.this, atom.expression
+                matches = left is window or (isinstance(left, exp.Column) and left.name in names)
+                if current is not scope and isinstance(left, exp.Column):
+                    source = _column_source(current, left)
+                    matches = matches and source is previous
+                if not matches:
+                    continue
+                if not isinstance(right, exp.Literal) or right.is_string:
+                    return _render(atom), "filtered"
+                try:
+                    limit = int(right.this)
+                except ValueError:
+                    return _render(atom), "filtered"
+                kind = (
+                    "dedup"
+                    if (isinstance(atom, (exp.EQ, exp.LTE)) and limit == 1 or isinstance(atom, exp.LT) and limit == 2)
+                    else "top_n"
+                    if isinstance(atom, (exp.LT, exp.LTE))
+                    else "filtered"
+                )
+                return _render(atom), kind if limit > 0 else "filtered"
+        parent = current.parent
+        if parent is None or not isinstance(parent.expression, exp.Select):
+            break
+        if current is not scope:
+            projected = set()
+            for projection in select.selects:
+                if projection.is_star:
+                    projected.update(names)
+                node = projection.this if isinstance(projection, exp.Alias) else projection
+                if isinstance(node, exp.Column) and node.name in names and _column_source(current, node) is previous:
+                    projected.add(projection.alias_or_name)
+            names = projected
+        previous, current = current, parent
+    return None, None
 
 
 def _add_mapping(scope, column, value, label, default_database, result, file, line, target) -> None:
@@ -964,14 +1112,14 @@ def _extract_fragment(
 ) -> None:
     sql, templated = preprocess_template(fragment.text)
     file_edges: List[LineageEdge] = []
-    dropped: set = set()
+    events: List[Tuple[int, str, str]] = []
     truncated: set = set()
-    # (first raw line incl. leading comments, target) per statement, 1-based file lines
     statement_spans: List[Tuple[int, Optional[str]]] = []
-    for text, start_line, raw_line in _split_with_raw_lines(sql, dialect):
+    for local_sequence, (text, start_line, raw_line) in enumerate(_split_with_raw_lines(sql, dialect), 1):
         line = fragment.line_offset + start_line + 1
         span_start = fragment.line_offset + raw_line + 1
         result.statements += 1
+        sequence = result.statements
         try:
             stmt = sqlglot.parse_one(text, read=dialect or None)
         except (ParseError, TokenError, ValueError) as e:
@@ -979,79 +1127,102 @@ def _extract_fragment(
             continue
         if stmt is None:
             continue
+        target, kind, query = _write_target(stmt)
+        writes = [table_full_name(target, default_database)] if target is not None else []
         if isinstance(stmt, exp.Drop):
-            if isinstance(stmt.this, exp.Table):
-                dropped.add(table_full_name(stmt.this, default_database))
-            result.parsed += 1
-            continue
-        if isinstance(stmt, exp.TruncateTable):
-            truncated.update(table_full_name(t, default_database) for t in stmt.expressions if isinstance(t, exp.Table))
-            result.parsed += 1
-            continue
-        if isinstance(stmt, exp.Command):
-            if stmt.this.upper() == "TRUNCATE":
-                match = re.search(r"table\s+([\w.`]+)", str(stmt.expression), re.IGNORECASE)
-                if match:
-                    name = match.group(1).replace("`", "")
-                    truncated.add(name if "." in name or not default_database else f"{default_database}.{name}")
-                result.parsed += 1
-                continue
+            kind, query = "DROP", None
+            writes = [table_full_name(stmt.this, default_database)] if isinstance(stmt.this, exp.Table) else []
+        elif isinstance(stmt, exp.TruncateTable):
+            kind, query = "TRUNCATE", None
+            writes = [table_full_name(t, default_database) for t in stmt.expressions if isinstance(t, exp.Table)]
+        elif isinstance(stmt, exp.Command):
             result.unresolved.append(Unresolved(fragment.file, line, f"unsupported statement: {stmt.this}"))
             continue
+        elif isinstance(stmt, exp.Create) and target is None:
+            table = stmt.this.this if isinstance(stmt.this, exp.Schema) else stmt.this
+            writes = [table_full_name(table, default_database)] if isinstance(table, exp.Table) else []
+        reads = _source_tables(query, target, default_database) if query is not None else []
+        sql_hash = hashlib.sha256(_render(stmt).encode()).hexdigest()[:16]
+        fact = StatementFact(
+            f"{fragment.file}:{fragment.line_offset}:{local_sequence}",
+            sql_hash,
+            fragment.file,
+            line,
+            kind,
+            reads,
+            writes,
+            sequence,
+        )
+        result.statement_facts.append(fact)
         result.parsed += 1
-
-        target, kind, query = _write_target(stmt)
+        for name in writes:
+            events.append((sequence, kind, name))
+        if kind == "TRUNCATE":
+            truncated.update(writes)
+        elif kind == "DROP" or kind.startswith("CREATE"):
+            truncated.difference_update(writes)
         if query is None:
             continue
-        target_name = table_full_name(target, default_database) if target is not None else None
+        target_name = writes[0] if target is not None else None
         statement_spans.append((span_start, target_name))
-        window: List[str] = []
-        # A write needs its scopes for the incremental window even when no section is requested.
-        walk_scopes = target is not None or bool(sections & {"joins", "rules"})
-        for scope in _iter_scopes(query) if walk_scopes else ():
+        parameters: List[str] = []
+        collections = [result.joins, result.predicates, result.mappings, result.window_functions, result.conditions]
+        starts = [len(records) for records in collections]
+        for scope in _iter_scopes(query):
             if target is not None:
-                window.extend(_window_in_scope(scope))
+                parameters.extend(_parameters_in_scope(scope))
             if "joins" in sections:
-                for left_table, right_table, keys, join_type, transforms in _join_edges_in_scope(
-                    scope, default_database, result
+                for left, right, keys, join_type, transforms, condition, aliases in _join_edges_in_scope(
+                    scope, default_database, result, fragment.file, line
                 ):
                     result.joins.append(
                         JoinEdge(
-                            left_table,
-                            right_table,
+                            left,
+                            right,
                             keys,
                             join_type,
                             fragment.file,
                             line,
-                            transforms=transforms,
-                            statement_target=target_name,
+                            transforms,
+                            target_name,
+                            condition,
+                            aliases,
                         )
                     )
             if "rules" in sections:
                 _rules_in_scope(scope, default_database, result, fragment.file, line, target_name)
+        for records, start in zip(collections, starts):
+            for record in records[start:]:
+                record.statement_id = fact.statement_id
         if target is None:
-            result.queries += 1
+            if isinstance(query, exp.Query):
+                result.queries += 1
             continue
+        mode = {
+            "INSERT INTO": "insert",
+            "INSERT OVERWRITE": "overwrite",
+            "MERGE": "merge",
+            "UPDATE": "update",
+            "DELETE": "delete",
+            "CREATE TABLE": "create",
+            "CREATE VIEW": "create_view",
+        }.get(kind, "unknown")
+        if kind == "INSERT INTO" and target_name in truncated:
+            mode = "truncate_reload"
         edge = LineageEdge(
-            target=target_name,
-            sources=_source_tables(query, target, default_database),
-            statement=kind,
-            file=fragment.file,
-            line=line,
+            target_name,
+            reads,
+            kind,
+            fragment.file,
+            line,
             templated=templated,
-            window=list(dict.fromkeys(window)),
+            load_mode=mode,
+            parameterized_predicates=list(dict.fromkeys(parameters)),
+            sequence=sequence,
         )
-        if kind == "INSERT OVERWRITE" or kind.startswith("CREATE"):
-            edge.load_mode = "overwrite"
-        elif edge.window:
-            edge.load_mode = "incremental"
         file_edges.append(edge)
-
-    for edge in file_edges:
-        if edge.target in truncated:
-            edge.load_mode = "truncate_reload"
-    result.lineage.extend(_fold_temp_tables(file_edges, dropped))
-
+    result.raw_lineage.extend(file_edges)
+    result.lineage.extend(_fold_temp_tables(file_edges, events))
     if "comments" in sections:
         for comment in extract_comments(fragment.text, fragment.file, fragment.line_offset):
             comment.statement_target = _enclosing_target(statement_spans, comment.line)
@@ -1069,42 +1240,50 @@ def _enclosing_target(spans: List[Tuple[int, Optional[str]]], line: int) -> Opti
     return target
 
 
-def _fold_temp_tables(edges: List[LineageEdge], dropped: set) -> List[LineageEdge]:
-    """Collapse tables created and dropped within one file out of the lineage.
+def _fold_temp_tables(edges: List[LineageEdge], events: List[Tuple[int, str, str]]) -> List[LineageEdge]:
+    """Fold only unambiguous create-use-drop lifetimes; retain all raw edges separately.
 
-    ``A -> tmp -> B`` with ``tmp`` dropped later in the same file becomes
-    ``A -> B`` carrying ``via_temp=[tmp]``, so scratch tables do not flood the
-    graph.
+    Multiple creations of the same name remain explicit rather than mixing their sources.
+    A DROP before CREATE is cleanup, never evidence that the resulting table is temporary.
     """
-    temp_targets = {e.target for e in edges if e.target in dropped}
-    if not temp_targets:
-        return edges
-    temp_sources: Dict[str, List[str]] = defaultdict(list)
-    for edge in edges:
-        if edge.target in temp_targets:
-            temp_sources[edge.target].extend(edge.sources)
+    creates = defaultdict(list)
+    drops = defaultdict(list)
+    for sequence, kind, name in events:
+        if kind.startswith("CREATE"):
+            creates[name].append(sequence)
+        elif kind == "DROP":
+            drops[name].append(sequence)
+    lifetimes = {}
+    for name, starts in creates.items():
+        later_drops = [n for n in drops[name] if n > starts[0]]
+        if len(starts) != 1 or not later_drops:
+            continue
+        end = later_drops[0]
+        if any(e.target == name and e.sequence > end for e in edges):
+            continue
+        readers = [e for e in edges if name in e.sources and e.target != name]
+        if readers and all(starts[0] < e.sequence < end for e in readers):
+            lifetimes[name] = (starts[0], end)
 
-    def expand(name: str, trail: List[str], depth: int = 0) -> List[str]:
-        if name not in temp_targets or depth > _MAX_RESOLVE_DEPTH:
+    def expand(name: str, before: int, trail: List[str], visited: set) -> List[str]:
+        lifetime = lifetimes.get(name)
+        if lifetime is None or not lifetime[0] < before < lifetime[1] or name in visited:
             return [name]
         trail.append(name)
-        out: List[str] = []
-        for src in temp_sources[name]:
-            out.extend(expand(src, trail, depth + 1))
-        return out
+        sources = []
+        for edge in edges:
+            if edge.target == name and lifetime[0] <= edge.sequence < before:
+                for src in edge.sources:
+                    sources.extend(expand(src, edge.sequence, trail, visited | {name}))
+        return sources
 
     folded = []
     for edge in edges:
-        if edge.target in temp_targets:
+        if edge.target in lifetimes:
             continue
-        trail: List[str] = []
-        sources: Dict[str, None] = {}
-        for src in edge.sources:
-            for real in expand(src, trail):
-                sources.setdefault(real, None)
-        edge.sources = list(sources)
-        edge.via_temp = list(dict.fromkeys(trail))
-        folded.append(edge)
+        trail = []
+        sources = [src for name in edge.sources for src in expand(name, edge.sequence, trail, set())]
+        folded.append(replace(edge, sources=list(dict.fromkeys(sources)), via_temp=list(dict.fromkeys(trail))))
     return folded
 
 
