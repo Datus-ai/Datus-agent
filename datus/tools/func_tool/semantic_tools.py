@@ -606,6 +606,11 @@ class SemanticTools:
             "columns": list(columns),
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
+            # The rows themselves, for ``get_query_metrics_result`` to slice a page
+            # out of: re-parsing ``csv`` would cost every row before the offset and
+            # trip ``csv.field_size_limit`` on a large cell. The compressor copies
+            # before it changes anything, so this is still the full result.
+            "data": data,
         }
         while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
             self._query_metrics_result_cache.popitem(last=False)
@@ -646,24 +651,32 @@ class SemanticTools:
         offset = max(int(offset or 0), 0)
         limit = min(max(int(limit or 0), 1), self.MAX_QUERY_METRICS_RESULT_PAGE)
 
-        reader = csv.reader(io.StringIO(cached["csv"]))
-        header = next(reader, list(cached["columns"]))
-        page = list(itertools.islice(reader, offset, offset + limit))
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow(header)
-        writer.writerows(page)
+        # Serialized with the same writer as the full ``csv``, so a page reads
+        # exactly like the matching rows of it.
+        page = self._slice_query_data(cached["data"], offset, limit)
+        returned = self._query_data_row_count(page)
         return FuncToolResult(
             result={
                 "result_id": result_id,
                 "columns": list(cached["columns"]),
-                "csv": buf.getvalue(),
+                "csv": self._query_data_to_csv(list(cached["columns"]), page),
                 "row_count": cached["row_count"],
                 "offset": offset,
-                "returned": len(page),
-                "has_more": offset + len(page) < cached["row_count"],
+                "returned": returned,
+                "has_more": offset + returned < cached["row_count"],
             }
         )
+
+    @staticmethod
+    def _slice_query_data(data: Any, offset: int, limit: int) -> Any:
+        """Rows ``[offset, offset + limit)`` of a query result, in its own shape."""
+        if hasattr(data, "num_rows") and callable(getattr(data, "slice", None)):  # pyarrow.Table
+            return data.slice(offset, limit)
+        if hasattr(data, "iloc"):  # pandas.DataFrame
+            return data.iloc[offset : offset + limit]
+        if isinstance(data, (list, tuple)):
+            return data[offset : offset + limit]
+        return list(itertools.islice(data, offset, offset + limit))
 
     @staticmethod
     def _drop_compiled_sql(metadata: dict) -> dict:

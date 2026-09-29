@@ -320,6 +320,53 @@ class TestQueryMetricsCompression:
         assert last.result["has_more"] is False
         assert last.result["csv"].splitlines()[-1] == "49,4900"
 
+    def test_get_query_metrics_result_serves_a_cell_past_the_csv_field_limit(self, semantic_tools):
+        """``csv.reader`` refuses a field over ``csv.field_size_limit()`` (128 KiB by
+        default); a page must not depend on re-reading the cached CSV."""
+        import csv as csv_module
+
+        big = "x" * (csv_module.field_size_limit() + 1)
+        rows = [{"id": 0, "note": "small"}, {"id": 1, "note": big}]
+        query_result = QueryResult(columns=["id", "note"], data=rows, metadata={})
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result_id = semantic_tools.query_metrics(metrics=["note"]).result["result_id"]
+
+        page = semantic_tools.get_query_metrics_result(result_id, offset=1, limit=1)
+
+        assert page.success == 1
+        assert page.result["returned"] == 1
+        assert big in page.result["csv"]
+
+    def test_get_query_metrics_result_serializes_only_the_page(self, semantic_tools):
+        """The rows before ``offset`` are sliced away, not parsed and discarded."""
+        result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
+        seen = []
+        real = SemanticTools._query_data_to_csv
+
+        def spy(columns, data):
+            seen.append(len(data))
+            return real(columns, data)
+
+        with patch.object(SemanticTools, "_query_data_to_csv", side_effect=spy):
+            semantic_tools.get_query_metrics_result(result_id, offset=45, limit=3)
+
+        assert seen == [3]
+
+    @pytest.mark.parametrize("shape", ["pyarrow", "pandas"])
+    def test_get_query_metrics_result_slices_tabular_results(self, semantic_tools, shape):
+        import pandas as pd
+        import pyarrow as pa
+
+        frame = pd.DataFrame({"id": list(range(10)), "value": [i * 100 for i in range(10)]})
+        data = pa.Table.from_pandas(frame, preserve_index=False) if shape == "pyarrow" else frame
+        result_id = semantic_tools._cache_query_metrics_result(["id", "value"], data)
+
+        page = semantic_tools.get_query_metrics_result(result_id, offset=8, limit=5)
+
+        assert page.result["returned"] == 2
+        assert page.result["has_more"] is False
+        assert page.result["csv"].splitlines() == ["id,value", "8,800", "9,900"]
+
     def test_get_query_metrics_result_caps_the_page(self, semantic_tools):
         semantic_tools.MAX_QUERY_METRICS_RESULT_PAGE = 5
         result_id = self._query_fifty_rows(semantic_tools).result["result_id"]
