@@ -442,13 +442,11 @@ class ChatService:
             # A resumed subagent session holds several runs; the k-th task result
             # for a session id replays that session's k-th run.
             subagent_runs_used: Dict[str, int] = {}
-            # Subagent nodes carry no scope, and their session manager is cached during
-            # construction — before SubAgentTaskTool sets ``session_subdir`` — so today the
-            # .db lands flat in the unscoped dir. The nested layouts are the intended ones.
+            # SubAgentTaskTool nests subagent sessions under the main one, in the user's
+            # scope. Sessions from before that fix sit flat in the unscoped dir.
             subagent_session_dirs = [
-                self._session_dir,
-                os.path.join(self._session_dir, session_id),
                 os.path.join(session_manager.session_dir, session_id),
+                self._session_dir,
             ]
 
             for idx, msg in enumerate(raw_messages):

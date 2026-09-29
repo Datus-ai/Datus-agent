@@ -4,7 +4,9 @@
 
 """CI-level tests for SubAgentTaskTool (AgenticNode-based execution)."""
 
+import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -14,6 +16,7 @@ from openai.types.responses import ResponseFunctionToolCall
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
+from datus.models.session_manager import SessionManager
 from datus.schemas.action_history import (
     SUBAGENT_COMPLETE_ACTION_TYPE,
     ActionHistory,
@@ -2780,6 +2783,63 @@ def _build_persistent_mock_node(
 
 
 @pytest.mark.ci
+class TestNestedSessionLayout:
+    """Real nodes: the subagent's .db must land under the main session, in the user's scope.
+
+    ``AgenticNode.__init__`` caches its session manager while restoring state, so a
+    ``session_subdir`` assigned after construction used to be ignored.
+    """
+
+    PARENT = "chat_session_parent01"
+    USER = "alice"
+
+    def _tool(self, real_agent_config):
+        tool = SubAgentTaskTool(agent_config=real_agent_config)
+        tool._parent_node = SimpleNamespace(session_id=self.PARENT, scope=self.USER)
+        return tool
+
+    def _nested_dir(self, real_agent_config) -> Path:
+        return Path(real_agent_config.session_dir) / self.USER / self.PARENT
+
+    @staticmethod
+    def _seed(session_dir: str, session_id: str) -> None:
+        session = SessionManager(session_dir=session_dir).get_session(session_id)
+        asyncio.run(session.add_items([{"role": "user", "content": "earlier run"}]))
+
+    def test_new_session_nests_under_parent_in_user_scope(self, real_agent_config, mock_llm_create):
+        tool = self._tool(real_agent_config)
+        node = tool._create_node("explore")
+
+        tool._nest_session(node, self.PARENT, resume_session_id=None)
+        node.session_manager.create_session(node.session_id)
+
+        assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
+        assert (self._nested_dir(real_agent_config) / f"{node.session_id}.db").is_file()
+        assert not (Path(real_agent_config.session_dir) / f"{node.session_id}.db").exists()
+
+    def test_resume_finds_nested_session(self, real_agent_config, mock_llm_create):
+        sid = "explore_session_nested01"
+        self._seed(str(self._nested_dir(real_agent_config)), sid)
+        tool = self._tool(real_agent_config)
+        node = tool._create_node("explore", session_id=sid)
+
+        tool._nest_session(node, self.PARENT, resume_session_id=sid)
+
+        assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
+        assert node.session_manager.session_exists(sid)
+
+    def test_resume_keeps_pre_fix_flat_session_in_place(self, real_agent_config, mock_llm_create):
+        sid = "explore_session_legacy01"
+        self._seed(real_agent_config.session_dir, sid)
+        tool = self._tool(real_agent_config)
+        node = tool._create_node("explore", session_id=sid)
+
+        tool._nest_session(node, self.PARENT, resume_session_id=sid)
+
+        assert Path(node.session_manager.session_dir) == Path(real_agent_config.session_dir)
+        assert node.session_manager.session_exists(sid)
+
+
 class TestSessionPersistence:
     @pytest.mark.asyncio
     async def test_returns_session_id_in_result(self, task_tool):
@@ -2799,6 +2859,7 @@ class TestSessionPersistence:
         subagent .db nests under {sessions_dir}/{user_scope}/{parent_id}/."""
         parent = MagicMock()
         parent.session_id = "chat_session_parent01"
+        parent.scope = "alice"
         parent.proxy_tool_patterns = None
         task_tool.set_parent_node(parent)
 
@@ -2808,7 +2869,7 @@ class TestSessionPersistence:
                 result = await task_tool.task(type="gen_sql", prompt="test")
 
         assert result.success == 1
-        assert node.session_subdir == "chat_session_parent01"
+        node.relocate_session.assert_called_once_with(scope="alice", session_subdir="chat_session_parent01")
 
     @pytest.mark.asyncio
     async def test_no_parent_session_falls_back_to_flat_path(self, task_tool):
