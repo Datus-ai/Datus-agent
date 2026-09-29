@@ -89,7 +89,11 @@ from datus.configuration.logging_config import add_logging_arguments
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
+from datus.tools.func_tool.date_parsing_tools import DateParsingTools
+from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import configure_entrypoint_logging, get_logger
 from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
@@ -118,6 +122,10 @@ from datus.utils.mcp_decorators import get_tool_registry  # noqa: E402
 assert DBFuncTool  # Ensure imported and decorator ran
 assert ContextSearchTools  # Ensure imported and decorator ran
 assert ReferenceTemplateTools  # Ensure imported and decorator ran
+assert SemanticTools  # Ensure imported and decorator ran
+assert DateParsingTools  # Ensure imported and decorator ran
+assert PlatformDocSearchTool  # Ensure imported and decorator ran
+assert FilesystemFuncTool  # Ensure imported and decorator ran
 
 
 # ============================================================================
@@ -165,6 +173,41 @@ class ToolContext:
     @property
     def has_reference_template_tools(self) -> bool:
         return self.reference_template_tool is not None
+
+    # The dynamic wrapper reads each tool class by its registry ``name`` and
+    # ``availability_property`` off this object, so every @mcp_tool_class needs
+    # its pair here — a missing one reads as "not available" on every call.
+    @property
+    def semantic_tool(self) -> Optional[SemanticTools]:
+        return self.tools.get("semantic_tool")
+
+    @property
+    def has_semantic_tools(self) -> bool:
+        return self.semantic_tool is not None
+
+    @property
+    def date_parsing_tool(self) -> Optional[DateParsingTools]:
+        return self.tools.get("date_parsing_tool")
+
+    @property
+    def has_date_parsing_tools(self) -> bool:
+        return self.date_parsing_tool is not None
+
+    @property
+    def platform_doc_tool(self) -> Optional[PlatformDocSearchTool]:
+        return self.tools.get("platform_doc_tool")
+
+    @property
+    def has_platform_doc_tools(self) -> bool:
+        return self.platform_doc_tool is not None
+
+    @property
+    def filesystem_tool(self) -> Optional[FilesystemFuncTool]:
+        return self.tools.get("filesystem_tool")
+
+    @property
+    def has_filesystem_tools(self) -> bool:
+        return self.filesystem_tool is not None
 
     def close(self):
         """Release resources held by this context."""
@@ -837,6 +880,10 @@ class DatusMCPServer:
        - search_metrics, get_metrics
        - search_reference_sql, get_reference_sql
        - search_semantic_objects
+
+    3. Reference template, semantic, date parsing, platform doc and filesystem
+       tools — every class in the ``@mcp_tool_class`` registry; the filesystem
+       group exposes its read methods only.
     """
 
     def __init__(

@@ -25,6 +25,7 @@ from datus.tools.func_tool.fs_path_policy import (
 from datus.utils.exceptions import DatusException
 from datus.utils.image_content import IMAGE_EXTENSIONS, read_image_output
 from datus.utils.loggings import get_logger
+from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 from datus.utils.memory_loader import apply_single_replacement
 
 logger = get_logger(__name__)
@@ -66,6 +67,10 @@ class FilesystemConfig:
         self.max_file_size = max_file_size
 
 
+@mcp_tool_class(
+    name="filesystem_tool",
+    availability_property="has_filesystem_tools",
+)
 class FilesystemFuncTool(BaseTool):
     """Function tool wrapper for filesystem operations.
 
@@ -81,6 +86,50 @@ class FilesystemFuncTool(BaseTool):
     """
 
     permission_category: str = "filesystem_tools"
+
+    @classmethod
+    def create_dynamic(cls, agent_config: Any, sub_agent_name: Optional[str] = None) -> "FilesystemFuncTool":
+        """Create an instance for MCP, rooted where the sub-agent's node would be.
+
+        Always ``strict``, whatever ``agent_config.filesystem_strict`` says.
+        Outside strict mode an ``EXTERNAL`` path proceeds at the tool layer and
+        ``PermissionHooks`` is what asks the user first — and an MCP call runs
+        no hooks, so a non-strict instance would read any path on the host.
+        Only the read methods carry ``@mcp_tool``; the writers stay off MCP.
+        """
+        node_config = {}
+        if sub_agent_name:
+            try:
+                node_config = agent_config.sub_agent_config(sub_agent_name) or {}
+            except Exception:  # noqa: BLE001 - an unreadable node falls back to the project root
+                node_config = {}
+        root_path = node_config.get("workspace_root") or getattr(agent_config, "project_root", None) or os.getcwd()
+
+        datus_home = None
+        path_manager = getattr(agent_config, "path_manager", None)
+        if path_manager is not None:
+            try:
+                datus_home = str(path_manager.datus_home)
+            except Exception:  # noqa: BLE001 - same fallback as AgenticNode._make_filesystem_tool
+                datus_home = None
+
+        return cls(
+            root_path=os.path.expanduser(root_path),
+            current_node=sub_agent_name,
+            datus_home=datus_home,
+            strict=True,
+            path_allowlist=getattr(agent_config, "filesystem_allowlist", None) or None,
+        )
+
+    @classmethod
+    def create_static(
+        cls,
+        agent_config: Any,
+        sub_agent_name: Optional[str] = None,
+        database_name: Optional[str] = None,
+    ) -> "FilesystemFuncTool":
+        """Create an instance for static MCP mode; same rules as ``create_dynamic``."""
+        return cls.create_dynamic(agent_config, sub_agent_name=sub_agent_name)
 
     def __init__(
         self,
@@ -261,6 +310,7 @@ class FilesystemFuncTool(BaseTool):
 
     # ------------------------------------------------------------- read/write
 
+    @mcp_tool()
     def read_image(self, path: str) -> list[Any] | FuncToolResult:
         """Read a local image so the current model can inspect it directly.
 
@@ -288,6 +338,7 @@ class FilesystemFuncTool(BaseTool):
         except OSError as exc:
             return FuncToolResult(success=0, error=str(exc))
 
+    @mcp_tool()
     def read_file(self, path: str, offset: int = 0, limit: int = 0) -> FuncToolResult:
         """
         Read the contents of a file.
@@ -789,6 +840,7 @@ class FilesystemFuncTool(BaseTool):
                 return remainder, candidate
         return pattern, path
 
+    @mcp_tool()
     def glob(self, pattern: str, path: str = ".") -> FuncToolResult:
         """
         Find files matching a glob pattern.
@@ -867,6 +919,7 @@ class FilesystemFuncTool(BaseTool):
             logger.exception(f"Error in glob search for {pattern} in {path}")
             return FuncToolResult(success=0, error=str(e))
 
+    @mcp_tool()
     def grep(self, pattern: str, path: str = ".", include: str = "", case_sensitive: bool = True) -> FuncToolResult:
         """
         Search file contents using a regular expression pattern.

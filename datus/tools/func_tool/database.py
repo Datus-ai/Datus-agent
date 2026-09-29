@@ -3635,6 +3635,7 @@ class DBFuncTool:
     # these methods, we return safe fallback values so the migration agent
     # can continue in pure-LLM mode.
 
+    @mcp_tool()
     def get_migration_capabilities(self, datasource: Optional[str] = "") -> FuncToolResult:
         """
         Get migration target hints (dialect_family, requires, forbids, type_hints,
@@ -3679,6 +3680,7 @@ class DBFuncTool:
             )
         return FuncToolResult(result=capabilities)
 
+    @mcp_tool()
     def suggest_table_layout(self, datasource: Optional[str] = "", columns_json: str = "[]") -> FuncToolResult:
         """
         Suggest dialect-specific table layout (distribution/partition/order) for
@@ -3718,6 +3720,7 @@ class DBFuncTool:
             return FuncToolResult(result={})
         return FuncToolResult(result=suggestion)
 
+    @mcp_tool()
     def validate_ddl(
         self,
         datasource: Optional[str] = "",

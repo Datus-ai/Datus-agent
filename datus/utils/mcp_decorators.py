@@ -127,6 +127,64 @@ def get_mcp_tools(cls: type) -> List[Tuple[str, Callable, MCPToolConfig]]:
     return tools
 
 
+def _apply_plugin_transformers(instance: Any, method_name: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the active plugins' tool transformers over one MCP call's arguments.
+
+    The agent's tool loop wraps every node tool with these
+    (``apply_tool_transformers``), and some policies are enforced nowhere else:
+    a metric row policy narrows ``query_metrics`` in that wrapper, not inside
+    ``SemanticTools``. An MCP call has no node, so without this it would reach
+    the method with the policy never run. ``transform_tool_args`` is the same
+    chain for a caller with no node, and it fails closed.
+
+    Raises:
+        ToolTransformDenied: a transformer refused the call.
+    """
+    from datus.tools.middleware import transform_tool_args
+
+    agent_config = getattr(instance, "agent_config", None)
+
+    def context() -> Dict[str, Any]:
+        # Built only once a transformer matches: reading the metric catalogue
+        # costs an adapter round trip.
+        policy_context = getattr(agent_config, "policy_context", None)
+        metric_datasets = None
+        reader = getattr(instance, "metric_datasets", None)
+        if callable(reader):
+            try:
+                metric_datasets = reader()
+            except Exception:  # noqa: BLE001 - None makes metric transformers deny, as on the node path
+                metric_datasets = None
+        return {
+            "node_name": getattr(instance, "sub_agent_name", None) or "",
+            "policy_context": dict(policy_context) if isinstance(policy_context, dict) else {},
+            "project_root": getattr(agent_config, "project_root", None),
+            "agent_config": agent_config,
+            "metric_datasets": metric_datasets,
+        }
+
+    return transform_tool_args(
+        method_name,
+        kwargs,
+        context=context,
+        category=getattr(instance, "permission_category", None),
+        active_plugin_names=(
+            agent_config.active_plugin_names() if hasattr(agent_config, "active_plugin_names") else None
+        ),
+    )
+
+
+def _call_with_plugin_transformers(instance: Any, method: Callable, method_name: str, kwargs: Dict[str, Any]) -> Any:
+    """Call ``method`` with the arguments the active plugins' transformers leave."""
+    from datus.tools.middleware import ToolTransformDenied
+
+    try:
+        kwargs = _apply_plugin_transformers(instance, method_name, kwargs)
+    except ToolTransformDenied as exc:
+        return FuncToolResult(success=0, error=f"Denied by policy: {exc}")
+    return method(**kwargs)
+
+
 def create_dynamic_tool_wrapper(
     method_name: str,
     method: Callable,
@@ -172,7 +230,7 @@ def create_dynamic_tool_wrapper(
             return {"success": 0, "error": "Feature not available", "result": None}
 
         # Call the actual method
-        result = getattr(instance, method_name)(**kwargs)
+        result = _call_with_plugin_transformers(instance, getattr(instance, method_name), method_name, kwargs)
         return format_result(result)
 
     # Preserve original function metadata for MCP schema generation
@@ -211,7 +269,7 @@ def create_static_tool_wrapper(
             return {"success": 0, "error": "Feature not available", "result": None}
 
         # Call the actual method
-        result = bound_method(**kwargs)
+        result = _call_with_plugin_transformers(instance, bound_method, method_name, kwargs)
         return format_result(result)
 
     # Preserve original function metadata

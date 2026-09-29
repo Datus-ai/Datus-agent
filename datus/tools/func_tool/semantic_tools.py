@@ -51,6 +51,7 @@ from datus.tools.semantic_tools.registry import semantic_adapter_registry
 from datus.utils.compress_utils import DataCompressor
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
 
 logger = get_logger(__name__)
 
@@ -442,6 +443,10 @@ def _run_async(coro):
     return run_async(coro)
 
 
+@mcp_tool_class(
+    name="semantic_tool",
+    availability_property="has_semantic_tools",
+)
 class SemanticTools:
     """Function tool wrapper for semantic layer operations."""
 
@@ -459,6 +464,32 @@ class SemanticTools:
             "validate_semantic",
             "attribution_analyze",
         ]
+
+    @classmethod
+    def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "SemanticTools":
+        """Create a SemanticTools instance for dynamic MCP mode.
+
+        Resolves the adapter the way the agent nodes do
+        (``resolve_semantic_adapter_type``), so an MCP client sees the same
+        semantic layer a node's model would.
+        """
+        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
+        return cls(
+            agent_config,
+            sub_agent_name=sub_agent_name,
+            adapter_type=resolve_semantic_adapter_type(agent_config),
+        )
+
+    @classmethod
+    def create_static(
+        cls,
+        agent_config: AgentConfig,
+        sub_agent_name: Optional[str] = None,
+        database_name: Optional[str] = None,
+    ) -> "SemanticTools":
+        """Create a SemanticTools instance for static MCP mode (``database_name`` is unused)."""
+        return cls.create_dynamic(agent_config, sub_agent_name=sub_agent_name)
 
     def __init__(
         self,
@@ -664,6 +695,11 @@ class SemanticTools:
     def _metric_catalog_paging(self) -> Tuple[int, int]:
         """Page size and page cap for adapter catalog scans, from the adapter's config."""
         return metric_catalog_paging(self.agent_config, self.adapter_type)
+
+    @property
+    def has_semantic_adapter(self) -> bool:
+        """Whether a semantic adapter is configured — the same gate ``available_tools`` uses."""
+        return bool(self._configured_adapter_type())
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""
@@ -991,6 +1027,7 @@ class SemanticTools:
             trans_to_function_tool(self.attribution_analyze),
         ]
 
+    @mcp_tool(availability_check="has_semantic_adapter")
     def list_metrics(
         self,
         path: Optional[List[str]] = None,
@@ -1160,6 +1197,7 @@ class SemanticTools:
         )
         return None
 
+    @mcp_tool(availability_check="has_semantic_adapter")
     def get_metric(
         self,
         name: str,
@@ -1281,6 +1319,7 @@ class SemanticTools:
 
     # Dosi binding names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
+    @mcp_tool(availability_check="has_semantic_adapter")
     def query_metrics(
         self,
         metrics: List[str],
@@ -1500,6 +1539,7 @@ class SemanticTools:
                 error=f"Failed to query metrics: {str(e)}",
             )
 
+    @mcp_tool(availability_check="has_semantic_adapter")
     def validate_semantic(
         self,
         scope: Literal["all", "semantic_model"] = "all",
@@ -1699,6 +1739,7 @@ class SemanticTools:
 
     # Dosi parameter names come from metric declarations and require an open schema.
     @tool_schema(strict_mode=False)
+    @mcp_tool(availability_check="has_semantic_adapter")
     def attribution_analyze(
         self,
         metric_name: str,
