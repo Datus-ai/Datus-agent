@@ -91,33 +91,18 @@ def _is_safe_session_id(session_id: str) -> bool:
     return ".." not in session_id
 
 
-def _subagent_run_actions(
-    session_dirs: List[str],
-    parent_session_id: str,
-    call_id: str,
-    result_action: ActionHistory,
-    runs_used: Dict[str, int],
-) -> List[ActionHistory]:
-    """The steps one ``task`` call's subagent ran, stamped as depth-1 children of the call.
-
-    The parent transcript never includes them; they sit in the subagent's own session.
-    ``session_dirs`` are the directories to look in, in order.
-    """
-    sub_session_id = _subagent_session_id(result_action)
-    if not sub_session_id or not _is_safe_session_id(parent_session_id) or not _is_safe_session_id(sub_session_id):
+def _load_subagent_runs(session_dir: str, sub_session_id: str) -> List[List[ActionHistory]]:
+    """A subagent session's stored actions, one list per prompt it received."""
+    # SessionManager() creates its directory, so check for the file before building one.
+    if not os.path.isfile(os.path.join(session_dir, f"{sub_session_id}.db")):
         return []
-    # SessionManager() creates its directory, so find the file before building one.
-    sub_dir = next((d for d in session_dirs if os.path.isfile(os.path.join(d, f"{sub_session_id}.db"))), None)
-    if sub_dir is None:
-        return []
-
     try:
-        raw_messages = SessionManager(session_dir=sub_dir).get_session_messages(sub_session_id)
+        raw_messages = SessionManager(session_dir=session_dir).get_session_messages(sub_session_id)
     except Exception as e:
         logger.warning(f"Failed to read subagent session {sub_session_id} for history: {e}")
         return []
 
-    # One run per prompt the subagent received; its prompt is already on the task card.
+    # The prompt itself is already on the task card.
     runs: List[List[ActionHistory]] = []
     for msg in raw_messages:
         if msg.get("role") == "user":
@@ -126,13 +111,31 @@ def _subagent_run_actions(
             if not runs:
                 runs.append([])
             runs[-1].extend(msg.get("actions") or [])
+    return runs
 
-    run_index = runs_used.get(sub_session_id, 0)
-    runs_used[sub_session_id] = run_index + 1
-    if run_index >= len(runs):
+
+def _subagent_run_actions(
+    session_dir: str,
+    call_id: str,
+    result_action: ActionHistory,
+    runs_cache: Dict[str, List[List[ActionHistory]]],
+) -> List[ActionHistory]:
+    """The steps one ``task`` call's subagent ran, stamped as depth-1 children of the call.
+
+    ``session_dir`` is where ``SubAgentTaskTool`` nests subagent sessions for this main
+    session, inside the user's scope. A resumed session holds several runs, and each
+    ``task`` result takes the next one; ``runs_cache`` reads each session once per request.
+    """
+    sub_session_id = _subagent_session_id(result_action)
+    if not sub_session_id or not _is_safe_session_id(sub_session_id):
+        return []
+    if sub_session_id not in runs_cache:
+        runs_cache[sub_session_id] = _load_subagent_runs(session_dir, sub_session_id)
+    runs = runs_cache[sub_session_id]
+    if not runs:
         return []
 
-    actions = runs[run_index]
+    actions = runs.pop(0)
     for action in actions:
         action.depth = max(action.depth, 1)
         action.parent_action_id = action.parent_action_id or call_id
@@ -439,15 +442,12 @@ class ChatService:
 
             sse_messages: List[SSEMessagePayload] = []
             event_id = 0
-            # A resumed subagent session holds several runs; the k-th task result
-            # for a session id replays that session's k-th run.
-            subagent_runs_used: Dict[str, int] = {}
-            # SubAgentTaskTool nests subagent sessions under the main one, in the user's
-            # scope. Sessions from before that fix sit flat in the unscoped dir.
-            subagent_session_dirs = [
-                os.path.join(session_manager.session_dir, session_id),
-                self._session_dir,
-            ]
+            # Subagent sessions nest under this one, in the user's scope. Only that
+            # directory is read: the flat pre-fix layout is shared by every user.
+            subagent_dir = (
+                os.path.join(session_manager.session_dir, session_id) if _is_safe_session_id(session_id) else None
+            )
+            subagent_runs: Dict[str, List[List[ActionHistory]]] = {}
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")
@@ -482,8 +482,14 @@ class ChatService:
                         payloads, event_id = _actions_to_payloads(
                             msg["actions"],
                             event_id,
-                            expand_subagent=lambda call_id, result_action: _subagent_run_actions(
-                                subagent_session_dirs, session_id, call_id, result_action, subagent_runs_used
+                            expand_subagent=(
+                                (
+                                    lambda call_id, result_action: _subagent_run_actions(
+                                        subagent_dir, call_id, result_action, subagent_runs
+                                    )
+                                )
+                                if subagent_dir
+                                else None
                             ),
                         )
                         sse_messages.extend(payloads)

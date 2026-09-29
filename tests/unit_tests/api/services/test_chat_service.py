@@ -703,8 +703,8 @@ class TestChatServiceGetHistorySubagent:
         assert not os.path.exists(os.path.join(chat_svc._session_dir, self.MAIN))
         assert not os.path.exists(os.path.join(chat_svc._session_dir, self.USER, self.MAIN))
 
-    def test_pre_fix_flat_subagent_session_is_found_too(self, chat_svc):
-        """Sessions written before the nesting fix sit flat in the unscoped dir."""
+    def test_flat_unscoped_subagent_session_is_not_read(self, chat_svc):
+        """The pre-fix flat layout is shared by every user of the project, so history skips it."""
         self._write(
             self._main_manager(chat_svc),
             self.MAIN,
@@ -714,7 +714,31 @@ class TestChatServiceGetHistorySubagent:
 
         result = chat_svc.get_history(self.MAIN, user_id=self.USER)
 
-        assert ("thinking", "Legacy run.", 1, "call_task1") in self._rows(result)
+        assert [r for r in self._rows(result) if r[2] == 1] == []
+
+    def test_resumed_subagent_session_is_read_once_per_request(self, chat_svc):
+        self._write(
+            self._main_manager(chat_svc),
+            self.MAIN,
+            [
+                {"role": "user", "content": "model it"},
+                *self._task_items("call_task1", "first pass", "v1"),
+                *self._task_items("call_task2", "second pass", "v2"),
+            ],
+        )
+        self._write(
+            self._sub_manager(chat_svc),
+            self.SUB,
+            [
+                *self._sub_run("first pass", "call_read1", "Pass one."),
+                *self._sub_run("second pass", "call_read2", "Pass two."),
+            ],
+        )
+        original = SessionManager.get_session_messages
+        with patch.object(SessionManager, "get_session_messages", autospec=True, side_effect=original) as spy:
+            chat_svc.get_history(self.MAIN, user_id=self.USER)
+
+        assert [c.args[1] for c in spy.call_args_list].count(self.SUB) == 1
 
     @pytest.mark.parametrize("session_id", ["..", "a..b", "bad/id"])
     def test_unsafe_session_ids_are_rejected(self, session_id):

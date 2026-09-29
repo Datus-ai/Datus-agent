@@ -365,19 +365,15 @@ class SubAgentTaskTool:
 
     # ── node creation ─────────────────────────────────────────────────
 
-    def _nest_session(self, node, parent_session_id: str, resume_session_id: Optional[str]) -> None:
+    def _nest_session(self, node, parent_session_id: str) -> None:
         """Store the subagent's session under the main session, in the user's scope.
 
         Path: ``{sessions_dir}/{user_scope}/{parent_session_id}/{subagent_session_id}.db``.
-        A resumed session that predates this layout sits flat and unscoped; it stays there.
         """
         if not hasattr(node, "relocate_session"):
             node.session_subdir = parent_session_id
             return
-        legacy_exists = resume_session_id is not None and node.session_manager.session_exists(resume_session_id)
         node.relocate_session(scope=getattr(self._parent_node, "scope", None), session_subdir=parent_session_id)
-        if legacy_exists and not node.session_manager.session_exists(resume_session_id):
-            node.relocate_session(scope=None, session_subdir=None)
 
     def _create_node(self, subagent_type: str, session_id: Optional[str] = None):
         """Create a new AgenticNode instance for the given subagent type.
@@ -801,7 +797,7 @@ class SubAgentTaskTool:
                         parent_sid,
                     )
                 else:
-                    self._nest_session(node, parent_sid, resume_session_id=session_id)
+                    self._nest_session(node, parent_sid)
 
             # Verify the .db file actually exists after session_subdir is wired up
             # — session_manager resolves the nested directory layout per

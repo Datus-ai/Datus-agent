@@ -2810,7 +2810,7 @@ class TestNestedSessionLayout:
         tool = self._tool(real_agent_config)
         node = tool._create_node("explore")
 
-        tool._nest_session(node, self.PARENT, resume_session_id=None)
+        tool._nest_session(node, self.PARENT)
         node.session_manager.create_session(node.session_id)
 
         assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
@@ -2823,21 +2823,22 @@ class TestNestedSessionLayout:
         tool = self._tool(real_agent_config)
         node = tool._create_node("explore", session_id=sid)
 
-        tool._nest_session(node, self.PARENT, resume_session_id=sid)
+        tool._nest_session(node, self.PARENT)
 
         assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
         assert node.session_manager.session_exists(sid)
 
-    def test_resume_keeps_pre_fix_flat_session_in_place(self, real_agent_config, mock_llm_create):
+    def test_resume_does_not_reach_the_shared_flat_layout(self, real_agent_config, mock_llm_create):
+        """The pre-fix flat dir is shared by every user; resume only looks in the user's own."""
         sid = "explore_session_legacy01"
         self._seed(real_agent_config.session_dir, sid)
         tool = self._tool(real_agent_config)
         node = tool._create_node("explore", session_id=sid)
 
-        tool._nest_session(node, self.PARENT, resume_session_id=sid)
+        tool._nest_session(node, self.PARENT)
 
-        assert Path(node.session_manager.session_dir) == Path(real_agent_config.session_dir)
-        assert node.session_manager.session_exists(sid)
+        assert Path(node.session_manager.session_dir) == self._nested_dir(real_agent_config)
+        assert not node.session_manager.session_exists(sid)
 
 
 class TestSessionPersistence:
