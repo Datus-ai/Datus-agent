@@ -25,7 +25,7 @@ classifiers = [
 dependencies = [
     "datus-db-core>=0.1.7",
     "datus-storage-base>=0.1.5,<0.2.0",
-    "python-dotenv==1.0.0",
+    "python-dotenv==1.2.2",
     "pandas==2.1.4",
     "sqlalchemy==2.0.23",
     "sqlglot>=26.12.0,<31",
@@ -55,7 +55,7 @@ dependencies = [
     "pydantic>=2.11.7,<3.0",
     "lancedb==0.34.0",
     # This library is required by lancedb
-    "pyarrow<19.0.0",
+    "pyarrow>=23.0.1",
     "rich==14.0.0",
     "prompt_toolkit>=3.0.51",
     "pygments>=2.18.0",
@@ -188,7 +188,7 @@ testpaths = ["tests"]
 [dependency-groups]
 # uv sync --dev
 dev = [
-    "pytest==8.0.2",
+    "pytest==9.0.3",
     "pytest-asyncio>=0.23.8",
     "jsonschema>=4.25.1,<5",
     # Keep consistent with the workflow version of github
