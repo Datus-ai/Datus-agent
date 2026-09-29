@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from contextlib import AbstractContextManager
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -571,6 +572,7 @@ class TestChatServiceGetHistorySubagent:
 
     MAIN = "chat_session_main0001"
     SUB = "semantic_modeling_session_ab12"
+    USER = "alice"
 
     @staticmethod
     def _tool_pair(call_id: str, name: str, arguments: dict, output: dict) -> list[dict]:
@@ -596,12 +598,23 @@ class TestChatServiceGetHistorySubagent:
         ]
 
     @staticmethod
-    def _write(session_dir: str, session_id: str, items: list[dict]) -> None:
-        session = SessionManager(session_dir=session_dir).get_session(session_id)
-        asyncio.run(session.add_items(items))
+    def _write(manager: SessionManager, session_id: str, items: list[dict]) -> None:
+        asyncio.run(manager.get_session(session_id).add_items(items))
 
-    def _sub_dir(self, chat_svc) -> str:
-        return os.path.join(chat_svc._session_dir, self.MAIN)
+    def _main_manager(self, chat_svc) -> SessionManager:
+        return SessionManager(session_dir=chat_svc._session_dir, scope=self.USER)
+
+    def _sub_manager(self, chat_svc, scope=None) -> SessionManager:
+        """The manager a subagent node really writes through (``SubAgentTaskTool`` sets no scope)."""
+        from datus.agent.node.agentic_node import AgenticNode
+
+        node = SimpleNamespace(
+            agent_config=SimpleNamespace(session_dir=chat_svc._session_dir),
+            scope=scope,
+            session_subdir=self.MAIN,
+            _session_manager=None,
+        )
+        return AgenticNode.session_manager.fget(node)
 
     @staticmethod
     def _rows(result) -> list[tuple]:
@@ -614,7 +627,7 @@ class TestChatServiceGetHistorySubagent:
 
     def test_subagent_steps_replay_flat_before_task_result(self, chat_svc):
         self._write(
-            chat_svc._session_dir,
+            self._main_manager(chat_svc),
             self.MAIN,
             [
                 {"role": "user", "content": "model the orders table"},
@@ -622,9 +635,11 @@ class TestChatServiceGetHistorySubagent:
                 self._assistant("The subagent finished."),
             ],
         )
-        self._write(self._sub_dir(chat_svc), self.SUB, self._sub_run("build a model", "call_read1", "Model written."))
+        self._write(
+            self._sub_manager(chat_svc), self.SUB, self._sub_run("build a model", "call_read1", "Model written.")
+        )
 
-        result = chat_svc.get_history(self.MAIN)
+        result = chat_svc.get_history(self.MAIN, user_id=self.USER)
 
         assert result.success is True
         assert self._rows(result) == [
@@ -639,7 +654,7 @@ class TestChatServiceGetHistorySubagent:
 
     def test_resumed_subagent_session_replays_each_run_under_its_own_task(self, chat_svc):
         self._write(
-            chat_svc._session_dir,
+            self._main_manager(chat_svc),
             self.MAIN,
             [
                 {"role": "user", "content": "model it"},
@@ -649,7 +664,7 @@ class TestChatServiceGetHistorySubagent:
             ],
         )
         self._write(
-            self._sub_dir(chat_svc),
+            self._sub_manager(chat_svc),
             self.SUB,
             [
                 *self._sub_run("first pass", "call_read1", "Pass one."),
@@ -657,26 +672,42 @@ class TestChatServiceGetHistorySubagent:
             ],
         )
 
-        result = chat_svc.get_history(self.MAIN)
+        result = chat_svc.get_history(self.MAIN, user_id=self.USER)
 
         sub_rows = [(r[1], r[3]) for r in self._rows(result) if r[2] == 1 and r[0] == "thinking"]
         assert sub_rows == [("Pass one.", "call_task1"), ("Pass two.", "call_task2")]
 
     def test_missing_subagent_session_keeps_history_and_creates_nothing(self, chat_svc):
         self._write(
-            chat_svc._session_dir,
+            self._main_manager(chat_svc),
             self.MAIN,
             [{"role": "user", "content": "model it"}, *self._task_items("call_task1", "p", "done")],
         )
 
-        result = chat_svc.get_history(self.MAIN)
+        result = chat_svc.get_history(self.MAIN, user_id=self.USER)
 
         assert [r[:2] for r in self._rows(result)] == [
             ("markdown", "model it"),
             ("call-tool", "task"),
             ("call-tool-result", "task"),
         ]
-        assert not os.path.exists(self._sub_dir(chat_svc))
+        assert not os.path.exists(os.path.join(chat_svc._session_dir, self.MAIN))
+        assert not os.path.exists(os.path.join(chat_svc._session_dir, self.USER, self.MAIN))
+
+    def test_subagent_session_under_the_user_scope_is_found_too(self, chat_svc):
+        """Fallback for a subagent node that does carry the user's scope."""
+        self._write(
+            self._main_manager(chat_svc),
+            self.MAIN,
+            [{"role": "user", "content": "model it"}, *self._task_items("call_task1", "p", "done")],
+        )
+        self._write(
+            self._sub_manager(chat_svc, scope=self.USER), self.SUB, self._sub_run("p", "call_read1", "Scoped run.")
+        )
+
+        result = chat_svc.get_history(self.MAIN, user_id=self.USER)
+
+        assert ("thinking", "Scoped run.", 1, "call_task1") in self._rows(result)
 
     @pytest.mark.parametrize("session_id", ["..", "a..b", "bad/id"])
     def test_unsafe_session_ids_are_rejected(self, session_id):

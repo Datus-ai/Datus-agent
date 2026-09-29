@@ -92,7 +92,7 @@ def _is_safe_session_id(session_id: str) -> bool:
 
 
 def _subagent_run_actions(
-    session_manager: SessionManager,
+    session_dirs: List[str],
     parent_session_id: str,
     call_id: str,
     result_action: ActionHistory,
@@ -100,15 +100,23 @@ def _subagent_run_actions(
 ) -> List[ActionHistory]:
     """The steps one ``task`` call's subagent ran, stamped as depth-1 children of the call.
 
-    Subagent sessions live at ``{scoped session dir}/{parent session id}/{sub session id}.db``
-    (see ``SubAgentTaskTool``), which the parent transcript never includes.
+    Subagent sessions live at ``{session dir}/{parent session id}/{sub session id}.db``,
+    which the parent transcript never includes. ``session_dirs`` are the base dirs to try,
+    in order (see ``AgenticNode.session_manager`` for the layout).
     """
     sub_session_id = _subagent_session_id(result_action)
     if not sub_session_id or not _is_safe_session_id(parent_session_id) or not _is_safe_session_id(sub_session_id):
         return []
-    nested_dir = os.path.join(session_manager.session_dir, parent_session_id)
-    # SessionManager() creates its directory, so check for the file before building one.
-    if not os.path.isfile(os.path.join(nested_dir, f"{sub_session_id}.db")):
+    # SessionManager() creates its directory, so find the file before building one.
+    nested_dir = next(
+        (
+            os.path.join(base, parent_session_id)
+            for base in session_dirs
+            if os.path.isfile(os.path.join(base, parent_session_id, f"{sub_session_id}.db"))
+        ),
+        None,
+    )
+    if nested_dir is None:
         return []
 
     try:
@@ -442,6 +450,9 @@ class ChatService:
             # A resumed subagent session holds several runs; the k-th task result
             # for a session id replays that session's k-th run.
             subagent_runs_used: Dict[str, int] = {}
+            # Subagent nodes are built without a scope, so their sessions sit under the
+            # unscoped dir; the scoped one covers a node that does carry the user's scope.
+            subagent_session_dirs = [self._session_dir, session_manager.session_dir]
 
             for idx, msg in enumerate(raw_messages):
                 role = msg.get("role", "")
@@ -477,7 +488,7 @@ class ChatService:
                             msg["actions"],
                             event_id,
                             expand_subagent=lambda call_id, result_action: _subagent_run_actions(
-                                session_manager, session_id, call_id, result_action, subagent_runs_used
+                                subagent_session_dirs, session_id, call_id, result_action, subagent_runs_used
                             ),
                         )
                         sse_messages.extend(payloads)
