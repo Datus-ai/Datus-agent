@@ -15,7 +15,15 @@ def load_config(config_path):
 
 
 def get_benchmark_file_path(config, benchmark, workdir):
-    benchmark_config = config.get("agent", {}).get("benchmark", {})
+    agent_config = config.get("agent", {})
+    built_in_files = {
+        "spider2": "spider2/spider2-snow/spider2-snow.jsonl",
+    }
+    if benchmark in built_in_files:
+        agent_home = os.path.expanduser(os.path.expandvars(agent_config.get("home") or "~/.datus"))
+        return os.path.join(agent_home, "benchmark", built_in_files[benchmark])
+
+    benchmark_config = agent_config.get("benchmark", {})
 
     if benchmark not in benchmark_config:
         raise Exception(f"benchmark '{benchmark}' not found in agent config")
@@ -24,9 +32,7 @@ def get_benchmark_file_path(config, benchmark, workdir):
     if not benchmark_path:
         raise Exception(f"benchmark_path not found in '{benchmark}'")
 
-    if benchmark == "spider2":
-        benchmark_file = os.path.join(workdir, benchmark_path, "spider2-snow.jsonl")
-    elif benchmark == "bird_dev":
+    if benchmark == "bird_dev":
         benchmark_file = os.path.join(workdir, benchmark_path, "dev.json")
     else:
         benchmark_file = os.path.join(workdir, benchmark_path, f"{benchmark}.jsonl")

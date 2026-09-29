@@ -53,7 +53,7 @@ Set the required environment variables for your benchmark:
 ### Step 3: Download and Prepare the BIRD Dataset
 
 !!! note
-    This step is only required for the BIRD benchmark. If you are running Spider 2.0-Snow, skip to [Step 4](#step-4-run-benchmark-tests).
+    This step is only required for the BIRD benchmark. For Spider 2.0-Snow, follow the preparation instructions below instead.
 
 Download and extract the BIRD dev dataset into the Datus home directory (`~/.datus` by default):
 
@@ -89,6 +89,22 @@ Then bootstrap the knowledge base for the BIRD dataset:
 datus-agent bootstrap-kb --datasource bird_sqlite --benchmark bird_dev
 ```
 
+### Prepare the Spider 2.0-Snow Dataset {#spider2-data}
+
+Spider2 data is downloaded separately from Datus Agent. The following sparse checkout retrieves the Snow benchmark data and the gold tables used by development scripts, without initializing Spider2's unrelated submodules. It pins the [dataset revision](https://github.com/xlang-ai/Spider2/tree/94ba92bbd5de296a408e5a5fd4df9f5091741931) previously referenced by Datus Agent.
+
+```bash title="Terminal"
+mkdir -p ~/.datus/benchmark/spider2
+git -C ~/.datus/benchmark/spider2 init
+git -C ~/.datus/benchmark/spider2 remote add origin https://github.com/xlang-ai/Spider2.git
+git -C ~/.datus/benchmark/spider2 sparse-checkout set spider2-snow methods/gold-tables
+git -C ~/.datus/benchmark/spider2 fetch --depth=1 --filter=blob:none origin 94ba92bbd5de296a408e5a5fd4df9f5091741931
+git -C ~/.datus/benchmark/spider2 checkout --detach FETCH_HEAD
+test -f ~/.datus/benchmark/spider2/spider2-snow/spider2-snow.jsonl
+```
+
+If `agent.home` differs from `~/.datus`, replace that prefix in the commands. Keep this data outside the Datus Agent source checkout. The benchmark reads questions and gold results from `spider2-snow/`; the repository's schema recall scripts also read `methods/gold-tables/`.
+
 ### Step 4: Run Benchmark Tests
 
 !!! warning
@@ -117,7 +133,7 @@ datus-agent bootstrap-kb --datasource bird_sqlite --benchmark bird_dev
 **Spider 2.0-Snow Dataset**
 
 !!! info
-    You can find the task ID (instance ID) in the [spider2-snow.jsonl](https://github.com/xlang-ai/Spider2/blob/main/spider2-snow/spider2-snow.jsonl) file.
+    You can find the task ID (instance ID) in the [pinned spider2-snow.jsonl](https://github.com/xlang-ai/Spider2/blob/94ba92bbd5de296a408e5a5fd4df9f5091741931/spider2-snow/spider2-snow.jsonl) file.
 
 !!! note
     Ensure you have configured the Snowflake environment variables before running Spider 2.0-Snow benchmarks.
