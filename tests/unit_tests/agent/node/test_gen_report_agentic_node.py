@@ -705,6 +705,45 @@ class TestExecuteStreamGenReportError:
         assert last.output["error_code"] == "MODEL_NOT_FOUND"
         assert "you passed deepseek-v4-pro-0831" in last.output["error"]
 
+    @pytest.mark.asyncio
+    async def test_execute_stream_error_shows_provider_message_not_raw_body(self, real_agent_config, mock_llm_create):
+        """``Error code: 400 - {<body>}`` reaches the error card as the provider's message alone."""
+        import anthropic
+        import httpx
+
+        from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
+
+        provider_message = "messages.1.content.0: Input tag 'output_text' found using 'type' does not match"
+        body = {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": provider_message},
+            "request_id": "req_011CfWrVfhtGKLrySY9Yuk8j",
+        }
+
+        async def _raise_error(*args, **kwargs):
+            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise anthropic.BadRequestError(
+                f"Error code: 400 - {body}", response=httpx.Response(400, request=request), body=body
+            )
+            yield  # noqa
+
+        node = GenReportAgenticNode(
+            node_id="report_provider_message",
+            description="Provider message test",
+            node_type=NodeType.TYPE_GEN_REPORT,
+            agent_config=real_agent_config,
+            node_name="gen_report",
+        )
+        node.input = GenReportNodeInput(user_message="Analyze data")
+        mock_llm_create.generate_with_tools_stream = _raise_error
+
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+        last = actions[-1]
+        assert last.action_type == "error"
+        assert last.output["error"] == provider_message
+        assert "Error code" not in last.messages
+
 
 @pytest.mark.acceptance
 @pytest.mark.llm_harness
