@@ -386,9 +386,111 @@ def _build_interaction_result_content(action: ActionHistory) -> Optional[List[IM
     return [IMessageContent(type="markdown", payload=payload_data)]
 
 
+def _build_answered_ask_user_content(
+    call_action: ActionHistory, result_action: ActionHistory
+) -> Optional[List[IMessageContent]]:
+    """Rebuild an answered ``ask_user`` card from its tool call + tool result.
+
+    The INTERACTION actions behind a live card never reach the stored
+    transcript, so on history replay only the tool pair survives. Returns
+    ``None`` unless the question was actually answered (cancelled, failed or
+    malformed calls keep rendering as they did before).
+    """
+    _, arguments = _extract_function(call_action)
+    questions = arguments.get("questions")
+    if isinstance(questions, str):
+        try:
+            questions = json.loads(questions)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(questions, list) or not questions:
+        return None
+
+    result_payload = _normalize_tool_result_payload(
+        output=result_action.output,
+        status=result_action.status,
+        fallback_error=result_action.messages,
+    )
+    if not result_payload.get("success"):
+        return None
+    answers_raw = result_payload.get("result")
+    if isinstance(answers_raw, str):
+        try:
+            answers_raw = json.loads(answers_raw)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(answers_raw, list) or len(answers_raw) != len(questions):
+        return None
+
+    requests_payload = []
+    answers = []
+    for question, answer_item in zip(questions, answers_raw):
+        if not isinstance(question, dict) or not isinstance(answer_item, dict):
+            return None
+        options = question.get("options") or None
+        multi_select = bool(question.get("multi_select")) if options else False
+        # Keys mirror ``AskUserTool``'s ``choices_dict`` so replay and live agree.
+        requests_payload.append(
+            {
+                "title": str(question.get("title") or "Question"),
+                "content": str(question.get("question") or ""),
+                "options": [{"key": str(j), "title": str(opt)} for j, opt in enumerate(options, 1)]
+                if options
+                else None,
+                "defaultChoice": None,
+                "contentType": "markdown",
+                "allowFreeText": True,
+                "multiSelect": multi_select,
+            }
+        )
+        # The tool result already carries display text, not option keys.
+        answer = answer_item.get("answer")
+        answers.append([str(a) for a in answer] if isinstance(answer, list) else [str(answer or "")])
+
+    payload_data = {
+        "interactionKey": call_action.action_id,
+        "actionType": "request_batch" if len(questions) > 1 else "request_choice",
+        "requests": requests_payload,
+        "submitted": True,
+        "answers": answers,
+    }
+    return [IMessageContent(type="user-interaction", payload=payload_data)]
+
+
 # ------------------------------------------------------------------
 # Public converter
 # ------------------------------------------------------------------
+
+
+def answered_ask_user_to_sse_event(
+    call_action: ActionHistory,
+    result_action: ActionHistory,
+    event_id: int,
+    message_id: str,
+) -> Optional[SSEEvent]:
+    """History-only: an answered ``ask_user`` tool pair as one interaction card.
+
+    Kept out of ``action_to_sse_event`` on purpose — the live stream already
+    emits the real INTERACTION card, and doing this there would draw it twice.
+    """
+    contents = _build_answered_ask_user_content(call_action, result_action)
+    if contents is None:
+        return None
+    return SSEEvent(
+        id=event_id,
+        event="message",
+        data=SSEMessageData(
+            type=SSEDataType.CREATE_MESSAGE,
+            payload=SSEMessagePayload(
+                message_id=message_id,
+                role="assistant",
+                content=contents,
+                depth=call_action.depth,
+                parent_action_id=call_action.parent_action_id,
+            ),
+        ),
+        timestamp=to_utc_iso(getattr(call_action, "start_time", None)) or now_utc_iso(),
+    )
 
 
 def _build_token_usage_event(action: ActionHistory, event_id: int) -> Optional[SSEEvent]:

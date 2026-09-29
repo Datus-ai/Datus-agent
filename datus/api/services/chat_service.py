@@ -24,7 +24,7 @@ from datus.api.models.cli_models import (
     SSEMessagePayload,
     StreamChatInput,
 )
-from datus.api.services.action_sse_converter import action_to_sse_event
+from datus.api.services.action_sse_converter import action_to_sse_event, answered_ask_user_to_sse_event
 from datus.api.services.chat_task_manager import (
     TurnEndCallback,
     _is_visible_assistant_response,
@@ -34,7 +34,7 @@ from datus.api.services.chat_task_manager import (
 )
 from datus.configuration.agent_config import AgentConfig
 from datus.models.session_manager import SessionManager, session_matches_agent
-from datus.schemas.action_history import ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.config_utils import coerce_positive_int
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -48,6 +48,15 @@ logger = get_logger(__name__)
 # request path — clients that omit ``limit`` entirely — stays bounded.
 _DEFAULT_SESSION_PAGE_SIZE = 50
 _DEFAULT_MAX_SESSION_PAGE_SIZE = 200
+
+
+def _is_ask_user_call(action: ActionHistory) -> bool:
+    input_data = action.input if isinstance(action.input, dict) else {}
+    return (
+        action.role == ActionRole.TOOL
+        and action.status == ActionStatus.PROCESSING
+        and input_data.get("function_name") == "ask_user"
+    )
 
 
 class ChatService:
@@ -322,15 +331,34 @@ class ChatService:
                         # Maps fingerprint -> owning message_id; the helpers below
                         # need the owner to tell a legitimate UPDATE from a repeat.
                         seen_assistant_message_fingerprints: dict[str, str] = {}
+                        tool_results = {
+                            a.action_id.removeprefix("complete_"): a
+                            for a in messages
+                            if a.role == ActionRole.TOOL and a.status != ActionStatus.PROCESSING
+                        }
+                        replayed_ask_user_ids: set[str] = set()
                         for action in messages:
-                            include_final_response = _should_include_final_response(action, assistant_response_seen)
-                            sse_event = action_to_sse_event(
-                                action,
-                                event_id,
-                                str(uuid.uuid4()),
-                                include_user_message=True,
-                                include_final_response=include_final_response,
-                            )
+                            if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
+                                if action.action_id.removeprefix("complete_") in replayed_ask_user_ids:
+                                    # Folded into the card, but it still counts as a tool result.
+                                    tool_result_seen = True
+                                    continue
+                            sse_event = None
+                            if _is_ask_user_call(action) and action.action_id in tool_results:
+                                sse_event = answered_ask_user_to_sse_event(
+                                    action, tool_results[action.action_id], event_id, str(uuid.uuid4())
+                                )
+                                if sse_event:
+                                    replayed_ask_user_ids.add(action.action_id)
+                            if sse_event is None:
+                                include_final_response = _should_include_final_response(action, assistant_response_seen)
+                                sse_event = action_to_sse_event(
+                                    action,
+                                    event_id,
+                                    str(uuid.uuid4()),
+                                    include_user_message=True,
+                                    include_final_response=include_final_response,
+                                )
                             if sse_event:
                                 if _should_skip_duplicate_assistant_message(
                                     action,
